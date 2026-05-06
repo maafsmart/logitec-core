@@ -78,6 +78,8 @@ logitec-wms/
 
 1. Copiar variables:
    - `cp .env.example .env` (o crear `.env` manualmente en Windows)
+   - Local (`NODE_ENV=development`): `DATABASE_URL="file:./dev.db"` (SQLite)
+   - Produccion/Render (`NODE_ENV=production`): `DATABASE_URL` PostgreSQL
 2. Instalar dependencias:
    - `npm install`
 3. Generar cliente y migrar:
