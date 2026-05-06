@@ -25,7 +25,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/comments", commentsRouter);
-app.use(express.static(publicDir));
+app.use(express.static("public"));
 
 app.get(/^\/(?!api|health).*/, (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));

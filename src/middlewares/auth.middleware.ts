@@ -1,8 +1,9 @@
-import { UserRole } from "@prisma/client";
 import { NextFunction, Request, Response } from "express";
 import jwt, { JwtPayload } from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { HttpError } from "../shared/http-error.js";
+
+type UserRole = "ADMIN" | "OPERATOR" | "CLIENT";
 
 type AuthPayload = JwtPayload & {
   sub: string;

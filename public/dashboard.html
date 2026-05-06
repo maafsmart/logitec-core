@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Logitec Control Panel</title>
+    <style>
+      :root {
+        --bg: #0b1222;
+        --panel: #111c34;
+        --line: #2a3b63;
+        --text: #eaf0ff;
+        --muted: #9caacc;
+        --ok: #7be495;
+        --error: #ff9ba7;
+        --accent: #4d8dff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        font-family: "Inter", "Segoe UI", Arial, sans-serif;
+        color: var(--text);
+        background: radial-gradient(circle at top, #12244a 0%, var(--bg) 55%);
+      }
+      .panel {
+        width: min(980px, 100%);
+        background: rgba(17, 28, 52, 0.94);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 28px;
+        box-shadow: 0 16px 54px rgba(0, 0, 0, 0.34);
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 1.7rem;
+      }
+      .subtitle {
+        margin: 0 0 20px;
+        color: var(--muted);
+      }
+      .hint {
+        margin: 0 0 16px;
+        color: #bfd0ff;
+        font-weight: 600;
+      }
+      .status {
+        margin: 0 0 18px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #0f1830;
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .error {
+        color: var(--error);
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+      }
+      li {
+        margin: 6px 0;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        gap: 18px;
+        margin-top: 16px;
+      }
+      .sidebar {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+        background: #0f1830;
+      }
+      .module-btn {
+        width: 100%;
+        text-align: left;
+        margin-bottom: 8px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+        font-weight: 600;
+        color: var(--text);
+        cursor: pointer;
+        background: #132043;
+      }
+      .module-btn.active {
+        border-color: #5d86d8;
+        background: #1a2b54;
+      }
+      .module-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .content {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px;
+        background: #0f1830;
+      }
+      .user-row {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 8px 0;
+        color: var(--muted);
+      }
+      .user-row:last-child {
+        border-bottom: 0;
+      }
+      .actions {
+        margin-top: 16px;
+        display: flex;
+        gap: 10px;
+      }
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin: 10px 0 12px;
+      }
+      .form-grid .full {
+        grid-column: 1 / -1;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .field label {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .field input,
+      .field select {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #111d3a;
+        color: var(--text);
+        padding: 10px;
+      }
+      .field input:focus,
+      .field select:focus {
+        outline: 2px solid #4f7ed8;
+      }
+      .inline-error {
+        color: var(--error);
+        min-height: 20px;
+        margin: 0 0 8px;
+      }
+      .meta {
+        margin-top: 16px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #0f1830;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+      .meta strong {
+        color: var(--text);
+      }
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-weight: 600;
+        color: white;
+        cursor: pointer;
+        background: linear-gradient(90deg, var(--accent), #6ca8ff);
+      }
+      .hidden {
+        display: none;
+      }
+      @media (max-width: 880px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .form-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="panel">
+      <h1>Dashboard - Logitec Control Panel</h1>
+      <p class="subtitle">Sesion activa</p>
+      <p class="hint">Estas dentro del dashboard protegido.</p>
+      <div id="statusBox" class="status">Validando sesion...</div>
+      <ul id="usersSummary"></ul>
+      <div class="meta">
+        <div><strong>Usuario:</strong> <span id="currentUserEmail">Cargando...</span></div>
+        <div><strong>Rol:</strong> <span id="currentUserRole">Cargando...</span></div>
+        <div><strong>URL actual:</strong> <span id="currentUrl"></span></div>
+      </div>
+      <div class="layout">
+        <aside class="sidebar">
+          <button class="module-btn active" data-module="users" id="btnUsers">Usuarios</button>
+          <button class="module-btn" data-module="account" id="btnAccount">Mi cuenta</button>
+          <button class="module-btn" data-module="inventory" id="btnInventory" disabled>Inventario (proximamente)</button>
+          <button class="module-btn" data-module="lots" id="btnLots" disabled>Lotes (proximamente)</button>
+          <button class="module-btn" data-module="picking" id="btnPicking" disabled>Picking (proximamente)</button>
+          <button class="module-btn" data-module="traceability" id="btnTraceability" disabled>Trazabilidad (proximamente)</button>
+        </aside>
+        <section class="content">
+          <div id="moduleUsers">
+            <h3 style="margin-top: 0">Modulo Usuarios</h3>
+            <p id="usersMessage" class="subtitle" style="margin-bottom: 10px">Cargando usuarios...</p>
+            <form id="createUserForm" class="hidden">
+              <div class="form-grid">
+                <div class="field">
+                  <label for="newFullName">Nombre completo</label>
+                  <input id="newFullName" type="text" required />
+                </div>
+                <div class="field">
+                  <label for="newEmail">Email</label>
+                  <input id="newEmail" type="email" required />
+                </div>
+                <div class="field">
+                  <label for="newPassword">Contrasena</label>
+                  <input id="newPassword" type="password" minlength="6" required />
+                </div>
+                <div class="field">
+                  <label for="newRole">Rol</label>
+                  <select id="newRole" required>
+                    <option value="OPERATOR">OPERATOR</option>
+                    <option value="CLIENT">CLIENT</option>
+                    <option value="ADMIN">ADMIN</option>
+                  </select>
+                </div>
+              </div>
+              <p id="createUserError" class="inline-error"></p>
+              <button id="createUserBtn" type="submit">Crear usuario</button>
+            </form>
+            <div id="usersList"></div>
+          </div>
+          <div id="moduleAccount" class="hidden">
+            <h3 style="margin-top: 0">Mi cuenta</h3>
+            <p class="subtitle" style="margin-bottom: 10px">Cambia tu contrasena de acceso.</p>
+            <form id="changePasswordForm">
+              <div class="form-grid">
+                <div class="field full">
+                  <label for="currentPassword">Contrasena actual</label>
+                  <input id="currentPassword" type="password" minlength="6" required />
+                </div>
+                <div class="field full">
+                  <label for="newAccountPassword">Nueva contrasena</label>
+                  <input id="newAccountPassword" type="password" minlength="6" required />
+                </div>
+              </div>
+              <p id="changePasswordError" class="inline-error"></p>
+              <button id="changePasswordBtn" type="submit">Actualizar contrasena</button>
+            </form>
+          </div>
+          <div id="modulePlaceholder" class="hidden">
+            <h3 style="margin-top: 0">Modulo en construccion</h3>
+            <p class="subtitle">Este modulo se habilitara en la siguiente iteracion del MVP.</p>
+          </div>
+        </section>
+      </div>
+      <div class="actions">
+        <button id="logoutBtn" type="button">Cerrar sesion</button>
+      </div>
+    </main>
+
+    <script src="/dashboard.js"></script>
+  </body>
+</html>

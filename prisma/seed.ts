@@ -4,17 +4,26 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 async function main() {
-  const email = "admin@logitec.local";
-  const exists = await prisma.user.findUnique({ where: { email } });
-  if (exists) return;
+  if (process.env.NODE_ENV === "production") {
+    return;
+  }
 
+  const email = "admin@logitec.local";
   const passwordHash = await bcrypt.hash("Admin1234", 10);
-  await prisma.user.create({
-    data: {
+  await prisma.user.upsert({
+    where: { email },
+    update: {
+      fullName: "Administrador Logitec",
+      passwordHash,
+      role: "ADMIN",
+      isActive: true
+    },
+    create: {
       email,
       fullName: "Administrador Logitec",
       passwordHash,
-      role: "ADMIN"
+      role: "ADMIN",
+      isActive: true
     }
   });
 }

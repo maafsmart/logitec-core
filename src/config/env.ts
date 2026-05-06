@@ -7,32 +7,17 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   JWT_SECRET: z.string().min(12, "JWT_SECRET must have at least 12 characters"),
-  PORT: z.coerce.number().int().positive().default(3000)
-})
-  .superRefine((data, ctx) => {
-    const isSqlite = data.DATABASE_URL.startsWith("file:");
-    const isPostgres =
-      data.DATABASE_URL.startsWith("postgresql://") ||
-      data.DATABASE_URL.startsWith("postgres://");
-
-    if (!isSqlite && !isPostgres) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["DATABASE_URL"],
-        message:
-          "DATABASE_URL must use sqlite (file:...) or PostgreSQL (postgresql:// or postgres://)."
-      });
-    }
-
-    if (data.NODE_ENV === "production" && !isPostgres) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["DATABASE_URL"],
-        message:
-          "In production, DATABASE_URL must be PostgreSQL (postgresql://... or postgres://...)."
-      });
-    }
-  });
+  PORT: z.preprocess(
+    (value) => {
+      const raw = typeof value === "string" ? value.trim() : value;
+      if (raw === undefined || raw === null || raw === "") return 3000;
+      const parsedPort = Number(raw);
+      if (!Number.isFinite(parsedPort) || Number.isNaN(parsedPort)) return 3000;
+      return parsedPort;
+    },
+    z.number().int().positive().default(3000)
+  )
+});
 
 const parsed = envSchema.safeParse(process.env);
 

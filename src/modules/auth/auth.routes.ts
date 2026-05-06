@@ -13,6 +13,10 @@ const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6)
 });
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(6),
+  newPassword: z.string().min(6)
+});
 
 authRouter.post("/login", async (req, res) => {
   const { email, password } = loginSchema.parse(req.body);
@@ -68,6 +72,34 @@ authRouter.get("/me", requireAuth, async (req, res) => {
   }
 
   res.json(user);
+});
+
+authRouter.post("/change-password", requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
+  if (currentPassword === newPassword) {
+    res.status(400).json({ message: "La nueva contrasena debe ser diferente a la actual" });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: req.auth!.userId } });
+  if (!user || !user.isActive) {
+    res.status(404).json({ message: "Usuario no encontrado" });
+    return;
+  }
+
+  const validCurrentPassword = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!validCurrentPassword) {
+    res.status(401).json({ message: "Contrasena actual incorrecta" });
+    return;
+  }
+
+  const newPasswordHash = await bcrypt.hash(newPassword, 10);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordHash: newPasswordHash }
+  });
+
+  res.json({ message: "Contrasena actualizada correctamente" });
 });
 
 export const allowedRoles = ["ADMIN", "OPERATOR", "CLIENT"];
