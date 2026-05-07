@@ -205,11 +205,9 @@
       <div class="layout">
         <aside class="sidebar">
           <button class="module-btn active" data-module="users" id="btnUsers">Usuarios</button>
+          <button class="module-btn" data-module="picking" id="btnPicking">Picking</button>
+          <button class="module-btn" data-module="catalog" id="btnCatalog">Catalogo</button>
           <button class="module-btn" data-module="account" id="btnAccount">Mi cuenta</button>
-          <button class="module-btn" data-module="inventory" id="btnInventory" disabled>Inventario (proximamente)</button>
-          <button class="module-btn" data-module="lots" id="btnLots" disabled>Lotes (proximamente)</button>
-          <button class="module-btn" data-module="picking" id="btnPicking" disabled>Picking (proximamente)</button>
-          <button class="module-btn" data-module="traceability" id="btnTraceability" disabled>Trazabilidad (proximamente)</button>
         </aside>
         <section class="content">
           <div id="moduleUsers">
@@ -260,6 +258,23 @@
               <p id="changePasswordError" class="inline-error"></p>
               <button id="changePasswordBtn" type="submit">Actualizar contrasena</button>
             </form>
+          </div>
+          <div id="modulePicking" class="hidden">
+            <h3 style="margin-top: 0">Picking (simulacion handheld)</h3>
+            <p class="subtitle" style="margin-bottom: 10px">
+              Aqui conectaremos el escaneo SKU/codigo con validacion de inventario en la siguiente iteracion.
+            </p>
+            <div class="field full">
+              <label for="scanInput">Escanear SKU / Codigo</label>
+              <input id="scanInput" type="text" placeholder="Ej. SKU-0001 o codigo de barras" />
+            </div>
+            <p id="scanHint" class="inline-error">Pendiente: validacion contra inventario.</p>
+          </div>
+          <div id="moduleCatalog" class="hidden">
+            <h3 style="margin-top: 0">Catalogo base</h3>
+            <p class="subtitle" style="margin-bottom: 0">
+              Este modulo sera la base para clientes y productos. Primero se habilitara carga manual y despues importacion CSV/Excel.
+            </p>
           </div>
           <div id="modulePlaceholder" class="hidden">
             <h3 style="margin-top: 0">Modulo en construccion</h3>

@@ -11,6 +11,8 @@ const createUserForm = document.getElementById("createUserForm");
 const createUserBtn = document.getElementById("createUserBtn");
 const createUserError = document.getElementById("createUserError");
 const moduleUsers = document.getElementById("moduleUsers");
+const modulePicking = document.getElementById("modulePicking");
+const moduleCatalog = document.getElementById("moduleCatalog");
 const moduleAccount = document.getElementById("moduleAccount");
 const modulePlaceholder = document.getElementById("modulePlaceholder");
 const moduleButtons = document.querySelectorAll(".module-btn");
@@ -23,6 +25,15 @@ const changePasswordBtn = document.getElementById("changePasswordBtn");
 const changePasswordError = document.getElementById("changePasswordError");
 const currentPassword = document.getElementById("currentPassword");
 const newAccountPassword = document.getElementById("newAccountPassword");
+const scanHint = document.getElementById("scanHint");
+
+let currentUserRole = null;
+
+const roleModules = {
+  ADMIN: ["users", "picking", "catalog", "account"],
+  OPERATOR: ["picking", "account"],
+  CLIENT: ["catalog", "account"]
+};
 
 currentUrl.textContent = window.location.href;
 
@@ -36,15 +47,23 @@ if (!token) {
 }
 
 function activateModule(moduleName) {
+  if (!currentUserRole) return;
+  const allowed = roleModules[currentUserRole] || [];
+  if (!allowed.includes(moduleName)) return;
+
   moduleButtons.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.module === moduleName);
   });
 
   const showUsers = moduleName === "users";
+  const showPicking = moduleName === "picking";
+  const showCatalog = moduleName === "catalog";
   const showAccount = moduleName === "account";
   moduleUsers.classList.toggle("hidden", !showUsers);
+  modulePicking.classList.toggle("hidden", !showPicking);
+  moduleCatalog.classList.toggle("hidden", !showCatalog);
   moduleAccount.classList.toggle("hidden", !showAccount);
-  modulePlaceholder.classList.toggle("hidden", showUsers || showAccount);
+  modulePlaceholder.classList.toggle("hidden", showUsers || showPicking || showCatalog || showAccount);
 }
 
 async function authenticatedFetch(path, options = {}) {
@@ -104,6 +123,15 @@ async function loadUsersModule(role) {
     )
     .join("");
   usersSummary.innerHTML = `<li>Usuarios visibles: ${Array.isArray(users) ? users.length : 0}</li>`;
+}
+
+function applyRoleNavigation(role) {
+  const allowed = roleModules[role] || [];
+  moduleButtons.forEach((btn) => {
+    const enabled = allowed.includes(btn.dataset.module);
+    btn.disabled = !enabled;
+    btn.style.display = enabled ? "block" : "none";
+  });
 }
 
 async function createUser(event) {
@@ -204,11 +232,15 @@ async function validateSession() {
   try {
     const user = await loadCurrentUser();
     if (!user) return;
+    currentUserRole = user.role || "CLIENT";
+    applyRoleNavigation(currentUserRole);
 
     statusBox.innerHTML = '<span class="ok">API protegida funcionando</span>';
     currentUserEmail.textContent = user.email || "No disponible";
     currentUserRole.textContent = user.role || "No disponible";
-    await loadUsersModule(user.role);
+    await loadUsersModule(currentUserRole);
+    scanHint.textContent = `Ubicacion operativa inicial: recepcion y bodega en ${"TULTITLAN24"}.`;
+    activateModule(roleModules[currentUserRole][0] || "account");
   } catch (_error) {
     statusBox.innerHTML = '<span class="error">Error de red validando sesion.</span>';
     currentUserEmail.textContent = "No disponible";
@@ -223,5 +255,4 @@ moduleButtons.forEach((btn) => {
 logoutBtn.addEventListener("click", forceLogout);
 createUserForm.addEventListener("submit", createUser);
 changePasswordForm.addEventListener("submit", changePassword);
-activateModule("users");
 validateSession();
