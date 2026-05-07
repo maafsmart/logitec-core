@@ -261,20 +261,49 @@
           </div>
           <div id="modulePicking" class="hidden">
             <h3 style="margin-top: 0">Picking (simulacion handheld)</h3>
-            <p class="subtitle" style="margin-bottom: 10px">
-              Aqui conectaremos el escaneo SKU/codigo con validacion de inventario en la siguiente iteracion.
-            </p>
-            <div class="field full">
-              <label for="scanInput">Escanear SKU / Codigo</label>
-              <input id="scanInput" type="text" placeholder="Ej. SKU-0001 o codigo de barras" />
-            </div>
-            <p id="scanHint" class="inline-error">Pendiente: validacion contra inventario.</p>
+            <p class="subtitle" style="margin-bottom: 10px">Escaneo web tipo handheld conectado a backend.</p>
+            <form id="scanForm">
+              <div class="field full">
+                <label for="scanInput">Escanear SKU / Codigo</label>
+                <input id="scanInput" type="text" placeholder="Ej. SKU-0001 o codigo de barras" />
+              </div>
+              <p id="scanHint" class="inline-error"></p>
+              <button id="scanBtn" type="submit">Escanear</button>
+            </form>
+            <div id="scanResult" class="subtitle" style="margin-top: 10px; margin-bottom: 8px"></div>
+            <div id="scanEventsList"></div>
           </div>
           <div id="moduleCatalog" class="hidden">
             <h3 style="margin-top: 0">Catalogo base</h3>
-            <p class="subtitle" style="margin-bottom: 0">
-              Este modulo sera la base para clientes y productos. Primero se habilitara carga manual y despues importacion CSV/Excel.
+            <p class="subtitle" style="margin-bottom: 10px">
+              Base minima para productos (validacion de picking) y clientes.
             </p>
+            <form id="createProductForm" class="hidden">
+              <div class="form-grid">
+                <div class="field">
+                  <label for="productSku">SKU</label>
+                  <input id="productSku" type="text" required />
+                </div>
+                <div class="field">
+                  <label for="productBarcode">Codigo de barras</label>
+                  <input id="productBarcode" type="text" />
+                </div>
+                <div class="field">
+                  <label for="productName">Nombre</label>
+                  <input id="productName" type="text" required />
+                </div>
+                <div class="field">
+                  <label for="productWarehouse">Almacen</label>
+                  <input id="productWarehouse" type="text" value="TULTITLAN24" required />
+                </div>
+              </div>
+              <p id="createProductError" class="inline-error"></p>
+              <button id="createProductBtn" type="submit">Crear producto</button>
+            </form>
+            <h4 style="margin-bottom: 8px">Productos</h4>
+            <div id="productsList"></div>
+            <h4 style="margin-bottom: 8px; margin-top: 18px">Clientes (base)</h4>
+            <div id="clientsList"></div>
           </div>
           <div id="modulePlaceholder" class="hidden">
             <h3 style="margin-top: 0">Modulo en construccion</h3>

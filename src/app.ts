@@ -6,7 +6,9 @@ import morgan from "morgan";
 import path from "path";
 import { fileURLToPath } from "url";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { catalogRouter } from "./modules/catalog/catalog.routes.js";
 import { commentsRouter } from "./modules/comments/comments.routes.js";
+import { pickingRouter } from "./modules/picking/picking.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
 
 export const app = express();
@@ -26,6 +28,8 @@ app.get("/health", (_req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/comments", commentsRouter);
+app.use("/api/picking", pickingRouter);
+app.use("/api/catalog", catalogRouter);
 app.use(express.static("public"));
 
 app.get(/^\/(?!api|health).*/, (_req, res) => {
