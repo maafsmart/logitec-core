@@ -420,12 +420,32 @@
             <div id="inventoryMovementsList">Cargando...</div>
           </div>
           <div id="moduleCatalog" class="hidden">
-            <h3 style="margin-top: 0">Catalogo base</h3>
+            <h3 style="margin-top: 0">Catálogo WMS</h3>
             <p class="subtitle" style="margin-bottom: 10px">
-              Base minima para productos (validacion de picking) y clientes.
+              Catálogo maestro por cliente. Inventario y picking dependen de estos SKUs.
             </p>
-            <form id="createProductForm" class="hidden">
+            <form id="createCustomerForm" class="hidden">
+              <h4 style="margin-bottom: 8px">Crear cliente</h4>
               <div class="form-grid">
+                <div class="field">
+                  <label for="customerCode">Código</label>
+                  <input id="customerCode" type="text" placeholder="Ej. CUST01" required />
+                </div>
+                <div class="field">
+                  <label for="customerName">Nombre</label>
+                  <input id="customerName" type="text" required />
+                </div>
+              </div>
+              <p id="createCustomerError" class="inline-error"></p>
+              <button id="createCustomerBtn" type="submit">Crear cliente</button>
+            </form>
+            <form id="createProductForm" class="hidden">
+              <h4 style="margin-bottom: 8px">Crear producto manual</h4>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="productCustomerCode">Cliente (código)</label>
+                  <input id="productCustomerCode" type="text" placeholder="Ej. CUST01" />
+                </div>
                 <div class="field">
                   <label for="productSku">SKU</label>
                   <input id="productSku" type="text" required />
@@ -446,9 +466,23 @@
               <p id="createProductError" class="inline-error"></p>
               <button id="createProductBtn" type="submit">Crear producto</button>
             </form>
+            <div id="catalogImportSection" class="hidden">
+              <h4 style="margin: 18px 0 8px">Importador de catálogo (CSV)</h4>
+              <p class="subtitle" style="margin-bottom: 10px; font-size: 0.9rem;">
+                Columnas mínimas: customer, sku, name (o material description). También soporta barcode, unit,
+                serialControlled, lotControlled y active.
+              </p>
+              <div class="field full">
+                <label for="catalogImportCsv">Pegar CSV aquí</label>
+                <textarea id="catalogImportCsv" rows="6" placeholder="customer,sku,name&#10;CUST01,SKU-001,Producto 1"></textarea>
+              </div>
+              <p id="catalogImportResult" class="subtitle" style="min-height: 1.2em"></p>
+              <button type="button" id="catalogPreviewBtn">Preview importación</button>
+              <button type="button" id="catalogApplyBtn">Aplicar importación</button>
+            </div>
             <h4 style="margin-bottom: 8px">Productos</h4>
             <div id="productsList"></div>
-            <h4 style="margin-bottom: 8px; margin-top: 18px">Clientes (base)</h4>
+            <h4 style="margin-bottom: 8px; margin-top: 18px">Clientes</h4>
             <div id="clientsList"></div>
           </div>
           <div id="modulePlaceholder" class="hidden">
@@ -470,6 +504,6 @@
       </div>
     </main>
 
-    <script src="/dashboard.js?v=3"></script>
+    <script src="/dashboard.js?v=4"></script>
   </body>
 </html>

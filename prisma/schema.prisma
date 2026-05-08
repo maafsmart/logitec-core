@@ -37,16 +37,25 @@ model Comment {
 
 model Product {
   id                  String               @id @default(cuid())
+  customerId          String?
   sku                 String               @unique
   barcode             String?              @unique
   name                String
+  description         String?
+  unit                String               @default("EA")
+  serialControlled    Boolean              @default(false)
+  lotControlled       Boolean              @default(false)
   warehouse           String               @default("TULTITLAN24")
   active              Boolean              @default(true)
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
+  customer            Customer?            @relation(fields: [customerId], references: [id])
   scanEvents          ScanEvent[]
-  inventoryStocks     InventoryStock[]
+  inventoryStocks     InventoryStock[]     // legacy compatibility
   inventoryMovements  InventoryMovement[]
+  inventories         Inventory[]
+
+  @@index([customerId])
 }
 
 model InventoryStock {
@@ -64,7 +73,11 @@ model InventoryStock {
 model InventoryMovement {
   id              String   @id @default(cuid())
   productId       String
-  warehouse       String
+  type            String   @default("ADJUSTMENT")
+  warehouse       String?
+  qty             Decimal  @default(0) @db.Decimal(18, 4)
+  fromLocationId  String?
+  toLocationId    String?
   movementType    String
   quantityBefore  Decimal  @db.Decimal(18, 4)
   quantityAfter   Decimal  @db.Decimal(18, 4)
@@ -73,10 +86,14 @@ model InventoryMovement {
   userId          String
   createdAt       DateTime @default(now())
   product         Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  fromLocation    Location? @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
+  toLocation      Location? @relation("MovementTo", fields: [toLocationId], references: [id], onDelete: SetNull)
   user            User     @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([productId, createdAt])
   @@index([userId])
+  @@index([fromLocationId])
+  @@index([toLocationId])
 }
 
 model ScanEvent {
@@ -85,6 +102,8 @@ model ScanEvent {
   result      String
   userId      String
   productId   String?
+  warehouse   String?
+  location    String?
   createdAt   DateTime @default(now())
   user        User     @relation(fields: [userId], references: [id])
   product     Product? @relation(fields: [productId], references: [id])
@@ -100,4 +119,46 @@ model Client {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Customer {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  name      String
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  products  Product[]
+}
+
+model Location {
+  id               String              @id @default(cuid())
+  warehouse        String
+  zone             String
+  rack             String
+  level            String
+  position         String
+  code             String              @unique
+  active           Boolean             @default(true)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  inventories      Inventory[]
+  movementsFrom    InventoryMovement[] @relation("MovementFrom")
+  movementsTo      InventoryMovement[] @relation("MovementTo")
+
+  @@index([warehouse])
+}
+
+model Inventory {
+  id          String    @id @default(cuid())
+  productId   String
+  locationId  String
+  qty         Decimal   @default(0) @db.Decimal(18, 4)
+  reservedQty Decimal   @default(0) @db.Decimal(18, 4)
+  status      String    @default("AVAILABLE")
+  updatedAt   DateTime  @updatedAt
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  location    Location  @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@unique([productId, locationId, status])
+  @@index([locationId, status])
 }

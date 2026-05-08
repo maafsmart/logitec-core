@@ -39,6 +39,12 @@ const scanEventsList = document.getElementById("scanEventsList");
 const createProductForm = document.getElementById("createProductForm");
 const createProductBtn = document.getElementById("createProductBtn");
 const createProductError = document.getElementById("createProductError");
+const createCustomerForm = document.getElementById("createCustomerForm");
+const createCustomerBtn = document.getElementById("createCustomerBtn");
+const createCustomerError = document.getElementById("createCustomerError");
+const customerCode = document.getElementById("customerCode");
+const customerName = document.getElementById("customerName");
+const productCustomerCode = document.getElementById("productCustomerCode");
 const productSku = document.getElementById("productSku");
 const productBarcode = document.getElementById("productBarcode");
 const productName = document.getElementById("productName");
@@ -60,6 +66,11 @@ const importCsv = document.getElementById("importCsv");
 const importBtn = document.getElementById("importBtn");
 const importResult = document.getElementById("importResult");
 const inventoryMovementsList = document.getElementById("inventoryMovementsList");
+const catalogImportSection = document.getElementById("catalogImportSection");
+const catalogImportCsv = document.getElementById("catalogImportCsv");
+const catalogImportResult = document.getElementById("catalogImportResult");
+const catalogPreviewBtn = document.getElementById("catalogPreviewBtn");
+const catalogApplyBtn = document.getElementById("catalogApplyBtn");
 
 let currentRole = null;
 let currentUserId = null;
@@ -262,7 +273,9 @@ async function loadStockStrip() {
   const body = rows
     .map((row) => {
       const p = row.product || {};
-      return `<tr><td><strong>${p.sku || "—"}</strong></td><td>${p.name || "—"}</td><td>${row.warehouse}</td><td>${formatQty(row.quantity)}</td></tr>`;
+      const wh = row.location?.warehouse || "—";
+      const loc = row.location?.code ? ` / ${row.location.code}` : "";
+      return `<tr><td><strong>${p.sku || "—"}</strong></td><td>${p.name || "—"}</td><td>${wh}${loc}</td><td>${formatQty(row.qty)}</td></tr>`;
     })
     .join("");
   inventoryList.innerHTML = `<table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table>`;
@@ -378,7 +391,7 @@ async function loadCatalogData() {
   if (clientsResponse?.ok) {
     const clients = await clientsResponse.json();
     clientsList.innerHTML = (Array.isArray(clients) ? clients : [])
-      .map((client) => `<div class="user-row"><strong>${client.name}</strong>${client.email ? ` - ${client.email}` : ""}</div>`)
+      .map((client) => `<div class="user-row"><strong>${client.code || "N/A"}</strong> - ${client.name}</div>`)
       .join("");
   }
 }
@@ -392,6 +405,8 @@ function applyRoleNavigation(role) {
   });
 
   createProductForm.classList.toggle("hidden", role !== "ADMIN");
+  createCustomerForm.classList.toggle("hidden", role !== "ADMIN");
+  catalogImportSection.classList.toggle("hidden", role !== "ADMIN");
   movementForm.classList.toggle("hidden", role !== "ADMIN");
   importSection.classList.toggle("hidden", role !== "ADMIN");
 }
@@ -492,6 +507,7 @@ async function createProduct(event) {
   createProductBtn.disabled = true;
 
   const payload = {
+    customerCode: productCustomerCode.value.trim() || undefined,
     sku: productSku.value.trim(),
     barcode: productBarcode.value.trim() || undefined,
     name: productName.value.trim(),
@@ -521,12 +537,85 @@ async function createProduct(event) {
     }
 
     createProductForm.reset();
+    productCustomerCode.value = "";
     productWarehouse.value = "TULTITLAN24";
     await loadCatalogData();
   } catch (_error) {
     createProductError.textContent = "Error de red creando producto.";
   } finally {
     createProductBtn.disabled = false;
+  }
+}
+
+async function createCustomer(event) {
+  event.preventDefault();
+  createCustomerError.textContent = "";
+  createCustomerBtn.disabled = true;
+
+  const payload = {
+    code: customerCode.value.trim(),
+    name: customerName.value.trim()
+  };
+
+  if (!payload.code || !payload.name) {
+    createCustomerError.textContent = "Codigo y nombre son obligatorios.";
+    createCustomerBtn.disabled = false;
+    return;
+  }
+
+  try {
+    const response = await authenticatedFetch("/api/catalog/customers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!response) return;
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      createCustomerError.textContent = data.message || "No se pudo crear cliente.";
+      return;
+    }
+    createCustomerForm.reset();
+    await loadCatalogData();
+  } catch (_error) {
+    createCustomerError.textContent = "Error de red creando cliente.";
+  } finally {
+    createCustomerBtn.disabled = false;
+  }
+}
+
+async function runCatalogImport(mode) {
+  catalogImportResult.textContent = "";
+  const csv = catalogImportCsv.value.trim();
+  if (!csv) {
+    catalogImportResult.textContent = "Pega contenido CSV.";
+    return;
+  }
+  const btn = mode === "preview" ? catalogPreviewBtn : catalogApplyBtn;
+  btn.disabled = true;
+
+  try {
+    const response = await authenticatedFetch("/api/catalog/import/products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ csv, mode })
+    });
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      catalogImportResult.textContent = data.message || "No se pudo procesar importacion.";
+      return;
+    }
+    const sample = Array.isArray(data.preview) ? data.preview.slice(0, 8) : [];
+    const previewLine = sample.map((p) => `${p.sku}:${p.action}`).join(", ");
+    catalogImportResult.textContent = `Modo ${data.mode}. Crear: ${data.created || 0}, actualizar: ${data.updated || 0}, omitidos: ${data.skipped || 0}.${previewLine ? ` Preview: ${previewLine}` : ""}`;
+    if (mode === "apply") {
+      await loadCatalogData();
+    }
+  } catch (_error) {
+    catalogImportResult.textContent = "Error de red en importacion de catalogo.";
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -641,8 +730,11 @@ usersList.addEventListener("click", (event) => {
 logoutBtn.addEventListener("click", forceLogout);
 createUserForm.addEventListener("submit", createUser);
 changePasswordForm.addEventListener("submit", changePassword);
+createCustomerForm.addEventListener("submit", createCustomer);
 createProductForm.addEventListener("submit", createProduct);
 scanForm.addEventListener("submit", scanCode);
 movementForm.addEventListener("submit", submitMovement);
 importBtn.addEventListener("click", runImport);
+catalogPreviewBtn.addEventListener("click", () => runCatalogImport("preview"));
+catalogApplyBtn.addEventListener("click", () => runCatalogImport("apply"));
 validateSession();
