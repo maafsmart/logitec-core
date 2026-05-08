@@ -139,7 +139,28 @@ catalogRouter.get("/clients", async (_req, res) => {
     orderBy: { createdAt: "desc" },
     take: 200
   });
-  res.json(customers.map((c) => ({ id: c.id, name: c.name, email: null, active: c.active })));
+  res.json(customers.map((c) => ({ id: c.id, code: c.code, name: c.name, email: null, active: c.active })));
+});
+
+catalogRouter.delete("/customers/:id", requireRole(["ADMIN"]), async (req, res) => {
+  const id = z.string().min(1).parse(req.params.id);
+  const customer = await prisma.customer.findUnique({ where: { id } });
+  if (!customer) {
+    throw new HttpError(404, "Cliente no encontrado.");
+  }
+
+  const linkedProducts = await prisma.product.count({
+    where: { customerId: id }
+  });
+  if (linkedProducts > 0) {
+    throw new HttpError(
+      400,
+      `No se puede eliminar cliente ${customer.code}: tiene ${linkedProducts} productos ligados.`
+    );
+  }
+
+  await prisma.customer.delete({ where: { id } });
+  res.json({ message: "Cliente eliminado.", id });
 });
 
 catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) => {

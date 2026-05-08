@@ -391,9 +391,30 @@ async function loadCatalogData() {
   if (clientsResponse?.ok) {
     const clients = await clientsResponse.json();
     clientsList.innerHTML = (Array.isArray(clients) ? clients : [])
-      .map((client) => `<div class="user-row"><strong>${client.code || "N/A"}</strong> - ${client.name}</div>`)
+      .map((client) => {
+        const deleteBtn =
+          currentRole === "ADMIN"
+            ? `<button type="button" class="user-delete" data-delete-customer="${client.id}">Eliminar cliente</button>`
+            : "";
+        return `<div class="user-row"><strong>${client.code || "N/A"}</strong> - ${client.name}${deleteBtn}</div>`;
+      })
       .join("");
   }
+}
+
+async function deleteCustomerById(customerId) {
+  if (!customerId) return;
+  if (!window.confirm("¿Eliminar este cliente? Solo funciona si no tiene productos ligados.")) return;
+  const response = await authenticatedFetch(`/api/catalog/customers/${encodeURIComponent(customerId)}`, {
+    method: "DELETE"
+  });
+  if (!response) return;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    window.alert(data.message || "No se pudo eliminar cliente.");
+    return;
+  }
+  await loadCatalogData();
 }
 
 function applyRoleNavigation(role) {
@@ -746,6 +767,15 @@ usersList.addEventListener("click", (event) => {
   const id = target.getAttribute("data-delete-user");
   if (id) {
     void deleteUserById(id);
+  }
+});
+
+clientsList.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const id = target.getAttribute("data-delete-customer");
+  if (id) {
+    void deleteCustomerById(id);
   }
 });
 
