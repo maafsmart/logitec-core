@@ -140,7 +140,8 @@
         font-size: 0.9rem;
       }
       .field input,
-      .field select {
+      .field select,
+      .field textarea {
         border: 1px solid var(--line);
         border-radius: 10px;
         background: #111d3a;
@@ -148,7 +149,8 @@
         padding: 10px;
       }
       .field input:focus,
-      .field select:focus {
+      .field select:focus,
+      .field textarea:focus {
         outline: 2px solid #4f7ed8;
       }
       .inline-error {
@@ -289,6 +291,7 @@
         <aside class="sidebar">
           <button class="module-btn active" data-module="users" id="btnUsers">Usuarios</button>
           <button class="module-btn" data-module="picking" id="btnPicking">Picking</button>
+          <button class="module-btn" data-module="inventory" id="btnInventory">Inventario</button>
           <button class="module-btn" data-module="catalog" id="btnCatalog">Catalogo</button>
           <button class="module-btn" data-module="account" id="btnAccount">Mi cuenta</button>
         </aside>
@@ -359,6 +362,63 @@
             </p>
             <div id="scanEventsList"></div>
           </div>
+          <div id="moduleInventory" class="hidden">
+            <h3 style="margin-top: 0">Inventario y movimientos</h3>
+            <p class="subtitle" style="margin-bottom: 10px">
+              Existencias por SKU y almacén. Entradas, salidas y ajuste de saldo (solo ADMIN registra movimientos e importación).
+            </p>
+            <form id="movementForm" class="hidden">
+              <h4 style="margin: 16px 0 8px">Registrar movimiento</h4>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="moveSku">SKU</label>
+                  <input id="moveSku" type="text" required placeholder="Ej. SKU-001" />
+                </div>
+                <div class="field">
+                  <label for="moveWarehouse">Almacén</label>
+                  <input id="moveWarehouse" type="text" value="TULTITLAN24" required />
+                </div>
+                <div class="field">
+                  <label for="moveType">Tipo</label>
+                  <select id="moveType" required>
+                    <option value="IN">Entrada (+)</option>
+                    <option value="OUT">Salida (−)</option>
+                    <option value="ADJUST_SET">Ajuste: fijar saldo</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="moveQty">Cantidad</label>
+                  <input id="moveQty" type="number" step="0.0001" min="0" required />
+                </div>
+                <div class="field">
+                  <label for="moveRef">Referencia (opcional)</label>
+                  <input id="moveRef" type="text" placeholder="OC, factura, etc." />
+                </div>
+                <div class="field full">
+                  <label for="moveNotes">Notas (opcional)</label>
+                  <input id="moveNotes" type="text" />
+                </div>
+              </div>
+              <p id="movementError" class="inline-error"></p>
+              <button id="movementBtn" type="submit">Guardar movimiento</button>
+            </form>
+            <div id="importSection" class="hidden">
+              <h4 style="margin: 18px 0 8px">Importar saldos (CSV)</h4>
+              <p class="subtitle" style="margin-bottom: 10px; font-size: 0.9rem;">
+                Primera fila: encabezados. Columnas: <strong>sku</strong> (o codigo/clave),
+                <strong>cantidad</strong> (o saldo/qty/quantity), opcional <strong>almacen</strong> (o warehouse/bodega).
+                Fija el saldo al valor indicado (debe existir el SKU en catálogo).
+              </p>
+              <div class="field full">
+                <label for="importCsv">Pegar CSV aquí</label>
+                <textarea id="importCsv" rows="6" placeholder="sku,cantidad&#10;SKU-001,100"></textarea>
+              </div>
+              <p id="importResult" class="subtitle" style="min-height: 1.2em"></p>
+              <button type="button" id="importBtn">Ejecutar importación</button>
+            </div>
+            <h4 style="margin: 18px 0 8px">Últimos movimientos</h4>
+            <div id="inventoryMovementsList">Cargando...</div>
+          </div>
           <div id="moduleCatalog" class="hidden">
             <h3 style="margin-top: 0">Catalogo base</h3>
             <p class="subtitle" style="margin-bottom: 10px">
@@ -398,11 +458,11 @@
         </section>
       </div>
       <section id="inventorySection" class="inventory-strip">
-        <h3>Inventario extendido (catálogo)</h3>
+        <h3>Existencias (resumen)</h3>
         <p class="muted">
-          Vista rápida del catálogo cargado en sistema; coincide con validaciones de picking.
+          Saldo por SKU y almacén. El detalle y movimientos están en el módulo Inventario.
         </p>
-        <div id="inventoryList">Cargando inventario...</div>
+        <div id="inventoryList">Cargando...</div>
       </section>
       </div>
       <div class="actions">
@@ -410,6 +470,6 @@
       </div>
     </main>
 
-    <script src="/dashboard.js?v=2"></script>
+    <script src="/dashboard.js?v=3"></script>
   </body>
 </html>

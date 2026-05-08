@@ -16,6 +16,7 @@ const createUserBtn = document.getElementById("createUserBtn");
 const createUserError = document.getElementById("createUserError");
 const moduleUsers = document.getElementById("moduleUsers");
 const modulePicking = document.getElementById("modulePicking");
+const moduleInventory = document.getElementById("moduleInventory");
 const moduleCatalog = document.getElementById("moduleCatalog");
 const moduleAccount = document.getElementById("moduleAccount");
 const modulePlaceholder = document.getElementById("modulePlaceholder");
@@ -45,13 +46,27 @@ const productWarehouse = document.getElementById("productWarehouse");
 const productsList = document.getElementById("productsList");
 const clientsList = document.getElementById("clientsList");
 const inventoryList = document.getElementById("inventoryList");
+const movementForm = document.getElementById("movementForm");
+const movementBtn = document.getElementById("movementBtn");
+const movementError = document.getElementById("movementError");
+const moveSku = document.getElementById("moveSku");
+const moveWarehouse = document.getElementById("moveWarehouse");
+const moveType = document.getElementById("moveType");
+const moveQty = document.getElementById("moveQty");
+const moveRef = document.getElementById("moveRef");
+const moveNotes = document.getElementById("moveNotes");
+const importSection = document.getElementById("importSection");
+const importCsv = document.getElementById("importCsv");
+const importBtn = document.getElementById("importBtn");
+const importResult = document.getElementById("importResult");
+const inventoryMovementsList = document.getElementById("inventoryMovementsList");
 
 let currentRole = null;
 let currentUserId = null;
 
 const roleModules = {
-  ADMIN: ["users", "picking", "catalog", "account"],
-  OPERATOR: ["picking", "account"],
+  ADMIN: ["users", "picking", "inventory", "catalog", "account"],
+  OPERATOR: ["picking", "inventory", "account"],
   CLIENT: ["catalog", "account"]
 };
 
@@ -77,13 +92,18 @@ function activateModule(moduleName) {
 
   const showUsers = moduleName === "users";
   const showPicking = moduleName === "picking";
+  const showInventory = moduleName === "inventory";
   const showCatalog = moduleName === "catalog";
   const showAccount = moduleName === "account";
   moduleUsers.classList.toggle("hidden", !showUsers);
   modulePicking.classList.toggle("hidden", !showPicking);
+  moduleInventory.classList.toggle("hidden", !showInventory);
   moduleCatalog.classList.toggle("hidden", !showCatalog);
   moduleAccount.classList.toggle("hidden", !showAccount);
-  modulePlaceholder.classList.toggle("hidden", showUsers || showPicking || showCatalog || showAccount);
+  modulePlaceholder.classList.toggle(
+    "hidden",
+    showUsers || showPicking || showInventory || showCatalog || showAccount
+  );
 }
 
 async function authenticatedFetch(path, options = {}) {
@@ -211,8 +231,143 @@ async function loadProductsRows() {
     )
     .join("");
   productsList.innerHTML = rows;
-  if (inventoryList) {
-    inventoryList.innerHTML = rows || "<span style=\"color:#9caacc\">Sin productos en catálogo.</span>";
+}
+
+function formatQty(q) {
+  if (q == null || q === "") return "—";
+  const n = typeof q === "string" ? Number(q.replace(",", ".")) : Number(q);
+  if (Number.isNaN(n)) return String(q);
+  return n.toLocaleString("es-MX", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+}
+
+async function loadStockStrip() {
+  if (!inventoryList) return;
+  if (currentRole !== "ADMIN" && currentRole !== "OPERATOR") {
+    inventoryList.innerHTML = '<span style="color:#9caacc">Las existencias solo aplican a roles operativos.</span>';
+    return;
+  }
+  const response = await authenticatedFetch("/api/inventory/stock");
+  if (!response?.ok) {
+    inventoryList.textContent = "No se pudo cargar existencias.";
+    return;
+  }
+  const rows = await response.json();
+  if (!Array.isArray(rows) || rows.length === 0) {
+    inventoryList.innerHTML =
+      '<span style="color:#9caacc">Sin registros de existencias. Usa Inventario para cargar saldos o importar CSV.</span>';
+    return;
+  }
+  const thead =
+    "<tr><th>SKU</th><th>Producto</th><th>Almacén</th><th>Cantidad</th></tr>";
+  const body = rows
+    .map((row) => {
+      const p = row.product || {};
+      return `<tr><td><strong>${p.sku || "—"}</strong></td><td>${p.name || "—"}</td><td>${row.warehouse}</td><td>${formatQty(row.quantity)}</td></tr>`;
+    })
+    .join("");
+  inventoryList.innerHTML = `<table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table>`;
+}
+
+async function loadInventoryMovements() {
+  if (!inventoryMovementsList) return;
+  if (currentRole !== "ADMIN" && currentRole !== "OPERATOR") {
+    inventoryMovementsList.innerHTML = "";
+    return;
+  }
+  const response = await authenticatedFetch("/api/inventory/movements");
+  if (!response?.ok) {
+    inventoryMovementsList.textContent = "No se pudo cargar movimientos.";
+    return;
+  }
+  const rows = await response.json();
+  if (!Array.isArray(rows) || rows.length === 0) {
+    inventoryMovementsList.innerHTML =
+      '<p class="subtitle" style="margin:0">Aún no hay movimientos registrados.</p>';
+    return;
+  }
+  const thead =
+    "<tr><th>Fecha</th><th>SKU</th><th>Tipo</th><th>Antes</th><th>Después</th><th>Almacén</th><th>Usuario</th><th>Ref.</th></tr>";
+  const body = rows
+    .map((m) => {
+      const sku = m.product?.sku || "—";
+      const u = m.user?.fullName || "—";
+      const ref = m.reference || "—";
+      return `<tr><td>${formatScanDate(m.createdAt)}</td><td>${sku}</td><td>${m.movementType}</td><td>${formatQty(m.quantityBefore)}</td><td>${formatQty(m.quantityAfter)}</td><td>${m.warehouse}</td><td>${u}</td><td>${ref}</td></tr>`;
+    })
+    .join("");
+  inventoryMovementsList.innerHTML = `<div style="overflow:auto;max-width:100%"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+}
+
+async function submitMovement(event) {
+  event.preventDefault();
+  movementError.textContent = "";
+  movementBtn.disabled = true;
+  const payload = {
+    sku: moveSku.value.trim(),
+    warehouse: moveWarehouse.value.trim() || "TULTITLAN24",
+    type: moveType.value,
+    quantity: Number(moveQty.value),
+    reference: moveRef.value.trim() || undefined,
+    notes: moveNotes.value.trim() || undefined
+  };
+  try {
+    const response = await authenticatedFetch("/api/inventory/movements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      movementError.textContent = data.message || "No se pudo registrar el movimiento.";
+      return;
+    }
+    movementForm.reset();
+    moveWarehouse.value = "TULTITLAN24";
+    await loadStockStrip();
+    await loadInventoryMovements();
+  } catch (_e) {
+    movementError.textContent = "Error de red.";
+  } finally {
+    movementBtn.disabled = false;
+  }
+}
+
+async function runImport() {
+  if (importResult) importResult.textContent = "";
+  importBtn.disabled = true;
+  const csv = importCsv.value.trim();
+  if (!csv) {
+    if (importResult) importResult.textContent = "Pega el contenido CSV.";
+    importBtn.disabled = false;
+    return;
+  }
+  try {
+    const response = await authenticatedFetch("/api/inventory/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ csv })
+    });
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (importResult) importResult.textContent = data.message || "Importación rechazada.";
+      return;
+    }
+    const errLines =
+      Array.isArray(data.errors) && data.errors.length
+        ? data.errors.map((e) => `${e.sku}: ${e.message}`).join("; ")
+        : "";
+    if (importResult) {
+      importResult.textContent = `Aplicados: ${data.applied}. Omitidos: ${data.skipped || 0}.${errLines ? ` Detalle: ${errLines}` : ""}`;
+    }
+    importCsv.value = "";
+    await loadStockStrip();
+    await loadInventoryMovements();
+  } catch (_e) {
+    if (importResult) importResult.textContent = "Error de red en importación.";
+  } finally {
+    importBtn.disabled = false;
   }
 }
 
@@ -237,6 +392,8 @@ function applyRoleNavigation(role) {
   });
 
   createProductForm.classList.toggle("hidden", role !== "ADMIN");
+  movementForm.classList.toggle("hidden", role !== "ADMIN");
+  importSection.classList.toggle("hidden", role !== "ADMIN");
 }
 
 async function createUser(event) {
@@ -451,6 +608,8 @@ async function validateSession() {
     await loadUsersModule(currentRole);
     await loadCatalogData();
     if (currentRole === "ADMIN" || currentRole === "OPERATOR") {
+      await loadStockStrip();
+      await loadInventoryMovements();
       await loadScanEvents();
     } else if (scanEventsList) {
       scanEventsList.innerHTML =
@@ -484,4 +643,6 @@ createUserForm.addEventListener("submit", createUser);
 changePasswordForm.addEventListener("submit", changePassword);
 createProductForm.addEventListener("submit", createProduct);
 scanForm.addEventListener("submit", scanCode);
+movementForm.addEventListener("submit", submitMovement);
+importBtn.addEventListener("click", runImport);
 validateSession();
