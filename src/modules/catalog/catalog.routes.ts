@@ -26,8 +26,49 @@ const createCustomerSchema = z.object({
 
 const catalogImportSchema = z.object({
   csv: z.string().min(1),
-  mode: z.enum(["preview", "apply"]).default("preview")
+  mode: z.enum(["preview", "apply"]).default("preview"),
+  autoCreateCustomers: z.coerce.boolean().default(false)
 });
+
+function parseCsvLine(line: string): string[] {
+  const values: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      values.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  values.push(current.trim());
+  return values;
+}
+
+function normalizeCustomerCode(nameOrCode: string): string {
+  const raw = nameOrCode.trim().toUpperCase();
+  if (!raw) return "";
+  if (raw.length <= 12 && /^[A-Z0-9_-]+$/.test(raw)) return raw;
+  return raw
+    .replace(/[^A-Z0-9 ]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((p) => p.slice(0, 4))
+    .join("")
+    .slice(0, 20);
+}
 
 catalogRouter.use(requireAuth);
 
@@ -102,7 +143,7 @@ catalogRouter.get("/clients", async (_req, res) => {
 });
 
 catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) => {
-  const { csv, mode } = catalogImportSchema.parse(req.body);
+  const { csv, mode, autoCreateCustomers } = catalogImportSchema.parse(req.body);
 
   const lines = csv
     .split(/\r?\n/)
@@ -112,7 +153,7 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
     throw new HttpError(400, "CSV debe incluir encabezado y al menos una fila.");
   }
 
-  const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  const header = parseCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
   const idxCustomer = header.findIndex((h) => h === "customer" || h === "cliente" || h === "customer_code");
   const idxSku = header.findIndex((h) => h === "sku" || h === "material number" || h === "material_number");
   const idxBarcode = header.findIndex((h) => h === "barcode" || h === "ean");
@@ -123,30 +164,53 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
   const idxSerial = header.findIndex((h) => h === "serialcontrolled" || h === "serial_controlled" || h === "serial");
   const idxLot = header.findIndex((h) => h === "lotcontrolled" || h === "lot_controlled" || h === "lote");
   const idxActive = header.findIndex((h) => h === "active" || h === "activo");
+  const idxSupplier = header.findIndex((h) => h === "supplier" || h === "proveedor");
+  const idxSupplierPo = header.findIndex((h) => h === "supplier po" || h === "supplier_po" || h === "supplierpo");
 
   if (idxCustomer < 0 || idxSku < 0 || idxName < 0) {
     throw new HttpError(400, "CSV catálogo requiere customer, sku y name/description.");
   }
 
   const preview: Array<{ sku: string; action: "CREATE" | "UPDATE" | "SKIP"; reason?: string }> = [];
+  const unknownCustomers = new Set<string>();
+  const detectedSuppliers = new Set<string>();
+  const detectedSupplierPo = new Set<string>();
   let created = 0;
   let updated = 0;
   let skipped = 0;
 
   for (let i = 1; i < lines.length; i += 1) {
-    const cols = lines[i].split(",").map((c) => c.trim());
-    const customerCode = cols[idxCustomer]?.toUpperCase();
+    const cols = parseCsvLine(lines[i]);
+    const customerInput = (cols[idxCustomer] || "").trim();
+    const customerCode = normalizeCustomerCode(customerInput);
     const sku = cols[idxSku];
     const name = cols[idxName];
+    if (idxSupplier >= 0 && cols[idxSupplier]?.trim()) detectedSuppliers.add(cols[idxSupplier].trim());
+    if (idxSupplierPo >= 0 && cols[idxSupplierPo]?.trim()) detectedSupplierPo.add(cols[idxSupplierPo].trim());
     if (!customerCode || !sku || !name) {
       preview.push({ sku: sku || `row-${i + 1}`, action: "SKIP", reason: "customer/sku/name vacios" });
       skipped += 1;
       continue;
     }
 
-    const customer = await prisma.customer.findUnique({ where: { code: customerCode } });
+    let customer = await prisma.customer.findUnique({ where: { code: customerCode } });
     if (!customer) {
-      preview.push({ sku, action: "SKIP", reason: `customer no existe: ${customerCode}` });
+      customer = await prisma.customer.findFirst({
+        where: { name: { equals: customerInput, mode: "insensitive" } }
+      });
+    }
+    if (!customer && mode === "apply" && autoCreateCustomers) {
+      customer = await prisma.customer.create({
+        data: {
+          code: customerCode,
+          name: customerInput || customerCode,
+          active: true
+        }
+      });
+    }
+    if (!customer) {
+      unknownCustomers.add(customerInput || customerCode);
+      preview.push({ sku, action: "SKIP", reason: `customer no existe: ${customerInput || customerCode}` });
       skipped += 1;
       continue;
     }
@@ -191,10 +255,14 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
 
   res.json({
     mode,
+    autoCreateCustomers,
     created,
     updated,
     skipped,
-    preview
+    preview,
+    unknownCustomers: Array.from(unknownCustomers),
+    suppliersDetected: Array.from(detectedSuppliers).slice(0, 50),
+    supplierPoDetected: Array.from(detectedSupplierPo).slice(0, 50)
   });
 });
 

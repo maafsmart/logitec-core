@@ -598,7 +598,7 @@ async function runCatalogImport(mode) {
     const response = await authenticatedFetch("/api/catalog/import/products", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ csv, mode })
+      body: JSON.stringify({ csv, mode, autoCreateCustomers: false })
     });
     if (!response) return;
     const data = await response.json().catch(() => ({}));
@@ -608,7 +608,29 @@ async function runCatalogImport(mode) {
     }
     const sample = Array.isArray(data.preview) ? data.preview.slice(0, 8) : [];
     const previewLine = sample.map((p) => `${p.sku}:${p.action}`).join(", ");
-    catalogImportResult.textContent = `Modo ${data.mode}. Crear: ${data.created || 0}, actualizar: ${data.updated || 0}, omitidos: ${data.skipped || 0}.${previewLine ? ` Preview: ${previewLine}` : ""}`;
+    const unknownCustomers = Array.isArray(data.unknownCustomers) ? data.unknownCustomers : [];
+    const suppliersDetected = Array.isArray(data.suppliersDetected) ? data.suppliersDetected : [];
+    const suppliersPo = Array.isArray(data.supplierPoDetected) ? data.supplierPoDetected : [];
+    catalogImportResult.textContent = `Modo ${data.mode}. Crear: ${data.created || 0}, actualizar: ${data.updated || 0}, omitidos: ${data.skipped || 0}.${previewLine ? ` Preview: ${previewLine}` : ""}${unknownCustomers.length ? ` Clientes no encontrados: ${unknownCustomers.join(" | ")}.` : ""}${suppliersDetected.length ? ` Proveedores detectados: ${suppliersDetected.slice(0, 4).join(", ")}.` : ""}${suppliersPo.length ? ` Supplier PO detectados: ${suppliersPo.slice(0, 4).join(", ")}.` : ""}`;
+
+    if (mode === "preview" && unknownCustomers.length > 0) {
+      const confirmed = window.confirm(
+        `Se detectaron ${unknownCustomers.length} clientes no existentes. ¿Crear estos clientes automáticamente y aplicar importación? (Solo ADMIN)`
+      );
+      if (confirmed) {
+        const applyResponse = await authenticatedFetch("/api/catalog/import/products", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ csv, mode: "apply", autoCreateCustomers: true })
+        });
+        if (applyResponse?.ok) {
+          const applyData = await applyResponse.json().catch(() => ({}));
+          catalogImportResult.textContent = `Aplicado con alta automática de clientes. Crear: ${applyData.created || 0}, actualizar: ${applyData.updated || 0}, omitidos: ${applyData.skipped || 0}.`;
+          await loadCatalogData();
+          return;
+        }
+      }
+    }
     if (mode === "apply") {
       await loadCatalogData();
     }
