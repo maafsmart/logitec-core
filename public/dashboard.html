@@ -180,6 +180,80 @@
       .hidden {
         display: none;
       }
+      .session-banner {
+        margin-bottom: 18px;
+        padding: 14px 16px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: linear-gradient(135deg, #14274d 0%, #0f1830 100%);
+      }
+      .session-banner .who {
+        margin: 0;
+        font-size: 1.35rem;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .session-banner .hint-banner {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+      .dashboard-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .inventory-strip {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px;
+        background: #0c1528;
+        max-height: 280px;
+        overflow: auto;
+      }
+      .inventory-strip h3 {
+        margin: 0 0 10px;
+        font-size: 1.05rem;
+      }
+      .inventory-strip .muted {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+      .scan-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+      }
+      .scan-table th,
+      .scan-table td {
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .scan-table th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .user-delete {
+        margin-left: 10px;
+        padding: 4px 10px;
+        font-size: 0.82rem;
+        border-radius: 8px;
+        background: rgba(255, 155, 167, 0.18);
+        color: var(--error);
+        border: 1px solid rgba(255, 155, 167, 0.45);
+        cursor: pointer;
+      }
+      .badge-inactive {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        background: rgba(255, 155, 167, 0.15);
+        color: var(--error);
+      }
       @media (max-width: 880px) {
         .layout {
           grid-template-columns: 1fr;
@@ -192,16 +266,25 @@
   </head>
   <body>
     <main class="panel">
-      <h1>Dashboard - Logitec Control Panel</h1>
-      <p class="subtitle">Sesion activa</p>
-      <p class="hint">Estas dentro del dashboard protegido.</p>
+      <div id="sessionBanner" class="session-banner">
+        <p class="who" id="sessionDisplayName">Cargando sesión...</p>
+        <p class="hint-banner">
+          Estás operando como <strong id="sessionEmailInline">—</strong>
+          <span id="sessionRoleInline"></span>
+        </p>
+      </div>
+      <h1 style="margin-bottom: 6px">Dashboard — Logitec Control Panel</h1>
+      <p class="subtitle">Sesión activa</p>
+      <p class="hint">Área protegida con JWT.</p>
       <div id="statusBox" class="status">Validando sesion...</div>
       <ul id="usersSummary"></ul>
       <div class="meta">
-        <div><strong>Usuario:</strong> <span id="currentUserEmail">Cargando...</span></div>
+        <div><strong>Nombre:</strong> <span id="currentUserFullName">Cargando...</span></div>
+        <div><strong>Correo:</strong> <span id="currentUserEmail">Cargando...</span></div>
         <div><strong>Rol:</strong> <span id="currentUserRole">Cargando...</span></div>
         <div><strong>URL actual:</strong> <span id="currentUrl"></span></div>
       </div>
+      <div class="dashboard-stack">
       <div class="layout">
         <aside class="sidebar">
           <button class="module-btn active" data-module="users" id="btnUsers">Usuarios</button>
@@ -271,6 +354,9 @@
               <button id="scanBtn" type="submit">Escanear</button>
             </form>
             <div id="scanResult" class="subtitle" style="margin-top: 10px; margin-bottom: 8px"></div>
+            <p class="subtitle" style="margin-top: 14px; margin-bottom: 6px">
+              Historial de escaneos (fecha, operador si aplica, código, resultado)
+            </p>
             <div id="scanEventsList"></div>
           </div>
           <div id="moduleCatalog" class="hidden">
@@ -311,11 +397,19 @@
           </div>
         </section>
       </div>
+      <section id="inventorySection" class="inventory-strip">
+        <h3>Inventario extendido (catálogo)</h3>
+        <p class="muted">
+          Vista rápida del catálogo cargado en sistema; coincide con validaciones de picking.
+        </p>
+        <div id="inventoryList">Cargando inventario...</div>
+      </section>
+      </div>
       <div class="actions">
         <button id="logoutBtn" type="button">Cerrar sesion</button>
       </div>
     </main>
 
-    <script src="/dashboard.js"></script>
+    <script src="/dashboard.js?v=2"></script>
   </body>
 </html>

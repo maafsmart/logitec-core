@@ -61,11 +61,20 @@ pickingRouter.post("/scan", async (req, res) => {
 });
 
 pickingRouter.get("/scans", async (req, res) => {
+  const isAdmin = req.auth!.role === "ADMIN";
+
   const scans = await prisma.scanEvent.findMany({
-    where: { userId: req.auth!.userId },
+    where: isAdmin ? {} : { userId: req.auth!.userId },
     orderBy: { createdAt: "desc" },
-    take: 20,
+    take: isAdmin ? 150 : 50,
     include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true
+        }
+      },
       product: {
         select: {
           sku: true,

@@ -2,6 +2,10 @@ const token = localStorage.getItem("token");
 const statusBox = document.getElementById("statusBox");
 const usersSummary = document.getElementById("usersSummary");
 const logoutBtn = document.getElementById("logoutBtn");
+const sessionDisplayName = document.getElementById("sessionDisplayName");
+const sessionEmailInline = document.getElementById("sessionEmailInline");
+const sessionRoleInline = document.getElementById("sessionRoleInline");
+const currentUserFullName = document.getElementById("currentUserFullName");
 const currentUserEmail = document.getElementById("currentUserEmail");
 const currentUserRoleText = document.getElementById("currentUserRole");
 const currentUrl = document.getElementById("currentUrl");
@@ -40,8 +44,10 @@ const productName = document.getElementById("productName");
 const productWarehouse = document.getElementById("productWarehouse");
 const productsList = document.getElementById("productsList");
 const clientsList = document.getElementById("clientsList");
+const inventoryList = document.getElementById("inventoryList");
 
 let currentRole = null;
+let currentUserId = null;
 
 const roleModules = {
   ADMIN: ["users", "picking", "catalog", "account"],
@@ -102,6 +108,19 @@ function renderUsersSummary(text) {
   usersSummary.innerHTML = `<li>${text}</li>`;
 }
 
+function formatScanDate(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString("es-MX", {
+      dateStyle: "short",
+      timeStyle: "medium"
+    });
+  } catch (_e) {
+    return iso;
+  }
+}
+
 async function loadCurrentUser() {
   const response = await authenticatedFetch("/api/auth/me");
   if (!response) return null;
@@ -133,33 +152,72 @@ async function loadUsersModule(role) {
   }
 
   const users = await response.json();
-  usersMessage.textContent = "Gestion inicial de usuarios activa.";
+  usersMessage.textContent = "Gestión inicial de usuarios (todos los administradores ven el listado completo).";
   usersList.innerHTML = (Array.isArray(users) ? users : [])
-    .map((user) => `<div class="user-row"><strong>${user.fullName}</strong> - ${user.email} (${user.role})</div>`)
+    .map((user) => {
+      const inactive = user.isActive === false;
+      const inactiveTag = inactive ? '<span class="badge-inactive">inactivo</span>' : "";
+      const delBtn =
+        currentUserId && user.id !== currentUserId && user.isActive !== false
+          ? `<button type="button" class="user-delete" data-delete-user="${user.id}">Desactivar</button>`
+          : "";
+      return `<div class="user-row"><strong>${user.fullName}</strong> - ${user.email} (${user.role})${inactiveTag}${delBtn}</div>`;
+    })
     .join("");
-  renderUsersSummary(`Usuarios visibles: ${Array.isArray(users) ? users.length : 0}`);
+  renderUsersSummary(`Usuarios en sistema: ${Array.isArray(users) ? users.length : 0}`);
 }
 
 async function loadScanEvents() {
   const response = await authenticatedFetch("/api/picking/scans");
   if (!response || !response.ok) return;
   const scans = await response.json();
-  scanEventsList.innerHTML = (Array.isArray(scans) ? scans : [])
+  const rows = Array.isArray(scans) ? scans : [];
+  if (rows.length === 0) {
+    scanEventsList.innerHTML = '<p class="subtitle" style="margin:0">Sin escaneos registrados aún.</p>';
+    return;
+  }
+  const showOperator = currentRole === "ADMIN";
+  const thead = showOperator
+    ? "<tr><th>Fecha / hora</th><th>Operador</th><th>Código</th><th>Resultado</th><th>Detalle</th></tr>"
+    : "<tr><th>Fecha /hora</th><th>Código</th><th>Resultado</th><th>Detalle</th></tr>";
+  const body = rows
     .map((scan) => {
-      const name = scan.product?.name || "producto no encontrado";
-      return `<div class="user-row"><strong>${scan.scannedCode}</strong> - ${scan.result} (${name})</div>`;
+      const name = scan.product?.name || "—";
+      const skuPart = scan.product?.sku ? ` · SKU ${scan.product.sku}` : "";
+      const operator =
+        showOperator && scan.user
+          ? `<td>${scan.user.fullName}<br/><small style="color:#9caacc">${scan.user.email}</small></td>`
+          : "";
+      const firstCols = showOperator
+        ? `<td>${formatScanDate(scan.createdAt)}</td>${operator}<td><strong>${scan.scannedCode}</strong></td><td>${scan.result}</td><td>${name}${skuPart}</td>`
+        : `<td>${formatScanDate(scan.createdAt)}</td><td><strong>${scan.scannedCode}</strong></td><td>${scan.result}</td><td>${name}${skuPart}</td>`;
+      return `<tr>${firstCols}</tr>`;
     })
     .join("");
+  scanEventsList.innerHTML = `<table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table>`;
+}
+
+async function loadProductsRows() {
+  const productsResponse = await authenticatedFetch("/api/catalog/products");
+  if (!productsResponse?.ok) {
+    if (inventoryList) inventoryList.textContent = "No se pudo cargar el catálogo.";
+    return;
+  }
+  const products = await productsResponse.json();
+  const rows = (Array.isArray(products) ? products : [])
+    .map(
+      (product) =>
+        `<div class="user-row"><strong>${product.sku}</strong> — ${product.name} <span style="color:#9caacc">(${product.warehouse})</span></div>`
+    )
+    .join("");
+  productsList.innerHTML = rows;
+  if (inventoryList) {
+    inventoryList.innerHTML = rows || "<span style=\"color:#9caacc\">Sin productos en catálogo.</span>";
+  }
 }
 
 async function loadCatalogData() {
-  const productsResponse = await authenticatedFetch("/api/catalog/products");
-  if (productsResponse?.ok) {
-    const products = await productsResponse.json();
-    productsList.innerHTML = (Array.isArray(products) ? products : [])
-      .map((product) => `<div class="user-row"><strong>${product.sku}</strong> - ${product.name} (${product.warehouse})</div>`)
-      .join("");
-  }
+  await loadProductsRows();
 
   const clientsResponse = await authenticatedFetch("/api/catalog/clients");
   if (clientsResponse?.ok) {
@@ -359,30 +417,66 @@ async function scanCode(event) {
   }
 }
 
+async function deleteUserById(userId) {
+  if (!userId || userId === currentUserId) return;
+  if (!window.confirm("¿Desactivar este usuario? No podrá iniciar sesión.")) return;
+  const response = await authenticatedFetch(`/api/users/${encodeURIComponent(userId)}`, {
+    method: "DELETE"
+  });
+  if (!response) return;
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    window.alert(data.message || "No se pudo desactivar el usuario.");
+    return;
+  }
+  await loadUsersModule("ADMIN");
+}
+
 async function validateSession() {
   try {
     const user = await loadCurrentUser();
     if (!user) return;
     currentRole = user.role || "CLIENT";
+    currentUserId = user.id || null;
     applyRoleNavigation(currentRole);
 
     statusBox.innerHTML = '<span class="ok">API protegida funcionando</span>';
+    const displayName = user.fullName || user.email || "Usuario";
+    if (sessionDisplayName) sessionDisplayName.textContent = `Hola, ${displayName}`;
+    if (sessionEmailInline) sessionEmailInline.textContent = user.email || "—";
+    if (sessionRoleInline) sessionRoleInline.textContent = ` · Rol: ${currentRole}`;
+    if (currentUserFullName) currentUserFullName.textContent = user.fullName || "—";
     currentUserEmail.textContent = user.email || "No disponible";
     currentUserRoleText.textContent = currentRole;
     await loadUsersModule(currentRole);
     await loadCatalogData();
-    await loadScanEvents();
+    if (currentRole === "ADMIN" || currentRole === "OPERATOR") {
+      await loadScanEvents();
+    } else if (scanEventsList) {
+      scanEventsList.innerHTML =
+        '<p class="subtitle" style="margin:0">El historial de picking no aplica a tu rol.</p>';
+    }
     scanHint.textContent = "Escaner activo. Ubicacion inicial: recepcion/bodega (TULTITLAN24).";
     activateModule(roleModules[currentRole][0] || "account");
   } catch (_error) {
     statusBox.innerHTML = '<span class="error">Error de red validando sesion.</span>';
     currentUserEmail.textContent = "No disponible";
     currentUserRoleText.textContent = "No disponible";
+    if (currentUserFullName) currentUserFullName.textContent = "—";
   }
 }
 
 moduleButtons.forEach((btn) => {
   btn.addEventListener("click", () => activateModule(btn.dataset.module));
+});
+
+usersList.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const id = target.getAttribute("data-delete-user");
+  if (id) {
+    void deleteUserById(id);
+  }
 });
 
 logoutBtn.addEventListener("click", forceLogout);

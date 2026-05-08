@@ -15,7 +15,9 @@ const createUserSchema = z.object({
 
 // Crear usuario (solo ADMIN)
 usersRouter.post("/", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
-  const { email, password, fullName, role } = createUserSchema.parse(req.body);
+  const parsed = createUserSchema.parse(req.body);
+  const email = parsed.email.trim().toLowerCase();
+  const { password, fullName, role } = parsed;
 
   const passwordHash = await bcrypt.hash(password, 10);
 
@@ -34,6 +36,7 @@ usersRouter.post("/", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
 // Listar usuarios (solo ADMIN)
 usersRouter.get("/", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
   const users = await prisma.user.findMany({
+    orderBy: { createdAt: "desc" },
     select: {
       id: true,
       email: true,
@@ -45,6 +48,28 @@ usersRouter.get("/", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
   });
 
   res.json(users);
+});
+
+// Desactivar usuario (solo ADMIN; borrado logico para no romper escaneos/comentarios)
+usersRouter.delete("/:id", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
+  const id = z.string().min(1).parse(req.params.id);
+  if (id === req.auth!.userId) {
+    res.status(400).json({ message: "No puedes desactivar tu propia cuenta desde aqui." });
+    return;
+  }
+
+  const existing = await prisma.user.findUnique({ where: { id } });
+  if (!existing) {
+    res.status(404).json({ message: "Usuario no encontrado." });
+    return;
+  }
+
+  await prisma.user.update({
+    where: { id },
+    data: { isActive: false }
+  });
+
+  res.json({ message: "Usuario desactivado.", id });
 });
 
 export { usersRouter };
