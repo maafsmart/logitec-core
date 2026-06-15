@@ -27,6 +27,14 @@ usersRouter.post("/", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
       fullName,
       passwordHash,
       role
+    },
+    select: {
+      id: true,
+      email: true,
+      fullName: true,
+      role: true,
+      isActive: true,
+      createdAt: true
     }
   });
 
