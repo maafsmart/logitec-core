@@ -256,6 +256,21 @@
         background: rgba(255, 155, 167, 0.15);
         color: var(--error);
       }
+      .filter-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: flex-end;
+        margin-bottom: 12px;
+      }
+      .filter-strip .field {
+        min-width: min(140px, 100%);
+        flex: 1 1 auto;
+      }
+      .filter-strip .field.compact {
+        flex: 0 1 120px;
+        min-width: 100px;
+      }
       @media (max-width: 880px) {
         .layout {
           grid-template-columns: 1fr;
@@ -290,6 +305,9 @@
       <div class="layout">
         <aside class="sidebar">
           <button class="module-btn active" data-module="users" id="btnUsers">Usuarios</button>
+          <button class="module-btn" data-module="traceability" id="btnTraceability">Trazabilidad</button>
+          <button class="module-btn" data-module="tasks" id="btnTasks">Mis tareas</button>
+          <button class="module-btn" data-module="incidents" id="btnIncidents">Incidencias</button>
           <button class="module-btn" data-module="picking" id="btnPicking">Picking</button>
           <button class="module-btn" data-module="inventory" id="btnInventory">Inventario</button>
           <button class="module-btn" data-module="catalog" id="btnCatalog">Catalogo</button>
@@ -317,6 +335,7 @@
                   <label for="newRole">Rol</label>
                   <select id="newRole" required>
                     <option value="OPERATOR">OPERATOR</option>
+                    <option value="SUPERVISOR">SUPERVISOR</option>
                     <option value="CLIENT">CLIENT</option>
                     <option value="ADMIN">ADMIN</option>
                   </select>
@@ -326,6 +345,116 @@
               <button id="createUserBtn" type="submit">Crear usuario</button>
             </form>
             <div id="usersList"></div>
+          </div>
+          <div id="moduleTraceability" class="hidden">
+            <h3 style="margin-top: 0">Trazabilidad unificada</h3>
+            <p class="subtitle" style="margin-bottom: 10px">
+              Actividad operativa: importaciones, movimientos, picking y más (vista de consulta).
+            </p>
+            <div class="filter-strip">
+              <div class="field compact">
+                <label for="traceWh">Almacén</label>
+                <input id="traceWh" type="text" placeholder="Ej. TULTITLAN24" />
+              </div>
+              <div class="field compact">
+                <label for="traceUserId">Usuario (id)</label>
+                <input id="traceUserId" type="text" placeholder="cuid" />
+              </div>
+              <div class="field compact">
+                <label for="traceType">Tipo</label>
+                <input id="traceType" type="text" placeholder="IMPORT, PICK…" />
+              </div>
+              <div class="field compact">
+                <label for="traceSku">SKU</label>
+                <input id="traceSku" type="text" />
+              </div>
+              <div class="field compact">
+                <label for="traceFrom">Desde</label>
+                <input id="traceFrom" type="date" />
+              </div>
+              <div class="field compact">
+                <label for="traceTo">Hasta</label>
+                <input id="traceTo" type="date" />
+              </div>
+              <button type="button" id="traceLoadBtn">Cargar</button>
+            </div>
+            <p id="traceMessage" class="subtitle" style="min-height: 1.2em"></p>
+            <div id="traceList" style="overflow: auto; max-width: 100%"></div>
+          </div>
+          <div id="moduleTasks" class="hidden">
+            <h3 style="margin-top: 0">Mis tareas</h3>
+            <p class="subtitle" style="margin-bottom: 10px">
+              Cola operativa (preparación para workflows). Creación: ADMIN / supervisor.
+            </p>
+            <div id="taskCreateWrap" class="hidden">
+              <h4 style="margin: 12px 0 8px">Nueva tarea</h4>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="taskType">Tipo</label>
+                  <select id="taskType">
+                    <option value="PICK">PICK</option>
+                    <option value="RECEIVE">RECEIVE</option>
+                    <option value="MOVE">MOVE</option>
+                    <option value="ADJUSTMENT">ADJUSTMENT</option>
+                    <option value="COUNT">COUNT</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="taskWarehouse">Almacén</label>
+                  <input id="taskWarehouse" type="text" placeholder="Opcional" />
+                </div>
+                <div class="field">
+                  <label for="taskRef">Referencia</label>
+                  <input id="taskRef" type="text" />
+                </div>
+                <div class="field">
+                  <label for="taskPriority">Prioridad</label>
+                  <input id="taskPriority" type="number" min="0" max="100" value="0" />
+                </div>
+              </div>
+              <p id="taskCreateError" class="inline-error"></p>
+              <button type="button" id="taskCreateBtn">Crear tarea</button>
+            </div>
+            <p id="taskMessage" class="subtitle" style="min-height: 1.2em"></p>
+            <div id="taskList" style="overflow: auto; max-width: 100%"></div>
+          </div>
+          <div id="moduleIncidents" class="hidden">
+            <h3 style="margin-top: 0">Incidencias</h3>
+            <p class="subtitle" style="margin-bottom: 10px">Registro de excepciones operativas.</p>
+            <h4 style="margin: 12px 0 8px">Registrar</h4>
+            <div class="form-grid">
+              <div class="field">
+                <label for="incidentType">Tipo</label>
+                <select id="incidentType">
+                  <option value="DOUBLE_SCAN">DOUBLE_SCAN</option>
+                  <option value="DAMAGED">DAMAGED</option>
+                  <option value="STOCK_MISMATCH">STOCK_MISMATCH</option>
+                  <option value="WRONG_LOCATION">WRONG_LOCATION</option>
+                  <option value="MISSING_PRODUCT">MISSING_PRODUCT</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="incidentWarehouse">Almacén</label>
+                <input id="incidentWarehouse" type="text" placeholder="Opcional" />
+              </div>
+              <div class="field full">
+                <label for="incidentLocation">Ubicación / detalle</label>
+                <input id="incidentLocation" type="text" />
+              </div>
+              <div class="field full">
+                <label for="incidentProductId">ID producto (opcional)</label>
+                <input id="incidentProductId" type="text" placeholder="cuid" />
+              </div>
+              <div class="field full">
+                <label for="incidentNotes">Notas</label>
+                <textarea id="incidentNotes" rows="3" placeholder="Describe el incidente"></textarea>
+              </div>
+            </div>
+            <p id="incidentCreateError" class="inline-error"></p>
+            <button type="button" id="incidentCreateBtn">Enviar incidencia</button>
+            <h4 style="margin: 18px 0 8px">Listado</h4>
+            <p id="incidentMessage" class="subtitle" style="min-height: 1.2em"></p>
+            <div id="incidentList" style="overflow: auto; max-width: 100%"></div>
           </div>
           <div id="moduleAccount" class="hidden">
             <h3 style="margin-top: 0">Mi cuenta</h3>
@@ -504,6 +633,6 @@
       </div>
     </main>
 
-    <script src="/dashboard.js?v=4"></script>
+    <script src="/dashboard.js?v=5"></script>
   </body>
 </html>

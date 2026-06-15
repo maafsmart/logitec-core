@@ -8,8 +8,11 @@ import { fileURLToPath } from "url";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { catalogRouter } from "./modules/catalog/catalog.routes.js";
 import { commentsRouter } from "./modules/comments/comments.routes.js";
+import { incidentsRouter } from "./modules/incidents/incidents.routes.js";
 import { inventoryRouter } from "./modules/inventory/inventory.routes.js";
 import { pickingRouter } from "./modules/picking/picking.routes.js";
+import { tasksRouter } from "./modules/tasks/tasks.routes.js";
+import { traceabilityRouter } from "./modules/traceability/traceability.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
 
 export const app = express();
@@ -32,6 +35,9 @@ app.use("/api/comments", commentsRouter);
 app.use("/api/inventory", inventoryRouter);
 app.use("/api/picking", pickingRouter);
 app.use("/api/catalog", catalogRouter);
+app.use("/api/traceability", traceabilityRouter);
+app.use("/api/tasks", tasksRouter);
+app.use("/api/incidents", incidentsRouter);
 app.use(express.static("public"));
 
 app.get(/^\/(?!api|health).*/, (_req, res) => {

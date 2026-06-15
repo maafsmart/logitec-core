@@ -8,17 +8,23 @@ datasource db {
 }
 
 model User {
-  id                  String               @id @default(cuid())
-  email               String               @unique
-  passwordHash        String
-  fullName            String
-  role                String
-  isActive            Boolean              @default(true)
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  comments            Comment[]
-  scanEvents          ScanEvent[]
-  inventoryMovements  InventoryMovement[]
+  id                   String               @id @default(cuid())
+  email                String               @unique
+  passwordHash         String
+  fullName             String
+  role                 String
+  isActive             Boolean              @default(true)
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  comments             Comment[]
+  scanEvents           ScanEvent[]
+  inventoryMovements   InventoryMovement[]
+  activityLogs         ActivityLog[]
+  tasksAssigned        Task[]               @relation("TaskAssigned")
+  tasksCreated         Task[]               @relation("TaskCreated")
+  tasksApproved        Task[]               @relation("TaskApproved")
+  incidentsReported    Incident[]           @relation("IncidentReporter")
+  incidentsReviewed    Incident[]           @relation("IncidentReviewer")
 }
 
 model Comment {
@@ -54,6 +60,8 @@ model Product {
   inventoryStocks     InventoryStock[]     // legacy compatibility
   inventoryMovements  InventoryMovement[]
   inventories         Inventory[]
+  activityLogs        ActivityLog[]
+  incidents           Incident[]
 
   @@index([customerId])
 }
@@ -84,16 +92,19 @@ model InventoryMovement {
   reference       String?
   notes           String?
   userId          String
+  taskId          String?
   createdAt       DateTime @default(now())
   product         Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
   fromLocation    Location? @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
   toLocation      Location? @relation("MovementTo", fields: [toLocationId], references: [id], onDelete: SetNull)
   user            User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  task            Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@index([productId, createdAt])
   @@index([userId])
   @@index([fromLocationId])
   @@index([toLocationId])
+  @@index([taskId])
 }
 
 model ScanEvent {
@@ -105,11 +116,14 @@ model ScanEvent {
   warehouse   String?
   location    String?
   createdAt   DateTime @default(now())
+  taskId      String?
   user        User     @relation(fields: [userId], references: [id])
   product     Product? @relation(fields: [productId], references: [id])
+  task        Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
   @@index([scannedCode])
+  @@index([taskId])
 }
 
 model Client {
@@ -128,6 +142,7 @@ model Customer {
   active    Boolean   @default(true)
   createdAt DateTime  @default(now())
   products  Product[]
+  activityLogs ActivityLog[]
 }
 
 model Location {
@@ -161,4 +176,82 @@ model Inventory {
 
   @@unique([productId, locationId, status])
   @@index([locationId, status])
+}
+
+model ActivityLog {
+  id          String    @id @default(cuid())
+  type        String
+  subtype     String?
+  reference   String?
+  userId      String?
+  productId   String?
+  customerId  String?
+  warehouse   String?
+  location    String?
+  qty         Decimal?  @db.Decimal(18, 4)
+  result      String?
+  metadata    Json?
+  taskId      String?
+  createdAt   DateTime  @default(now())
+
+  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  product     Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  task        Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([type, createdAt])
+  @@index([warehouse])
+  @@index([userId])
+  @@index([productId])
+  @@index([taskId])
+}
+
+model Task {
+  id            String   @id @default(cuid())
+  type          String
+  status        String
+  assignedToId  String?
+  createdById   String?
+  approvedById  String?
+  warehouse     String?
+  priority      Int      @default(0)
+  reference     String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  assignedTo    User?    @relation("TaskAssigned", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy     User?    @relation("TaskCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  approvedBy    User?    @relation("TaskApproved", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  activityLogs         ActivityLog[]
+  inventoryMovements   InventoryMovement[]
+  scanEvents           ScanEvent[]
+
+  @@index([status, createdAt])
+  @@index([assignedToId])
+  @@index([warehouse])
+}
+
+model Incident {
+  id            String    @id @default(cuid())
+  type          String
+  status        String
+  reportedById  String
+  reviewedById  String?
+  warehouse     String?
+  location      String?
+  productId     String?
+  notes         String
+  resolution    String?
+  createdAt     DateTime  @default(now())
+  resolvedAt    DateTime?
+
+  reportedBy    User      @relation("IncidentReporter", fields: [reportedById], references: [id], onDelete: Restrict)
+  reviewedBy    User?     @relation("IncidentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  product       Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([reportedById])
 }

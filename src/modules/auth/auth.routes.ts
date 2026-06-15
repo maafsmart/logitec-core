@@ -103,5 +103,5 @@ authRouter.post("/change-password", requireAuth, async (req, res) => {
   res.json({ message: "Contrasena actualizada correctamente" });
 });
 
-export const allowedRoles = ["ADMIN", "OPERATOR", "CLIENT"];
+export const allowedRoles = ["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"];
 export { authRouter };
