@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
+import { logActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
 
 const catalogRouter = Router();
@@ -109,6 +110,16 @@ catalogRouter.post("/products", requireRole(["ADMIN"]), async (req, res) => {
       lotControlled: data.lotControlled,
       warehouse: data.warehouse.trim()
     }
+  });
+  await logActivity({
+    type: "PRODUCT_CREATE",
+    subtype: "MANUAL",
+    reference: product.sku,
+    userId: req.auth!.userId,
+    productId: product.id,
+    customerId: product.customerId,
+    warehouse: product.warehouse,
+    metadata: { sku: product.sku, barcode: product.barcode }
   });
   res.status(201).json(product);
 });
@@ -272,6 +283,24 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
       });
       updated += 1;
     }
+  }
+
+  if (mode === "apply") {
+    await logActivity({
+      type: "IMPORT",
+      subtype: "CSV_CATALOG",
+      reference: "catalog_bulk",
+      userId: req.auth!.userId,
+      metadata: {
+        created,
+        updated,
+        skipped,
+        autoCreateCustomers,
+        unknownCustomers: Array.from(unknownCustomers),
+        suppliersSample: Array.from(detectedSuppliers).slice(0, 20),
+        supplierPoSample: Array.from(detectedSupplierPo).slice(0, 20)
+      }
+    });
   }
 
   res.json({

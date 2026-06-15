@@ -3,7 +3,7 @@ import jwt, { JwtPayload } from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { HttpError } from "../shared/http-error.js";
 
-type UserRole = "ADMIN" | "OPERATOR" | "CLIENT";
+type UserRole = "ADMIN" | "OPERATOR" | "SUPERVISOR" | "CLIENT";
 
 type AuthPayload = JwtPayload & {
   sub: string;

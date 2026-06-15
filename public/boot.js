@@ -23,31 +23,37 @@ async function healthLooksReady(response) {
   }
 }
 
+function pauseForAttempt(attempt) {
+  // Primeros intentos más seguidos: el servicio suele levantar en 10–40 s en cold start.
+  if (attempt <= 20) return 900;
+  if (attempt <= 35) return 1800;
+  return 2800;
+}
+
 async function wakeService() {
-  const maxAttempts = 45;
-  const pauseMs = 2500;
+  const maxAttempts = 55;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      statusText.textContent = `Iniciando servicio... intento ${attempt}/${maxAttempts}`;
+      statusText.textContent = `Conectando con el sistema… intento ${attempt}/${maxAttempts}`;
       const response = await fetch("/health", {
         cache: "no-store",
         headers: { Accept: "application/json" }
       });
       if (await healthLooksReady(response)) {
-        statusText.textContent = "Servicio activo, redirigiendo...";
-        setTimeout(nextRoute, 350);
+        statusText.textContent = "Listo. Abriendo panel…";
+        setTimeout(nextRoute, 300);
         return;
       }
     } catch (_error) {
-      // Red fría o servicio aún no levanta.
+      // Red fría o servicio aún no acepta conexiones.
     }
 
-    await new Promise((resolve) => setTimeout(resolve, pauseMs));
+    await new Promise((resolve) => setTimeout(resolve, pauseForAttempt(attempt)));
   }
 
-  statusText.textContent = "Tardó más de lo esperado. Redirigiendo al login o al panel...";
-  setTimeout(nextRoute, 700);
+  statusText.textContent = "Sigue tardando. Te llevamos al login; si falla, intenta de nuevo en unos segundos.";
+  setTimeout(nextRoute, 900);
 }
 
 wakeService();

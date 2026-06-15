@@ -10,7 +10,7 @@ const createUserSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   fullName: z.string().min(1),
-  role: z.enum(["ADMIN", "OPERATOR", "CLIENT"])
+  role: z.enum(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"])
 });
 
 // Crear usuario (solo ADMIN)
@@ -27,6 +27,14 @@ usersRouter.post("/", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
       fullName,
       passwordHash,
       role
+    },
+    select: {
+      id: true,
+      email: true,
+      fullName: true,
+      role: true,
+      isActive: true,
+      createdAt: true
     }
   });
 

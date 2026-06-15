@@ -3,19 +3,23 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
+import { logActivity } from "../activity/activity-log.service.js";
 
 const pickingRouter = Router();
 
 const scanSchema = z.object({
   code: z.string().min(1).max(120),
   warehouse: z.string().min(1).max(80).optional(),
-  location: z.string().min(1).max(120).optional()
+  location: z.string().min(1).max(120).optional(),
+  taskId: z.string().optional()
 });
 
-pickingRouter.use(requireAuth, requireRole(["ADMIN", "OPERATOR"]));
+pickingRouter.use(requireAuth, requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]));
 
 pickingRouter.post("/scan", async (req, res) => {
-  const { code, warehouse: warehouseInput, location: locationInput } = scanSchema.parse(req.body);
+  const parsed = scanSchema.parse(req.body);
+  const { code, warehouse: warehouseInput, location: locationInput, taskId: taskIdOpt } = parsed;
+  const taskId = taskIdOpt?.trim() || null;
   const normalizedCode = code.trim();
   const normalizedWarehouse = warehouseInput?.trim().toUpperCase() || null;
   const normalizedLocation = locationInput?.trim().toUpperCase() || null;
@@ -41,7 +45,8 @@ pickingRouter.post("/scan", async (req, res) => {
         result: "ERROR",
         userId: req.auth!.userId,
         warehouse: normalizedWarehouse,
-        location: normalizedLocation
+        location: normalizedLocation,
+        taskId
       },
       select: {
         id: true,
@@ -49,6 +54,18 @@ pickingRouter.post("/scan", async (req, res) => {
         scannedCode: true,
         createdAt: true
       }
+    });
+    await logActivity({
+      type: "PICK",
+      subtype: "PICK_ERROR_UNKNOWN_PRODUCT",
+      reference: normalizedCode,
+      userId: req.auth!.userId,
+      warehouse: normalizedWarehouse,
+      location: normalizedLocation,
+      qty: null,
+      result: "ERROR",
+      metadata: { scanEventId: scanEvent.id },
+      taskId
     });
     res.status(404).json({
       message: "Producto no existe",
@@ -80,7 +97,8 @@ pickingRouter.post("/scan", async (req, res) => {
           userId: req.auth!.userId,
           productId: product.id,
           warehouse: normalizedWarehouse || product.warehouse,
-          location: normalizedLocation
+          location: normalizedLocation,
+          taskId
         },
         select: { id: true, result: true, scannedCode: true, createdAt: true }
       });
@@ -105,7 +123,8 @@ pickingRouter.post("/scan", async (req, res) => {
         quantityAfter: after,
         reference: "PICK_SCAN",
         notes: `Picking scan ${normalizedCode}`,
-        userId: req.auth!.userId
+        userId: req.auth!.userId,
+        taskId
       }
     });
     const scanEvent = await tx.scanEvent.create({
@@ -115,14 +134,33 @@ pickingRouter.post("/scan", async (req, res) => {
         userId: req.auth!.userId,
         productId: product.id,
         warehouse: stock.location.warehouse,
-        location: stock.location.code
+        location: stock.location.code,
+        taskId
       },
       select: { id: true, result: true, scannedCode: true, createdAt: true }
     });
-    return { ok: true as const, scanEvent, locationCode: stock.location.code };
+    return {
+      ok: true as const,
+      scanEvent,
+      locationCode: stock.location.code,
+      warehouse: stock.location.warehouse
+    };
   });
 
   if (!stockResult.ok) {
+    await logActivity({
+      type: "PICK",
+      subtype: "PICK_ERROR_NO_STOCK",
+      reference: normalizedCode,
+      userId: req.auth!.userId,
+      productId: product.id,
+      warehouse: normalizedWarehouse || product.warehouse,
+      location: normalizedLocation,
+      qty: null,
+      result: "ERROR_NO_STOCK",
+      metadata: { scanEventId: stockResult.scanEvent.id },
+      taskId
+    });
     res.status(409).json({
       message: "Producto existe pero sin stock disponible",
       product,
@@ -130,6 +168,20 @@ pickingRouter.post("/scan", async (req, res) => {
     });
     return;
   }
+
+  await logActivity({
+    type: "PICK",
+    subtype: "PICK_SUCCESS",
+    reference: normalizedCode,
+    userId: req.auth!.userId,
+    productId: product.id,
+    warehouse: stockResult.warehouse,
+    location: stockResult.locationCode,
+    qty: 1,
+    result: "OK",
+    metadata: { scanEventId: stockResult.scanEvent.id },
+    taskId
+  });
 
   res.json({
     message: "Producto encontrado",

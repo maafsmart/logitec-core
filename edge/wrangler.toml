@@ -1,0 +1,10 @@
+# Cloudflare Workers — carátula Logitec desde el borde + proxy a Render
+# Desde esta carpeta: cd edge && npx wrangler deploy
+#
+# Una sola vez, guardar la URL base de Render (sin barra final):
+#   npx wrangler secret put ORIGIN_URL
+#   (pegar ejemplo: https://logitec-wms-xxxx.onrender.com)
+#
+name = "logitec-warm-edge"
+main = "warm-edge-worker.js"
+compatibility_date = "2025-05-08"

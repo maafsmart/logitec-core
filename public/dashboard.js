@@ -71,13 +71,29 @@ const catalogImportCsv = document.getElementById("catalogImportCsv");
 const catalogImportResult = document.getElementById("catalogImportResult");
 const catalogPreviewBtn = document.getElementById("catalogPreviewBtn");
 const catalogApplyBtn = document.getElementById("catalogApplyBtn");
+const moduleTraceability = document.getElementById("moduleTraceability");
+const moduleTasks = document.getElementById("moduleTasks");
+const moduleIncidents = document.getElementById("moduleIncidents");
+const traceLoadBtn = document.getElementById("traceLoadBtn");
+const traceList = document.getElementById("traceList");
+const traceMessage = document.getElementById("traceMessage");
+const taskList = document.getElementById("taskList");
+const taskMessage = document.getElementById("taskMessage");
+const taskCreateWrap = document.getElementById("taskCreateWrap");
+const taskCreateBtn = document.getElementById("taskCreateBtn");
+const taskCreateError = document.getElementById("taskCreateError");
+const incidentList = document.getElementById("incidentList");
+const incidentMessage = document.getElementById("incidentMessage");
+const incidentCreateBtn = document.getElementById("incidentCreateBtn");
+const incidentCreateError = document.getElementById("incidentCreateError");
 
 let currentRole = null;
 let currentUserId = null;
 
 const roleModules = {
-  ADMIN: ["users", "picking", "inventory", "catalog", "account"],
-  OPERATOR: ["picking", "inventory", "account"],
+  ADMIN: ["users", "traceability", "tasks", "incidents", "picking", "inventory", "catalog", "account"],
+  SUPERVISOR: ["traceability", "tasks", "incidents", "picking", "inventory", "account"],
+  OPERATOR: ["traceability", "tasks", "incidents", "picking", "inventory", "account"],
   CLIENT: ["catalog", "account"]
 };
 
@@ -106,15 +122,32 @@ function activateModule(moduleName) {
   const showInventory = moduleName === "inventory";
   const showCatalog = moduleName === "catalog";
   const showAccount = moduleName === "account";
+  const showTraceability = moduleName === "traceability";
+  const showTasks = moduleName === "tasks";
+  const showIncidents = moduleName === "incidents";
   moduleUsers.classList.toggle("hidden", !showUsers);
   modulePicking.classList.toggle("hidden", !showPicking);
   moduleInventory.classList.toggle("hidden", !showInventory);
   moduleCatalog.classList.toggle("hidden", !showCatalog);
   moduleAccount.classList.toggle("hidden", !showAccount);
+  if (moduleTraceability) moduleTraceability.classList.toggle("hidden", !showTraceability);
+  if (moduleTasks) moduleTasks.classList.toggle("hidden", !showTasks);
+  if (moduleIncidents) moduleIncidents.classList.toggle("hidden", !showIncidents);
   modulePlaceholder.classList.toggle(
     "hidden",
-    showUsers || showPicking || showInventory || showCatalog || showAccount
+    showUsers ||
+      showPicking ||
+      showInventory ||
+      showCatalog ||
+      showAccount ||
+      showTraceability ||
+      showTasks ||
+      showIncidents
   );
+
+  if (showTraceability) void loadTraceability();
+  if (showTasks) void loadTasks();
+  if (showIncidents) void loadIncidents();
 }
 
 async function authenticatedFetch(path, options = {}) {
@@ -251,9 +284,254 @@ function formatQty(q) {
   return n.toLocaleString("es-MX", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 }
 
+function escCell(s) {
+  if (s == null || s === "") return "—";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function loadTraceability() {
+  if (!traceList) return;
+  if (traceMessage) traceMessage.textContent = "Cargando…";
+  const params = new URLSearchParams();
+  const wh = document.getElementById("traceWh")?.value?.trim();
+  const uid = document.getElementById("traceUserId")?.value?.trim();
+  const typ = document.getElementById("traceType")?.value?.trim();
+  const sku = document.getElementById("traceSku")?.value?.trim();
+  const from = document.getElementById("traceFrom")?.value?.trim();
+  const to = document.getElementById("traceTo")?.value?.trim();
+  if (wh) params.set("warehouse", wh);
+  if (uid) params.set("userId", uid);
+  if (typ) params.set("type", typ);
+  if (sku) params.set("sku", sku);
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  params.set("limit", "200");
+  try {
+    const response = await authenticatedFetch(`/api/traceability/activity?${params.toString()}`);
+    if (!response) return;
+    if (!response.ok) {
+      if (traceMessage) traceMessage.textContent = "No se pudo cargar trazabilidad.";
+      traceList.innerHTML = "";
+      return;
+    }
+    const rows = await response.json();
+    if (traceMessage) traceMessage.textContent = `${Array.isArray(rows) ? rows.length : 0} registros.`;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      traceList.innerHTML = '<p class="subtitle" style="margin:0">Sin actividad con los filtros actuales.</p>';
+      return;
+    }
+    const thead =
+      "<tr><th>Fecha</th><th>Usuario</th><th>Tipo</th><th>Subtipo</th><th>Producto</th><th>Ubicación</th><th>Cant.</th><th>Resultado</th><th>Referencia</th></tr>";
+    const body = rows
+      .map((r) => {
+        const who = r.user ? `${r.user.fullName}` : "—";
+        const skuCell = r.product?.sku ? `${r.product.sku}` : "—";
+        return `<tr><td>${formatScanDate(r.createdAt)}</td><td>${escCell(who)}</td><td>${escCell(r.type)}</td><td>${escCell(r.subtype)}</td><td>${escCell(skuCell)}</td><td>${escCell(r.location || r.warehouse)}</td><td>${formatQty(r.qty)}</td><td>${escCell(r.result)}</td><td>${escCell(r.reference)}</td></tr>`;
+      })
+      .join("");
+    traceList.innerHTML = `<table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table>`;
+  } catch (_e) {
+    if (traceMessage) traceMessage.textContent = "Error de red.";
+  }
+}
+
+async function loadTasks() {
+  if (!taskList) return;
+  if (taskMessage) taskMessage.textContent = "Cargando…";
+  try {
+    const response = await authenticatedFetch("/api/tasks");
+    if (!response) return;
+    if (!response.ok) {
+      if (taskMessage) taskMessage.textContent = "No se pudieron cargar tareas.";
+      taskList.innerHTML = "";
+      return;
+    }
+    const rows = await response.json();
+    if (taskMessage) taskMessage.textContent = `${Array.isArray(rows) ? rows.length : 0} tareas.`;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      taskList.innerHTML = '<p class="subtitle" style="margin:0">No hay tareas registradas.</p>';
+      return;
+    }
+    const thead =
+      "<tr><th>Creado</th><th>Tipo</th><th>Estado</th><th>Almacén</th><th>Asignado a</th><th>Ref.</th><th>Prioridad</th><th>Acción</th></tr>";
+    const body = rows
+      .map((t) => {
+        const assign = t.assignedTo ? escCell(t.assignedTo.fullName) : "—";
+        const canUpdate =
+          currentRole === "ADMIN" ||
+          currentRole === "SUPERVISOR" ||
+          (currentRole === "OPERATOR" && t.assignedToId === currentUserId);
+        const action = canUpdate
+          ? `<button type="button" class="task-advance" data-task-id="${escCell(t.id)}">Avanzar estado</button>`
+          : "—";
+        return `<tr><td>${formatScanDate(t.createdAt)}</td><td>${escCell(t.type)}</td><td>${escCell(t.status)}</td><td>${escCell(t.warehouse)}</td><td>${assign}</td><td>${escCell(t.reference)}</td><td>${t.priority ?? 0}</td><td>${action}</td></tr>`;
+      })
+      .join("");
+    taskList.innerHTML = `<div style="overflow:auto"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+  } catch (_e) {
+    if (taskMessage) taskMessage.textContent = "Error de red.";
+  }
+}
+
+async function advanceTaskStatus(taskId) {
+  if (!taskId) return;
+  const order = ["PENDING", "ASSIGNED", "IN_PROGRESS", "COMPLETED"];
+  try {
+    const list = await authenticatedFetch("/api/tasks");
+    if (!list?.ok) return;
+    const tasks = await list.json();
+    const t = Array.isArray(tasks) ? tasks.find((x) => x.id === taskId) : null;
+    const cur = t?.status || "PENDING";
+    const idx = order.indexOf(cur);
+    const next = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : "COMPLETED";
+    const response = await authenticatedFetch(`/api/tasks/${encodeURIComponent(taskId)}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: next })
+    });
+    if (response?.ok) await loadTasks();
+  } catch (_e) {
+    window.alert("No se pudo actualizar la tarea.");
+  }
+}
+
+async function createTaskClick() {
+  if (!taskCreateBtn || !taskCreateError) return;
+  taskCreateError.textContent = "";
+  const type = document.getElementById("taskType")?.value;
+  const warehouse = document.getElementById("taskWarehouse")?.value?.trim();
+  const reference = document.getElementById("taskRef")?.value?.trim();
+  const priority = Number(document.getElementById("taskPriority")?.value || 0);
+  taskCreateBtn.disabled = true;
+  try {
+    const response = await authenticatedFetch("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type,
+        warehouse: warehouse || undefined,
+        reference: reference || undefined,
+        priority: Number.isFinite(priority) ? priority : 0
+      })
+    });
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      taskCreateError.textContent = data.message || "No se pudo crear.";
+      return;
+    }
+    await loadTasks();
+  } catch (_e) {
+    taskCreateError.textContent = "Error de red.";
+  } finally {
+    taskCreateBtn.disabled = false;
+  }
+}
+
+async function loadIncidents() {
+  if (!incidentList) return;
+  if (incidentMessage) incidentMessage.textContent = "Cargando…";
+  try {
+    const response = await authenticatedFetch("/api/incidents");
+    if (!response) return;
+    if (!response.ok) {
+      if (incidentMessage) incidentMessage.textContent = "No se pudieron cargar incidencias.";
+      incidentList.innerHTML = "";
+      return;
+    }
+    const rows = await response.json();
+    if (incidentMessage) incidentMessage.textContent = `${Array.isArray(rows) ? rows.length : 0} incidencias.`;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      incidentList.innerHTML = '<p class="subtitle" style="margin:0">Sin incidencias.</p>';
+      return;
+    }
+    const canResolve = currentRole === "ADMIN" || currentRole === "SUPERVISOR";
+    const thead =
+      "<tr><th>Fecha</th><th>Tipo</th><th>Estado</th><th>Reportó</th><th>Producto</th><th>Notas</th><th>Acción</th></tr>";
+    const body = rows
+      .map((i) => {
+        const rep = i.reportedBy ? escCell(i.reportedBy.fullName) : "—";
+        const sku = i.product?.sku ? escCell(i.product.sku) : "—";
+        const action = canResolve
+          ? `<button type="button" class="incident-resolve" data-incident-id="${escCell(i.id)}">Cerrar</button>`
+          : "—";
+        return `<tr><td>${formatScanDate(i.createdAt)}</td><td>${escCell(i.type)}</td><td>${escCell(i.status)}</td><td>${rep}</td><td>${sku}</td><td style="max-width:200px;word-break:break-word">${escCell(
+          i.notes?.slice(0, 120)
+        )}${i.notes?.length > 120 ? "…" : ""}</td><td>${action}</td></tr>`;
+      })
+      .join("");
+    incidentList.innerHTML = `<div style="overflow:auto"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+  } catch (_e) {
+    if (incidentMessage) incidentMessage.textContent = "Error de red.";
+  }
+}
+
+async function resolveIncident(incidentId) {
+  const resolution = window.prompt("Resolución (opcional):", "");
+  if (resolution === null) return;
+  try {
+    const response = await authenticatedFetch(`/api/incidents/${encodeURIComponent(incidentId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "RESOLVED", resolution: resolution || "Cerrado" })
+    });
+    if (response?.ok) await loadIncidents();
+    else {
+      const d = await response?.json().catch(() => ({}));
+      window.alert(d.message || "No se pudo cerrar.");
+    }
+  } catch (_e) {
+    window.alert("Error de red.");
+  }
+}
+
+async function createIncidentClick() {
+  if (!incidentCreateBtn || !incidentCreateError) return;
+  incidentCreateError.textContent = "";
+  const type = document.getElementById("incidentType")?.value;
+  const warehouse = document.getElementById("incidentWarehouse")?.value?.trim();
+  const location = document.getElementById("incidentLocation")?.value?.trim();
+  const productId = document.getElementById("incidentProductId")?.value?.trim();
+  const notes = document.getElementById("incidentNotes")?.value?.trim();
+  if (!notes) {
+    incidentCreateError.textContent = "Las notas son obligatorias.";
+    return;
+  }
+  incidentCreateBtn.disabled = true;
+  try {
+    const response = await authenticatedFetch("/api/incidents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type,
+        warehouse: warehouse || undefined,
+        location: location || undefined,
+        productId: productId || undefined,
+        notes
+      })
+    });
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      incidentCreateError.textContent = data.message || "No se pudo registrar.";
+      return;
+    }
+    document.getElementById("incidentNotes").value = "";
+    await loadIncidents();
+  } catch (_e) {
+    incidentCreateError.textContent = "Error de red.";
+  } finally {
+    incidentCreateBtn.disabled = false;
+  }
+}
+
 async function loadStockStrip() {
   if (!inventoryList) return;
-  if (currentRole !== "ADMIN" && currentRole !== "OPERATOR") {
+  if (currentRole !== "ADMIN" && currentRole !== "OPERATOR" && currentRole !== "SUPERVISOR") {
     inventoryList.innerHTML = '<span style="color:#9caacc">Las existencias solo aplican a roles operativos.</span>';
     return;
   }
@@ -283,7 +561,7 @@ async function loadStockStrip() {
 
 async function loadInventoryMovements() {
   if (!inventoryMovementsList) return;
-  if (currentRole !== "ADMIN" && currentRole !== "OPERATOR") {
+  if (currentRole !== "ADMIN" && currentRole !== "OPERATOR" && currentRole !== "SUPERVISOR") {
     inventoryMovementsList.innerHTML = "";
     return;
   }
@@ -430,6 +708,9 @@ function applyRoleNavigation(role) {
   catalogImportSection.classList.toggle("hidden", role !== "ADMIN");
   movementForm.classList.toggle("hidden", role !== "ADMIN");
   importSection.classList.toggle("hidden", role !== "ADMIN");
+  if (taskCreateWrap) {
+    taskCreateWrap.classList.toggle("hidden", role !== "ADMIN" && role !== "SUPERVISOR");
+  }
 }
 
 async function createUser(event) {
@@ -739,7 +1020,7 @@ async function validateSession() {
     currentUserRoleText.textContent = currentRole;
     await loadUsersModule(currentRole);
     await loadCatalogData();
-    if (currentRole === "ADMIN" || currentRole === "OPERATOR") {
+    if (currentRole === "ADMIN" || currentRole === "OPERATOR" || currentRole === "SUPERVISOR") {
       await loadStockStrip();
       await loadInventoryMovements();
       await loadScanEvents();
@@ -789,4 +1070,25 @@ movementForm.addEventListener("submit", submitMovement);
 importBtn.addEventListener("click", runImport);
 catalogPreviewBtn.addEventListener("click", () => runCatalogImport("preview"));
 catalogApplyBtn.addEventListener("click", () => runCatalogImport("apply"));
+if (traceLoadBtn) traceLoadBtn.addEventListener("click", () => void loadTraceability());
+if (taskCreateBtn) taskCreateBtn.addEventListener("click", () => void createTaskClick());
+if (incidentCreateBtn) incidentCreateBtn.addEventListener("click", () => void createIncidentClick());
+if (taskList) {
+  taskList.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (!target.classList.contains("task-advance")) return;
+    const id = target.getAttribute("data-task-id");
+    if (id) void advanceTaskStatus(id);
+  });
+}
+if (incidentList) {
+  incidentList.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (!target.classList.contains("incident-resolve")) return;
+    const id = target.getAttribute("data-incident-id");
+    if (id) void resolveIncident(id);
+  });
+}
 validateSession();

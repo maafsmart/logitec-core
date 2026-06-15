@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
+import { logActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
 
 const inventoryRouter = Router();
@@ -21,7 +22,8 @@ const createMovementSchema = z
     type: z.enum(movementTypes),
     quantity: z.coerce.number(),
     reference: z.string().max(120).optional(),
-    notes: z.string().max(500).optional()
+    notes: z.string().max(500).optional(),
+    taskId: z.string().optional()
   })
   .superRefine((data, ctx) => {
     if (data.type === "ADJUST_SET") {
@@ -54,7 +56,7 @@ function dec(n: string | number): Prisma.Decimal {
 
 inventoryRouter.use(requireAuth);
 
-inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR"]), async (_req, res) => {
+inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]), async (_req, res) => {
   const rows = await prisma.inventory.findMany({
     orderBy: [{ location: { warehouse: "asc" } }, { updatedAt: "desc" }],
     take: 500,
@@ -69,7 +71,7 @@ inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR"]), async (_req, r
   res.json(rows);
 });
 
-inventoryRouter.get("/locations", requireRole(["ADMIN", "OPERATOR"]), async (_req, res) => {
+inventoryRouter.get("/locations", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]), async (_req, res) => {
   const rows = await prisma.location.findMany({
     orderBy: [{ warehouse: "asc" }, { code: "asc" }],
     take: 500
@@ -102,7 +104,7 @@ inventoryRouter.post("/locations", requireRole(["ADMIN"]), async (req, res) => {
   res.status(201).json(location);
 });
 
-inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR"]), async (_req, res) => {
+inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]), async (_req, res) => {
   const rows = await prisma.inventoryMovement.findMany({
     orderBy: { createdAt: "desc" },
     take: 200,
@@ -193,17 +195,46 @@ inventoryRouter.post("/movements", requireRole(["ADMIN"]), async (req, res) => {
         quantityAfter: after,
         reference: body.reference?.trim() || null,
         notes: body.notes?.trim() || null,
-        userId: req.auth!.userId
+        userId: req.auth!.userId,
+        taskId: body.taskId?.trim() || null
       },
       include: {
         product: { select: { sku: true, name: true } }
       }
     });
 
-    return movement;
+    return { movement, defaultLocationCode, product };
   });
 
-  res.status(201).json(result);
+  const logType =
+    body.type === "IN" ? "RECEIVE" : body.type === "OUT" ? "OUTBOUND" : "ADJUSTMENT";
+  const logSubtype =
+    body.type === "IN"
+      ? "MANUAL_IN"
+      : body.type === "OUT"
+        ? "MANUAL_OUT"
+        : "MANUAL_ADJUSTMENT";
+
+  await logActivity({
+    type: logType,
+    subtype: logSubtype,
+    reference: body.reference?.trim() || result.movement.id,
+    userId: req.auth!.userId,
+    productId: result.product.id,
+    customerId: result.product.customerId ?? null,
+    warehouse,
+    location: result.defaultLocationCode,
+    qty: qtyIn,
+    result: "OK",
+    metadata: {
+      movementType: body.type,
+      movementId: result.movement.id,
+      notes: body.notes?.trim() || null
+    },
+    taskId: body.taskId?.trim() || null
+  });
+
+  res.status(201).json(result.movement);
 });
 
 inventoryRouter.post("/import", requireRole(["ADMIN"]), async (req, res) => {
@@ -328,6 +359,18 @@ inventoryRouter.post("/import", requireRole(["ADMIN"]), async (req, res) => {
       });
     }
   }
+
+  await logActivity({
+    type: "IMPORT",
+    subtype: "CSV_INVENTORY",
+    reference: "inventory_csv_batch",
+    userId: req.auth!.userId,
+    metadata: {
+      applied,
+      skipped: errors.length,
+      errors: errors.slice(0, 30)
+    }
+  });
 
   res.json({ applied, skipped: errors.length, errors });
 });
