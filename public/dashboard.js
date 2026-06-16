@@ -185,6 +185,32 @@ function formatScanDate(iso) {
   }
 }
 
+function formatDateShort(iso) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("es-MX", {
+      dateStyle: "short",
+      timeStyle: "short"
+    });
+  } catch (_e) {
+    return iso;
+  }
+}
+
+function renderCellWithClamp(value, className = "", maxLen = 32) {
+  const raw = value == null || value === "" ? "—" : String(value);
+  const display = raw.length > maxLen ? `${raw.slice(0, maxLen)}…` : raw;
+  const safeDisplay = escCell(display);
+  const safeTitle = escCell(raw);
+  return `<span class="${className}" title="${safeTitle}">${safeDisplay}</span>`;
+}
+
+function statusBadge(value) {
+  const raw = value == null || value === "" ? "—" : String(value);
+  const tone = raw.includes("COMPLETED") || raw.includes("RESOLVED") ? "success" : raw.includes("IN_PROGRESS") ? "warn" : "info";
+  return `<span class="badge ${tone}">${escCell(raw)}</span>`;
+}
+
 async function loadCurrentUser() {
   const response = await authenticatedFetch("/api/auth/me");
   if (!response) return null;
@@ -253,12 +279,12 @@ async function loadScanEvents() {
           ? `<td>${scan.user.fullName}<br/><small style="color:#9caacc">${scan.user.email}</small></td>`
           : "";
       const firstCols = showOperator
-        ? `<td>${formatScanDate(scan.createdAt)}</td>${operator}<td><strong>${scan.scannedCode}</strong></td><td>${scan.result}</td><td>${name}${skuPart}</td>`
-        : `<td>${formatScanDate(scan.createdAt)}</td><td><strong>${scan.scannedCode}</strong></td><td>${scan.result}</td><td>${name}${skuPart}</td>`;
+        ? `<td class="cell-nowrap">${formatDateShort(scan.createdAt)}</td>${operator}<td class="cell-nowrap"><strong>${escCell(scan.scannedCode)}</strong></td><td>${statusBadge(scan.result)}</td><td>${renderCellWithClamp(`${name}${skuPart}`, "cell-truncate", 42)}</td>`
+        : `<td class="cell-nowrap">${formatDateShort(scan.createdAt)}</td><td class="cell-nowrap"><strong>${escCell(scan.scannedCode)}</strong></td><td>${statusBadge(scan.result)}</td><td>${renderCellWithClamp(`${name}${skuPart}`, "cell-truncate", 42)}</td>`;
       return `<tr>${firstCols}</tr>`;
     })
     .join("");
-  scanEventsList.innerHTML = `<table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table>`;
+  scanEventsList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
 }
 
 async function loadProductsRows() {
@@ -330,10 +356,10 @@ async function loadTraceability() {
       .map((r) => {
         const who = r.user ? `${r.user.fullName}` : "—";
         const skuCell = r.product?.sku ? `${r.product.sku}` : "—";
-        return `<tr><td>${formatScanDate(r.createdAt)}</td><td>${escCell(who)}</td><td>${escCell(r.type)}</td><td>${escCell(r.subtype)}</td><td>${escCell(skuCell)}</td><td>${escCell(r.location || r.warehouse)}</td><td>${formatQty(r.qty)}</td><td>${escCell(r.result)}</td><td>${escCell(r.reference)}</td></tr>`;
+        return `<tr><td class="cell-nowrap">${formatDateShort(r.createdAt)}</td><td>${renderCellWithClamp(who, "cell-truncate", 20)}</td><td>${statusBadge(r.type)}</td><td>${renderCellWithClamp(r.subtype, "cell-truncate", 18)}</td><td class="cell-nowrap">${escCell(skuCell)}</td><td>${renderCellWithClamp(r.location || r.warehouse, "cell-truncate", 28)}</td><td class="cell-nowrap">${formatQty(r.qty)}</td><td>${statusBadge(r.result)}</td><td>${renderCellWithClamp(r.reference, "cell-truncate", 24)}</td></tr>`;
       })
       .join("");
-    traceList.innerHTML = `<table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table>`;
+    traceList.innerHTML = `<div class="table-wrap"><table class="scan-table trace-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
   } catch (_e) {
     if (traceMessage) traceMessage.textContent = "Error de red.";
   }
@@ -366,12 +392,12 @@ async function loadTasks() {
           currentRole === "SUPERVISOR" ||
           (currentRole === "OPERATOR" && t.assignedToId === currentUserId);
         const action = canUpdate
-          ? `<button type="button" class="task-advance" data-task-id="${escCell(t.id)}">Avanzar estado</button>`
+          ? `<button type="button" class="task-advance btn-table" data-task-id="${escCell(t.id)}">Avanzar</button>`
           : "—";
-        return `<tr><td>${formatScanDate(t.createdAt)}</td><td>${escCell(t.type)}</td><td>${escCell(t.status)}</td><td>${escCell(t.warehouse)}</td><td>${assign}</td><td>${escCell(t.reference)}</td><td>${t.priority ?? 0}</td><td>${action}</td></tr>`;
+        return `<tr><td class="cell-nowrap">${formatDateShort(t.createdAt)}</td><td>${statusBadge(t.type)}</td><td>${statusBadge(t.status)}</td><td>${renderCellWithClamp(t.warehouse, "cell-truncate", 18)}</td><td>${renderCellWithClamp(assign, "cell-truncate", 24)}</td><td>${renderCellWithClamp(t.reference, "cell-truncate", 24)}</td><td class="cell-nowrap">${t.priority ?? 0}</td><td class="cell-nowrap">${action}</td></tr>`;
       })
       .join("");
-    taskList.innerHTML = `<div style="overflow:auto"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+    taskList.innerHTML = `<div class="table-wrap"><table class="scan-table task-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
   } catch (_e) {
     if (taskMessage) taskMessage.textContent = "Error de red.";
   }
@@ -457,14 +483,12 @@ async function loadIncidents() {
         const rep = i.reportedBy ? escCell(i.reportedBy.fullName) : "—";
         const sku = i.product?.sku ? escCell(i.product.sku) : "—";
         const action = canResolve
-          ? `<button type="button" class="incident-resolve" data-incident-id="${escCell(i.id)}">Cerrar</button>`
+          ? `<button type="button" class="incident-resolve btn-table btn-danger" data-incident-id="${escCell(i.id)}">Cerrar</button>`
           : "—";
-        return `<tr><td>${formatScanDate(i.createdAt)}</td><td>${escCell(i.type)}</td><td>${escCell(i.status)}</td><td>${rep}</td><td>${sku}</td><td style="max-width:200px;word-break:break-word">${escCell(
-          i.notes?.slice(0, 120)
-        )}${i.notes?.length > 120 ? "…" : ""}</td><td>${action}</td></tr>`;
+        return `<tr><td class="cell-nowrap">${formatDateShort(i.createdAt)}</td><td>${statusBadge(i.type)}</td><td>${statusBadge(i.status)}</td><td>${renderCellWithClamp(rep, "cell-truncate", 22)}</td><td class="cell-nowrap">${sku}</td><td>${renderCellWithClamp(i.notes, "cell-notes", 120)}</td><td class="cell-nowrap">${action}</td></tr>`;
       })
       .join("");
-    incidentList.innerHTML = `<div style="overflow:auto"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+    incidentList.innerHTML = `<div class="table-wrap"><table class="scan-table incident-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
   } catch (_e) {
     if (incidentMessage) incidentMessage.textContent = "Error de red.";
   }
@@ -553,10 +577,10 @@ async function loadStockStrip() {
       const p = row.product || {};
       const wh = row.location?.warehouse || "—";
       const loc = row.location?.code ? ` / ${row.location.code}` : "";
-      return `<tr><td><strong>${p.sku || "—"}</strong></td><td>${p.name || "—"}</td><td>${wh}${loc}</td><td>${formatQty(row.qty)}</td></tr>`;
+      return `<tr><td class="cell-nowrap"><strong>${escCell(p.sku || "—")}</strong></td><td>${renderCellWithClamp(p.name || "—", "cell-truncate", 38)}</td><td>${renderCellWithClamp(`${wh}${loc}`, "cell-truncate", 24)}</td><td class="cell-nowrap">${formatQty(row.qty)}</td></tr>`;
     })
     .join("");
-  inventoryList.innerHTML = `<table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table>`;
+  inventoryList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
 }
 
 async function loadInventoryMovements() {
@@ -583,10 +607,10 @@ async function loadInventoryMovements() {
       const sku = m.product?.sku || "—";
       const u = m.user?.fullName || "—";
       const ref = m.reference || "—";
-      return `<tr><td>${formatScanDate(m.createdAt)}</td><td>${sku}</td><td>${m.movementType}</td><td>${formatQty(m.quantityBefore)}</td><td>${formatQty(m.quantityAfter)}</td><td>${m.warehouse}</td><td>${u}</td><td>${ref}</td></tr>`;
+      return `<tr><td class="cell-nowrap">${formatDateShort(m.createdAt)}</td><td class="cell-nowrap">${escCell(sku)}</td><td>${statusBadge(m.movementType)}</td><td class="cell-nowrap">${formatQty(m.quantityBefore)}</td><td class="cell-nowrap">${formatQty(m.quantityAfter)}</td><td>${renderCellWithClamp(m.warehouse, "cell-truncate", 20)}</td><td>${renderCellWithClamp(u, "cell-truncate", 20)}</td><td>${renderCellWithClamp(ref, "cell-truncate", 20)}</td></tr>`;
     })
     .join("");
-  inventoryMovementsList.innerHTML = `<div style="overflow:auto;max-width:100%"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+  inventoryMovementsList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
 }
 
 async function submitMovement(event) {
