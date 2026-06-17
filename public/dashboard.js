@@ -36,6 +36,7 @@ const scanBtn = document.getElementById("scanBtn");
 const scanHint = document.getElementById("scanHint");
 const scanResult = document.getElementById("scanResult");
 const scanEventsList = document.getElementById("scanEventsList");
+const pickingFlow = document.getElementById("pickingFlow");
 const createProductForm = document.getElementById("createProductForm");
 const createProductBtn = document.getElementById("createProductBtn");
 const createProductError = document.getElementById("createProductError");
@@ -148,6 +149,10 @@ function activateModule(moduleName) {
   if (showTraceability) void loadTraceability();
   if (showTasks) void loadTasks();
   if (showIncidents) void loadIncidents();
+  if (showPicking) {
+    resetPickingFlow();
+    setTimeout(() => scanInput?.focus(), 0);
+  }
 }
 
 async function authenticatedFetch(path, options = {}) {
@@ -207,8 +212,45 @@ function renderCellWithClamp(value, className = "", maxLen = 32) {
 
 function statusBadge(value) {
   const raw = value == null || value === "" ? "—" : String(value);
-  const tone = raw.includes("COMPLETED") || raw.includes("RESOLVED") ? "success" : raw.includes("IN_PROGRESS") ? "warn" : "info";
+  const tone = raw.includes("COMPLETED") || raw.includes("RESOLVED") || raw === "OK" ? "success" : raw.includes("IN_PROGRESS") ? "warn" : raw.includes("ERROR") ? "error" : "info";
   return `<span class="badge ${tone}">${escCell(raw)}</span>`;
+}
+
+function resetPickingFlow() {
+  if (!pickingFlow) return;
+  pickingFlow.querySelectorAll(".picking-step").forEach((step) => {
+    step.classList.remove("active", "done");
+  });
+}
+
+function setPickingFlowState(state) {
+  if (!pickingFlow) return;
+  const order = ["read", "validate", "stock", "trace"];
+  const idx = order.indexOf(state);
+  pickingFlow.querySelectorAll(".picking-step").forEach((step) => {
+    const key = step.getAttribute("data-step");
+    const stepIdx = order.indexOf(key || "");
+    step.classList.remove("active", "done");
+    if (state === "success") {
+      step.classList.add("done");
+      return;
+    }
+    if (stepIdx >= 0 && stepIdx < idx) step.classList.add("done");
+    if (stepIdx === idx) step.classList.add("active");
+  });
+}
+
+function renderScanOperator(scan) {
+  if (!scan.user) return "—";
+  if (currentUserId && scan.user.id === currentUserId) return "Tú";
+  return scan.user.fullName || scan.user.email || "—";
+}
+
+function setScanResult(message, tone = "") {
+  if (!scanResult) return;
+  scanResult.textContent = message;
+  scanResult.className = "scan-result-box";
+  if (tone) scanResult.classList.add(tone);
 }
 
 async function loadCurrentUser() {
@@ -266,25 +308,26 @@ async function loadScanEvents() {
     scanEventsList.innerHTML = '<p class="subtitle" style="margin:0">Sin escaneos registrados aún.</p>';
     return;
   }
-  const showOperator = currentRole === "ADMIN";
+  const showOperator =
+    currentRole === "ADMIN" || currentRole === "SUPERVISOR" || currentRole === "OPERATOR";
   const thead = showOperator
     ? "<tr><th>Fecha / hora</th><th>Operador</th><th>Código</th><th>Resultado</th><th>Detalle</th></tr>"
-    : "<tr><th>Fecha /hora</th><th>Código</th><th>Resultado</th><th>Detalle</th></tr>";
+    : "<tr><th>Fecha / hora</th><th>Código</th><th>Resultado</th><th>Detalle</th></tr>";
   const body = rows
     .map((scan) => {
       const name = scan.product?.name || "—";
       const skuPart = scan.product?.sku ? ` · SKU ${scan.product.sku}` : "";
-      const operator =
-        showOperator && scan.user
-          ? `<td>${scan.user.fullName}<br/><small style="color:#9caacc">${scan.user.email}</small></td>`
-          : "";
-      const firstCols = showOperator
-        ? `<td class="cell-nowrap">${formatDateShort(scan.createdAt)}</td>${operator}<td class="cell-nowrap"><strong>${escCell(scan.scannedCode)}</strong></td><td>${statusBadge(scan.result)}</td><td>${renderCellWithClamp(`${name}${skuPart}`, "cell-truncate", 42)}</td>`
-        : `<td class="cell-nowrap">${formatDateShort(scan.createdAt)}</td><td class="cell-nowrap"><strong>${escCell(scan.scannedCode)}</strong></td><td>${statusBadge(scan.result)}</td><td>${renderCellWithClamp(`${name}${skuPart}`, "cell-truncate", 42)}</td>`;
-      return `<tr>${firstCols}</tr>`;
+      const detail = `${name}${skuPart}`;
+      const operatorCell = showOperator
+        ? `<td>${renderCellWithClamp(renderScanOperator(scan), "cell-truncate", 22)}</td>`
+        : "";
+      const cols = showOperator
+        ? `<td class="cell-nowrap">${formatDateShort(scan.createdAt)}</td>${operatorCell}<td class="cell-nowrap col-code"><strong>${escCell(scan.scannedCode)}</strong></td><td class="cell-nowrap">${statusBadge(scan.result)}</td><td class="col-detail">${renderCellWithClamp(detail, "cell-truncate", 48)}</td>`
+        : `<td class="cell-nowrap">${formatDateShort(scan.createdAt)}</td><td class="cell-nowrap col-code"><strong>${escCell(scan.scannedCode)}</strong></td><td class="cell-nowrap">${statusBadge(scan.result)}</td><td class="col-detail">${renderCellWithClamp(detail, "cell-truncate", 48)}</td>`;
+      return `<tr>${cols}</tr>`;
     })
     .join("");
-  scanEventsList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+  scanEventsList.innerHTML = `<div class="table-wrap"><table class="scan-table picking-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
 }
 
 async function loadProductsRows() {
@@ -970,17 +1013,21 @@ async function runCatalogImport(mode) {
 async function scanCode(event) {
   event.preventDefault();
   scanHint.textContent = "";
-  scanResult.textContent = "";
+  setScanResult("Procesando escaneo…");
+  setPickingFlowState("read");
   scanBtn.disabled = true;
 
   const code = scanInput.value.trim();
   if (!code) {
     scanHint.textContent = "Escanea un SKU o codigo.";
+    setScanResult("Ingresa un código para escanear.");
+    resetPickingFlow();
     scanBtn.disabled = false;
     return;
   }
 
   try {
+    setPickingFlowState("validate");
     const response = await authenticatedFetch("/api/picking/scan", {
       method: "POST",
       headers: {
@@ -994,18 +1041,27 @@ async function scanCode(event) {
 
     if (!response.ok) {
       scanHint.textContent = payload.message || "ERROR: producto no existe.";
-      scanResult.textContent = "Resultado: ERROR";
+      setScanResult(`Resultado: ERROR — ${payload.message || "producto no encontrado"}`, "error");
+      resetPickingFlow();
       await loadScanEvents();
       return;
     }
 
     const product = payload.product;
-    scanResult.textContent = `OK: ${product?.sku} - ${product?.name}`;
-    scanHint.textContent = `Almacen: ${product?.warehouse || "TULTITLAN24"}`;
+    setPickingFlowState("stock");
+    setPickingFlowState("trace");
+    setPickingFlowState("success");
+    setScanResult(
+      `OK — ${product?.sku || code}: ${product?.name || "Producto validado"} · Almacén ${product?.warehouse || "TULTITLAN24"} · Stock descontado y trazabilidad registrada.`,
+      "ok"
+    );
     scanInput.value = "";
     await loadScanEvents();
+    scanInput.focus();
   } catch (_error) {
     scanHint.textContent = "Error de red en escaneo.";
+    setScanResult("Error de red en escaneo.", "error");
+    resetPickingFlow();
   } finally {
     scanBtn.disabled = false;
   }
@@ -1052,7 +1108,7 @@ async function validateSession() {
       scanEventsList.innerHTML =
         '<p class="subtitle" style="margin:0">El historial de picking no aplica a tu rol.</p>';
     }
-    scanHint.textContent = "Escaner activo. Ubicacion inicial: recepcion/bodega (TULTITLAN24).";
+    if (scanHint) scanHint.textContent = "";
     activateModule(roleModules[currentRole][0] || "account");
   } catch (_error) {
     statusBox.innerHTML = '<span class="error">Error de red validando sesion.</span>';

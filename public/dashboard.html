@@ -323,6 +323,10 @@
         background: rgba(123, 228, 149, 0.18);
         color: #bff3cc;
       }
+      .badge.error {
+        background: rgba(255, 155, 167, 0.18);
+        color: #ffb8c2;
+      }
       .user-delete {
         margin-left: 10px;
         padding: 4px 10px;
@@ -357,6 +361,131 @@
         flex: 0 1 120px;
         min-width: 100px;
       }
+      .picking-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .picking-intro {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+        line-height: 1.5;
+      }
+      .picking-flow {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: linear-gradient(180deg, #0f1a33 0%, #0c1528 100%);
+      }
+      .picking-step {
+        text-align: center;
+        padding: 10px 8px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(19, 32, 67, 0.55);
+        font-size: 0.82rem;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+      .picking-step strong {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--text);
+        font-size: 0.88rem;
+      }
+      .picking-step.active {
+        border-color: #5d86d8;
+        background: rgba(77, 141, 255, 0.14);
+        color: #d6e6ff;
+      }
+      .picking-step.done {
+        border-color: rgba(123, 228, 149, 0.45);
+        background: rgba(123, 228, 149, 0.1);
+        color: #bff3cc;
+      }
+      .picking-scan-card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px;
+        background: linear-gradient(180deg, #101b36 0%, #0d1730 100%);
+      }
+      .picking-scan-card .field label {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--text);
+      }
+      .scan-input-lg {
+        width: 100%;
+        min-height: 56px;
+        padding: 14px 16px;
+        font-size: 1.15rem;
+        letter-spacing: 0.02em;
+        border: 2px solid #3f5f9f;
+        border-radius: 12px;
+        background: #0b1428;
+        color: var(--text);
+      }
+      .scan-input-lg:focus {
+        outline: none;
+        border-color: #6ca8ff;
+        box-shadow: 0 0 0 3px rgba(108, 168, 255, 0.22);
+      }
+      .picking-hint {
+        margin: 10px 0 0;
+        color: #bfd0ff;
+        font-size: 0.9rem;
+        line-height: 1.45;
+      }
+      .btn-scan {
+        width: 100%;
+        min-height: 52px;
+        margin-top: 14px;
+        font-size: 1.05rem;
+        font-weight: 700;
+        border-radius: 12px;
+        background: linear-gradient(90deg, #3f7fff, #6ca8ff);
+        box-shadow: 0 8px 22px rgba(77, 141, 255, 0.28);
+      }
+      .btn-scan:disabled {
+        opacity: 0.65;
+        cursor: not-allowed;
+      }
+      .scan-result-box {
+        min-height: 52px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: #0c1528;
+        font-size: 0.95rem;
+        line-height: 1.45;
+      }
+      .scan-result-box.ok {
+        border-color: rgba(123, 228, 149, 0.45);
+        background: rgba(123, 228, 149, 0.1);
+        color: #bff3cc;
+      }
+      .scan-result-box.error {
+        border-color: rgba(255, 155, 167, 0.45);
+        background: rgba(255, 155, 167, 0.1);
+        color: var(--error);
+      }
+      .picking-history h4 {
+        margin: 0 0 8px;
+        font-size: 1rem;
+      }
+      .picking-table {
+        min-width: 720px;
+      }
+      .picking-table .col-code {
+        min-width: 120px;
+      }
+      .picking-table .col-detail {
+        min-width: 180px;
+      }
       @media (max-width: 880px) {
         body {
           padding: 14px;
@@ -377,6 +506,20 @@
         .scan-table {
           font-size: 0.86rem;
           min-width: 740px;
+        }
+        .picking-flow {
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+        .picking-scan-card {
+          padding: 14px;
+        }
+        .scan-input-lg {
+          min-height: 58px;
+          font-size: 1.2rem;
+        }
+        .btn-scan {
+          min-height: 56px;
         }
       }
     </style>
@@ -574,22 +717,57 @@
               <button id="changePasswordBtn" type="submit">Actualizar contrasena</button>
             </form>
           </div>
-          <div id="modulePicking" class="hidden">
-            <h3>Picking (simulacion handheld)</h3>
-            <p class="subtitle" style="margin-bottom: 10px">Escaneo web tipo handheld conectado a backend.</p>
-            <form id="scanForm">
-              <div class="field full">
-                <label for="scanInput">Escanear SKU / Codigo</label>
-                <input id="scanInput" type="text" placeholder="Ej. SKU-0001 o codigo de barras" />
-              </div>
-              <p id="scanHint" class="inline-error"></p>
-              <button id="scanBtn" type="submit">Escanear</button>
-            </form>
-            <div id="scanResult" class="subtitle" style="margin-top: 10px; margin-bottom: 8px"></div>
-            <p class="subtitle" style="margin-top: 14px; margin-bottom: 6px">
-              Historial de escaneos (fecha, operador si aplica, código, resultado)
+          <div id="modulePicking" class="hidden picking-panel">
+            <h3>Picking — simulación handheld</h3>
+            <p class="picking-intro">
+              Modo operativo para escaneo en piso. Escanea el código de barras desde handheld o lector físico.
             </p>
-            <div id="scanEventsList"></div>
+            <div class="picking-flow" id="pickingFlow" aria-label="Flujo de picking">
+              <div class="picking-step" data-step="read">
+                <strong>1. Código leído</strong>
+                SKU o barras capturado
+              </div>
+              <div class="picking-step" data-step="validate">
+                <strong>2. Producto validado</strong>
+                Catálogo y existencia
+              </div>
+              <div class="picking-step" data-step="stock">
+                <strong>3. Descuento de stock</strong>
+                Salida automática
+              </div>
+              <div class="picking-step" data-step="trace">
+                <strong>4. Trazabilidad</strong>
+                Evento registrado
+              </div>
+            </div>
+            <form id="scanForm" class="picking-scan-card">
+              <div class="field full">
+                <label for="scanInput">Código de barras / SKU</label>
+                <input
+                  id="scanInput"
+                  class="scan-input-lg"
+                  type="text"
+                  inputmode="text"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  placeholder="Apunta el lector o escribe el código"
+                />
+              </div>
+              <p class="picking-hint">
+                Escanea el código de barras desde handheld o lector físico. El sistema valida producto, descuenta stock y registra trazabilidad.
+              </p>
+              <p id="scanHint" class="inline-error"></p>
+              <button id="scanBtn" class="btn-scan" type="submit">Escanear</button>
+            </form>
+            <div id="scanResult" class="scan-result-box" role="status" aria-live="polite"></div>
+            <section class="picking-history">
+              <h4>Historial de escaneos</h4>
+              <p class="subtitle" style="margin: 0 0 10px">
+                Fecha/hora, operador, código, resultado y detalle del producto.
+              </p>
+              <div id="scanEventsList"></div>
+            </section>
           </div>
           <div id="moduleInventory" class="hidden">
             <h3>Inventario y movimientos</h3>
@@ -733,6 +911,6 @@
       </div>
     </main>
 
-    <script src="/dashboard.js?v=6"></script>
+    <script src="/dashboard.js?v=7"></script>
   </body>
 </html>
