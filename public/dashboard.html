@@ -568,6 +568,24 @@
         border: 0;
         background: linear-gradient(90deg, #2d6fd4, #5a9aff);
       }
+      .file-input {
+        width: 100%;
+        padding: 10px;
+        border: 1px dashed #4f74bd;
+        border-radius: 10px;
+        background: #0b1428;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .file-status {
+        margin: 8px 0 0;
+        color: #bfd0ff;
+        font-size: 0.88rem;
+        min-height: 1.2em;
+      }
+      .file-status.error {
+        color: var(--error);
+      }
       @media (max-width: 880px) {
         body {
           padding: 14px;
@@ -910,13 +928,23 @@
             <div id="importSection" class="import-card hidden">
               <h4>Importar inventario inicial desde Excel/CSV</h4>
               <p class="import-help">
-                Compatible con Excel: guarda la hoja como <strong>CSV UTF-8</strong> o copia y pega aquí.
-                Columnas: <strong>sku</strong>, <strong>quantity</strong> (o cantidad/saldo), opcional <strong>warehouse</strong> (almacén) y <strong>location</strong> (ubicación).
-                <strong>Importante:</strong> el SKU debe existir primero en Catálogo.
+                Puedes cargar archivo <strong>.xlsx</strong> o <strong>.csv</strong>. Para evitar errores, usa las columnas de la plantilla:
+                <strong>sku</strong>, <strong>warehouse</strong>, <strong>location</strong>, <strong>quantity</strong>, <strong>reference</strong>.
+                También puedes pegar CSV manualmente. <strong>Importante:</strong> el SKU debe existir primero en Catálogo.
               </p>
               <a class="btn-template" href="/plantilla_inventario.csv" download="plantilla_inventario.csv">Descargar plantilla inventario</a>
               <div class="field full" style="margin-top: 12px">
-                <label for="importCsv">Pegar datos CSV</label>
+                <label for="inventoryImportFile">Seleccionar archivo Excel/CSV de inventario</label>
+                <input
+                  id="inventoryImportFile"
+                  class="file-input"
+                  type="file"
+                  accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                />
+              </div>
+              <p id="inventoryImportFileStatus" class="file-status"></p>
+              <div class="field full" style="margin-top: 12px">
+                <label for="importCsv">Revisar o pegar datos CSV</label>
                 <textarea id="importCsv" rows="6" placeholder="sku,warehouse,location,quantity&#10;SKU-0001,TULTITLAN24,TULTITLAN24-GEN-STAGE-01,10"></textarea>
               </div>
               <p id="importResult" class="subtitle" style="min-height: 1.2em"></p>
@@ -935,13 +963,23 @@
             <div id="catalogImportSection" class="import-card hidden">
               <h4>Importar catálogo desde Excel/CSV</h4>
               <p class="import-help">
-                Compatible con Excel: guarda la hoja como <strong>CSV UTF-8</strong> o copia y pega aquí.
-                Columnas mínimas: <strong>customer</strong>, <strong>sku</strong>, <strong>name</strong>.
-                Opcionales: <strong>barcode</strong>, <strong>unit</strong>, <strong>warehouse</strong>.
+                Puedes cargar archivo <strong>.xlsx</strong> o <strong>.csv</strong>. Para evitar errores, usa las columnas de la plantilla:
+                <strong>customer</strong>, <strong>sku</strong>, <strong>name</strong>, <strong>barcode</strong>, <strong>warehouse</strong>.
+                También puedes pegar CSV manualmente.
               </p>
               <a class="btn-template" href="/plantilla_catalogo.csv" download="plantilla_catalogo.csv">Descargar plantilla catálogo</a>
               <div class="field full" style="margin-top: 12px">
-                <label for="catalogImportCsv">Pegar datos CSV</label>
+                <label for="catalogImportFile">Seleccionar archivo Excel/CSV de catálogo</label>
+                <input
+                  id="catalogImportFile"
+                  class="file-input"
+                  type="file"
+                  accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                />
+              </div>
+              <p id="catalogImportFileStatus" class="file-status"></p>
+              <div class="field full" style="margin-top: 12px">
+                <label for="catalogImportCsv">Revisar o pegar datos CSV</label>
                 <textarea id="catalogImportCsv" rows="6" placeholder="customer,sku,name,barcode&#10;LOGITEC,SKU-0001,Producto Demo 1,750000000001"></textarea>
               </div>
               <p id="catalogImportResult" class="subtitle" style="min-height: 1.2em"></p>
@@ -1019,6 +1057,7 @@
       </div>
     </main>
 
-    <script src="/dashboard.js?v=8"></script>
+    <script src="/vendor/xlsx.full.min.js"></script>
+    <script src="/dashboard.js?v=10"></script>
   </body>
 </html>

@@ -72,6 +72,10 @@ const catalogImportCsv = document.getElementById("catalogImportCsv");
 const catalogImportResult = document.getElementById("catalogImportResult");
 const catalogPreviewBtn = document.getElementById("catalogPreviewBtn");
 const catalogApplyBtn = document.getElementById("catalogApplyBtn");
+const catalogImportFile = document.getElementById("catalogImportFile");
+const catalogImportFileStatus = document.getElementById("catalogImportFileStatus");
+const inventoryImportFile = document.getElementById("inventoryImportFile");
+const inventoryImportFileStatus = document.getElementById("inventoryImportFileStatus");
 const moduleTraceability = document.getElementById("moduleTraceability");
 const moduleTasks = document.getElementById("moduleTasks");
 const moduleIncidents = document.getElementById("moduleIncidents");
@@ -269,6 +273,77 @@ function csvEscapeCell(value) {
   const s = String(value);
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
+}
+
+function getImportFileExtension(filename) {
+  if (!filename || typeof filename !== "string") return "";
+  const idx = filename.lastIndexOf(".");
+  return idx >= 0 ? filename.slice(idx).toLowerCase() : "";
+}
+
+function setFileStatus(el, message, isError = false) {
+  if (!el) return;
+  el.textContent = message;
+  el.classList.toggle("error", isError);
+}
+
+async function readImportFileAsCsvText(file) {
+  if (!file) {
+    throw new Error("No se seleccionó ningún archivo.");
+  }
+  const ext = getImportFileExtension(file.name);
+  if (ext !== ".csv" && ext !== ".xlsx") {
+    throw new Error("Formato no soportado. Usa archivo .xlsx o .csv.");
+  }
+
+  if (ext === ".csv") {
+    const text = await file.text();
+    if (!text.trim()) throw new Error("El archivo CSV está vacío.");
+    return text.trim();
+  }
+
+  if (typeof XLSX === "undefined") {
+    throw new Error("No se pudo cargar el lector de Excel. Recarga la página e intenta de nuevo.");
+  }
+
+  const buffer = await file.arrayBuffer();
+  let workbook;
+  try {
+    workbook = XLSX.read(buffer, { type: "array" });
+  } catch (_e) {
+    throw new Error("No se pudo leer el archivo Excel. Verifica que sea un .xlsx válido.");
+  }
+
+  const sheetName = workbook.SheetNames?.[0];
+  if (!sheetName) throw new Error("El archivo Excel no contiene hojas.");
+
+  const sheet = workbook.Sheets[sheetName];
+  let csv;
+  try {
+    csv = XLSX.utils.sheet_to_csv(sheet);
+  } catch (_e) {
+    throw new Error("No se pudo convertir la primera hoja del Excel a CSV.");
+  }
+
+  if (!csv.trim()) throw new Error("La primera hoja del Excel está vacía.");
+  return csv.trim();
+}
+
+async function loadImportFileIntoTextarea(file, textarea, statusEl, nextStepLabel) {
+  if (!textarea) return;
+  setFileStatus(statusEl, "Leyendo archivo…", false);
+  try {
+    const csvText = await readImportFileAsCsvText(file);
+    textarea.value = csvText;
+    setFileStatus(
+      statusEl,
+      `Archivo "${file.name}" cargado (${csvText.split(/\r?\n/).filter(Boolean).length} líneas). Revisa el contenido y luego usa ${nextStepLabel}.`,
+      false
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "No se pudo leer el archivo.";
+    setFileStatus(statusEl, message, true);
+  }
 }
 
 function exportToCsv(filenameBase, rows, headers) {
@@ -1300,6 +1375,22 @@ movementForm.addEventListener("submit", submitMovement);
 importBtn.addEventListener("click", runImport);
 catalogPreviewBtn.addEventListener("click", () => runCatalogImport("preview"));
 catalogApplyBtn.addEventListener("click", () => runCatalogImport("apply"));
+if (catalogImportFile) {
+  catalogImportFile.addEventListener("change", (event) => {
+    const input = event.target;
+    const file = input instanceof HTMLInputElement ? input.files?.[0] : null;
+    void loadImportFileIntoTextarea(file, catalogImportCsv, catalogImportFileStatus, "Vista previa / Aplicar carga");
+    if (input instanceof HTMLInputElement) input.value = "";
+  });
+}
+if (inventoryImportFile) {
+  inventoryImportFile.addEventListener("change", (event) => {
+    const input = event.target;
+    const file = input instanceof HTMLInputElement ? input.files?.[0] : null;
+    void loadImportFileIntoTextarea(file, importCsv, inventoryImportFileStatus, "Cargar inventario");
+    if (input instanceof HTMLInputElement) input.value = "";
+  });
+}
 if (traceLoadBtn) traceLoadBtn.addEventListener("click", () => void loadTraceability());
 if (taskCreateBtn) taskCreateBtn.addEventListener("click", () => void createTaskClick());
 if (incidentCreateBtn) incidentCreateBtn.addEventListener("click", () => void createIncidentClick());
