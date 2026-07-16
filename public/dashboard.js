@@ -400,7 +400,7 @@ function transformTableData(headers, dataRows, importKind, sheetName, headerRowI
     const converted =
       importKind === "catalog"
         ? convertLogitecToCatalog(headers, dataRows)
-        : convertLogitecToInventory(headers, dataRows);
+        : convertLogitecToInventory(headers, dataRows, sheetName);
     return attachTableMetadata(converted, sheetName, headerRowIndex);
   }
 
@@ -771,12 +771,13 @@ function convertLogitecToCatalog(headers, rows) {
   };
 }
 
-function convertLogitecToInventory(headers, rows) {
+function convertLogitecToInventory(headers, rows, sheetName) {
   const headerIndex = buildHeaderIndex(headers);
   const cols = getLogitecColumnMap(headerIndex);
-  const converted = [];
+  const grouped = new Map();
   let skippedNoSku = 0;
   let emptyQuantityRows = 0;
+  const defaultLocation = `${LOGITEC_DEFAULT_WAREHOUSE}-GEN-STAGE-01`;
 
   for (const row of rows) {
     const sku = getCellValue(row, cols.materialNumber);
@@ -785,19 +786,24 @@ function convertLogitecToInventory(headers, rows) {
       continue;
     }
 
+    const ubicacion = getCellValue(row, cols.ubicacion);
     const qtyParsed = parseQuantityValue(getCellValue(row, cols.poQt));
     if (qtyParsed.empty) emptyQuantityRows += 1;
 
-    converted.push({
-      sku,
-      warehouse: LOGITEC_DEFAULT_WAREHOUSE,
-      location: getCellValue(row, cols.ubicacion),
-      quantity: qtyParsed.value,
-      reference: buildLogitecReference(row, cols),
-    });
+    const groupKey = `${sku}\u0001${ubicacion}`;
+    const current = grouped.get(groupKey) || { sku, ubicacion, quantity: 0 };
+    current.quantity += qtyParsed.value;
+    grouped.set(groupKey, current);
   }
 
-  const outputHeaders = ["sku", "warehouse", "location", "quantity", "reference"];
+  const converted = [...grouped.values()].map((item) => ({
+    sku: item.sku,
+    quantity: item.quantity,
+    warehouse: LOGITEC_DEFAULT_WAREHOUSE,
+    location: item.ubicacion || defaultLocation,
+  }));
+
+  const outputHeaders = ["sku", "quantity", "warehouse", "location"];
   const csvText = [
     outputHeaders.join(","),
     ...converted.map((item) =>
@@ -820,13 +826,15 @@ function buildImportFileStatusMessage(result, filename, nextStepLabel, importKin
     const kindLabel =
       importKind === "catalog"
         ? "Formato Logitec detectado: catálogo convertido con códigos de cliente limpios y nombre completo para revisión."
-        : "Formato Logitec detectado: inventario convertido para revisión.";
+        : "Formato Logitec detectado: inventario agrupado por SKU y ubicación. Almacén TULTITLAN24 y ubicación física separada.";
     const details = [
       kindLabel,
       result.sheetName ? `Hoja detectada: ${result.sheetName}.` : null,
       result.headerRowNumber ? `Fila de encabezados: ${result.headerRowNumber}.` : null,
       `Filas leídas: ${result.rowsRead}.`,
-      `Filas convertidas: ${result.rowsConverted}.`,
+      importKind === "inventory"
+        ? `Saldos agrupados: ${result.rowsConverted}.`
+        : `Filas convertidas: ${result.rowsConverted}.`,
       "Tipo detectado: Formato Logitec.",
     ].filter(Boolean);
     const extras = [];
