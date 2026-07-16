@@ -694,7 +694,7 @@ function convertLogitecToCatalog(headers, rows) {
     if (seenSkus.has(sku)) continue;
     seenSkus.add(sku);
 
-    const customer = getCellValue(row, cols.customer) || "LOGITEC";
+    const customer = "LOGITEC";
     const name = getCellValue(row, cols.materialDescription);
     const serial = getCellValue(row, cols.serialNumber);
     const barcode = serial || sku;
@@ -773,7 +773,7 @@ function buildImportFileStatusMessage(result, filename, nextStepLabel, importKin
   if (result.format === "logitec") {
     const kindLabel =
       importKind === "catalog"
-        ? "Formato Logitec detectado: catálogo convertido para revisión."
+        ? "Formato Logitec detectado: catálogo convertido bajo cliente LOGITEC para carga controlada."
         : "Formato Logitec detectado: inventario convertido para revisión.";
     const details = [
       kindLabel,
