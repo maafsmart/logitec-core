@@ -287,59 +287,528 @@ function setFileStatus(el, message, isError = false) {
   el.classList.toggle("error", isError);
 }
 
-async function readImportFileAsCsvText(file) {
-  if (!file) {
-    throw new Error("No se seleccionó ningún archivo.");
+async function readXlsxWorkbook(file) {
+  if (typeof XLSX === "undefined") {
+    throw new Error("No se pudo cargar el lector de Excel. Recarga la página e intenta de nuevo.");
   }
+  const buffer = await file.arrayBuffer();
+  try {
+    return XLSX.read(buffer, { type: "array" });
+  } catch (_e) {
+    throw new Error("No se pudo leer el archivo Excel. Verifica que sea un .xlsx válido.");
+  }
+}
+
+function rowIsEmpty(row) {
+  if (!Array.isArray(row)) return true;
+  return !row.some((cell) => String(cell ?? "").trim() !== "");
+}
+
+function rowToCells(row) {
+  return (Array.isArray(row) ? row : []).map((cell) => String(cell ?? "").trim());
+}
+
+function parseCsvToRowMatrix(csvText) {
+  return String(csvText || "").split(/\r?\n/).map((line) => parseCsvLine(line));
+}
+
+function sheetToRowMatrix(sheet) {
+  return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: false });
+}
+
+function getSheetSortPriority(sheetName, importKind) {
+  const normalized = normalizeHeaderKey(sheetName);
+  if (normalized.includes("inventario actual")) return 0;
+  if (normalized.includes("inventario")) return importKind === "inventory" ? 1 : 3;
+  if (importKind === "catalog" && normalized.includes("entradas")) return 2;
+  if (normalized.includes("entradas")) return 4;
+  if (normalized.includes("salidas")) return 50;
+  return 10;
+}
+
+function sortSheetNamesForImport(sheetNames, importKind) {
+  return [...sheetNames].sort(
+    (a, b) => getSheetSortPriority(a, importKind) - getSheetSortPriority(b, importKind)
+  );
+}
+
+const LOGITEC_HEADER_SCAN_ROWS = 20;
+
+function findLogitecHeaderRowInMatrix(rowMatrix) {
+  const limit = Math.min(rowMatrix.length, LOGITEC_HEADER_SCAN_ROWS);
+  for (let i = 0; i < limit; i += 1) {
+    const headers = rowToCells(rowMatrix[i]);
+    if (rowIsEmpty(headers)) continue;
+    if (isLogitecFormat(buildHeaderIndex(headers))) {
+      return { headerRowIndex: i, headers };
+    }
+  }
+  return null;
+}
+
+function findStandardHeaderRowInMatrix(rowMatrix, importKind) {
+  const limit = Math.min(rowMatrix.length, LOGITEC_HEADER_SCAN_ROWS);
+  for (let i = 0; i < limit; i += 1) {
+    const headers = rowToCells(rowMatrix[i]);
+    if (rowIsEmpty(headers)) continue;
+    const headerIndex = buildHeaderIndex(headers);
+    if (importKind === "catalog" && isStandardCatalogFormat(headerIndex)) {
+      return { headerRowIndex: i, headers };
+    }
+    if (importKind === "inventory" && isStandardInventoryFormat(headerIndex)) {
+      return { headerRowIndex: i, headers };
+    }
+  }
+  return null;
+}
+
+function extractDataRowsFromMatrix(rowMatrix, headerRowIndex) {
+  const dataRows = [];
+  for (let i = headerRowIndex + 1; i < rowMatrix.length; i += 1) {
+    const row = rowToCells(rowMatrix[i]);
+    if (rowIsEmpty(row)) continue;
+    dataRows.push(row);
+  }
+  return dataRows;
+}
+
+function buildCsvFromTable(headers, dataRows) {
+  const headerLine = headers.map((cell) => csvEscapeCell(cell)).join(",");
+  const bodyLines = dataRows.map((row) =>
+    headers.map((_header, index) => csvEscapeCell(row[index] ?? "")).join(",")
+  );
+  return [headerLine, ...bodyLines].join("\n");
+}
+
+function attachTableMetadata(result, sheetName, headerRowIndex) {
+  if (sheetName) result.sheetName = sheetName;
+  if (headerRowIndex >= 0) result.headerRowNumber = headerRowIndex + 1;
+  return result;
+}
+
+function transformTableData(headers, dataRows, importKind, sheetName, headerRowIndex) {
+  if (!headers.length) {
+    throw new Error("El archivo no contiene encabezados válidos.");
+  }
+  if (!dataRows.length) {
+    throw new Error("El archivo no contiene filas de datos.");
+  }
+
+  const headerIndex = buildHeaderIndex(headers);
+
+  if (isLogitecFormat(headerIndex)) {
+    const converted =
+      importKind === "catalog"
+        ? convertLogitecToCatalog(headers, dataRows)
+        : convertLogitecToInventory(headers, dataRows);
+    return attachTableMetadata(converted, sheetName, headerRowIndex);
+  }
+
+  const csvText = buildCsvFromTable(headers, dataRows);
+
+  if (importKind === "catalog" && isStandardCatalogFormat(headerIndex)) {
+    return attachTableMetadata(
+      {
+        csvText,
+        rowsRead: dataRows.length,
+        rowsConverted: dataRows.length,
+        format: "standard",
+      },
+      sheetName,
+      headerRowIndex
+    );
+  }
+
+  if (importKind === "inventory" && isStandardInventoryFormat(headerIndex)) {
+    return attachTableMetadata(
+      {
+        csvText,
+        rowsRead: dataRows.length,
+        rowsConverted: dataRows.length,
+        format: "standard",
+      },
+      sheetName,
+      headerRowIndex
+    );
+  }
+
+  return attachTableMetadata(
+    {
+      csvText,
+      rowsRead: dataRows.length,
+      rowsConverted: dataRows.length,
+      format: "unknown",
+    },
+    sheetName,
+    headerRowIndex
+  );
+}
+
+function transformImportCsvText(csvText, importKind) {
+  const trimmed = String(csvText || "").trim();
+  if (!trimmed) throw new Error("El archivo CSV está vacío.");
+
+  const rowMatrix = parseCsvToRowMatrix(trimmed);
+  const logitecHeader = findLogitecHeaderRowInMatrix(rowMatrix);
+  if (logitecHeader) {
+    const dataRows = extractDataRowsFromMatrix(rowMatrix, logitecHeader.headerRowIndex);
+    return transformTableData(
+      logitecHeader.headers,
+      dataRows,
+      importKind,
+      null,
+      logitecHeader.headerRowIndex
+    );
+  }
+
+  const standardHeader = findStandardHeaderRowInMatrix(rowMatrix, importKind);
+  if (standardHeader) {
+    const dataRows = extractDataRowsFromMatrix(rowMatrix, standardHeader.headerRowIndex);
+    return transformTableData(
+      standardHeader.headers,
+      dataRows,
+      importKind,
+      null,
+      standardHeader.headerRowIndex
+    );
+  }
+
+  const firstNonEmpty = rowMatrix.findIndex((row) => !rowIsEmpty(row));
+  if (firstNonEmpty < 0) throw new Error("El archivo CSV está vacío.");
+  const headers = rowToCells(rowMatrix[firstNonEmpty]);
+  const dataRows = extractDataRowsFromMatrix(rowMatrix, firstNonEmpty);
+  return transformTableData(headers, dataRows, importKind, null, firstNonEmpty);
+}
+
+function transformImportWorkbook(workbook, importKind) {
+  const sheetNames = workbook.SheetNames || [];
+  if (!sheetNames.length) throw new Error("El archivo Excel no contiene hojas.");
+
+  const orderedSheets = sortSheetNamesForImport(sheetNames, importKind);
+
+  for (const sheetName of orderedSheets) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) continue;
+    const rowMatrix = sheetToRowMatrix(sheet);
+    const logitecHeader = findLogitecHeaderRowInMatrix(rowMatrix);
+    if (!logitecHeader) continue;
+    const dataRows = extractDataRowsFromMatrix(rowMatrix, logitecHeader.headerRowIndex);
+    if (!dataRows.length) continue;
+    return transformTableData(
+      logitecHeader.headers,
+      dataRows,
+      importKind,
+      sheetName,
+      logitecHeader.headerRowIndex
+    );
+  }
+
+  for (const sheetName of orderedSheets) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) continue;
+    const rowMatrix = sheetToRowMatrix(sheet);
+    const standardHeader = findStandardHeaderRowInMatrix(rowMatrix, importKind);
+    if (!standardHeader) continue;
+    const dataRows = extractDataRowsFromMatrix(rowMatrix, standardHeader.headerRowIndex);
+    if (!dataRows.length) continue;
+    return transformTableData(
+      standardHeader.headers,
+      dataRows,
+      importKind,
+      sheetName,
+      standardHeader.headerRowIndex
+    );
+  }
+
+  const fallbackSheetName = orderedSheets[0];
+  const fallbackSheet = workbook.Sheets[fallbackSheetName];
+  const rowMatrix = sheetToRowMatrix(fallbackSheet);
+  const firstNonEmpty = rowMatrix.findIndex((row) => !rowIsEmpty(row));
+  if (firstNonEmpty < 0) throw new Error("El archivo Excel está vacío.");
+  const headers = rowToCells(rowMatrix[firstNonEmpty]);
+  const dataRows = extractDataRowsFromMatrix(rowMatrix, firstNonEmpty);
+  return transformTableData(headers, dataRows, importKind, fallbackSheetName, firstNonEmpty);
+}
+
+async function processImportFile(file, importKind) {
+  if (!file) throw new Error("No se seleccionó ningún archivo.");
   const ext = getImportFileExtension(file.name);
   if (ext !== ".csv" && ext !== ".xlsx") {
     throw new Error("Formato no soportado. Usa archivo .xlsx o .csv.");
   }
-
   if (ext === ".csv") {
-    const text = await file.text();
-    if (!text.trim()) throw new Error("El archivo CSV está vacío.");
-    return text.trim();
+    return transformImportCsvText(await file.text(), importKind);
   }
-
-  if (typeof XLSX === "undefined") {
-    throw new Error("No se pudo cargar el lector de Excel. Recarga la página e intenta de nuevo.");
-  }
-
-  const buffer = await file.arrayBuffer();
-  let workbook;
-  try {
-    workbook = XLSX.read(buffer, { type: "array" });
-  } catch (_e) {
-    throw new Error("No se pudo leer el archivo Excel. Verifica que sea un .xlsx válido.");
-  }
-
-  const sheetName = workbook.SheetNames?.[0];
-  if (!sheetName) throw new Error("El archivo Excel no contiene hojas.");
-
-  const sheet = workbook.Sheets[sheetName];
-  let csv;
-  try {
-    csv = XLSX.utils.sheet_to_csv(sheet);
-  } catch (_e) {
-    throw new Error("No se pudo convertir la primera hoja del Excel a CSV.");
-  }
-
-  if (!csv.trim()) throw new Error("La primera hoja del Excel está vacía.");
-  return csv.trim();
+  return transformImportWorkbook(await readXlsxWorkbook(file), importKind);
 }
 
-async function loadImportFileIntoTextarea(file, textarea, statusEl, nextStepLabel) {
+function normalizeHeaderKey(header) {
+  return String(header || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function parseCsvLine(line) {
+  const values = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      values.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  values.push(current.trim());
+  return values;
+}
+
+function parseCsvText(csvText) {
+  const lines = String(csvText || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) {
+    return { headers: [], rows: [] };
+  }
+  const headers = parseCsvLine(lines[0]);
+  const rows = lines.slice(1).map((line) => parseCsvLine(line));
+  return { headers, rows };
+}
+
+function buildHeaderIndex(headers) {
+  const index = new Map();
+  headers.forEach((header, i) => {
+    const key = normalizeHeaderKey(header);
+    if (key && !index.has(key)) index.set(key, i);
+  });
+  return index;
+}
+
+function findHeaderColumn(headerIndex, aliases) {
+  for (const alias of aliases) {
+    const idx = headerIndex.get(normalizeHeaderKey(alias));
+    if (idx !== undefined) return idx;
+  }
+  return -1;
+}
+
+const LOGITEC_DEFAULT_WAREHOUSE = "TULTITLAN24";
+
+const LOGITEC_HEADER_ALIASES = {
+  customer: ["customer"],
+  materialNumber: ["material number", "materialnumber", "material no", "material_no"],
+  materialDescription: ["material description", "materialdescription", "material desc"],
+  poQt: ["po qt", "po_qt", "po qty", "po quantity"],
+  ubicacion: ["ubicacion", "ubicación"],
+  lote: ["lote (sales ordener)", "lote sales ordener", "lote", "sales ordener", "sales order"],
+  serialNumber: ["serial number", "serialnumber", "serial no", "serial"],
+  status: ["status", "estado"],
+};
+
+function getLogitecColumnMap(headerIndex) {
+  return {
+    customer: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.customer),
+    materialNumber: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.materialNumber),
+    materialDescription: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.materialDescription),
+    poQt: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.poQt),
+    ubicacion: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.ubicacion),
+    lote: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.lote),
+    serialNumber: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.serialNumber),
+    status: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.status),
+  };
+}
+
+function isLogitecFormat(headerIndex) {
+  const cols = getLogitecColumnMap(headerIndex);
+  if (cols.materialNumber < 0) return false;
+  const secondaryHits = [cols.materialDescription, cols.poQt, cols.ubicacion].filter((idx) => idx >= 0).length;
+  return secondaryHits >= 1;
+}
+
+function isStandardCatalogFormat(headerIndex) {
+  const sku = findHeaderColumn(headerIndex, ["sku"]);
+  const customer = findHeaderColumn(headerIndex, ["customer", "cliente"]);
+  const name = findHeaderColumn(headerIndex, ["name", "nombre"]);
+  return sku >= 0 && (customer >= 0 || name >= 0);
+}
+
+function isStandardInventoryFormat(headerIndex) {
+  const sku = findHeaderColumn(headerIndex, ["sku", "material number"]);
+  const quantity = findHeaderColumn(headerIndex, ["quantity", "qty", "cantidad", "po qt"]);
+  const location = findHeaderColumn(headerIndex, ["location", "ubicacion", "ubicación"]);
+  return sku >= 0 && quantity >= 0 && location >= 0;
+}
+
+function getCellValue(row, index) {
+  if (index < 0 || !Array.isArray(row)) return "";
+  return String(row[index] ?? "").trim();
+}
+
+function parseQuantityValue(raw) {
+  if (raw == null || String(raw).trim() === "") return { value: 0, empty: true };
+  const normalized = String(raw).replace(/\s+/g, "").replace(",", ".");
+  const n = Number(normalized);
+  if (Number.isNaN(n)) return { value: 0, empty: true };
+  return { value: n, empty: false };
+}
+
+function buildLogitecReference(row, cols) {
+  const parts = [];
+  const lote = getCellValue(row, cols.lote);
+  const serial = getCellValue(row, cols.serialNumber);
+  const status = getCellValue(row, cols.status);
+  if (lote) parts.push(`LOTE: ${lote}`);
+  if (serial) parts.push(`SERIAL: ${serial}`);
+  if (status) parts.push(`STATUS: ${status}`);
+  return parts.join(" | ");
+}
+
+function convertLogitecToCatalog(headers, rows) {
+  const headerIndex = buildHeaderIndex(headers);
+  const cols = getLogitecColumnMap(headerIndex);
+  const seenSkus = new Set();
+  const converted = [];
+  let skippedNoSku = 0;
+
+  for (const row of rows) {
+    const sku = getCellValue(row, cols.materialNumber);
+    if (!sku) {
+      skippedNoSku += 1;
+      continue;
+    }
+    if (seenSkus.has(sku)) continue;
+    seenSkus.add(sku);
+
+    const customer = getCellValue(row, cols.customer) || "LOGITEC";
+    const name = getCellValue(row, cols.materialDescription);
+    const serial = getCellValue(row, cols.serialNumber);
+    const barcode = serial || sku;
+
+    converted.push({
+      customer,
+      sku,
+      name,
+      barcode,
+      warehouse: LOGITEC_DEFAULT_WAREHOUSE,
+    });
+  }
+
+  const outputHeaders = ["customer", "sku", "name", "barcode", "warehouse"];
+  const csvText = [
+    outputHeaders.join(","),
+    ...converted.map((item) =>
+      outputHeaders.map((key) => csvEscapeCell(item[key])).join(",")
+    ),
+  ].join("\n");
+
+  return {
+    csvText,
+    rowsRead: rows.length,
+    rowsConverted: converted.length,
+    skippedNoSku,
+    format: "logitec",
+  };
+}
+
+function convertLogitecToInventory(headers, rows) {
+  const headerIndex = buildHeaderIndex(headers);
+  const cols = getLogitecColumnMap(headerIndex);
+  const converted = [];
+  let skippedNoSku = 0;
+  let emptyQuantityRows = 0;
+
+  for (const row of rows) {
+    const sku = getCellValue(row, cols.materialNumber);
+    if (!sku) {
+      skippedNoSku += 1;
+      continue;
+    }
+
+    const qtyParsed = parseQuantityValue(getCellValue(row, cols.poQt));
+    if (qtyParsed.empty) emptyQuantityRows += 1;
+
+    converted.push({
+      sku,
+      warehouse: LOGITEC_DEFAULT_WAREHOUSE,
+      location: getCellValue(row, cols.ubicacion),
+      quantity: qtyParsed.value,
+      reference: buildLogitecReference(row, cols),
+    });
+  }
+
+  const outputHeaders = ["sku", "warehouse", "location", "quantity", "reference"];
+  const csvText = [
+    outputHeaders.join(","),
+    ...converted.map((item) =>
+      outputHeaders.map((key) => csvEscapeCell(item[key])).join(",")
+    ),
+  ].join("\n");
+
+  return {
+    csvText,
+    rowsRead: rows.length,
+    rowsConverted: converted.length,
+    skippedNoSku,
+    emptyQuantityRows,
+    format: "logitec",
+  };
+}
+
+function buildImportFileStatusMessage(result, filename, nextStepLabel, importKind) {
+  if (result.format === "logitec") {
+    const kindLabel =
+      importKind === "catalog"
+        ? "Formato Logitec detectado: catálogo convertido para revisión."
+        : "Formato Logitec detectado: inventario convertido para revisión.";
+    const details = [
+      kindLabel,
+      result.sheetName ? `Hoja detectada: ${result.sheetName}.` : null,
+      result.headerRowNumber ? `Fila de encabezados: ${result.headerRowNumber}.` : null,
+      `Filas leídas: ${result.rowsRead}.`,
+      `Filas convertidas: ${result.rowsConverted}.`,
+      "Tipo detectado: Formato Logitec.",
+    ].filter(Boolean);
+    const extras = [];
+    if (result.skippedNoSku) extras.push(`${result.skippedNoSku} filas omitidas sin SKU`);
+    if (result.emptyQuantityRows) extras.push(`${result.emptyQuantityRows} filas con cantidad vacía (se usó 0)`);
+    if (extras.length) details.push(extras.join(". ") + ".");
+    details.push(`Revisa el contenido y luego usa ${nextStepLabel}.`);
+    return details.join(" ");
+  }
+
+  const base = `Archivo "${filename}": leídas ${result.rowsRead} filas, convertidas ${result.rowsConverted} filas.`;
+  const sheetInfo = result.sheetName ? ` Hoja detectada: ${result.sheetName}.` : "";
+  const headerInfo = result.headerRowNumber ? ` Fila de encabezados: ${result.headerRowNumber}.` : "";
+
+  if (result.format === "standard") {
+    return `Formato plantilla estándar detectado.${sheetInfo}${headerInfo} ${base} Revisa el contenido y luego usa ${nextStepLabel}.`;
+  }
+
+  return `Formato no reconocido; se cargó CSV sin conversión.${sheetInfo}${headerInfo} ${base} Revisa el contenido y luego usa ${nextStepLabel}.`;
+}
+
+async function loadImportFileIntoTextarea(file, textarea, statusEl, nextStepLabel, importKind) {
   if (!textarea) return;
   setFileStatus(statusEl, "Leyendo archivo…", false);
   try {
-    const csvText = await readImportFileAsCsvText(file);
-    textarea.value = csvText;
-    setFileStatus(
-      statusEl,
-      `Archivo "${file.name}" cargado (${csvText.split(/\r?\n/).filter(Boolean).length} líneas). Revisa el contenido y luego usa ${nextStepLabel}.`,
-      false
-    );
+    const result = await processImportFile(file, importKind);
+    textarea.value = result.csvText;
+    setFileStatus(statusEl, buildImportFileStatusMessage(result, file.name, nextStepLabel, importKind), false);
   } catch (err) {
     const message = err instanceof Error ? err.message : "No se pudo leer el archivo.";
     setFileStatus(statusEl, message, true);
@@ -1379,7 +1848,7 @@ if (catalogImportFile) {
   catalogImportFile.addEventListener("change", (event) => {
     const input = event.target;
     const file = input instanceof HTMLInputElement ? input.files?.[0] : null;
-    void loadImportFileIntoTextarea(file, catalogImportCsv, catalogImportFileStatus, "Vista previa / Aplicar carga");
+    void loadImportFileIntoTextarea(file, catalogImportCsv, catalogImportFileStatus, "Vista previa / Aplicar carga", "catalog");
     if (input instanceof HTMLInputElement) input.value = "";
   });
 }
@@ -1387,7 +1856,7 @@ if (inventoryImportFile) {
   inventoryImportFile.addEventListener("change", (event) => {
     const input = event.target;
     const file = input instanceof HTMLInputElement ? input.files?.[0] : null;
-    void loadImportFileIntoTextarea(file, importCsv, inventoryImportFileStatus, "Cargar inventario");
+    void loadImportFileIntoTextarea(file, importCsv, inventoryImportFileStatus, "Cargar inventario", "inventory");
     if (input instanceof HTMLInputElement) input.value = "";
   });
 }
