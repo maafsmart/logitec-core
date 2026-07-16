@@ -87,15 +87,26 @@ const incidentList = document.getElementById("incidentList");
 const incidentMessage = document.getElementById("incidentMessage");
 const incidentCreateBtn = document.getElementById("incidentCreateBtn");
 const incidentCreateError = document.getElementById("incidentCreateError");
+const exportStockBtn = document.getElementById("exportStockBtn");
+const exportMovementsBtn = document.getElementById("exportMovementsBtn");
+const exportTraceBtn = document.getElementById("exportTraceBtn");
+const exportProductsBtn = document.getElementById("exportProductsBtn");
 
 let currentRole = null;
 let currentUserId = null;
 
 const roleModules = {
-  ADMIN: ["users", "traceability", "tasks", "incidents", "picking", "inventory", "catalog", "account"],
-  SUPERVISOR: ["traceability", "tasks", "incidents", "picking", "inventory", "account"],
-  OPERATOR: ["traceability", "tasks", "incidents", "picking", "inventory", "account"],
+  ADMIN: ["catalog", "inventory", "picking", "traceability", "tasks", "incidents", "users", "account"],
+  SUPERVISOR: ["inventory", "picking", "traceability", "tasks", "incidents", "account"],
+  OPERATOR: ["inventory", "picking", "traceability", "tasks", "incidents", "account"],
   CLIENT: ["catalog", "account"]
+};
+
+const defaultLandingModule = {
+  ADMIN: "catalog",
+  SUPERVISOR: "inventory",
+  OPERATOR: "inventory",
+  CLIENT: "catalog"
 };
 
 currentUrl.textContent = window.location.href;
@@ -253,6 +264,149 @@ function setScanResult(message, tone = "") {
   if (tone) scanResult.classList.add(tone);
 }
 
+function csvEscapeCell(value) {
+  if (value == null) return "";
+  const s = String(value);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function exportToCsv(filenameBase, rows, headers) {
+  const headerLine = headers.map((h) => csvEscapeCell(h.label)).join(",");
+  const bodyLines = (Array.isArray(rows) ? rows : []).map((row) =>
+    headers.map((h) => csvEscapeCell(h.value(row))).join(",")
+  );
+  const content = `\uFEFF${[headerLine, ...bodyLines].join("\r\n")}`;
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `${filenameBase}_${stamp}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 500);
+}
+
+function formatExportDate(iso) {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "medium" });
+  } catch (_e) {
+    return String(iso);
+  }
+}
+
+function buildTraceabilityParams() {
+  const params = new URLSearchParams();
+  const wh = document.getElementById("traceWh")?.value?.trim();
+  const uid = document.getElementById("traceUserId")?.value?.trim();
+  const typ = document.getElementById("traceType")?.value?.trim();
+  const sku = document.getElementById("traceSku")?.value?.trim();
+  const from = document.getElementById("traceFrom")?.value?.trim();
+  const to = document.getElementById("traceTo")?.value?.trim();
+  if (wh) params.set("warehouse", wh);
+  if (uid) params.set("userId", uid);
+  if (typ) params.set("type", typ);
+  if (sku) params.set("sku", sku);
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  params.set("limit", "500");
+  return params;
+}
+
+async function exportStockCsv() {
+  const response = await authenticatedFetch("/api/inventory/stock");
+  if (!response?.ok) {
+    window.alert("No se pudo exportar existencias.");
+    return;
+  }
+  const rows = await response.json();
+  if (!Array.isArray(rows) || rows.length === 0) {
+    window.alert("No hay existencias para exportar.");
+    return;
+  }
+  exportToCsv("logitec_inventario", rows, [
+    { label: "SKU", value: (r) => r.product?.sku || "" },
+    { label: "Producto", value: (r) => r.product?.name || "" },
+    { label: "Cliente", value: (r) => r.product?.customer?.name || r.product?.customer?.code || "" },
+    { label: "Almacén", value: (r) => r.location?.warehouse || "" },
+    { label: "Ubicación", value: (r) => r.location?.code || "" },
+    { label: "Stock actual", value: (r) => formatQty(r.qty) }
+  ]);
+}
+
+async function exportMovementsCsv() {
+  const response = await authenticatedFetch("/api/inventory/movements");
+  if (!response?.ok) {
+    window.alert("No se pudo exportar movimientos.");
+    return;
+  }
+  const rows = await response.json();
+  if (!Array.isArray(rows) || rows.length === 0) {
+    window.alert("No hay movimientos para exportar.");
+    return;
+  }
+  exportToCsv("logitec_movimientos", rows, [
+    { label: "Fecha", value: (r) => formatExportDate(r.createdAt) },
+    { label: "Usuario", value: (r) => r.user?.fullName || r.user?.email || "" },
+    { label: "Tipo", value: (r) => r.movementType || r.type || "" },
+    { label: "SKU", value: (r) => r.product?.sku || "" },
+    { label: "Producto", value: (r) => r.product?.name || "" },
+    { label: "Cantidad", value: (r) => formatQty(r.qty) },
+    { label: "Almacén", value: (r) => r.warehouse || "" },
+    { label: "Ubicación", value: (r) => r.toLocation?.code || r.fromLocation?.code || "" },
+    { label: "Referencia", value: (r) => r.reference || "" }
+  ]);
+}
+
+async function exportTraceabilityCsv() {
+  const params = buildTraceabilityParams();
+  const response = await authenticatedFetch(`/api/traceability/activity?${params.toString()}`);
+  if (!response?.ok) {
+    window.alert("No se pudo exportar trazabilidad.");
+    return;
+  }
+  const rows = await response.json();
+  if (!Array.isArray(rows) || rows.length === 0) {
+    window.alert("No hay registros de trazabilidad para exportar.");
+    return;
+  }
+  exportToCsv("logitec_trazabilidad", rows, [
+    { label: "Fecha", value: (r) => formatExportDate(r.createdAt) },
+    { label: "Evento", value: (r) => r.subtype || r.type || "" },
+    { label: "Tipo", value: (r) => r.type || "" },
+    { label: "SKU", value: (r) => r.product?.sku || "" },
+    { label: "Producto", value: (r) => r.product?.name || "" },
+    { label: "Cantidad", value: (r) => formatQty(r.qty) },
+    { label: "Ubicación", value: (r) => r.location || r.warehouse || "" },
+    { label: "Resultado", value: (r) => r.result || "" },
+    { label: "Referencia", value: (r) => r.reference || "" }
+  ]);
+}
+
+async function exportProductsCsv() {
+  const response = await authenticatedFetch("/api/catalog/products");
+  if (!response?.ok) {
+    window.alert("No se pudo exportar productos.");
+    return;
+  }
+  const rows = await response.json();
+  if (!Array.isArray(rows) || rows.length === 0) {
+    window.alert("No hay productos para exportar.");
+    return;
+  }
+  exportToCsv("logitec_catalogo", rows, [
+    { label: "Cliente", value: (r) => r.customer?.code || r.customer?.name || "" },
+    { label: "SKU", value: (r) => r.sku || "" },
+    { label: "Producto", value: (r) => r.name || "" },
+    { label: "Código de barras", value: (r) => r.barcode || "" },
+    { label: "Almacén", value: (r) => r.warehouse || "" },
+    { label: "Unidad", value: (r) => r.unit || "" },
+    { label: "Activo", value: (r) => (r.active === false ? "No" : "Sí") }
+  ]);
+}
+
 async function loadCurrentUser() {
   const response = await authenticatedFetch("/api/auth/me");
   if (!response) return null;
@@ -364,20 +518,8 @@ function escCell(s) {
 
 async function loadTraceability() {
   if (!traceList) return;
-  if (traceMessage) traceMessage.textContent = "Cargando…";
-  const params = new URLSearchParams();
-  const wh = document.getElementById("traceWh")?.value?.trim();
-  const uid = document.getElementById("traceUserId")?.value?.trim();
-  const typ = document.getElementById("traceType")?.value?.trim();
-  const sku = document.getElementById("traceSku")?.value?.trim();
-  const from = document.getElementById("traceFrom")?.value?.trim();
-  const to = document.getElementById("traceTo")?.value?.trim();
-  if (wh) params.set("warehouse", wh);
-  if (uid) params.set("userId", uid);
-  if (typ) params.set("type", typ);
-  if (sku) params.set("sku", sku);
-  if (from) params.set("from", from);
-  if (to) params.set("to", to);
+  if (traceMessage) traceMessage.textContent = "Consultando trazabilidad…";
+  const params = buildTraceabilityParams();
   params.set("limit", "200");
   try {
     const response = await authenticatedFetch(`/api/traceability/activity?${params.toString()}`);
@@ -717,7 +859,7 @@ async function runImport() {
         ? data.errors.map((e) => `${e.sku}: ${e.message}`).join("; ")
         : "";
     if (importResult) {
-      importResult.textContent = `Aplicados: ${data.applied}. Omitidos: ${data.skipped || 0}.${errLines ? ` Detalle: ${errLines}` : ""}`;
+      importResult.textContent = `Inventario cargado: ${data.applied} registros aplicados, ${data.skipped || 0} omitidos.${errLines ? ` Detalle: ${errLines}` : ""}`;
     }
     importCsv.value = "";
     await loadStockStrip();
@@ -778,6 +920,13 @@ function applyRoleNavigation(role) {
   if (taskCreateWrap) {
     taskCreateWrap.classList.toggle("hidden", role !== "ADMIN" && role !== "SUPERVISOR");
   }
+  const canExportInventory = role === "ADMIN" || role === "OPERATOR" || role === "SUPERVISOR";
+  const canExportTrace = canExportInventory;
+  const canExportProducts = role === "ADMIN" || role === "CLIENT";
+  if (exportStockBtn) exportStockBtn.style.display = canExportInventory ? "inline-block" : "none";
+  if (exportMovementsBtn) exportMovementsBtn.style.display = canExportInventory ? "inline-block" : "none";
+  if (exportTraceBtn) exportTraceBtn.style.display = canExportTrace ? "inline-block" : "none";
+  if (exportProductsBtn) exportProductsBtn.style.display = canExportProducts ? "inline-block" : "none";
 }
 
 async function createUser(event) {
@@ -980,7 +1129,7 @@ async function runCatalogImport(mode) {
     const unknownCustomers = Array.isArray(data.unknownCustomers) ? data.unknownCustomers : [];
     const suppliersDetected = Array.isArray(data.suppliersDetected) ? data.suppliersDetected : [];
     const suppliersPo = Array.isArray(data.supplierPoDetected) ? data.supplierPoDetected : [];
-    catalogImportResult.textContent = `Modo ${data.mode}. Crear: ${data.created || 0}, actualizar: ${data.updated || 0}, omitidos: ${data.skipped || 0}.${previewLine ? ` Preview: ${previewLine}` : ""}${unknownCustomers.length ? ` Clientes no encontrados: ${unknownCustomers.join(" | ")}.` : ""}${suppliersDetected.length ? ` Proveedores detectados: ${suppliersDetected.slice(0, 4).join(", ")}.` : ""}${suppliersPo.length ? ` Supplier PO detectados: ${suppliersPo.slice(0, 4).join(", ")}.` : ""}`;
+    catalogImportResult.textContent = `Vista previa: crear ${data.created || 0}, actualizar ${data.updated || 0}, omitir ${data.skipped || 0}.${previewLine ? ` Muestra: ${previewLine}` : ""}${unknownCustomers.length ? ` Clientes no encontrados: ${unknownCustomers.join(" | ")}.` : ""}${suppliersDetected.length ? ` Proveedores detectados: ${suppliersDetected.slice(0, 4).join(", ")}.` : ""}${suppliersPo.length ? ` Supplier PO detectados: ${suppliersPo.slice(0, 4).join(", ")}.` : ""}`;
 
     if (mode === "preview" && unknownCustomers.length > 0) {
       const confirmed = window.confirm(
@@ -1090,7 +1239,7 @@ async function validateSession() {
     currentUserId = user.id || null;
     applyRoleNavigation(currentRole);
 
-    statusBox.innerHTML = '<span class="ok">API protegida funcionando</span>';
+    statusBox.innerHTML = '<span class="ok">Sistema operativo</span>';
     const displayName = user.fullName || user.email || "Usuario";
     if (sessionDisplayName) sessionDisplayName.textContent = `Hola, ${displayName}`;
     if (sessionEmailInline) sessionEmailInline.textContent = user.email || "—";
@@ -1109,7 +1258,8 @@ async function validateSession() {
         '<p class="subtitle" style="margin:0">El historial de picking no aplica a tu rol.</p>';
     }
     if (scanHint) scanHint.textContent = "";
-    activateModule(roleModules[currentRole][0] || "account");
+    const landing = defaultLandingModule[currentRole] || roleModules[currentRole]?.[0] || "account";
+    activateModule(landing);
   } catch (_error) {
     statusBox.innerHTML = '<span class="error">Error de red validando sesion.</span>';
     currentUserEmail.textContent = "No disponible";
@@ -1153,6 +1303,10 @@ catalogApplyBtn.addEventListener("click", () => runCatalogImport("apply"));
 if (traceLoadBtn) traceLoadBtn.addEventListener("click", () => void loadTraceability());
 if (taskCreateBtn) taskCreateBtn.addEventListener("click", () => void createTaskClick());
 if (incidentCreateBtn) incidentCreateBtn.addEventListener("click", () => void createIncidentClick());
+if (exportStockBtn) exportStockBtn.addEventListener("click", () => void exportStockCsv());
+if (exportMovementsBtn) exportMovementsBtn.addEventListener("click", () => void exportMovementsCsv());
+if (exportTraceBtn) exportTraceBtn.addEventListener("click", () => void exportTraceabilityCsv());
+if (exportProductsBtn) exportProductsBtn.addEventListener("click", () => void exportProductsCsv());
 if (taskList) {
   taskList.addEventListener("click", (event) => {
     const target = event.target;

@@ -486,6 +486,88 @@
       .picking-table .col-detail {
         min-width: 180px;
       }
+      .demo-hide {
+        display: none !important;
+      }
+      .demo-flow-panel {
+        margin-bottom: 16px;
+        padding: 16px 18px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: linear-gradient(135deg, #14274d 0%, #0f1830 100%);
+      }
+      .demo-flow-title {
+        margin: 0 0 6px;
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .demo-flow-sub {
+        margin: 0 0 12px;
+        color: #bfd0ff;
+        font-size: 0.92rem;
+      }
+      .demo-flow-steps {
+        margin: 0;
+        padding-left: 20px;
+        color: var(--muted);
+        font-size: 0.9rem;
+        line-height: 1.55;
+      }
+      .demo-flow-steps li {
+        margin: 4px 0;
+      }
+      .import-card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+        background: #0c1528;
+      }
+      .import-card h4 {
+        margin: 0 0 8px;
+        font-size: 1rem;
+      }
+      .import-help {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 0.9rem;
+        line-height: 1.45;
+      }
+      .import-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        margin-top: 10px;
+      }
+      .btn-template {
+        display: inline-block;
+        padding: 8px 14px;
+        border-radius: 8px;
+        border: 1px solid #4f74bd;
+        background: rgba(77, 141, 255, 0.12);
+        color: #bfd0ff;
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 0.88rem;
+      }
+      .export-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 12px 0 16px;
+      }
+      .btn-export {
+        padding: 8px 14px;
+        font-size: 0.88rem;
+        border-radius: 9px;
+        font-weight: 600;
+        color: white;
+        cursor: pointer;
+        border: 0;
+        background: linear-gradient(90deg, #2d6fd4, #5a9aff);
+      }
       @media (max-width: 880px) {
         body {
           padding: 14px;
@@ -534,26 +616,37 @@
         </p>
       </div>
       <h1 style="margin-bottom: 6px">Logitec Control Panel</h1>
-      <p class="subtitle">Sesión activa</p>
-      <p class="hint">Área protegida con JWT.</p>
-      <div id="statusBox" class="status">Validando sesion...</div>
-      <ul id="usersSummary"></ul>
-      <div class="meta">
+      <p class="subtitle">Panel operativo de almacén</p>
+      <p class="hint demo-hide">Área protegida con JWT.</p>
+      <div id="statusBox" class="status demo-hide">Validando sesion...</div>
+      <ul id="usersSummary" class="demo-hide"></ul>
+      <div class="meta demo-hide">
         <div><strong>Nombre:</strong> <span id="currentUserFullName">Cargando...</span></div>
         <div><strong>Correo:</strong> <span id="currentUserEmail">Cargando...</span></div>
         <div><strong>Rol:</strong> <span id="currentUserRole">Cargando...</span></div>
         <div><strong>URL actual:</strong> <span id="currentUrl"></span></div>
       </div>
+      <section class="demo-flow-panel" id="demoFlowPanel">
+        <p class="demo-flow-title">Flujo operativo LOGITEC</p>
+        <p class="demo-flow-sub">Catálogo → Inventario → Picking → Trazabilidad → Reportes para Excel</p>
+        <ol class="demo-flow-steps">
+          <li>Cargar catálogo desde Excel/CSV</li>
+          <li>Cargar inventario inicial</li>
+          <li>Operar picking con handheld</li>
+          <li>Revisar trazabilidad para auditoría</li>
+          <li>Exportar reportes compatibles con Excel</li>
+        </ol>
+      </section>
       <div class="dashboard-stack">
       <div class="layout">
         <aside class="sidebar">
-          <button class="module-btn active" data-module="users" id="btnUsers">Usuarios</button>
+          <button class="module-btn" data-module="catalog" id="btnCatalog">Catálogo</button>
+          <button class="module-btn" data-module="inventory" id="btnInventory">Inventario</button>
+          <button class="module-btn" data-module="picking" id="btnPicking">Picking</button>
           <button class="module-btn" data-module="traceability" id="btnTraceability">Trazabilidad</button>
           <button class="module-btn" data-module="tasks" id="btnTasks">Mis tareas</button>
           <button class="module-btn" data-module="incidents" id="btnIncidents">Incidencias</button>
-          <button class="module-btn" data-module="picking" id="btnPicking">Picking</button>
-          <button class="module-btn" data-module="inventory" id="btnInventory">Inventario</button>
-          <button class="module-btn" data-module="catalog" id="btnCatalog">Catalogo</button>
+          <button class="module-btn" data-module="users" id="btnUsers">Usuarios</button>
           <button class="module-btn" data-module="account" id="btnAccount">Mi cuenta</button>
         </aside>
         <section class="content">
@@ -590,9 +683,9 @@
             <div id="usersList"></div>
           </div>
           <div id="moduleTraceability" class="hidden">
-            <h3>Trazabilidad unificada</h3>
+            <h3>Trazabilidad para auditoría</h3>
             <p class="subtitle" style="margin-bottom: 10px">
-              Actividad operativa: importaciones, movimientos, picking y más (vista de consulta).
+              Consulta unificada de movimientos, importaciones, picking y operaciones registradas.
             </p>
             <div class="filter-strip">
               <div class="field compact">
@@ -600,8 +693,8 @@
                 <input id="traceWh" type="text" placeholder="Ej. TULTITLAN24" />
               </div>
               <div class="field compact">
-                <label for="traceUserId">Usuario (id)</label>
-                <input id="traceUserId" type="text" placeholder="cuid" />
+                <label for="traceUserId">Usuario</label>
+                <input id="traceUserId" type="text" placeholder="Opcional" />
               </div>
               <div class="field compact">
                 <label for="traceType">Tipo</label>
@@ -619,7 +712,8 @@
                 <label for="traceTo">Hasta</label>
                 <input id="traceTo" type="date" />
               </div>
-              <button type="button" id="traceLoadBtn">Cargar</button>
+              <button type="button" id="traceLoadBtn">Consultar</button>
+              <button type="button" id="exportTraceBtn" class="btn-export">Exportar trazabilidad CSV</button>
             </div>
             <p id="traceMessage" class="subtitle" style="min-height: 1.2em"></p>
             <div id="traceList" style="overflow: auto; max-width: 100%"></div>
@@ -772,8 +866,12 @@
           <div id="moduleInventory" class="hidden">
             <h3>Inventario y movimientos</h3>
             <p class="subtitle" style="margin-bottom: 10px">
-              Existencias por SKU y almacén. Entradas, salidas y ajuste de saldo (solo ADMIN registra movimientos e importación).
+              Control de existencias por SKU y almacén. Carga inicial y movimientos operativos.
             </p>
+            <div class="export-strip">
+              <button type="button" id="exportStockBtn" class="btn-export">Exportar existencias CSV</button>
+              <button type="button" id="exportMovementsBtn" class="btn-export">Exportar movimientos CSV</button>
+            </div>
             <form id="movementForm" class="hidden">
               <h4 style="margin: 16px 0 8px">Registrar movimiento</h4>
               <div class="form-grid">
@@ -807,30 +905,54 @@
                 </div>
               </div>
               <p id="movementError" class="inline-error"></p>
-              <button id="movementBtn" type="submit">Guardar movimiento</button>
+              <button id="movementBtn" type="submit">Registrar movimiento</button>
             </form>
-            <div id="importSection" class="hidden">
-              <h4 style="margin: 18px 0 8px">Importar saldos (CSV)</h4>
-              <p class="subtitle" style="margin-bottom: 10px; font-size: 0.9rem;">
-                Primera fila: encabezados. Columnas: <strong>sku</strong> (o codigo/clave),
-                <strong>cantidad</strong> (o saldo/qty/quantity), opcional <strong>almacen</strong> (o warehouse/bodega).
-                Fija el saldo al valor indicado (debe existir el SKU en catálogo).
+            <div id="importSection" class="import-card hidden">
+              <h4>Importar inventario inicial desde Excel/CSV</h4>
+              <p class="import-help">
+                Compatible con Excel: guarda la hoja como <strong>CSV UTF-8</strong> o copia y pega aquí.
+                Columnas: <strong>sku</strong>, <strong>quantity</strong> (o cantidad/saldo), opcional <strong>warehouse</strong> (almacén) y <strong>location</strong> (ubicación).
+                <strong>Importante:</strong> el SKU debe existir primero en Catálogo.
               </p>
-              <div class="field full">
-                <label for="importCsv">Pegar CSV aquí</label>
-                <textarea id="importCsv" rows="6" placeholder="sku,cantidad&#10;SKU-001,100"></textarea>
+              <a class="btn-template" href="/plantilla_inventario.csv" download="plantilla_inventario.csv">Descargar plantilla inventario</a>
+              <div class="field full" style="margin-top: 12px">
+                <label for="importCsv">Pegar datos CSV</label>
+                <textarea id="importCsv" rows="6" placeholder="sku,warehouse,location,quantity&#10;SKU-0001,TULTITLAN24,TULTITLAN24-GEN-STAGE-01,10"></textarea>
               </div>
               <p id="importResult" class="subtitle" style="min-height: 1.2em"></p>
-              <button type="button" id="importBtn">Ejecutar importación</button>
+              <div class="import-actions">
+                <button type="button" id="importBtn">Cargar inventario</button>
+              </div>
             </div>
             <h4 style="margin: 18px 0 8px">Últimos movimientos</h4>
             <div id="inventoryMovementsList">Cargando...</div>
           </div>
           <div id="moduleCatalog" class="hidden">
-            <h3>Catálogo WMS</h3>
+            <h3>Catálogo de productos</h3>
             <p class="subtitle" style="margin-bottom: 10px">
-              Catálogo maestro por cliente. Inventario y picking dependen de estos SKUs.
+              Maestro de SKUs por cliente. Base para inventario, picking y reportes.
             </p>
+            <div id="catalogImportSection" class="import-card hidden">
+              <h4>Importar catálogo desde Excel/CSV</h4>
+              <p class="import-help">
+                Compatible con Excel: guarda la hoja como <strong>CSV UTF-8</strong> o copia y pega aquí.
+                Columnas mínimas: <strong>customer</strong>, <strong>sku</strong>, <strong>name</strong>.
+                Opcionales: <strong>barcode</strong>, <strong>unit</strong>, <strong>warehouse</strong>.
+              </p>
+              <a class="btn-template" href="/plantilla_catalogo.csv" download="plantilla_catalogo.csv">Descargar plantilla catálogo</a>
+              <div class="field full" style="margin-top: 12px">
+                <label for="catalogImportCsv">Pegar datos CSV</label>
+                <textarea id="catalogImportCsv" rows="6" placeholder="customer,sku,name,barcode&#10;LOGITEC,SKU-0001,Producto Demo 1,750000000001"></textarea>
+              </div>
+              <p id="catalogImportResult" class="subtitle" style="min-height: 1.2em"></p>
+              <div class="import-actions">
+                <button type="button" id="catalogPreviewBtn">Vista previa</button>
+                <button type="button" id="catalogApplyBtn">Aplicar carga</button>
+              </div>
+            </div>
+            <div class="export-strip">
+              <button type="button" id="exportProductsBtn" class="btn-export">Exportar productos CSV</button>
+            </div>
             <form id="createCustomerForm" class="hidden">
               <h4 style="margin-bottom: 8px">Crear cliente</h4>
               <div class="form-grid">
@@ -873,20 +995,6 @@
               <p id="createProductError" class="inline-error"></p>
               <button id="createProductBtn" type="submit">Crear producto</button>
             </form>
-            <div id="catalogImportSection" class="hidden">
-              <h4 style="margin: 18px 0 8px">Importador de catálogo (CSV)</h4>
-              <p class="subtitle" style="margin-bottom: 10px; font-size: 0.9rem;">
-                Columnas mínimas: customer, sku, name (o material description). También soporta barcode, unit,
-                serialControlled, lotControlled y active.
-              </p>
-              <div class="field full">
-                <label for="catalogImportCsv">Pegar CSV aquí</label>
-                <textarea id="catalogImportCsv" rows="6" placeholder="customer,sku,name&#10;CUST01,SKU-001,Producto 1"></textarea>
-              </div>
-              <p id="catalogImportResult" class="subtitle" style="min-height: 1.2em"></p>
-              <button type="button" id="catalogPreviewBtn">Preview importación</button>
-              <button type="button" id="catalogApplyBtn">Aplicar importación</button>
-            </div>
             <h4 style="margin-bottom: 8px">Productos</h4>
             <div id="productsList"></div>
             <h4 style="margin-bottom: 8px; margin-top: 18px">Clientes</h4>
@@ -911,6 +1019,6 @@
       </div>
     </main>
 
-    <script src="/dashboard.js?v=7"></script>
+    <script src="/dashboard.js?v=8"></script>
   </body>
 </html>
