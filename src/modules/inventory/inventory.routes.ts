@@ -37,21 +37,30 @@ const createMovementSchema = z
 
 const importRowSchema = z.object({
   sku: z.string().min(1).max(80),
+  customer: z.string().max(60).optional(),
   warehouse: z.string().min(1).max(80).optional(),
   location: z.string().min(1).max(120).optional(),
   status: z.string().min(1).max(30).optional(),
-  quantity: z.coerce.number().nonnegative()
+  quantity: z.coerce.number().nonnegative(),
+  reference: z.string().max(120).optional(),
+  notes: z.string().max(500).optional()
 });
 
 const importSchema = z.object({
   rows: z.array(importRowSchema).optional(),
-  csv: z.string().optional()
+  csv: z.string().optional(),
+  reconcileFullInventory: z.coerce.boolean().optional().default(false)
 });
 
 const DEFAULT_WH = "TULTITLAN24";
+const RECONCILE_REFERENCE = "RECONCILE_INVENTORY_NOT_IN_FILE";
 
 function dec(n: string | number): Prisma.Decimal {
   return new Prisma.Decimal(String(n));
+}
+
+function stockCompositeKey(productId: string, locationId: string, status: string): string {
+  return `${productId}|${locationId}|${status}`;
 }
 
 inventoryRouter.use(requireAuth);
@@ -104,13 +113,26 @@ inventoryRouter.post("/locations", requireRole(["ADMIN"]), async (req, res) => {
   res.status(201).json(location);
 });
 
-inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]), async (_req, res) => {
+inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]), async (req, res) => {
+  const rawLimit = req.query.limit;
+  let take = 200;
+  if (rawLimit === "all") {
+    take = 10000;
+  } else if (rawLimit != null) {
+    const parsedLimit = Number(rawLimit);
+    if (!Number.isNaN(parsedLimit) && parsedLimit > 0) {
+      take = Math.min(parsedLimit, 10000);
+    }
+  }
+
   const rows = await prisma.inventoryMovement.findMany({
     orderBy: { createdAt: "desc" },
-    take: 200,
+    take,
     include: {
-      product: { select: { sku: true, name: true } },
-      user: { select: { fullName: true, email: true } }
+      product: { select: { sku: true, name: true, customer: { select: { code: true, name: true } } } },
+      user: { select: { fullName: true, email: true } },
+      fromLocation: { select: { code: true } },
+      toLocation: { select: { code: true } }
     }
   });
 
@@ -239,6 +261,7 @@ inventoryRouter.post("/movements", requireRole(["ADMIN"]), async (req, res) => {
 
 inventoryRouter.post("/import", requireRole(["ADMIN"]), async (req, res) => {
   const parsed = importSchema.parse(req.body);
+  const reconcileFullInventory = parsed.reconcileFullInventory === true;
   let rows = parsed.rows || [];
 
   if (parsed.csv?.trim()) {
@@ -255,6 +278,9 @@ inventoryRouter.post("/import", requireRole(["ADMIN"]), async (req, res) => {
     const idxLoc = header.findIndex((h) => h === "location" || h === "ubicacion");
     const idxStatus = header.findIndex((h) => h === "status" || h === "estado");
     const idxQty = header.findIndex((h) => h === "quantity" || h === "cantidad" || h === "saldo" || h === "qty");
+    const idxCustomer = header.findIndex((h) => h === "customer" || h === "cliente" || h === "customer_code");
+    const idxReference = header.findIndex((h) => h === "reference" || h === "referencia");
+    const idxNotes = header.findIndex((h) => h === "notes" || h === "notas");
     if (idxSku < 0 || idxQty < 0) {
       throw new HttpError(
         400,
@@ -271,10 +297,13 @@ inventoryRouter.post("/import", requireRole(["ADMIN"]), async (req, res) => {
       const statusCell = idxStatus >= 0 ? cells[idxStatus] : undefined;
       const rowParsed = importRowSchema.safeParse({
         sku,
+        customer: idxCustomer >= 0 ? cells[idxCustomer] : undefined,
         warehouse: warehouseCell || undefined,
         location: locationCell || undefined,
         status: statusCell || undefined,
-        quantity
+        quantity,
+        reference: idxReference >= 0 ? cells[idxReference] : undefined,
+        notes: idxNotes >= 0 ? cells[idxNotes] : undefined
       });
       if (!rowParsed.success) {
         throw new HttpError(400, `Fila ${i + 1}: datos invalidos.`);
@@ -289,22 +318,58 @@ inventoryRouter.post("/import", requireRole(["ADMIN"]), async (req, res) => {
   }
 
   const errors: { sku: string; message: string }[] = [];
-  let applied = 0;
+  const receivedRows = rows.length;
+  let created = 0;
+  let updated = 0;
+  let unchanged = 0;
+  let zeroed = 0;
+  let omitted = 0;
+
+  const keysInFile = new Set<string>();
+  const scopeCustomerCodes = new Set<string>();
+  const scopeProductIds = new Set<string>();
+  const scopeStatuses = new Set<string>();
+  const scopeWarehouses = new Set<string>([DEFAULT_WH]);
 
   for (const row of rows) {
     const wh = (row.warehouse || DEFAULT_WH).trim();
     const locationCode = (row.location || `${wh}-GEN-STAGE-01`).trim().toUpperCase();
     const status = (row.status || "AVAILABLE").trim().toUpperCase();
+    scopeWarehouses.add(wh.toUpperCase());
+    scopeStatuses.add(status);
+    if (row.customer?.trim()) {
+      scopeCustomerCodes.add(row.customer.trim().toUpperCase());
+    }
     const product = await prisma.product.findFirst({
-      where: { sku: row.sku.trim(), active: true }
+      where: { sku: row.sku.trim(), active: true },
+      include: { customer: { select: { code: true, name: true } } }
     });
     if (!product) {
+      omitted += 1;
       errors.push({ sku: row.sku, message: "SKU no existe o inactivo" });
       continue;
     }
 
+    scopeProductIds.add(product.id);
+    if (!row.customer?.trim() && product.customer?.code) {
+      scopeCustomerCodes.add(product.customer.code.toUpperCase());
+    }
+
+    if (row.customer?.trim()) {
+      const expectedCode = row.customer.trim().toUpperCase();
+      const actualCode = product.customer?.code?.toUpperCase();
+      if (!actualCode || actualCode !== expectedCode) {
+        omitted += 1;
+        errors.push({
+          sku: row.sku,
+          message: `Cliente no coincide: esperado ${expectedCode}, producto ligado a ${actualCode || "sin cliente"}`
+        });
+        continue;
+      }
+    }
+
     try {
-      await prisma.$transaction(async (tx) => {
+      const outcome = await prisma.$transaction(async (tx) => {
         let location = await tx.location.findUnique({ where: { code: locationCode } });
         if (!location) {
           location = await tx.location.create({
@@ -318,9 +383,11 @@ inventoryRouter.post("/import", requireRole(["ADMIN"]), async (req, res) => {
             }
           });
         }
+
         let stock = await tx.inventory.findFirst({
           where: { productId: product.id, locationId: location.id, status }
         });
+        const isNewStock = !stock;
         if (!stock) {
           stock = await tx.inventory.create({
             data: { productId: product.id, locationId: location.id, status, qty: dec(0), reservedQty: dec(0) }
@@ -329,6 +396,13 @@ inventoryRouter.post("/import", requireRole(["ADMIN"]), async (req, res) => {
 
         const before = stock.qty;
         const target = dec(row.quantity);
+
+        const compositeKey = stockCompositeKey(product.id, location.id, status);
+        keysInFile.add(compositeKey);
+
+        if (before.equals(target)) {
+          return "unchanged" as const;
+        }
 
         await tx.inventory.update({
           where: { id: stock.id },
@@ -345,14 +419,20 @@ inventoryRouter.post("/import", requireRole(["ADMIN"]), async (req, res) => {
             movementType: "ADJUST_SET",
             quantityBefore: before,
             quantityAfter: target,
-            reference: "IMPORT_INVENTORY_CSV",
-            notes: "Saldo fijado por importacion",
+            reference: (row.reference || "IMPORT_INVENTORY_CSV").trim().slice(0, 120),
+            notes: (row.notes || "Saldo fijado por importacion").trim().slice(0, 500),
             userId: req.auth!.userId
           }
         });
+
+        return isNewStock ? ("created" as const) : ("updated" as const);
       });
-      applied += 1;
+
+      if (outcome === "unchanged") unchanged += 1;
+      else if (outcome === "created") created += 1;
+      else updated += 1;
     } catch (e) {
+      omitted += 1;
       errors.push({
         sku: row.sku,
         message: e instanceof Error ? e.message : "Error"
@@ -360,19 +440,95 @@ inventoryRouter.post("/import", requireRole(["ADMIN"]), async (req, res) => {
     }
   }
 
+  if (reconcileFullInventory && scopeProductIds.size > 0) {
+    const reconcileWhere: Prisma.InventoryWhereInput = {
+      location: { warehouse: { in: [...scopeWarehouses] } },
+      productId: { in: [...scopeProductIds] },
+      status: { in: [...scopeStatuses] }
+    };
+    if (scopeCustomerCodes.size > 0) {
+      reconcileWhere.product = {
+        customer: { code: { in: [...scopeCustomerCodes] } }
+      };
+    }
+
+    const existingStocks = await prisma.inventory.findMany({
+      where: reconcileWhere,
+      include: {
+        product: { select: { id: true, sku: true } },
+        location: { select: { id: true, code: true, warehouse: true } }
+      }
+    });
+
+    for (const stock of existingStocks) {
+      const compositeKey = stockCompositeKey(stock.productId, stock.locationId, stock.status);
+      if (keysInFile.has(compositeKey)) continue;
+      if (stock.qty.equals(dec(0))) continue;
+
+      try {
+        await prisma.$transaction(async (tx) => {
+          const before = stock.qty;
+          await tx.inventory.update({
+            where: { id: stock.id },
+            data: { qty: dec(0) }
+          });
+          await tx.inventoryMovement.create({
+            data: {
+              productId: stock.productId,
+              type: "ADJUSTMENT",
+              warehouse: stock.location.warehouse,
+              qty: dec(0),
+              fromLocationId: stock.locationId,
+              movementType: "ADJUST_SET",
+              quantityBefore: before,
+              quantityAfter: dec(0),
+              reference: RECONCILE_REFERENCE,
+              notes: "Saldo ajustado a cero por reconciliacion de inventario fisico completo",
+              userId: req.auth!.userId
+            }
+          });
+        });
+        zeroed += 1;
+      } catch (e) {
+        errors.push({
+          sku: stock.product.sku,
+          message: e instanceof Error ? e.message : "Error al reconciliar saldo"
+        });
+      }
+    }
+  }
+
+  const applied = created + updated + unchanged;
+
   await logActivity({
     type: "IMPORT",
-    subtype: "CSV_INVENTORY",
+    subtype: reconcileFullInventory ? "CSV_INVENTORY_RECONCILE" : "CSV_INVENTORY",
     reference: "inventory_csv_batch",
     userId: req.auth!.userId,
     metadata: {
+      receivedRows,
       applied,
-      skipped: errors.length,
+      created,
+      updated,
+      unchanged,
+      zeroed,
+      omitted,
+      reconcileFullInventory,
       errors: errors.slice(0, 30)
     }
   });
 
-  res.json({ applied, skipped: errors.length, errors });
+  res.json({
+    receivedRows,
+    applied,
+    created,
+    updated,
+    unchanged,
+    zeroed,
+    omitted,
+    skipped: omitted,
+    errors
+  });
 });
 
 export { inventoryRouter };

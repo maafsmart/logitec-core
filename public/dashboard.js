@@ -66,6 +66,7 @@ const importSection = document.getElementById("importSection");
 const importCsv = document.getElementById("importCsv");
 const importBtn = document.getElementById("importBtn");
 const importResult = document.getElementById("importResult");
+const reconcileFullInventoryChk = document.getElementById("reconcileFullInventory");
 const inventoryMovementsList = document.getElementById("inventoryMovementsList");
 const catalogImportSection = document.getElementById("catalogImportSection");
 const catalogImportCsv = document.getElementById("catalogImportCsv");
@@ -106,6 +107,7 @@ const DEMO_RESET_CONFIRM_TEXT = "REINICIAR LOGITEC";
 
 let currentRole = null;
 let currentUserId = null;
+let catalogApplyCompleted = false;
 
 const roleModules = {
   ADMIN: ["catalog", "inventory", "picking", "traceability", "tasks", "incidents", "users", "account"],
@@ -644,6 +646,9 @@ const LOGITEC_HEADER_ALIASES = {
   lote: ["lote (sales ordener)", "lote sales ordener", "lote", "sales ordener", "sales order"],
   serialNumber: ["serial number", "serialnumber", "serial no", "serial"],
   status: ["status", "estado"],
+  poNetPrice: ["po net price", "po_net_price", "precio neto", "precio"],
+  totalPo: ["total po", "total_po", "total"],
+  currency: ["currency", "moneda"],
 };
 
 function getLogitecColumnMap(headerIndex) {
@@ -656,6 +661,9 @@ function getLogitecColumnMap(headerIndex) {
     lote: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.lote),
     serialNumber: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.serialNumber),
     status: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.status),
+    poNetPrice: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.poNetPrice),
+    totalPo: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.totalPo),
+    currency: findHeaderColumn(headerIndex, LOGITEC_HEADER_ALIASES.currency),
   };
 }
 
@@ -738,6 +746,84 @@ function normalizeCustomerCode(rawName) {
   return value;
 }
 
+function truncateText(value, max) {
+  const text = String(value || "");
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 3))}...`;
+}
+
+const LOGITEC_KNOWN_STATUSES = new Set(["AVAILABLE", "OPERATIONS", "HOLD", "BLOCKED", "QUARANTINE"]);
+
+function normalizeInventoryStatus(raw) {
+  const original = String(raw || "").trim();
+  if (!original || /^n\/a$/i.test(original)) {
+    return { status: "AVAILABLE", recognized: false, original: original || "N/A" };
+  }
+  const normalized = original.toUpperCase();
+  if (LOGITEC_KNOWN_STATUSES.has(normalized)) {
+    return { status: normalized, recognized: true, original };
+  }
+  return { status: "AVAILABLE", recognized: false, original };
+}
+
+function buildGroupedInventoryReference(group) {
+  const parts = [];
+  if (group.lotes.length) parts.push(`LOTE: ${group.lotes.slice(0, 3).join(";")}`);
+  if (group.serialRows > 0) {
+    const validSerials = group.serialRows - group.serialNA;
+    if (group.serialNA > 0) {
+      parts.push(`SERIAL: ${validSerials} serie(s); ${group.serialNA} N/A`);
+    } else {
+      parts.push(`SERIAL: ${group.serialRows} serie(s)`);
+    }
+  }
+  if (group.statusOriginal && !group.statusRecognized) {
+    parts.push(`STATUS_ORIG: ${group.statusOriginal}`);
+  }
+  return truncateText(parts.join(" | "), 120);
+}
+
+function buildGroupedInventoryNotes(group) {
+  if (!group.financialHint) return "";
+  return truncateText(group.financialHint, 500);
+}
+
+function buildLogitecImportSummary(rows, cols, convertedCount, conflicts) {
+  const customers = new Set();
+  const locations = new Set();
+  const statuses = new Set();
+  const skus = new Set();
+  let financialRows = 0;
+
+  for (const row of rows) {
+    const sku = getCellValue(row, cols.materialNumber);
+    if (sku) skus.add(sku);
+    const customerName = getCellValue(row, cols.customer);
+    if (customerName) customers.add(normalizeCustomerCode(customerName));
+    const ubicacion = getCellValue(row, cols.ubicacion);
+    if (ubicacion) locations.add(ubicacion);
+    const statusInfo = normalizeInventoryStatus(getCellValue(row, cols.status));
+    statuses.add(statusInfo.status);
+    if (
+      getCellValue(row, cols.poNetPrice) ||
+      getCellValue(row, cols.totalPo) ||
+      getCellValue(row, cols.currency)
+    ) {
+      financialRows += 1;
+    }
+  }
+
+  return {
+    uniqueProducts: skus.size,
+    customers: customers.size,
+    locations: locations.size,
+    statuses: [...statuses],
+    groupedBalances: convertedCount,
+    financialRows,
+    conflicts
+  };
+}
+
 function buildLogitecReference(row, cols) {
   const parts = [];
   const lote = getCellValue(row, cols.lote);
@@ -752,8 +838,9 @@ function buildLogitecReference(row, cols) {
 function convertLogitecToCatalog(headers, rows) {
   const headerIndex = buildHeaderIndex(headers);
   const cols = getLogitecColumnMap(headerIndex);
-  const seenSkus = new Set();
+  const skuIndex = new Map();
   const converted = [];
+  const conflicts = [];
   let skippedNoSku = 0;
 
   for (const row of rows) {
@@ -762,20 +849,31 @@ function convertLogitecToCatalog(headers, rows) {
       skippedNoSku += 1;
       continue;
     }
-    if (seenSkus.has(sku)) continue;
-    seenSkus.add(sku);
 
     const customerName = getCellValue(row, cols.customer) || "LOGITEC";
     const customer = normalizeCustomerCode(customerName);
     const name = getCellValue(row, cols.materialDescription);
-    const barcode = sku;
+    const existing = skuIndex.get(sku);
 
+    if (existing) {
+      if (existing.customer !== customer) {
+        conflicts.push(
+          `SKU ${sku}: clientes distintos (${existing.customerName} / ${customerName}). El modelo actual solo permite un cliente por SKU.`
+        );
+      }
+      if (existing.name && name && existing.name !== name) {
+        conflicts.push(`SKU ${sku}: descripciones distintas en el Excel.`);
+      }
+      continue;
+    }
+
+    skuIndex.set(sku, { customer, customerName, name });
     converted.push({
       customer,
       customerName,
       sku,
       name,
-      barcode,
+      barcode: sku,
       warehouse: LOGITEC_DEFAULT_WAREHOUSE,
     });
   }
@@ -788,11 +886,26 @@ function convertLogitecToCatalog(headers, rows) {
     ),
   ].join("\n");
 
+  const customersDetected = new Set(converted.map((item) => item.customer));
+
   return {
     csvText,
     rowsRead: rows.length,
     rowsConverted: converted.length,
     skippedNoSku,
+    conflicts,
+    importSummary: {
+      uniqueProducts: converted.length,
+      customers: customersDetected.size,
+      groupedBalances: converted.length,
+      conflicts: conflicts.length,
+      financialRows: rows.filter(
+        (row) =>
+          getCellValue(row, cols.poNetPrice) ||
+          getCellValue(row, cols.totalPo) ||
+          getCellValue(row, cols.currency)
+      ).length
+    },
     format: "logitec",
   };
 }
@@ -801,8 +914,12 @@ function convertLogitecToInventory(headers, rows, sheetName) {
   const headerIndex = buildHeaderIndex(headers);
   const cols = getLogitecColumnMap(headerIndex);
   const grouped = new Map();
+  const conflicts = [];
+  const skuCustomerIndex = new Map();
   let skippedNoSku = 0;
   let emptyQuantityRows = 0;
+  let emptyLocationRows = 0;
+  let unrecognizedStatusRows = 0;
   const defaultLocation = `${LOGITEC_DEFAULT_WAREHOUSE}-GEN-STAGE-01`;
 
   for (const row of rows) {
@@ -812,24 +929,71 @@ function convertLogitecToInventory(headers, rows, sheetName) {
       continue;
     }
 
+    const customerName = getCellValue(row, cols.customer) || "LOGITEC";
+    const customer = normalizeCustomerCode(customerName);
+    const skuCustomer = skuCustomerIndex.get(sku);
+    if (skuCustomer && skuCustomer !== customer) {
+      const conflictMsg = `SKU ${sku}: aparece con clientes distintos en inventario (${skuCustomer} / ${customer}).`;
+      if (!conflicts.includes(conflictMsg)) conflicts.push(conflictMsg);
+    } else if (!skuCustomer) {
+      skuCustomerIndex.set(sku, customer);
+    }
+
     const ubicacion = getCellValue(row, cols.ubicacion);
+    if (!ubicacion) emptyLocationRows += 1;
+    const statusInfo = normalizeInventoryStatus(getCellValue(row, cols.status));
+    if (!statusInfo.recognized && statusInfo.original) unrecognizedStatusRows += 1;
+
     const qtyParsed = parseQuantityValue(getCellValue(row, cols.poQt));
     if (qtyParsed.empty) emptyQuantityRows += 1;
 
-    const groupKey = `${sku}\u0001${ubicacion}`;
-    const current = grouped.get(groupKey) || { sku, ubicacion, quantity: 0 };
+    const groupKey = `${customer}\u0001${sku}\u0001${ubicacion}\u0001${statusInfo.status}`;
+    const current = grouped.get(groupKey) || {
+      customer,
+      customerName,
+      sku,
+      ubicacion,
+      status: statusInfo.status,
+      statusOriginal: statusInfo.original,
+      statusRecognized: statusInfo.recognized,
+      quantity: 0,
+      lotes: [],
+      serialRows: 0,
+      serialNA: 0,
+      financialHint: "",
+    };
+
     current.quantity += qtyParsed.value;
+
+    const lote = getCellValue(row, cols.lote);
+    if (lote && !current.lotes.includes(lote)) current.lotes.push(lote);
+
+    const serial = getCellValue(row, cols.serialNumber);
+    current.serialRows += 1;
+    if (!serial || /^n\/a$/i.test(serial)) current.serialNA += 1;
+
+    const price = getCellValue(row, cols.poNetPrice);
+    const total = getCellValue(row, cols.totalPo);
+    const currency = getCellValue(row, cols.currency);
+    if ((price || total || currency) && !current.financialHint) {
+      current.financialHint = `FIN: price=${price || "-"} total=${total || "-"} ${currency || ""}`.trim();
+    }
+
     grouped.set(groupKey, current);
   }
 
   const converted = [...grouped.values()].map((item) => ({
+    customer: item.customer,
     sku: item.sku,
     quantity: item.quantity,
     warehouse: LOGITEC_DEFAULT_WAREHOUSE,
     location: item.ubicacion || defaultLocation,
+    status: item.status,
+    reference: buildGroupedInventoryReference(item),
+    notes: buildGroupedInventoryNotes(item),
   }));
 
-  const outputHeaders = ["sku", "quantity", "warehouse", "location"];
+  const outputHeaders = ["customer", "sku", "quantity", "warehouse", "location", "status", "reference", "notes"];
   const csvText = [
     outputHeaders.join(","),
     ...converted.map((item) =>
@@ -837,12 +1001,19 @@ function convertLogitecToInventory(headers, rows, sheetName) {
     ),
   ].join("\n");
 
+  const importSummary = buildLogitecImportSummary(rows, cols, converted.length, conflicts);
+  importSummary.conflicts = conflicts.length;
+
   return {
     csvText,
     rowsRead: rows.length,
     rowsConverted: converted.length,
     skippedNoSku,
     emptyQuantityRows,
+    emptyLocationRows,
+    unrecognizedStatusRows,
+    conflicts,
+    importSummary,
     format: "logitec",
   };
 }
@@ -852,7 +1023,7 @@ function buildImportFileStatusMessage(result, filename, nextStepLabel, importKin
     const kindLabel =
       importKind === "catalog"
         ? "Formato Logitec detectado: catálogo convertido con códigos de cliente limpios y nombre completo para revisión."
-        : "Formato Logitec detectado: inventario agrupado por SKU y ubicación. Almacén TULTITLAN24 y ubicación física separada.";
+        : "Formato Logitec detectado: inventario agrupado por cliente, SKU, ubicación y status.";
     const details = [
       kindLabel,
       result.sheetName ? `Hoja detectada: ${result.sheetName}.` : null,
@@ -860,12 +1031,33 @@ function buildImportFileStatusMessage(result, filename, nextStepLabel, importKin
       `Filas leídas: ${result.rowsRead}.`,
       importKind === "inventory"
         ? `Saldos agrupados: ${result.rowsConverted}.`
-        : `Filas convertidas: ${result.rowsConverted}.`,
+        : `Productos únicos: ${result.rowsConverted}.`,
       "Tipo detectado: Formato Logitec.",
     ].filter(Boolean);
+    if (result.importSummary) {
+      const summary = result.importSummary;
+      details.push(`Clientes detectados: ${summary.customers}.`);
+      if (summary.locations != null) details.push(`Ubicaciones detectadas: ${summary.locations}.`);
+      if (summary.statuses?.length) details.push(`Status detectados: ${summary.statuses.join(", ")}.`);
+      if (summary.financialRows) {
+        details.push(
+          `Datos financieros detectados en ${summary.financialRows} fila(s); pendientes de modelo de valorización (ver notes/reference).`
+        );
+      }
+      if (summary.conflicts) {
+        details.push(`Conflictos detectados: ${summary.conflicts}.`);
+      }
+    }
     const extras = [];
     if (result.skippedNoSku) extras.push(`${result.skippedNoSku} filas omitidas sin SKU`);
     if (result.emptyQuantityRows) extras.push(`${result.emptyQuantityRows} filas con cantidad vacía (se usó 0)`);
+    if (result.emptyLocationRows) extras.push(`${result.emptyLocationRows} filas con ubicación vacía`);
+    if (result.unrecognizedStatusRows) {
+      extras.push(`${result.unrecognizedStatusRows} filas con STATUS no reconocido (se usó AVAILABLE y se conserva en reference)`);
+    }
+    if (result.conflicts?.length) {
+      extras.push(`Conflictos (${result.conflicts.length}): ${result.conflicts.slice(0, 2).join("; ")}`);
+    }
     if (extras.length) details.push(extras.join(". ") + ".");
     details.push(`Revisa el contenido y luego usa ${nextStepLabel}.`);
     return details.join(" ");
@@ -888,6 +1080,7 @@ async function loadImportFileIntoTextarea(file, textarea, statusEl, nextStepLabe
   try {
     const result = await processImportFile(file, importKind);
     textarea.value = result.csvText;
+    if (importKind === "catalog") resetCatalogApplyState();
     setFileStatus(statusEl, buildImportFileStatusMessage(result, file.name, nextStepLabel, importKind), false);
   } catch (err) {
     const message = err instanceof Error ? err.message : "No se pudo leer el archivo.";
@@ -951,17 +1144,19 @@ async function exportStockCsv() {
     return;
   }
   exportToCsv("logitec_inventario", rows, [
-    { label: "SKU", value: (r) => r.product?.sku || "" },
-    { label: "Producto", value: (r) => r.product?.name || "" },
-    { label: "Cliente", value: (r) => r.product?.customer?.name || r.product?.customer?.code || "" },
-    { label: "Almacén", value: (r) => r.location?.warehouse || "" },
-    { label: "Ubicación", value: (r) => r.location?.code || "" },
-    { label: "Stock actual", value: (r) => formatQty(r.qty) }
+    { label: "cliente", value: (r) => r.product?.customer?.name || "" },
+    { label: "codigo_cliente", value: (r) => r.product?.customer?.code || "" },
+    { label: "sku", value: (r) => r.product?.sku || "" },
+    { label: "producto", value: (r) => r.product?.name || "" },
+    { label: "almacen", value: (r) => r.location?.warehouse || "" },
+    { label: "ubicacion", value: (r) => r.location?.code || "" },
+    { label: "status", value: (r) => r.status || "" },
+    { label: "cantidad", value: (r) => formatQty(r.qty) }
   ]);
 }
 
 async function exportMovementsCsv() {
-  const response = await authenticatedFetch("/api/inventory/movements");
+  const response = await authenticatedFetch("/api/inventory/movements?limit=all");
   if (!response?.ok) {
     window.alert("No se pudo exportar movimientos.");
     return;
@@ -972,15 +1167,19 @@ async function exportMovementsCsv() {
     return;
   }
   exportToCsv("logitec_movimientos", rows, [
-    { label: "Fecha", value: (r) => formatExportDate(r.createdAt) },
-    { label: "Usuario", value: (r) => r.user?.fullName || r.user?.email || "" },
-    { label: "Tipo", value: (r) => r.movementType || r.type || "" },
-    { label: "SKU", value: (r) => r.product?.sku || "" },
-    { label: "Producto", value: (r) => r.product?.name || "" },
-    { label: "Cantidad", value: (r) => formatQty(r.qty) },
-    { label: "Almacén", value: (r) => r.warehouse || "" },
-    { label: "Ubicación", value: (r) => r.toLocation?.code || r.fromLocation?.code || "" },
-    { label: "Referencia", value: (r) => r.reference || "" }
+    { label: "fecha", value: (r) => formatExportDate(r.createdAt) },
+    { label: "usuario", value: (r) => r.user?.fullName || r.user?.email || "" },
+    { label: "tipo", value: (r) => r.movementType || r.type || "" },
+    { label: "cliente", value: (r) => r.product?.customer?.name || r.product?.customer?.code || "" },
+    { label: "sku", value: (r) => r.product?.sku || "" },
+    { label: "producto", value: (r) => r.product?.name || "" },
+    { label: "antes", value: (r) => formatQty(r.quantityBefore) },
+    { label: "despues", value: (r) => formatQty(r.quantityAfter) },
+    { label: "almacen", value: (r) => r.warehouse || "" },
+    { label: "ubicacion", value: (r) => r.toLocation?.code || r.fromLocation?.code || "" },
+    { label: "status", value: () => "" },
+    { label: "referencia", value: (r) => r.reference || "" },
+    { label: "notas", value: (r) => r.notes || "" }
   ]);
 }
 
@@ -1380,13 +1579,15 @@ async function loadStockStrip() {
     return;
   }
   const thead =
-    "<tr><th>SKU</th><th>Producto</th><th>Almacén</th><th>Cantidad</th></tr>";
+    "<tr><th>Cliente</th><th>SKU</th><th>Producto</th><th>Almacén</th><th>Ubicación</th><th>Status</th><th>Cantidad</th></tr>";
   const body = rows
     .map((row) => {
       const p = row.product || {};
+      const customer = p.customer?.name || p.customer?.code || "—";
       const wh = row.location?.warehouse || "—";
-      const loc = row.location?.code ? ` / ${row.location.code}` : "";
-      return `<tr><td class="cell-nowrap"><strong>${escCell(p.sku || "—")}</strong></td><td>${renderCellWithClamp(p.name || "—", "cell-truncate", 38)}</td><td>${renderCellWithClamp(`${wh}${loc}`, "cell-truncate", 24)}</td><td class="cell-nowrap">${formatQty(row.qty)}</td></tr>`;
+      const loc = row.location?.code || "—";
+      const status = row.status || "—";
+      return `<tr><td>${renderCellWithClamp(customer, "cell-truncate", 24)}</td><td class="cell-nowrap"><strong>${escCell(p.sku || "—")}</strong></td><td>${renderCellWithClamp(p.name || "—", "cell-truncate", 32)}</td><td>${renderCellWithClamp(wh, "cell-truncate", 14)}</td><td>${renderCellWithClamp(loc, "cell-truncate", 18)}</td><td class="cell-nowrap">${escCell(status)}</td><td class="cell-nowrap">${formatQty(row.qty)}</td></tr>`;
     })
     .join("");
   inventoryList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
@@ -1419,7 +1620,7 @@ async function loadInventoryMovements() {
       return `<tr><td class="cell-nowrap">${formatDateShort(m.createdAt)}</td><td class="cell-nowrap">${escCell(sku)}</td><td>${statusBadge(m.movementType)}</td><td class="cell-nowrap">${formatQty(m.quantityBefore)}</td><td class="cell-nowrap">${formatQty(m.quantityAfter)}</td><td>${renderCellWithClamp(m.warehouse, "cell-truncate", 20)}</td><td>${renderCellWithClamp(u, "cell-truncate", 20)}</td><td>${renderCellWithClamp(ref, "cell-truncate", 20)}</td></tr>`;
     })
     .join("");
-  inventoryMovementsList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+  inventoryMovementsList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>${rows.length >= 200 ? '<p class="subtitle" style="margin:8px 0 0">Mostrando los últimos 200 movimientos. Usa Exportar movimientos CSV para ver más.</p>' : ""}`;
 }
 
 async function submitMovement(event) {
@@ -1476,10 +1677,11 @@ async function runImport() {
   );
 
   try {
+    const reconcileFullInventory = reconcileFullInventoryChk?.checked === true;
     const response = await authenticatedFetch("/api/inventory/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ csv })
+      body: JSON.stringify({ csv, reconcileFullInventory })
     });
     if (!response) {
       if (importResult) importResult.textContent = "Sesión expirada. Vuelve a iniciar sesión.";
@@ -1498,10 +1700,17 @@ async function runImport() {
         ? data.errors.map((e) => `${e.sku}: ${e.message}`).join("; ")
         : "";
     if (importResult) {
-      importResult.textContent = `Inventario cargado: ${data.applied} registros aplicados, ${data.skipped || 0} omitidos.${errLines ? ` Detalle: ${errLines}` : ""}`;
+      const received = data.receivedRows ?? data.applied ?? 0;
+      const created = data.created ?? 0;
+      const updated = data.updated ?? 0;
+      const unchanged = data.unchanged ?? 0;
+      const zeroed = data.zeroed ?? 0;
+      const omitted = data.omitted ?? data.skipped ?? 0;
+      importResult.textContent = `Inventario procesado: ${received} recibidos, ${created} creados, ${updated} actualizados, ${unchanged} sin cambios, ${zeroed} ajustados a cero, ${omitted} omitidos.${errLines ? ` Detalle: ${errLines}` : ""}`;
       importResult.classList.remove("import-processing");
     }
     importCsv.value = "";
+    if (reconcileFullInventoryChk) reconcileFullInventoryChk.checked = false;
     await loadStockStrip();
     await loadInventoryMovements();
   } catch (_e) {
@@ -1808,7 +2017,92 @@ async function createCustomer(event) {
   }
 }
 
+function resetCatalogApplyState() {
+  catalogApplyCompleted = false;
+  if (catalogApplyBtn) {
+    catalogApplyBtn.disabled = false;
+    catalogApplyBtn.textContent = catalogApplyBtn.dataset.idleLabel || "Aplicar carga";
+  }
+}
+
+function setCatalogImportButtonsBusy(busy, mode) {
+  if (catalogPreviewBtn) {
+    if (!catalogPreviewBtn.dataset.idleLabel) {
+      catalogPreviewBtn.dataset.idleLabel = catalogPreviewBtn.textContent || "Vista previa";
+    }
+    if (busy) {
+      catalogPreviewBtn.disabled = true;
+      if (mode === "preview") {
+        catalogPreviewBtn.textContent = "Analizando vista previa...";
+      }
+    } else {
+      catalogPreviewBtn.disabled = false;
+      catalogPreviewBtn.textContent = catalogPreviewBtn.dataset.idleLabel;
+    }
+  }
+  if (catalogApplyBtn) {
+    if (!catalogApplyBtn.dataset.idleLabel) {
+      catalogApplyBtn.dataset.idleLabel = catalogApplyBtn.textContent || "Aplicar carga";
+    }
+    if (busy) {
+      catalogApplyBtn.disabled = true;
+      if (mode === "apply") catalogApplyBtn.textContent = "Procesando catálogo...";
+    } else if (catalogApplyCompleted) {
+      catalogApplyBtn.disabled = true;
+      catalogApplyBtn.textContent = "Catálogo ya aplicado";
+    } else {
+      catalogApplyBtn.disabled = false;
+      catalogApplyBtn.textContent = catalogApplyBtn.dataset.idleLabel;
+    }
+  }
+}
+
+function formatCatalogPreviewMessage(data) {
+  const sample = Array.isArray(data.preview) ? data.preview.slice(0, 8) : [];
+  const previewLine = sample.map((p) => `${p.sku}:${p.action}`).join(", ");
+  const unknownCustomers = Array.isArray(data.unknownCustomers) ? data.unknownCustomers : [];
+  const suppliersDetected = Array.isArray(data.suppliersDetected) ? data.suppliersDetected : [];
+  const suppliersPo = Array.isArray(data.supplierPoDetected) ? data.supplierPoDetected : [];
+  let message = `Vista previa (sin cambios en base de datos): crear ${data.created || 0}, actualizar ${data.updated || 0}, omitir ${data.skipped || 0}.`;
+  if (previewLine) message += ` Muestra: ${previewLine}.`;
+  if (unknownCustomers.length) {
+    message += ` Clientes faltantes (${unknownCustomers.length}): ${unknownCustomers.slice(0, 6).join(" | ")}.`;
+    if (unknownCustomers.length > 6) message += " …";
+    message += " Usa Aplicar carga para guardar en base de datos.";
+  } else {
+    message += " Si el resultado es correcto, usa Aplicar carga para guardar en base de datos.";
+  }
+  if (suppliersDetected.length) message += ` Proveedores detectados: ${suppliersDetected.slice(0, 4).join(", ")}.`;
+  if (suppliersPo.length) message += ` Supplier PO detectados: ${suppliersPo.slice(0, 4).join(", ")}.`;
+  return message;
+}
+
+async function fetchCatalogImport(csv, mode, autoCreateCustomers) {
+  const response = await authenticatedFetch("/api/catalog/import/products", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ csv, mode, autoCreateCustomers })
+  });
+  if (!response) {
+    return { ok: false, message: "Sesión expirada. Vuelve a iniciar sesión." };
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      ok: false,
+      message: data.message || "Error al procesar catálogo. Revisa el CSV e intenta de nuevo."
+    };
+  }
+  return { ok: true, data };
+}
+
 async function runCatalogImport(mode) {
+  if (mode === "apply" && catalogApplyCompleted) {
+    catalogImportResult.textContent =
+      "El catálogo ya fue aplicado. Carga un archivo nuevo o edita el CSV para volver a importar.";
+    return;
+  }
+
   catalogImportResult.textContent = "";
   catalogImportResult.classList.remove("import-processing");
   const csv = catalogImportCsv.value.trim();
@@ -1817,89 +2111,71 @@ async function runCatalogImport(mode) {
     return;
   }
 
-  const isApply = mode === "apply";
-  if (isApply) {
-    setButtonLoading(catalogApplyBtn, true, "Procesando catálogo...", "Aplicar carga");
-    if (catalogPreviewBtn) catalogPreviewBtn.disabled = true;
+  const isPreview = mode === "preview";
+  setCatalogImportButtonsBusy(true, mode);
+  setImportProcessingMessage(
+    catalogImportResult,
+    isPreview
+      ? "Analizando catálogo, no cierres esta pantalla."
+      : "Procesando catálogo, no cierres esta pantalla.",
+    true
+  );
+
+  try {
+    if (isPreview) {
+      const previewResult = await fetchCatalogImport(csv, "preview", false);
+      if (!previewResult.ok) {
+        catalogImportResult.textContent = previewResult.message;
+        return;
+      }
+      catalogImportResult.textContent = formatCatalogPreviewMessage(previewResult.data);
+      return;
+    }
+
+    const previewResult = await fetchCatalogImport(csv, "preview", false);
+    if (!previewResult.ok) {
+      catalogImportResult.textContent = previewResult.message;
+      return;
+    }
+
+    const unknownCustomers = Array.isArray(previewResult.data.unknownCustomers)
+      ? previewResult.data.unknownCustomers
+      : [];
+    let autoCreateCustomers = false;
+    if (unknownCustomers.length > 0) {
+      const confirmed = window.confirm(
+        `Se detectaron ${unknownCustomers.length} clientes no existentes.\n\n¿Crear estos clientes automáticamente y aplicar el catálogo?\n\nSolo Aplicar carga modifica la base de datos.`
+      );
+      if (!confirmed) {
+        catalogImportResult.textContent =
+          "Aplicación cancelada. Revisa la vista previa o confirma la creación automática de clientes.";
+        return;
+      }
+      autoCreateCustomers = true;
+    }
+
     setImportProcessingMessage(
       catalogImportResult,
       "Procesando catálogo, no cierres esta pantalla.",
       true
     );
-  } else if (catalogPreviewBtn) {
-    catalogPreviewBtn.disabled = true;
-  }
 
-  try {
-    const response = await authenticatedFetch("/api/catalog/import/products", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ csv, mode, autoCreateCustomers: false })
-    });
-    if (!response) {
-      catalogImportResult.textContent = "Sesión expirada. Vuelve a iniciar sesión.";
-      catalogImportResult.classList.remove("import-processing");
+    const applyResult = await fetchCatalogImport(csv, "apply", autoCreateCustomers);
+    if (!applyResult.ok) {
+      catalogImportResult.textContent = applyResult.message;
       return;
     }
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      catalogImportResult.textContent =
-        data.message || "Error al procesar catálogo. Revisa el CSV e intenta de nuevo.";
-      catalogImportResult.classList.remove("import-processing");
-      return;
-    }
-    const sample = Array.isArray(data.preview) ? data.preview.slice(0, 8) : [];
-    const previewLine = sample.map((p) => `${p.sku}:${p.action}`).join(", ");
-    const unknownCustomers = Array.isArray(data.unknownCustomers) ? data.unknownCustomers : [];
-    const suppliersDetected = Array.isArray(data.suppliersDetected) ? data.suppliersDetected : [];
-    const suppliersPo = Array.isArray(data.supplierPoDetected) ? data.supplierPoDetected : [];
-    catalogImportResult.textContent = `Vista previa: crear ${data.created || 0}, actualizar ${data.updated || 0}, omitir ${data.skipped || 0}.${previewLine ? ` Muestra: ${previewLine}` : ""}${unknownCustomers.length ? ` Clientes no encontrados: ${unknownCustomers.join(" | ")}.` : ""}${suppliersDetected.length ? ` Proveedores detectados: ${suppliersDetected.slice(0, 4).join(", ")}.` : ""}${suppliersPo.length ? ` Supplier PO detectados: ${suppliersPo.slice(0, 4).join(", ")}.` : ""}`;
-    catalogImportResult.classList.remove("import-processing");
 
-    if (mode === "preview" && unknownCustomers.length > 0) {
-      const confirmed = window.confirm(
-        `Se detectaron ${unknownCustomers.length} clientes no existentes. ¿Crear estos clientes automáticamente y aplicar importación? (Solo ADMIN)`
-      );
-      if (confirmed) {
-        setButtonLoading(catalogApplyBtn, true, "Procesando catálogo...", "Aplicar carga");
-        if (catalogPreviewBtn) catalogPreviewBtn.disabled = true;
-        setImportProcessingMessage(
-          catalogImportResult,
-          "Procesando catálogo, no cierres esta pantalla.",
-          true
-        );
-        const applyResponse = await authenticatedFetch("/api/catalog/import/products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ csv, mode: "apply", autoCreateCustomers: true })
-        });
-        if (!applyResponse) {
-          catalogImportResult.textContent = "Sesión expirada. Vuelve a iniciar sesión.";
-          catalogImportResult.classList.remove("import-processing");
-          return;
-        }
-        const applyData = await applyResponse.json().catch(() => ({}));
-        if (!applyResponse.ok) {
-          catalogImportResult.textContent =
-            applyData.message || "Error al aplicar catálogo. Revisa el CSV e intenta de nuevo.";
-          catalogImportResult.classList.remove("import-processing");
-          return;
-        }
-        catalogImportResult.textContent = `Aplicado con alta automática de clientes. Crear: ${applyData.created || 0}, actualizar: ${applyData.updated || 0}, omitidos: ${applyData.skipped || 0}.`;
-        catalogImportResult.classList.remove("import-processing");
-        await loadCatalogData();
-        return;
-      }
-    }
-    if (mode === "apply") {
-      await loadCatalogData();
-    }
+    const applied = applyResult.data;
+    catalogImportResult.textContent = `Catálogo aplicado correctamente. Crear: ${applied.created || 0}, actualizar: ${applied.updated || 0}, omitidos: ${applied.skipped || 0}.`;
+    catalogApplyCompleted = true;
+    await loadCatalogData();
   } catch (_error) {
-    catalogImportResult.textContent = "Error de red al procesar catálogo. Verifica conexión e intenta de nuevo.";
-    catalogImportResult.classList.remove("import-processing");
+    catalogImportResult.textContent =
+      "Error de red al procesar catálogo. Verifica conexión e intenta de nuevo.";
   } finally {
-    setButtonLoading(catalogApplyBtn, false, "Procesando catálogo...", "Aplicar carga");
-    if (catalogPreviewBtn) catalogPreviewBtn.disabled = false;
+    catalogImportResult.classList.remove("import-processing");
+    setCatalogImportButtonsBusy(false, mode);
   }
 }
 
@@ -2051,6 +2327,9 @@ if (catalogImportFile) {
     void loadImportFileIntoTextarea(file, catalogImportCsv, catalogImportFileStatus, "Vista previa / Aplicar carga", "catalog");
     if (input instanceof HTMLInputElement) input.value = "";
   });
+}
+if (catalogImportCsv) {
+  catalogImportCsv.addEventListener("input", resetCatalogApplyState);
 }
 if (inventoryImportFile) {
   inventoryImportFile.addEventListener("change", (event) => {

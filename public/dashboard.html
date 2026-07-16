@@ -1014,6 +1014,15 @@
                 <label for="importCsv">Revisar o pegar datos CSV</label>
                 <textarea id="importCsv" rows="6" placeholder="sku,warehouse,location,quantity&#10;SKU-0001,TULTITLAN24,TULTITLAN24-GEN-STAGE-01,10"></textarea>
               </div>
+              <div id="reconcileInventoryWrap" class="field full" style="margin-top: 12px">
+                <label class="checkbox-label" for="reconcileFullInventory">
+                  <input id="reconcileFullInventory" type="checkbox" />
+                  Reconciliar como inventario físico completo
+                </label>
+                <p class="import-help" style="margin-top: 6px">
+                  Usa esta opción solo si el archivo representa el inventario real actual. Las ubicaciones/saldos anteriores que ya no aparezcan en el archivo se ajustarán a cero.
+                </p>
+              </div>
               <p id="importResult" class="subtitle" style="min-height: 1.2em"></p>
               <div class="import-actions">
                 <button type="button" id="importBtn">Cargar inventario</button>
@@ -1126,6 +1135,6 @@
     </main>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=17"></script>
+    <script src="/dashboard.js?v=21"></script>
   </body>
 </html>
