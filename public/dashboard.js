@@ -95,6 +95,14 @@ const exportStockBtn = document.getElementById("exportStockBtn");
 const exportMovementsBtn = document.getElementById("exportMovementsBtn");
 const exportTraceBtn = document.getElementById("exportTraceBtn");
 const exportProductsBtn = document.getElementById("exportProductsBtn");
+const demoAdminZone = document.getElementById("demoAdminZone");
+const demoResetOpenBtn = document.getElementById("demoResetOpenBtn");
+const demoResetPanel = document.getElementById("demoResetPanel");
+const demoResetConfirmInput = document.getElementById("demoResetConfirmInput");
+const demoResetStatus = document.getElementById("demoResetStatus");
+const demoResetCancelBtn = document.getElementById("demoResetCancelBtn");
+const demoResetExecuteBtn = document.getElementById("demoResetExecuteBtn");
+const DEMO_RESET_CONFIRM_TEXT = "REINICIAR LOGITEC";
 
 let currentRole = null;
 let currentUserId = null;
@@ -285,6 +293,24 @@ function setFileStatus(el, message, isError = false) {
   if (!el) return;
   el.textContent = message;
   el.classList.toggle("error", isError);
+}
+
+function setButtonLoading(button, isLoading, loadingLabel, idleLabel) {
+  if (!button) return;
+  if (!button.dataset.idleLabel) button.dataset.idleLabel = idleLabel || button.textContent || "";
+  if (isLoading) {
+    button.disabled = true;
+    button.textContent = loadingLabel;
+  } else {
+    button.disabled = false;
+    button.textContent = button.dataset.idleLabel;
+  }
+}
+
+function setImportProcessingMessage(element, message, active) {
+  if (!element) return;
+  element.textContent = message;
+  element.classList.toggle("import-processing", active);
 }
 
 async function readXlsxWorkbook(file) {
@@ -1432,24 +1458,39 @@ async function submitMovement(event) {
 }
 
 async function runImport() {
-  if (importResult) importResult.textContent = "";
-  importBtn.disabled = true;
+  if (importResult) {
+    importResult.textContent = "";
+    importResult.classList.remove("import-processing");
+  }
   const csv = importCsv.value.trim();
   if (!csv) {
     if (importResult) importResult.textContent = "Pega el contenido CSV.";
-    importBtn.disabled = false;
     return;
   }
+
+  setButtonLoading(importBtn, true, "Procesando inventario...", "Cargar inventario");
+  setImportProcessingMessage(
+    importResult,
+    "Procesando inventario, no cierres esta pantalla. Puede tardar unos segundos.",
+    true
+  );
+
   try {
     const response = await authenticatedFetch("/api/inventory/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ csv })
     });
-    if (!response) return;
+    if (!response) {
+      if (importResult) importResult.textContent = "Sesión expirada. Vuelve a iniciar sesión.";
+      return;
+    }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      if (importResult) importResult.textContent = data.message || "Importación rechazada.";
+      if (importResult) {
+        importResult.textContent = data.message || "Error al cargar inventario. Revisa el CSV e intenta de nuevo.";
+        importResult.classList.remove("import-processing");
+      }
       return;
     }
     const errLines =
@@ -1458,14 +1499,18 @@ async function runImport() {
         : "";
     if (importResult) {
       importResult.textContent = `Inventario cargado: ${data.applied} registros aplicados, ${data.skipped || 0} omitidos.${errLines ? ` Detalle: ${errLines}` : ""}`;
+      importResult.classList.remove("import-processing");
     }
     importCsv.value = "";
     await loadStockStrip();
     await loadInventoryMovements();
   } catch (_e) {
-    if (importResult) importResult.textContent = "Error de red en importación.";
+    if (importResult) {
+      importResult.textContent = "Error de red al cargar inventario. Verifica conexión e intenta de nuevo.";
+      importResult.classList.remove("import-processing");
+    }
   } finally {
-    importBtn.disabled = false;
+    setButtonLoading(importBtn, false, "Procesando inventario...", "Cargar inventario");
   }
 }
 
@@ -1525,6 +1570,69 @@ function applyRoleNavigation(role) {
   if (exportMovementsBtn) exportMovementsBtn.style.display = canExportInventory ? "inline-block" : "none";
   if (exportTraceBtn) exportTraceBtn.style.display = canExportTrace ? "inline-block" : "none";
   if (exportProductsBtn) exportProductsBtn.style.display = canExportProducts ? "inline-block" : "none";
+  if (demoAdminZone) demoAdminZone.classList.toggle("hidden", role !== "ADMIN");
+  if (role !== "ADMIN") closeDemoResetPanel();
+}
+
+function openDemoResetPanel() {
+  if (!demoResetPanel) return;
+  demoResetPanel.classList.remove("hidden");
+  if (demoResetConfirmInput) demoResetConfirmInput.value = "";
+  if (demoResetStatus) demoResetStatus.textContent = "";
+}
+
+function closeDemoResetPanel() {
+  if (!demoResetPanel) return;
+  demoResetPanel.classList.add("hidden");
+  if (demoResetConfirmInput) demoResetConfirmInput.value = "";
+  if (demoResetStatus) demoResetStatus.textContent = "";
+}
+
+async function refreshDemoModules() {
+  await Promise.all([
+    loadCatalogData(),
+    loadStockStrip(),
+    loadInventoryMovements(),
+    loadTraceability(),
+    loadScanEvents()
+  ]);
+}
+
+async function runDemoReset() {
+  const typed = demoResetConfirmInput?.value?.trim() || "";
+  if (typed !== DEMO_RESET_CONFIRM_TEXT) {
+    if (demoResetStatus) demoResetStatus.textContent = "Confirmación incorrecta. Escribe exactamente REINICIAR LOGITEC.";
+    return;
+  }
+
+  if (demoResetStatus) demoResetStatus.textContent = "Reiniciando datos de demo...";
+  if (demoResetExecuteBtn) demoResetExecuteBtn.disabled = true;
+  if (demoResetCancelBtn) demoResetCancelBtn.disabled = true;
+
+  try {
+    const response = await authenticatedFetch("/api/admin/demo-reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation: DEMO_RESET_CONFIRM_TEXT })
+    });
+    if (!response) {
+      if (demoResetStatus) demoResetStatus.textContent = "Sesión expirada. Vuelve a iniciar sesión.";
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (demoResetStatus) demoResetStatus.textContent = data.message || "No se pudo reiniciar los datos de demo.";
+      return;
+    }
+    if (demoResetStatus) demoResetStatus.textContent = data.message || "Datos de demo reiniciados.";
+    closeDemoResetPanel();
+    await refreshDemoModules();
+  } catch (_error) {
+    if (demoResetStatus) demoResetStatus.textContent = "Error de red al reiniciar datos de demo.";
+  } finally {
+    if (demoResetExecuteBtn) demoResetExecuteBtn.disabled = false;
+    if (demoResetCancelBtn) demoResetCancelBtn.disabled = false;
+  }
 }
 
 async function createUser(event) {
@@ -1702,13 +1810,25 @@ async function createCustomer(event) {
 
 async function runCatalogImport(mode) {
   catalogImportResult.textContent = "";
+  catalogImportResult.classList.remove("import-processing");
   const csv = catalogImportCsv.value.trim();
   if (!csv) {
     catalogImportResult.textContent = "Pega contenido CSV.";
     return;
   }
-  const btn = mode === "preview" ? catalogPreviewBtn : catalogApplyBtn;
-  btn.disabled = true;
+
+  const isApply = mode === "apply";
+  if (isApply) {
+    setButtonLoading(catalogApplyBtn, true, "Procesando catálogo...", "Aplicar carga");
+    if (catalogPreviewBtn) catalogPreviewBtn.disabled = true;
+    setImportProcessingMessage(
+      catalogImportResult,
+      "Procesando catálogo, no cierres esta pantalla.",
+      true
+    );
+  } else if (catalogPreviewBtn) {
+    catalogPreviewBtn.disabled = true;
+  }
 
   try {
     const response = await authenticatedFetch("/api/catalog/import/products", {
@@ -1716,10 +1836,16 @@ async function runCatalogImport(mode) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ csv, mode, autoCreateCustomers: false })
     });
-    if (!response) return;
+    if (!response) {
+      catalogImportResult.textContent = "Sesión expirada. Vuelve a iniciar sesión.";
+      catalogImportResult.classList.remove("import-processing");
+      return;
+    }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      catalogImportResult.textContent = data.message || "No se pudo procesar importacion.";
+      catalogImportResult.textContent =
+        data.message || "Error al procesar catálogo. Revisa el CSV e intenta de nuevo.";
+      catalogImportResult.classList.remove("import-processing");
       return;
     }
     const sample = Array.isArray(data.preview) ? data.preview.slice(0, 8) : [];
@@ -1728,32 +1854,52 @@ async function runCatalogImport(mode) {
     const suppliersDetected = Array.isArray(data.suppliersDetected) ? data.suppliersDetected : [];
     const suppliersPo = Array.isArray(data.supplierPoDetected) ? data.supplierPoDetected : [];
     catalogImportResult.textContent = `Vista previa: crear ${data.created || 0}, actualizar ${data.updated || 0}, omitir ${data.skipped || 0}.${previewLine ? ` Muestra: ${previewLine}` : ""}${unknownCustomers.length ? ` Clientes no encontrados: ${unknownCustomers.join(" | ")}.` : ""}${suppliersDetected.length ? ` Proveedores detectados: ${suppliersDetected.slice(0, 4).join(", ")}.` : ""}${suppliersPo.length ? ` Supplier PO detectados: ${suppliersPo.slice(0, 4).join(", ")}.` : ""}`;
+    catalogImportResult.classList.remove("import-processing");
 
     if (mode === "preview" && unknownCustomers.length > 0) {
       const confirmed = window.confirm(
         `Se detectaron ${unknownCustomers.length} clientes no existentes. ¿Crear estos clientes automáticamente y aplicar importación? (Solo ADMIN)`
       );
       if (confirmed) {
+        setButtonLoading(catalogApplyBtn, true, "Procesando catálogo...", "Aplicar carga");
+        if (catalogPreviewBtn) catalogPreviewBtn.disabled = true;
+        setImportProcessingMessage(
+          catalogImportResult,
+          "Procesando catálogo, no cierres esta pantalla.",
+          true
+        );
         const applyResponse = await authenticatedFetch("/api/catalog/import/products", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ csv, mode: "apply", autoCreateCustomers: true })
         });
-        if (applyResponse?.ok) {
-          const applyData = await applyResponse.json().catch(() => ({}));
-          catalogImportResult.textContent = `Aplicado con alta automática de clientes. Crear: ${applyData.created || 0}, actualizar: ${applyData.updated || 0}, omitidos: ${applyData.skipped || 0}.`;
-          await loadCatalogData();
+        if (!applyResponse) {
+          catalogImportResult.textContent = "Sesión expirada. Vuelve a iniciar sesión.";
+          catalogImportResult.classList.remove("import-processing");
           return;
         }
+        const applyData = await applyResponse.json().catch(() => ({}));
+        if (!applyResponse.ok) {
+          catalogImportResult.textContent =
+            applyData.message || "Error al aplicar catálogo. Revisa el CSV e intenta de nuevo.";
+          catalogImportResult.classList.remove("import-processing");
+          return;
+        }
+        catalogImportResult.textContent = `Aplicado con alta automática de clientes. Crear: ${applyData.created || 0}, actualizar: ${applyData.updated || 0}, omitidos: ${applyData.skipped || 0}.`;
+        catalogImportResult.classList.remove("import-processing");
+        await loadCatalogData();
+        return;
       }
     }
     if (mode === "apply") {
       await loadCatalogData();
     }
   } catch (_error) {
-    catalogImportResult.textContent = "Error de red en importacion de catalogo.";
+    catalogImportResult.textContent = "Error de red al procesar catálogo. Verifica conexión e intenta de nuevo.";
+    catalogImportResult.classList.remove("import-processing");
   } finally {
-    btn.disabled = false;
+    setButtonLoading(catalogApplyBtn, false, "Procesando catálogo...", "Aplicar carga");
+    if (catalogPreviewBtn) catalogPreviewBtn.disabled = false;
   }
 }
 
@@ -1921,6 +2067,9 @@ if (exportStockBtn) exportStockBtn.addEventListener("click", () => void exportSt
 if (exportMovementsBtn) exportMovementsBtn.addEventListener("click", () => void exportMovementsCsv());
 if (exportTraceBtn) exportTraceBtn.addEventListener("click", () => void exportTraceabilityCsv());
 if (exportProductsBtn) exportProductsBtn.addEventListener("click", () => void exportProductsCsv());
+if (demoResetOpenBtn) demoResetOpenBtn.addEventListener("click", openDemoResetPanel);
+if (demoResetCancelBtn) demoResetCancelBtn.addEventListener("click", closeDemoResetPanel);
+if (demoResetExecuteBtn) demoResetExecuteBtn.addEventListener("click", () => void runDemoReset());
 if (taskList) {
   taskList.addEventListener("click", (event) => {
     const target = event.target;

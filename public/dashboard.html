@@ -586,6 +586,54 @@
       .file-status.error {
         color: var(--error);
       }
+      .demo-admin-zone {
+        margin-top: 28px;
+        padding: 18px;
+        border: 1px solid rgba(198, 40, 40, 0.45);
+        border-radius: 12px;
+        background: rgba(198, 40, 40, 0.08);
+      }
+      .demo-admin-zone h4 {
+        margin: 0 0 10px;
+        color: #ffb4b4;
+      }
+      .demo-admin-warning {
+        margin: 0 0 14px;
+        color: #ffd6d6;
+        font-size: 0.9rem;
+        line-height: 1.45;
+      }
+      .btn-danger {
+        padding: 10px 16px;
+        border: 0;
+        border-radius: 9px;
+        font-weight: 700;
+        color: #fff;
+        background: linear-gradient(90deg, #b71c1c, #e53935);
+        cursor: pointer;
+      }
+      .btn-danger:disabled {
+        opacity: 0.65;
+        cursor: not-allowed;
+      }
+      .demo-reset-panel {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(198, 40, 40, 0.35);
+      }
+      .demo-reset-panel input {
+        width: 100%;
+        margin: 10px 0 12px;
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid #8b3a3a;
+        background: #1a0f14;
+        color: #fff;
+      }
+      .import-processing {
+        color: #9fd0ff;
+        font-weight: 600;
+      }
       @media (max-width: 880px) {
         body {
           padding: 14px;
@@ -828,6 +876,24 @@
               <p id="changePasswordError" class="inline-error"></p>
               <button id="changePasswordBtn" type="submit">Actualizar contrasena</button>
             </form>
+            <div id="demoAdminZone" class="demo-admin-zone hidden">
+              <h4>Zona de administración / demo</h4>
+              <p class="demo-admin-warning">
+                Esta acción elimina catálogo, inventario, movimientos y registros operativos de demo. No elimina usuarios ni accesos.
+              </p>
+              <button type="button" id="demoResetOpenBtn" class="btn-danger">Reiniciar datos de demo</button>
+              <div id="demoResetPanel" class="demo-reset-panel hidden">
+                <p class="subtitle" style="margin: 0">
+                  Para confirmar, escribe exactamente: <strong>REINICIAR LOGITEC</strong>
+                </p>
+                <input id="demoResetConfirmInput" type="text" placeholder="REINICIAR LOGITEC" autocomplete="off" />
+                <p id="demoResetStatus" class="subtitle" style="min-height: 1.2em"></p>
+                <div class="import-actions">
+                  <button type="button" id="demoResetCancelBtn">Cancelar</button>
+                  <button type="button" id="demoResetExecuteBtn" class="btn-danger">Confirmar reinicio</button>
+                </div>
+              </div>
+            </div>
           </div>
           <div id="modulePicking" class="hidden picking-panel">
             <h3>Picking — simulación handheld</h3>
@@ -1060,6 +1126,6 @@
     </main>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=16"></script>
+    <script src="/dashboard.js?v=17"></script>
   </body>
 </html>

@@ -5,6 +5,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import path from "path";
 import { fileURLToPath } from "url";
+import { adminRouter } from "./modules/admin/admin.routes.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { catalogRouter } from "./modules/catalog/catalog.routes.js";
 import { commentsRouter } from "./modules/comments/comments.routes.js";
@@ -30,6 +31,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/auth", authRouter);
+app.use("/api/admin", adminRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/comments", commentsRouter);
 app.use("/api/inventory", inventoryRouter);
