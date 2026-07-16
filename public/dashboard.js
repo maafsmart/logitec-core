@@ -667,6 +667,51 @@ function parseQuantityValue(raw) {
   return { value: n, empty: false };
 }
 
+function stripCustomerLegalSuffixes(name) {
+  let value = String(name || "").trim();
+  const patterns = [
+    /,?\s*S\.?\s*DE\s*R\.?\s*L\.?\s*DE\s*C\.?\s*V\.?\s*$/i,
+    /,?\s*S\.?\s*A\.?\s*DE\s*C\.?\s*V\.?\s*$/i,
+    /,?\s*SA\s*DE\s*CV\s*$/i,
+    /,\s*S\.?\s*A\.?\s*$/i,
+    /,\s*SA\s*$/i,
+    /,\s*DE\s*CV\s*$/i,
+  ];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of patterns) {
+      const next = value.replace(pattern, "").trim();
+      if (next !== value) {
+        value = next;
+        changed = true;
+      }
+    }
+  }
+  return value;
+}
+
+function normalizeCustomerCode(rawName) {
+  let value = String(rawName || "").trim();
+  if (!value) return "LOGITEC";
+
+  value = value.replace(/AT&T/gi, "ATT");
+  value = value.replace(/&/g, " AND ");
+  value = stripCustomerLegalSuffixes(value);
+  value = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/ /g, "_");
+
+  if (value.length > 40) value = value.slice(0, 40).replace(/_+$/g, "");
+  if (!value) return "LOGITEC";
+  return value;
+}
+
 function buildLogitecReference(row, cols) {
   const parts = [];
   const lote = getCellValue(row, cols.lote);
@@ -694,13 +739,14 @@ function convertLogitecToCatalog(headers, rows) {
     if (seenSkus.has(sku)) continue;
     seenSkus.add(sku);
 
-    const customer = "LOGITEC";
+    const customerName = getCellValue(row, cols.customer) || "LOGITEC";
+    const customer = normalizeCustomerCode(customerName);
     const name = getCellValue(row, cols.materialDescription);
-    const serial = getCellValue(row, cols.serialNumber);
-    const barcode = serial || sku;
+    const barcode = sku;
 
     converted.push({
       customer,
+      customerName,
       sku,
       name,
       barcode,
@@ -708,7 +754,7 @@ function convertLogitecToCatalog(headers, rows) {
     });
   }
 
-  const outputHeaders = ["customer", "sku", "name", "barcode", "warehouse"];
+  const outputHeaders = ["customer", "customerName", "sku", "name", "barcode", "warehouse"];
   const csvText = [
     outputHeaders.join(","),
     ...converted.map((item) =>
@@ -773,7 +819,7 @@ function buildImportFileStatusMessage(result, filename, nextStepLabel, importKin
   if (result.format === "logitec") {
     const kindLabel =
       importKind === "catalog"
-        ? "Formato Logitec detectado: catálogo convertido bajo cliente LOGITEC para carga controlada."
+        ? "Formato Logitec detectado: catálogo convertido con códigos de cliente limpios y nombre completo para revisión."
         : "Formato Logitec detectado: inventario convertido para revisión.";
     const details = [
       kindLabel,

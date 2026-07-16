@@ -57,6 +57,13 @@ function parseCsvLine(line: string): string[] {
   return values;
 }
 
+function resolveCustomerCode(customerInput: string): string {
+  const trimmed = customerInput.trim();
+  if (!trimmed) return "";
+  if (/^[A-Z0-9_]{1,60}$/i.test(trimmed)) return trimmed.toUpperCase();
+  return normalizeCustomerCode(trimmed);
+}
+
 function normalizeCustomerCode(nameOrCode: string): string {
   const raw = nameOrCode.trim().toUpperCase();
   if (!raw) return "";
@@ -187,6 +194,9 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
 
   const header = parseCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
   const idxCustomer = header.findIndex((h) => h === "customer" || h === "cliente" || h === "customer_code");
+  const idxCustomerName = header.findIndex(
+    (h) => h === "customername" || h === "customer_name" || h === "cliente_nombre"
+  );
   const idxSku = header.findIndex((h) => h === "sku" || h === "material number" || h === "material_number");
   const idxBarcode = header.findIndex((h) => h === "barcode" || h === "ean");
   const idxName = header.findIndex(
@@ -214,7 +224,9 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
   for (let i = 1; i < lines.length; i += 1) {
     const cols = parseCsvLine(lines[i]);
     const customerInput = (cols[idxCustomer] || "").trim();
-    const customerCode = normalizeCustomerCode(customerInput);
+    const customerDisplayName =
+      idxCustomerName >= 0 ? (cols[idxCustomerName] || "").trim() : customerInput;
+    const customerCode = resolveCustomerCode(customerInput);
     const sku = cols[idxSku];
     const name = cols[idxName];
     if (idxSupplier >= 0 && cols[idxSupplier]?.trim()) detectedSuppliers.add(cols[idxSupplier].trim());
@@ -228,14 +240,14 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
     let customer = await prisma.customer.findUnique({ where: { code: customerCode } });
     if (!customer) {
       customer = await prisma.customer.findFirst({
-        where: { name: { equals: customerInput, mode: "insensitive" } }
+        where: { name: { equals: customerDisplayName || customerInput, mode: "insensitive" } }
       });
     }
     if (!customer && mode === "apply" && autoCreateCustomers) {
       customer = await prisma.customer.create({
         data: {
           code: customerCode,
-          name: customerInput || customerCode,
+          name: customerDisplayName || customerInput || customerCode,
           active: true
         }
       });
