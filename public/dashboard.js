@@ -16,6 +16,10 @@ const createUserBtn = document.getElementById("createUserBtn");
 const createUserError = document.getElementById("createUserError");
 const moduleUsers = document.getElementById("moduleUsers");
 const moduleControlCenter = document.getElementById("moduleControlCenter");
+const moduleClients = document.getElementById("moduleClients");
+const moduleReports = document.getElementById("moduleReports");
+const clientsModuleList = document.getElementById("clientsModuleList");
+const clientsAdminList = document.getElementById("clientsAdminList");
 const ccInventoryList = document.getElementById("ccInventoryList");
 const modulePicking = document.getElementById("modulePicking");
 const moduleInventory = document.getElementById("moduleInventory");
@@ -118,10 +122,12 @@ let productsCache = [];
 let movementsCountCache = 0;
 let pendingConflictsCache = 0;
 
+let clientsCache = [];
+
 const roleModules = {
-  ADMIN: ["control", "inventory", "catalog", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "users", "account"],
-  SUPERVISOR: ["control", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "account"],
-  OPERATOR: ["control", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "account"],
+  ADMIN: ["control", "clients", "catalog", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "reports", "users", "account"],
+  SUPERVISOR: ["control", "clients", "catalog", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "reports", "account"],
+  OPERATOR: ["control", "clients", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "reports", "account"],
   CLIENT: ["catalog", "account"]
 };
 
@@ -132,7 +138,7 @@ const defaultLandingModule = {
   CLIENT: "catalog"
 };
 
-currentUrl.textContent = window.location.href;
+currentUrl && (currentUrl.textContent = window.location.href);
 
 function forceLogout() {
   localStorage.removeItem("token");
@@ -154,6 +160,8 @@ function activateModule(moduleName) {
 
   const showUsers = moduleName === "users";
   const showControl = moduleName === "control";
+  const showClients = moduleName === "clients";
+  const showReports = moduleName === "reports";
   const showPicking = moduleName === "picking";
   const showInventory = moduleName === "inventory";
   const showCatalog = moduleName === "catalog";
@@ -166,6 +174,8 @@ function activateModule(moduleName) {
   const showRequisitions = moduleName === "requisitions";
   moduleUsers.classList.toggle("hidden", !showUsers);
   if (moduleControlCenter) moduleControlCenter.classList.toggle("hidden", !showControl);
+  if (moduleClients) moduleClients.classList.toggle("hidden", !showClients);
+  if (moduleReports) moduleReports.classList.toggle("hidden", !showReports);
   modulePicking.classList.toggle("hidden", !showPicking);
   moduleInventory.classList.toggle("hidden", !showInventory);
   moduleCatalog.classList.toggle("hidden", !showCatalog);
@@ -180,6 +190,8 @@ function activateModule(moduleName) {
     "hidden",
     showUsers ||
       showControl ||
+      showClients ||
+      showReports ||
       showPicking ||
       showInventory ||
       showCatalog ||
@@ -193,6 +205,7 @@ function activateModule(moduleName) {
   );
 
   if (showControl) refreshControlCenter();
+  if (showClients) renderClientsModule();
   if (showTraceability) void loadTraceability();
   if (showTasks) void loadTasks();
   if (showIncidents) void loadIncidents();
@@ -546,6 +559,8 @@ function updateInventorySummary(rows) {
   if (elLocations) elLocations.textContent = String(locations.size);
   if (elMovements) elMovements.textContent = String(movementsCountCache);
   if (elConflicts) elConflicts.textContent = String(pendingConflictsCache);
+  const elStockTotal = document.getElementById("sumStockTotal");
+  if (elStockTotal) elStockTotal.textContent = list.length ? formatQty(sumStockQty(list)) : "0";
   updateControlCenterKpis();
 }
 
@@ -661,8 +676,136 @@ const CATALOG_COLUMNS = [
   { label: "SKU" },
   { label: "Producto" },
   { label: "Almacén" },
-  { label: "Barras" }
+  { label: "Código de barras" }
 ];
+
+const CLIENTS_COLUMNS = [
+  { label: "Cliente" },
+  { label: "Customer" },
+  { label: "Productos", align: "right" },
+  { label: "Saldos asociados", align: "right" },
+  { label: "Estado" }
+];
+
+function openModal(id) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.classList.add("open");
+    el.setAttribute("aria-hidden", "false");
+  }
+}
+
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.classList.remove("open");
+    el.setAttribute("aria-hidden", "true");
+  }
+}
+
+function wireModals() {
+  document.querySelectorAll("[data-close-modal]").forEach((btn) => {
+    btn.addEventListener("click", () => closeModal(btn.getAttribute("data-close-modal")));
+  });
+  ["catalogImportModal", "inventoryImportModal"].forEach((id) => {
+    const overlay = document.getElementById(id);
+    if (!overlay || overlay.dataset.modalWired === "1") return;
+    overlay.dataset.modalWired = "1";
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) closeModal(id);
+    });
+  });
+  const openCat = document.getElementById("openCatalogImportBtn");
+  if (openCat) openCat.addEventListener("click", () => openModal("catalogImportModal"));
+  const openInv = document.getElementById("openInventoryImportBtn");
+  if (openInv) openInv.addEventListener("click", () => openModal("inventoryImportModal"));
+  const toggleMov = document.getElementById("toggleMovementsBtn");
+  if (toggleMov) {
+    toggleMov.addEventListener("click", () => {
+      const panel = document.getElementById("movementsPanel");
+      if (!panel) return;
+      const open = panel.classList.toggle("open");
+      toggleMov.textContent = open ? "Ocultar movimientos" : "Ver movimientos";
+      if (open) void loadInventoryMovements();
+    });
+  }
+  const rStock = document.getElementById("reportsExportStock");
+  const rMov = document.getElementById("reportsExportMovements");
+  const rProd = document.getElementById("reportsExportProducts");
+  const rTrace = document.getElementById("reportsExportTrace");
+  if (rStock) rStock.addEventListener("click", () => void exportStockCsv());
+  if (rMov) rMov.addEventListener("click", () => void exportMovementsCsv());
+  if (rProd) rProd.addEventListener("click", () => void exportProductsCsv());
+  if (rTrace) rTrace.addEventListener("click", () => void exportTraceabilityCsv());
+}
+
+function updateAppDateTime() {
+  const el = document.getElementById("appDateTime");
+  if (!el) return;
+  try {
+    el.textContent = new Date().toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" });
+  } catch (_e) {
+    el.textContent = new Date().toLocaleString();
+  }
+}
+
+function buildClientStatsMap() {
+  const map = new Map();
+  for (const p of productsCache) {
+    const code = p.customer?.code || "—";
+    const name = p.customer?.name || code;
+    if (!map.has(code)) map.set(code, { code, name, products: 0, stock: 0 });
+    map.get(code).products += 1;
+  }
+  for (const row of stockRowsCache) {
+    const code = row.product?.customer?.code || "—";
+    if (!map.has(code)) {
+      map.set(code, { code, name: row.product?.customer?.name || code, products: 0, stock: 0 });
+    }
+    const n = typeof row.qty === "string" ? Number(row.qty.replace(",", ".")) : Number(row.qty);
+    map.get(code).stock += Number.isNaN(n) ? 0 : n;
+  }
+  for (const c of clientsCache) {
+    const code = c.code || "—";
+    if (!map.has(code)) map.set(code, { code, name: c.name || code, products: 0, stock: 0 });
+    else if (c.name) map.get(code).name = c.name;
+  }
+  return map;
+}
+
+function renderClientsModule() {
+  if (!clientsModuleList) return;
+  const stats = buildClientStatsMap();
+  const rows = Array.from(stats.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
+  const countEl = document.getElementById("clientsTableCount");
+  if (countEl) countEl.textContent = `Mostrando ${rows.length} cliente${rows.length === 1 ? "" : "s"}`;
+  renderDataGrid(clientsModuleList, {
+    columns: CLIENTS_COLUMNS,
+    rowCellsList: rows.map((r) => [
+      renderCellEllipsis(r.name),
+      `<span class="cell-nowrap">${escCell(r.code)}</span>`,
+      String(r.products),
+      formatQty(r.stock),
+      `<span class="status-chip">${r.products > 0 ? "Activo" : "Sin catálogo"}</span>`
+    ]),
+    colsClass: "data-grid-cols-clients",
+    sizeClass: "data-grid-size-catalog",
+    emptyMessage: "No hay clientes detectados. Carga catálogo o inventario para ver clientes."
+  });
+  const adminZone = document.getElementById("clientsAdminZone");
+  const adminList = clientsAdminList;
+  if (adminZone && adminList && currentRole === "ADMIN") {
+    adminZone.classList.remove("hidden");
+    adminList.innerHTML = (Array.isArray(clientsCache) ? clientsCache : [])
+      .map(
+        (c) =>
+          `<div class="user-row"><strong>${escCell(c.code)}</strong> — ${escCell(c.name)}<button type="button" class="user-delete btn-compact btn-danger" data-delete-customer="${c.id}">Eliminar</button></div>`
+      )
+      .join("");
+  } else if (adminZone) {
+    adminZone.classList.add("hidden");
+  }
+}
 
 function renderControlCenterTable(rows) {
   if (!ccInventoryList) return;
@@ -2121,13 +2264,14 @@ async function loadStockStrip() {
         rowCellsList: [],
         colsClass: "data-grid-cols-stock",
         sizeClass: "data-grid-size-inventory",
-        emptyMessage: "Sin registros de existencias. Usa Carga avanzada para importar saldos."
+        emptyMessage: "Sin registros de existencias. Use Importar inventario para cargar saldos."
       });
     }
     applyControlCenterFilters();
     return;
   }
   applyInventoryFilters();
+  renderClientsModule();
 }
 
 async function loadInventoryMovements() {
@@ -2154,13 +2298,15 @@ async function loadInventoryMovements() {
     return;
   }
   const thead =
-    "<tr><th>Fecha</th><th>SKU</th><th>Tipo</th><th>Antes</th><th>Después</th><th>Almacén</th><th>Usuario</th><th>Ref.</th></tr>";
+    "<tr><th>Fecha</th><th>Tipo</th><th>SKU</th><th>Producto</th><th>Antes</th><th>Después</th><th>Ubicación</th><th>Usuario</th><th>Referencia</th></tr>";
   const body = rows
     .map((m) => {
       const sku = m.product?.sku || "—";
+      const productName = m.product?.name || "—";
       const u = m.user?.fullName || "—";
       const ref = m.reference || "—";
-      return `<tr><td class="cell-nowrap">${formatDateShort(m.createdAt)}</td><td class="cell-nowrap">${escCell(sku)}</td><td>${statusBadge(m.movementType)}</td><td class="cell-nowrap">${formatQty(m.quantityBefore)}</td><td class="cell-nowrap">${formatQty(m.quantityAfter)}</td><td>${renderCellWithClamp(m.warehouse, "cell-truncate", 20)}</td><td>${renderCellWithClamp(u, "cell-truncate", 20)}</td><td>${renderCellWithClamp(ref, "cell-truncate", 20)}</td></tr>`;
+      const loc = m.location?.code || m.warehouse || "—";
+      return `<tr><td class="cell-nowrap">${formatDateShort(m.createdAt)}</td><td>${statusBadge(m.movementType)}</td><td class="cell-nowrap">${escCell(sku)}</td><td>${renderCellWithClamp(productName, "cell-truncate", 28)}</td><td class="cell-nowrap">${formatQty(m.quantityBefore)}</td><td class="cell-nowrap">${formatQty(m.quantityAfter)}</td><td>${renderCellWithClamp(loc, "cell-truncate", 20)}</td><td>${renderCellWithClamp(u, "cell-truncate", 20)}</td><td>${renderCellWithClamp(ref, "cell-truncate", 20)}</td></tr>`;
     })
     .join("");
   inventoryMovementsList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>${rows.length >= 200 ? '<p class="subtitle" style="margin:8px 0 0">Mostrando los últimos 200 movimientos. Usa Exportar movimientos CSV para ver más.</p>' : ""}`;
@@ -2282,20 +2428,11 @@ async function runImport() {
 
 async function loadCatalogData() {
   await loadProductsRows();
-
   const clientsResponse = await authenticatedFetch("/api/catalog/clients");
-  if (clientsResponse?.ok) {
-    const clients = await clientsResponse.json();
-    clientsList.innerHTML = (Array.isArray(clients) ? clients : [])
-      .map((client) => {
-        const deleteBtn =
-          currentRole === "ADMIN"
-            ? `<button type="button" class="user-delete" data-delete-customer="${client.id}">Eliminar cliente</button>`
-            : "";
-        return `<div class="user-row"><strong>${client.code || "N/A"}</strong> - ${client.name}${deleteBtn}</div>`;
-      })
-      .join("");
-  }
+  clientsCache = clientsResponse?.ok ? await clientsResponse.json() : [];
+  if (!Array.isArray(clientsCache)) clientsCache = [];
+  if (clientsList) clientsList.innerHTML = "";
+  renderClientsModule();
 }
 
 async function deleteCustomerById(customerId) {
@@ -2323,9 +2460,13 @@ function applyRoleNavigation(role) {
 
   createProductForm.classList.toggle("hidden", role !== "ADMIN");
   createCustomerForm.classList.toggle("hidden", role !== "ADMIN");
-  catalogImportSection.classList.toggle("hidden", role !== "ADMIN");
+  if (importSection) importSection.classList.remove("hidden");
+  if (catalogImportSection) catalogImportSection.classList.remove("hidden");
   movementForm.classList.toggle("hidden", role !== "ADMIN");
-  importSection.classList.toggle("hidden", role !== "ADMIN");
+  const openCatBtn = document.getElementById("openCatalogImportBtn");
+  const openInvBtn = document.getElementById("openInventoryImportBtn");
+  if (openCatBtn) openCatBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
+  if (openInvBtn) openInvBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
   if (taskCreateWrap) {
     taskCreateWrap.classList.toggle("hidden", role !== "ADMIN" && role !== "SUPERVISOR");
   }
@@ -2336,6 +2477,14 @@ function applyRoleNavigation(role) {
   if (exportMovementsBtn) exportMovementsBtn.style.display = canExportInventory ? "inline-block" : "none";
   if (exportTraceBtn) exportTraceBtn.style.display = canExportTrace ? "inline-block" : "none";
   if (exportProductsBtn) exportProductsBtn.style.display = canExportProducts ? "inline-block" : "none";
+  const rStock = document.getElementById("reportsExportStock");
+  const rMov = document.getElementById("reportsExportMovements");
+  const rProd = document.getElementById("reportsExportProducts");
+  const rTrace = document.getElementById("reportsExportTrace");
+  if (rStock) rStock.style.display = canExportInventory ? "inline-block" : "none";
+  if (rMov) rMov.style.display = canExportInventory ? "inline-block" : "none";
+  if (rProd) rProd.style.display = canExportProducts ? "inline-block" : "none";
+  if (rTrace) rTrace.style.display = canExportTrace ? "inline-block" : "none";
   if (demoAdminZone) demoAdminZone.classList.toggle("hidden", role !== "ADMIN");
   if (role !== "ADMIN") closeDemoResetPanel();
 }
@@ -2371,7 +2520,7 @@ async function runDemoReset() {
     return;
   }
 
-  if (demoResetStatus) demoResetStatus.textContent = "Reiniciando datos de demo...";
+  if (demoResetStatus) demoResetStatus.textContent = "Reiniciando datos operativos...";
   if (demoResetExecuteBtn) demoResetExecuteBtn.disabled = true;
   if (demoResetCancelBtn) demoResetCancelBtn.disabled = true;
 
@@ -2387,14 +2536,14 @@ async function runDemoReset() {
     }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      if (demoResetStatus) demoResetStatus.textContent = data.message || "No se pudo reiniciar los datos de demo.";
+      if (demoResetStatus) demoResetStatus.textContent = data.message || "No se pudo reiniciar los datos operativos.";
       return;
     }
-    if (demoResetStatus) demoResetStatus.textContent = data.message || "Datos de demo reiniciados.";
+    if (demoResetStatus) demoResetStatus.textContent = data.message || "Datos operativos reiniciados.";
     closeDemoResetPanel();
     await refreshDemoModules();
   } catch (_error) {
-    if (demoResetStatus) demoResetStatus.textContent = "Error de red al reiniciar datos de demo.";
+    if (demoResetStatus) demoResetStatus.textContent = "Error de red al reiniciar datos operativos.";
   } finally {
     if (demoResetExecuteBtn) demoResetExecuteBtn.disabled = false;
     if (demoResetCancelBtn) demoResetCancelBtn.disabled = false;
@@ -2841,7 +2990,7 @@ async function validateSession() {
     currentUserId = user.id || null;
     applyRoleNavigation(currentRole);
 
-    statusBox.innerHTML = '<span class="ok">Sistema operativo</span>';
+    if (statusBox) statusBox.innerHTML = '<span class="ok">Sistema operativo</span>';
     const displayName = user.fullName || user.email || "Usuario";
     if (sessionDisplayName) sessionDisplayName.textContent = `Hola, ${displayName}`;
     if (sessionEmailInline) sessionEmailInline.textContent = user.email || "—";
@@ -2863,9 +3012,9 @@ async function validateSession() {
     const landing = defaultLandingModule[currentRole] || roleModules[currentRole]?.[0] || "account";
     activateModule(landing);
   } catch (_error) {
-    statusBox.innerHTML = '<span class="error">Error de red validando sesion.</span>';
-    currentUserEmail.textContent = "No disponible";
-    currentUserRoleText.textContent = "No disponible";
+    if (statusBox) statusBox.innerHTML = '<span class="error">Error de red validando sesion.</span>';
+    if (currentUserEmail) currentUserEmail.textContent = "No disponible";
+    if (currentUserRoleText) currentUserRoleText.textContent = "No disponible";
     if (currentUserFullName) currentUserFullName.textContent = "—";
   }
 }
@@ -2883,16 +3032,22 @@ usersList.addEventListener("click", (event) => {
   }
 });
 
-clientsList.addEventListener("click", (event) => {
+clientsList?.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
   const id = target.getAttribute("data-delete-customer");
-  if (id) {
-    void deleteCustomerById(id);
-  }
+  if (id) void deleteCustomerById(id);
 });
+if (clientsAdminList) {
+  clientsAdminList.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const id = target.getAttribute("data-delete-customer");
+    if (id) void deleteCustomerById(id);
+  });
+}
 
-logoutBtn.addEventListener("click", forceLogout);
+logoutBtn?.addEventListener("click", forceLogout);
 createUserForm.addEventListener("submit", createUser);
 changePasswordForm.addEventListener("submit", changePassword);
 createCustomerForm.addEventListener("submit", createCustomer);
@@ -2953,6 +3108,9 @@ wireInventoryFilterInputs();
 wireCatalogFilterInputs();
 wireControlCenterFilters();
 wireQuickActions();
+wireModals();
+updateAppDateTime();
+setInterval(updateAppDateTime, 60000);
 if (importResult) wireOperationalMessageClicks(importResult);
 if (catalogImportResult) wireOperationalMessageClicks(catalogImportResult);
 validateSession();
