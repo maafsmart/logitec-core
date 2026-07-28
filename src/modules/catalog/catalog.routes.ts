@@ -25,12 +25,6 @@ const createCustomerSchema = z.object({
   active: z.coerce.boolean().default(true)
 });
 
-const createClientSchema = z.object({
-  name: z.string().min(1).max(160),
-  code: z.string().max(60).optional(),
-  active: z.coerce.boolean().default(true)
-});
-
 const catalogImportSchema = z.object({
   csv: z.string().min(1),
   mode: z.enum(["preview", "apply"]).default("preview"),
@@ -153,32 +147,6 @@ catalogRouter.post("/customers", requireRole(["ADMIN"]), async (req, res) => {
       name: data.name.trim(),
       active: data.active
     }
-  });
-  res.status(201).json(customer);
-});
-
-catalogRouter.post("/clients", requireRole(["ADMIN"]), async (req, res) => {
-  const data = createClientSchema.parse(req.body);
-  const name = data.name.trim();
-  let code = data.code?.trim().toUpperCase() || "";
-  if (!code) {
-    code = normalizeCustomerCode(name);
-  }
-  if (!/^[A-Z0-9_-]{1,60}$/.test(code)) {
-    throw new HttpError(400, "Código de proyecto inválido. Use letras, números, guion o guion bajo.");
-  }
-  const existingCode = await prisma.customer.findUnique({ where: { code } });
-  if (existingCode) {
-    throw new HttpError(409, `Ya existe un cliente con código/proyecto ${code}.`);
-  }
-  const existingName = await prisma.customer.findFirst({
-    where: { name: { equals: name, mode: "insensitive" } }
-  });
-  if (existingName) {
-    throw new HttpError(409, `Ya existe un cliente con nombre ${name}.`);
-  }
-  const customer = await prisma.customer.create({
-    data: { code, name, active: data.active }
   });
   res.status(201).json(customer);
 });
