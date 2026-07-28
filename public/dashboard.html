@@ -266,6 +266,141 @@
         border-radius: 10px;
         background: #0c1730;
       }
+      /* ── Tablas operativas WMS ── */
+      .operational-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        margin-bottom: 20px;
+      }
+      .operational-filters-bar {
+        position: sticky;
+        top: 0;
+        z-index: 12;
+        padding: 12px 14px 10px;
+        border: 1px solid var(--line);
+        border-radius: 12px 12px 0 0;
+        background: #0f1830;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .operational-filters-bar .filter-strip {
+        margin-bottom: 0;
+      }
+      .operational-table-meta {
+        padding: 8px 14px;
+        font-size: 0.84rem;
+        font-weight: 600;
+        color: #9caacc;
+        border-left: 1px solid var(--line);
+        border-right: 1px solid var(--line);
+        background: #0d1730;
+      }
+      .operational-table-shell {
+        border: 1px solid var(--line);
+        border-top: 0;
+        border-radius: 0 0 12px 12px;
+        background: #0c1528;
+        overflow: hidden;
+      }
+      .operational-table-scroll {
+        overflow: auto;
+        max-height: calc(100vh - 260px);
+        -webkit-overflow-scrolling: touch;
+      }
+      .operational-table-scroll.compact-height {
+        max-height: min(380px, calc(100vh - 480px));
+      }
+      .operational-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 0.84rem;
+        min-width: 980px;
+      }
+      .operational-table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        padding: 9px 12px;
+        text-align: left;
+        font-weight: 700;
+        font-size: 0.76rem;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: #9caacc;
+        white-space: nowrap;
+        background: #152746;
+        border-bottom: 2px solid #2a3b63;
+        box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+      }
+      .operational-table tbody td {
+        padding: 6px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        vertical-align: middle;
+        background: #0c1528;
+      }
+      .operational-table tbody tr:nth-child(even) td {
+        background: #0e1a32;
+      }
+      .operational-table tbody tr:hover td {
+        background: rgba(77, 141, 255, 0.08);
+      }
+      .operational-table .col-sticky-cliente {
+        position: sticky;
+        left: 0;
+        z-index: 4;
+        min-width: 128px;
+        max-width: 168px;
+        box-shadow: 2px 0 6px rgba(0, 0, 0, 0.18);
+      }
+      .operational-table .col-sticky-sku {
+        position: sticky;
+        left: 128px;
+        z-index: 4;
+        min-width: 112px;
+        box-shadow: 2px 0 6px rgba(0, 0, 0, 0.12);
+      }
+      .operational-table thead th.col-sticky-cliente,
+      .operational-table thead th.col-sticky-sku {
+        z-index: 8;
+        background: #152746;
+      }
+      .operational-table tbody tr:nth-child(even) .col-sticky-cliente,
+      .operational-table tbody tr:nth-child(even) .col-sticky-sku {
+        background: #0e1a32;
+      }
+      .operational-table tbody tr:hover .col-sticky-cliente,
+      .operational-table tbody tr:hover .col-sticky-sku {
+        background: #132240;
+      }
+      .cell-ellipsis {
+        display: block;
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .numeric-cell {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        font-weight: 600;
+      }
+      .status-badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      .operational-empty {
+        padding: 28px 16px;
+        text-align: center;
+        color: #9caacc;
+        font-size: 0.9rem;
+      }
       .cell-nowrap {
         white-space: nowrap;
       }
@@ -1270,12 +1405,12 @@
                 </div>
               </div>
             </section>
-            <section class="cc-section" aria-label="Inventario operativo">
+            <section class="cc-section cc-table-section" aria-label="Inventario operativo">
               <div class="section-title-row" style="margin-top: 0">
                 <h4 class="cc-section-title" style="margin: 0; text-transform: none; font-size: 1rem; letter-spacing: 0.02em; color: var(--text)">Inventario operativo</h4>
-                <span id="ccTableCount" class="filter-hint" style="margin: 0"></span>
               </div>
-              <div id="ccInventoryList">Cargando existencias…</div>
+              <p id="ccTableCount" class="operational-table-meta" style="border-radius: 12px 12px 0 0; border: 1px solid var(--line); border-bottom: 0">Mostrando 0 de 0 saldos</p>
+              <div id="ccInventoryList" class="operational-table-shell">Cargando existencias…</div>
             </section>
           </div>
           <div id="moduleUsers" class="hidden">
@@ -1545,36 +1680,40 @@
             </div>
             <div class="section-title-row">
               <h4>Existencias</h4>
-              <button type="button" id="inventoryClearFiltersBtn" class="btn-export" style="background: linear-gradient(90deg, #3a4a6e, #4a5f8a)">Limpiar filtros</button>
             </div>
-            <p class="filter-hint">Filtra la tabla sin recargar. Los filtros se aplican en esta pantalla.</p>
-            <div class="filter-strip" id="inventoryFilterStrip">
-              <div class="field compact">
-                <label for="invFilterCliente">Cliente</label>
-                <input id="invFilterCliente" type="text" placeholder="Nombre" autocomplete="off" />
+            <div class="operational-panel">
+              <div class="operational-filters-bar">
+                <div class="filter-strip" id="inventoryFilterStrip">
+                  <div class="field compact">
+                    <label for="invFilterCliente">Cliente</label>
+                    <input id="invFilterCliente" type="text" placeholder="Nombre" autocomplete="off" />
+                  </div>
+                  <div class="field compact">
+                    <label for="invFilterCustomer">Customer</label>
+                    <input id="invFilterCustomer" type="text" placeholder="Código" autocomplete="off" />
+                  </div>
+                  <div class="field compact">
+                    <label for="invFilterSku">SKU</label>
+                    <input id="invFilterSku" type="text" placeholder="SKU" autocomplete="off" />
+                  </div>
+                  <div class="field compact">
+                    <label for="invFilterProducto">Producto</label>
+                    <input id="invFilterProducto" type="text" placeholder="Nombre" autocomplete="off" />
+                  </div>
+                  <div class="field compact">
+                    <label for="invFilterUbicacion">Ubicación</label>
+                    <input id="invFilterUbicacion" type="text" placeholder="Código" autocomplete="off" />
+                  </div>
+                  <div class="field compact">
+                    <label for="invFilterStatus">Status</label>
+                    <input id="invFilterStatus" type="text" placeholder="AVAILABLE…" autocomplete="off" />
+                  </div>
+                  <button type="button" id="inventoryClearFiltersBtn" class="btn-export" style="background: linear-gradient(90deg, #3a4a6e, #4a5f8a)">Limpiar filtros</button>
+                </div>
               </div>
-              <div class="field compact">
-                <label for="invFilterCustomer">Customer</label>
-                <input id="invFilterCustomer" type="text" placeholder="Código" autocomplete="off" />
-              </div>
-              <div class="field compact">
-                <label for="invFilterSku">SKU</label>
-                <input id="invFilterSku" type="text" placeholder="SKU" autocomplete="off" />
-              </div>
-              <div class="field compact">
-                <label for="invFilterProducto">Producto</label>
-                <input id="invFilterProducto" type="text" placeholder="Nombre" autocomplete="off" />
-              </div>
-              <div class="field compact">
-                <label for="invFilterUbicacion">Ubicación</label>
-                <input id="invFilterUbicacion" type="text" placeholder="Código" autocomplete="off" />
-              </div>
-              <div class="field compact">
-                <label for="invFilterStatus">Status</label>
-                <input id="invFilterStatus" type="text" placeholder="AVAILABLE…" autocomplete="off" />
-              </div>
+              <p id="inventoryTableCount" class="operational-table-meta">Mostrando 0 de 0 saldos</p>
+              <div id="inventoryList" class="operational-table-shell">Cargando...</div>
             </div>
-            <div id="inventoryList">Cargando...</div>
             <form id="movementForm" class="hidden">
               <h4 style="margin: 16px 0 8px">Registrar movimiento</h4>
               <div class="form-grid">
@@ -1662,24 +1801,28 @@
             </div>
             <div class="section-title-row">
               <h4>Productos</h4>
-              <button type="button" id="catalogClearFiltersBtn" class="btn-export" style="background: linear-gradient(90deg, #3a4a6e, #4a5f8a)">Limpiar filtros</button>
             </div>
-            <p class="filter-hint">Busca por cliente, SKU o nombre de producto.</p>
-            <div class="filter-strip" id="catalogFilterStrip">
-              <div class="field compact">
-                <label for="catFilterCliente">Cliente</label>
-                <input id="catFilterCliente" type="text" placeholder="Nombre o código" autocomplete="off" />
+            <div class="operational-panel">
+              <div class="operational-filters-bar">
+                <div class="filter-strip" id="catalogFilterStrip">
+                  <div class="field compact">
+                    <label for="catFilterCliente">Cliente</label>
+                    <input id="catFilterCliente" type="text" placeholder="Nombre o código" autocomplete="off" />
+                  </div>
+                  <div class="field compact">
+                    <label for="catFilterSku">SKU</label>
+                    <input id="catFilterSku" type="text" placeholder="SKU" autocomplete="off" />
+                  </div>
+                  <div class="field compact">
+                    <label for="catFilterProducto">Producto</label>
+                    <input id="catFilterProducto" type="text" placeholder="Nombre" autocomplete="off" />
+                  </div>
+                  <button type="button" id="catalogClearFiltersBtn" class="btn-export" style="background: linear-gradient(90deg, #3a4a6e, #4a5f8a)">Limpiar filtros</button>
+                </div>
               </div>
-              <div class="field compact">
-                <label for="catFilterSku">SKU</label>
-                <input id="catFilterSku" type="text" placeholder="SKU" autocomplete="off" />
-              </div>
-              <div class="field compact">
-                <label for="catFilterProducto">Producto</label>
-                <input id="catFilterProducto" type="text" placeholder="Nombre" autocomplete="off" />
-              </div>
+              <p id="catalogTableCount" class="operational-table-meta">Mostrando 0 de 0 productos</p>
+              <div id="productsList" class="operational-table-shell"></div>
             </div>
-            <div id="productsList"></div>
             <h4 style="margin-bottom: 8px; margin-top: 18px">Clientes</h4>
             <div id="clientsList"></div>
             <form id="createCustomerForm" class="hidden">
@@ -1877,6 +2020,6 @@
     </main>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=23"></script>
+    <script src="/dashboard.js?v=24"></script>
   </body>
 </html>

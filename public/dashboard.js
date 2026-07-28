@@ -249,6 +249,52 @@ function formatDateShort(iso) {
   }
 }
 
+function renderCellEllipsis(value, maxWidth = 220) {
+  const raw = value == null || value === "" ? "—" : String(value);
+  return `<span class="cell-ellipsis" style="max-width:${maxWidth}px" title="${escCell(raw)}">${escCell(raw)}</span>`;
+}
+
+function stickyColClass(colIndex, stickyClienteSku) {
+  if (!stickyClienteSku) return "";
+  if (colIndex === 0) return " col-sticky-cliente";
+  if (colIndex === 2) return " col-sticky-sku";
+  return "";
+}
+
+function updateTableCountMeta(elementId, shown, total, unit) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  el.textContent = `Mostrando ${shown} de ${total} ${unit}`;
+}
+
+function renderOperationalTableHtml(columns, bodyRows, { stickyClienteSku = true, compact = false } = {}) {
+  const thead = columns
+    .map((col, i) => `<th class="${col.thClass || ""}${stickyColClass(i, stickyClienteSku && col.sticky !== false)}"${col.align ? ` style="text-align:${col.align}"` : ""}>${col.label}</th>`)
+    .join("");
+  const scrollClass = compact ? "operational-table-scroll compact-height" : "operational-table-scroll";
+  return `<div class="${scrollClass}"><table class="operational-table"><thead><tr>${thead}</tr></thead><tbody>${bodyRows}</tbody></table></div>`;
+}
+
+function renderOperationalEmpty(message) {
+  return `<div class="operational-table-scroll"><p class="operational-empty">${escCell(message)}</p></div>`;
+}
+
+function inventoryStatusBadge(value) {
+  const raw = value == null || value === "" ? "—" : String(value);
+  const upper = raw.toUpperCase();
+  const inventoryTones = {
+    AVAILABLE: "available",
+    OPERATIONS: "operations",
+    HOLD: "hold",
+    BLOCKED: "blocked",
+    QUARANTINE: "quarantine"
+  };
+  if (inventoryTones[upper]) {
+    return `<span class="badge status-badge ${inventoryTones[upper]}">${escCell(upper)}</span>`;
+  }
+  return statusBadge(raw);
+}
+
 function renderCellWithClamp(value, className = "", maxLen = 32) {
   const raw = value == null || value === "" ? "—" : String(value);
   const display = raw.length > maxLen ? `${raw.slice(0, maxLen)}…` : raw;
@@ -534,29 +580,71 @@ function updateControlCenterKpis() {
   setKpi("ccKpiConflicts", String(pendingConflictsCache));
 }
 
+function stockRowHtml(row, { includeWarehouse = true } = {}) {
+  const p = row.product || {};
+  const cliente = p.customer?.name || "—";
+  const customer = p.customer?.code || "—";
+  const wh = row.location?.warehouse || "—";
+  const loc = row.location?.code || "—";
+  const status = row.status || "—";
+  const whCell = includeWarehouse
+    ? `<td>${renderCellEllipsis(wh, 140)}</td>`
+    : "";
+  return `<tr>
+    <td class="col-sticky-cliente">${renderCellEllipsis(cliente, 160)}</td>
+    <td class="cell-nowrap">${escCell(customer)}</td>
+    <td class="col-sticky-sku cell-nowrap"><strong>${escCell(p.sku || "—")}</strong></td>
+    <td>${renderCellEllipsis(p.name || "—", 220)}</td>
+    ${whCell}
+    <td class="cell-nowrap">${renderCellEllipsis(loc, 160)}</td>
+    <td class="cell-nowrap">${inventoryStatusBadge(status)}</td>
+    <td class="numeric-cell">${formatQty(row.qty)}</td>
+  </tr>`;
+}
+
+const STOCK_COLUMNS_FULL = [
+  { label: "Cliente" },
+  { label: "Customer" },
+  { label: "SKU" },
+  { label: "Producto" },
+  { label: "Almacén" },
+  { label: "Ubicación" },
+  { label: "Status" },
+  { label: "Cantidad", align: "right" }
+];
+
+const STOCK_COLUMNS_CC = [
+  { label: "Cliente" },
+  { label: "Customer" },
+  { label: "SKU" },
+  { label: "Producto" },
+  { label: "Ubicación" },
+  { label: "Status" },
+  { label: "Cantidad", align: "right" }
+];
+
+const CATALOG_COLUMNS = [
+  { label: "Cliente" },
+  { label: "Customer" },
+  { label: "SKU" },
+  { label: "Producto" },
+  { label: "Almacén" },
+  { label: "Barras" }
+];
+
 function renderControlCenterTable(rows) {
   if (!ccInventoryList) return;
-  const countEl = document.getElementById("ccTableCount");
+  const total = stockRowsCache.length;
+  const shown = Array.isArray(rows) ? rows.length : 0;
+  updateTableCountMeta("ccTableCount", shown, total, "saldos");
   if (!Array.isArray(rows) || rows.length === 0) {
-    if (countEl) countEl.textContent = "0 registros";
-    ccInventoryList.innerHTML =
-      '<p class="filter-hint" style="padding: 20px 0">Sin existencias con los filtros actuales. Carga inventario desde el módulo Inventario.</p>';
+    ccInventoryList.innerHTML = renderOperationalEmpty(
+      "Sin existencias con los filtros actuales. Carga inventario desde el módulo Inventario."
+    );
     return;
   }
-  if (countEl) countEl.textContent = `${rows.length} registro${rows.length === 1 ? "" : "s"}`;
-  const thead =
-    "<tr><th>Cliente</th><th>Customer</th><th>SKU</th><th>Producto</th><th>Ubicación</th><th>Status</th><th>Cantidad</th></tr>";
-  const body = rows
-    .map((row) => {
-      const p = row.product || {};
-      const cliente = p.customer?.name || "—";
-      const customer = p.customer?.code || "—";
-      const loc = row.location?.code || "—";
-      const status = row.status || "—";
-      return `<tr><td>${renderCellWithClamp(cliente, "cell-truncate", 22)}</td><td class="cell-nowrap">${escCell(customer)}</td><td class="cell-nowrap"><strong>${escCell(p.sku || "—")}</strong></td><td>${renderCellWithClamp(p.name || "—", "cell-truncate", 28)}</td><td>${renderCellWithClamp(loc, "cell-truncate", 16)}</td><td class="cell-nowrap">${statusBadge(status)}</td><td class="cell-nowrap">${formatQty(row.qty)}</td></tr>`;
-    })
-    .join("");
-  ccInventoryList.innerHTML = `<div class="table-wrap"><table class="scan-table compact-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+  const body = rows.map((row) => stockRowHtml(row, { includeWarehouse: false })).join("");
+  ccInventoryList.innerHTML = renderOperationalTableHtml(STOCK_COLUMNS_CC, body, { compact: true });
 }
 
 function applyControlCenterFilters() {
@@ -613,25 +701,17 @@ function filterStockRows(rows) {
 
 function renderStockTable(rows) {
   if (!inventoryList) return;
+  const total = stockRowsCache.length;
+  const shown = Array.isArray(rows) ? rows.length : 0;
+  updateTableCountMeta("inventoryTableCount", shown, total, "saldos");
   if (!Array.isArray(rows) || rows.length === 0) {
-    inventoryList.innerHTML =
-      '<span style="color:#9caacc">Sin registros de existencias con los filtros actuales. Ajusta filtros o carga inventario.</span>';
+    inventoryList.innerHTML = renderOperationalEmpty(
+      "Sin registros con los filtros actuales. Ajusta filtros o carga inventario."
+    );
     return;
   }
-  const thead =
-    "<tr><th>Cliente</th><th>Customer</th><th>SKU</th><th>Producto</th><th>Almacén</th><th>Ubicación</th><th>Status</th><th>Cantidad</th></tr>";
-  const body = rows
-    .map((row) => {
-      const p = row.product || {};
-      const cliente = p.customer?.name || "—";
-      const customer = p.customer?.code || "—";
-      const wh = row.location?.warehouse || "—";
-      const loc = row.location?.code || "—";
-      const status = row.status || "—";
-      return `<tr><td>${renderCellWithClamp(cliente, "cell-truncate", 24)}</td><td class="cell-nowrap">${escCell(customer)}</td><td class="cell-nowrap"><strong>${escCell(p.sku || "—")}</strong></td><td>${renderCellWithClamp(p.name || "—", "cell-truncate", 32)}</td><td>${renderCellWithClamp(wh, "cell-truncate", 14)}</td><td>${renderCellWithClamp(loc, "cell-truncate", 18)}</td><td class="cell-nowrap">${statusBadge(status)}</td><td class="cell-nowrap">${formatQty(row.qty)}</td></tr>`;
-    })
-    .join("");
-  inventoryList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+  const body = rows.map((row) => stockRowHtml(row, { includeWarehouse: true })).join("");
+  inventoryList.innerHTML = renderOperationalTableHtml(STOCK_COLUMNS_FULL, body);
 }
 
 function applyInventoryFilters() {
@@ -654,21 +734,28 @@ function filterProductRows(rows) {
 
 function renderProductsTable(rows) {
   if (!productsList) return;
+  const total = productsCache.length;
+  const shown = Array.isArray(rows) ? rows.length : 0;
+  updateTableCountMeta("catalogTableCount", shown, total, "productos");
   if (!Array.isArray(rows) || rows.length === 0) {
-    productsList.innerHTML =
-      '<span style="color:#9caacc">Sin productos con los filtros actuales.</span>';
+    productsList.innerHTML = renderOperationalEmpty("Sin productos con los filtros actuales.");
     return;
   }
-  const thead =
-    "<tr><th>Cliente</th><th>Customer</th><th>SKU</th><th>Producto</th><th>Almacén</th><th>Barras</th></tr>";
   const body = rows
     .map((product) => {
       const cliente = product.customer?.name || "—";
       const customer = product.customer?.code || "—";
-      return `<tr><td>${renderCellWithClamp(cliente, "cell-truncate", 24)}</td><td class="cell-nowrap">${escCell(customer)}</td><td class="cell-nowrap"><strong>${escCell(product.sku || "—")}</strong></td><td>${renderCellWithClamp(product.name || "—", "cell-truncate", 36)}</td><td>${renderCellWithClamp(product.warehouse || "—", "cell-truncate", 16)}</td><td class="cell-nowrap">${escCell(product.barcode || "—")}</td></tr>`;
+      return `<tr>
+        <td class="col-sticky-cliente">${renderCellEllipsis(cliente, 160)}</td>
+        <td class="cell-nowrap">${escCell(customer)}</td>
+        <td class="col-sticky-sku cell-nowrap"><strong>${escCell(product.sku || "—")}</strong></td>
+        <td>${renderCellEllipsis(product.name || "—", 240)}</td>
+        <td class="cell-nowrap">${renderCellEllipsis(product.warehouse || "—", 140)}</td>
+        <td class="cell-nowrap">${escCell(product.barcode || "—")}</td>
+      </tr>`;
     })
     .join("");
-  productsList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+  productsList.innerHTML = renderOperationalTableHtml(CATALOG_COLUMNS, body);
 }
 
 function applyCatalogFilters() {
@@ -1973,7 +2060,8 @@ async function loadStockStrip() {
   if (currentRole !== "ADMIN" && currentRole !== "OPERATOR" && currentRole !== "SUPERVISOR") {
     stockRowsCache = [];
     updateInventorySummary([]);
-    if (inventoryList) inventoryList.innerHTML = '<span style="color:#9caacc">Las existencias solo aplican a roles operativos.</span>';
+    updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
+    if (inventoryList) inventoryList.innerHTML = renderOperationalEmpty("Las existencias solo aplican a roles operativos.");
     applyControlCenterFilters();
     return;
   }
@@ -1981,7 +2069,8 @@ async function loadStockStrip() {
   if (!response?.ok) {
     stockRowsCache = [];
     updateInventorySummary([]);
-    if (inventoryList) inventoryList.textContent = "No se pudo cargar existencias.";
+    updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
+    if (inventoryList) inventoryList.innerHTML = renderOperationalEmpty("No se pudo cargar existencias.");
     applyControlCenterFilters();
     return;
   }
@@ -1989,9 +2078,11 @@ async function loadStockStrip() {
   stockRowsCache = Array.isArray(rows) ? rows : [];
   if (stockRowsCache.length === 0) {
     updateInventorySummary([]);
+    updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
     if (inventoryList) {
-      inventoryList.innerHTML =
-        '<span style="color:#9caacc">Sin registros de existencias. Usa Carga avanzada para importar saldos o registrar movimientos.</span>';
+      inventoryList.innerHTML = renderOperationalEmpty(
+        "Sin registros de existencias. Usa Carga avanzada para importar saldos."
+      );
     }
     applyControlCenterFilters();
     return;
