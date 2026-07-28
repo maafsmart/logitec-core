@@ -295,83 +295,121 @@
         border-right: 1px solid var(--line);
         background: #0d1730;
       }
-      .operational-table-shell {
+      .operational-table-meta {
+        padding: 8px 14px;
+        font-size: 0.84rem;
+        font-weight: 600;
+        color: #9caacc;
+        border-left: 1px solid var(--line);
+        border-right: 1px solid var(--line);
+        background: #0d1730;
+      }
+      /* ── DataGrid operativo WMS ── */
+      .data-grid {
+        display: flex;
+        flex-direction: column;
         border: 1px solid var(--line);
         border-top: 0;
         border-radius: 0 0 12px 12px;
         background: #0c1528;
         overflow: hidden;
       }
-      .operational-table-scroll {
+      .data-grid-header-x {
+        flex-shrink: 0;
+        overflow: hidden;
+        border-bottom: 2px solid #2a3b63;
+        background: #152746;
+      }
+      .data-grid-body-scroll {
         overflow: auto;
-        max-height: calc(100vh - 260px);
         -webkit-overflow-scrolling: touch;
       }
-      .operational-table-scroll.compact-height {
-        max-height: min(380px, calc(100vh - 480px));
+      .data-grid-size-inventory .data-grid-body-scroll {
+        max-height: calc(100vh - 340px);
+        min-height: 320px;
       }
-      .operational-table {
+      .data-grid-size-catalog .data-grid-body-scroll {
+        max-height: calc(100vh - 340px);
+        min-height: 320px;
+      }
+      .data-grid-size-compact .data-grid-body-scroll {
+        max-height: 360px;
+        min-height: 180px;
+      }
+      .data-grid-row {
+        display: grid;
         width: 100%;
-        border-collapse: separate;
-        border-spacing: 0;
-        font-size: 0.84rem;
         min-width: 980px;
+        align-items: center;
       }
-      .operational-table thead th {
-        position: sticky;
-        top: 0;
-        z-index: 5;
-        padding: 9px 12px;
-        text-align: left;
+      .data-grid-cols-stock {
+        grid-template-columns:
+          minmax(180px, 1.4fr)
+          140px
+          170px
+          minmax(280px, 2fr)
+          120px
+          120px
+          120px
+          90px;
+      }
+      .data-grid-cols-stock-cc {
+        grid-template-columns:
+          minmax(180px, 1.4fr)
+          140px
+          170px
+          minmax(280px, 2fr)
+          120px
+          120px
+          90px;
+      }
+      .data-grid-cols-catalog {
+        grid-template-columns:
+          minmax(180px, 1.4fr)
+          140px
+          170px
+          minmax(320px, 2fr)
+          120px
+          170px;
+      }
+      .data-grid-row.head .data-grid-cell {
+        padding: 10px 12px;
         font-weight: 700;
         font-size: 0.76rem;
         letter-spacing: 0.05em;
         text-transform: uppercase;
         color: #9caacc;
-        white-space: nowrap;
         background: #152746;
-        border-bottom: 2px solid #2a3b63;
-        box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+        white-space: nowrap;
       }
-      .operational-table tbody td {
-        padding: 6px 12px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-        vertical-align: middle;
+      .data-grid-row.body {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
         background: #0c1528;
       }
-      .operational-table tbody tr:nth-child(even) td {
+      .data-grid-row.body.row-alt {
         background: #0e1a32;
       }
-      .operational-table tbody tr:hover td {
+      .data-grid-row.body:hover {
         background: rgba(77, 141, 255, 0.08);
       }
-      .operational-table .col-sticky-cliente {
-        position: sticky;
-        left: 0;
-        z-index: 4;
-        min-width: 128px;
-        max-width: 168px;
-        box-shadow: 2px 0 6px rgba(0, 0, 0, 0.18);
+      .data-grid-cell {
+        padding: 7px 12px;
+        min-width: 0;
+        font-size: 0.84rem;
+        line-height: 1.35;
       }
-      .operational-table .col-sticky-sku {
-        position: sticky;
-        left: 128px;
-        z-index: 4;
-        min-width: 112px;
-        box-shadow: 2px 0 6px rgba(0, 0, 0, 0.12);
+      .data-grid-cell .cell-ellipsis {
+        max-width: 100%;
       }
-      .operational-table thead th.col-sticky-cliente,
-      .operational-table thead th.col-sticky-sku {
-        z-index: 8;
-        background: #152746;
-      }
-      .operational-table tbody tr:nth-child(even) .col-sticky-cliente,
-      .operational-table tbody tr:nth-child(even) .col-sticky-sku {
-        background: #0e1a32;
-      }
-      .operational-table tbody tr:hover .col-sticky-cliente,
-      .operational-table tbody tr:hover .col-sticky-sku {
-        background: #132240;
+      .data-grid-empty {
+        padding: 32px 16px;
+        text-align: center;
+        color: #9caacc;
+        font-size: 0.9rem;
+        min-height: 120px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
       .cell-ellipsis {
         display: block;
@@ -385,6 +423,11 @@
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
         font-weight: 600;
+        justify-content: flex-end;
+      }
+      .data-grid-cell.numeric-cell {
+        display: flex;
+        align-items: center;
       }
       .status-badge {
         display: inline-block;
@@ -394,12 +437,6 @@
         font-weight: 700;
         letter-spacing: 0.02em;
         white-space: nowrap;
-      }
-      .operational-empty {
-        padding: 28px 16px;
-        text-align: center;
-        color: #9caacc;
-        font-size: 0.9rem;
       }
       .cell-nowrap {
         white-space: nowrap;
@@ -1410,7 +1447,7 @@
                 <h4 class="cc-section-title" style="margin: 0; text-transform: none; font-size: 1rem; letter-spacing: 0.02em; color: var(--text)">Inventario operativo</h4>
               </div>
               <p id="ccTableCount" class="operational-table-meta" style="border-radius: 12px 12px 0 0; border: 1px solid var(--line); border-bottom: 0">Mostrando 0 de 0 saldos</p>
-              <div id="ccInventoryList" class="operational-table-shell">Cargando existencias…</div>
+              <div id="ccInventoryList">Cargando existencias…</div>
             </section>
           </div>
           <div id="moduleUsers" class="hidden">
@@ -1712,7 +1749,7 @@
                 </div>
               </div>
               <p id="inventoryTableCount" class="operational-table-meta">Mostrando 0 de 0 saldos</p>
-              <div id="inventoryList" class="operational-table-shell">Cargando...</div>
+              <div id="inventoryList">Cargando...</div>
             </div>
             <form id="movementForm" class="hidden">
               <h4 style="margin: 16px 0 8px">Registrar movimiento</h4>
@@ -1810,6 +1847,10 @@
                     <input id="catFilterCliente" type="text" placeholder="Nombre o código" autocomplete="off" />
                   </div>
                   <div class="field compact">
+                    <label for="catFilterCustomer">Customer</label>
+                    <input id="catFilterCustomer" type="text" placeholder="Código" autocomplete="off" />
+                  </div>
+                  <div class="field compact">
                     <label for="catFilterSku">SKU</label>
                     <input id="catFilterSku" type="text" placeholder="SKU" autocomplete="off" />
                   </div>
@@ -1821,7 +1862,7 @@
                 </div>
               </div>
               <p id="catalogTableCount" class="operational-table-meta">Mostrando 0 de 0 productos</p>
-              <div id="productsList" class="operational-table-shell"></div>
+              <div id="productsList"></div>
             </div>
             <h4 style="margin-bottom: 8px; margin-top: 18px">Clientes</h4>
             <div id="clientsList"></div>
@@ -2020,6 +2061,6 @@
     </main>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=24"></script>
+    <script src="/dashboard.js?v=25"></script>
   </body>
 </html>

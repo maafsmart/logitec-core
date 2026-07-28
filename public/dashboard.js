@@ -254,29 +254,54 @@ function renderCellEllipsis(value, maxWidth = 220) {
   return `<span class="cell-ellipsis" style="max-width:${maxWidth}px" title="${escCell(raw)}">${escCell(raw)}</span>`;
 }
 
-function stickyColClass(colIndex, stickyClienteSku) {
-  if (!stickyClienteSku) return "";
-  if (colIndex === 0) return " col-sticky-cliente";
-  if (colIndex === 2) return " col-sticky-sku";
-  return "";
-}
-
 function updateTableCountMeta(elementId, shown, total, unit) {
   const el = document.getElementById(elementId);
   if (!el) return;
   el.textContent = `Mostrando ${shown} de ${total} ${unit}`;
 }
 
-function renderOperationalTableHtml(columns, bodyRows, { stickyClienteSku = true, compact = false } = {}) {
-  const thead = columns
-    .map((col, i) => `<th class="${col.thClass || ""}${stickyColClass(i, stickyClienteSku && col.sticky !== false)}"${col.align ? ` style="text-align:${col.align}"` : ""}>${col.label}</th>`)
-    .join("");
-  const scrollClass = compact ? "operational-table-scroll compact-height" : "operational-table-scroll";
-  return `<div class="${scrollClass}"><table class="operational-table"><thead><tr>${thead}</tr></thead><tbody>${bodyRows}</tbody></table></div>`;
+function wireDataGridScrollSync(gridRoot) {
+  if (!gridRoot || gridRoot.dataset.scrollSync === "1") return;
+  const body = gridRoot.querySelector(".data-grid-body-scroll");
+  const headerX = gridRoot.querySelector(".data-grid-header-x");
+  if (!body || !headerX) return;
+  gridRoot.dataset.scrollSync = "1";
+  body.addEventListener("scroll", () => {
+    headerX.scrollLeft = body.scrollLeft;
+  });
 }
 
-function renderOperationalEmpty(message) {
-  return `<div class="operational-table-scroll"><p class="operational-empty">${escCell(message)}</p></div>`;
+function renderDataGrid(container, { columns, rowCellsList, colsClass, sizeClass, emptyMessage }) {
+  if (!container) return;
+  if (!Array.isArray(rowCellsList) || rowCellsList.length === 0) {
+    container.innerHTML = `<div class="data-grid ${sizeClass}"><div class="data-grid-empty">${escCell(emptyMessage)}</div></div>`;
+    return;
+  }
+  const headerHtml = columns
+    .map((col) => {
+      const extra = col.align === "right" ? " numeric-cell" : "";
+      return `<div class="data-grid-cell${extra}">${escCell(col.label)}</div>`;
+    })
+    .join("");
+  const bodyHtml = rowCellsList
+    .map((cells, idx) => {
+      const rowCells = cells
+        .map((cellHtml, ci) => {
+          const extra = columns[ci]?.align === "right" ? " numeric-cell" : "";
+          return `<div class="data-grid-cell${extra}">${cellHtml}</div>`;
+        })
+        .join("");
+      return `<div class="data-grid-row body ${colsClass}${idx % 2 === 1 ? " row-alt" : ""}">${rowCells}</div>`;
+    })
+    .join("");
+  container.innerHTML = `
+    <div class="data-grid ${sizeClass}">
+      <div class="data-grid-header-x">
+        <div class="data-grid-row head ${colsClass}">${headerHtml}</div>
+      </div>
+      <div class="data-grid-body-scroll">${bodyHtml}</div>
+    </div>`;
+  wireDataGridScrollSync(container.firstElementChild);
 }
 
 function inventoryStatusBadge(value) {
@@ -488,6 +513,7 @@ function getInventoryFilterValues() {
 function getCatalogFilterValues() {
   return {
     cliente: document.getElementById("catFilterCliente")?.value?.trim() || "",
+    customer: document.getElementById("catFilterCustomer")?.value?.trim() || "",
     sku: document.getElementById("catFilterSku")?.value?.trim() || "",
     producto: document.getElementById("catFilterProducto")?.value?.trim() || ""
   };
@@ -580,26 +606,32 @@ function updateControlCenterKpis() {
   setKpi("ccKpiConflicts", String(pendingConflictsCache));
 }
 
-function stockRowHtml(row, { includeWarehouse = true } = {}) {
+function stockRowCells(row, { includeWarehouse = true } = {}) {
   const p = row.product || {};
-  const cliente = p.customer?.name || "—";
-  const customer = p.customer?.code || "—";
-  const wh = row.location?.warehouse || "—";
-  const loc = row.location?.code || "—";
-  const status = row.status || "—";
-  const whCell = includeWarehouse
-    ? `<td>${renderCellEllipsis(wh, 140)}</td>`
-    : "";
-  return `<tr>
-    <td class="col-sticky-cliente">${renderCellEllipsis(cliente, 160)}</td>
-    <td class="cell-nowrap">${escCell(customer)}</td>
-    <td class="col-sticky-sku cell-nowrap"><strong>${escCell(p.sku || "—")}</strong></td>
-    <td>${renderCellEllipsis(p.name || "—", 220)}</td>
-    ${whCell}
-    <td class="cell-nowrap">${renderCellEllipsis(loc, 160)}</td>
-    <td class="cell-nowrap">${inventoryStatusBadge(status)}</td>
-    <td class="numeric-cell">${formatQty(row.qty)}</td>
-  </tr>`;
+  const cells = [
+    renderCellEllipsis(p.customer?.name || "—"),
+    `<span class="cell-nowrap">${escCell(p.customer?.code || "—")}</span>`,
+    `<strong class="cell-nowrap">${escCell(p.sku || "—")}</strong>`,
+    renderCellEllipsis(p.name || "—")
+  ];
+  if (includeWarehouse) cells.push(renderCellEllipsis(row.location?.warehouse || "—"));
+  cells.push(
+    renderCellEllipsis(row.location?.code || "—"),
+    inventoryStatusBadge(row.status || "—"),
+    formatQty(row.qty)
+  );
+  return cells;
+}
+
+function catalogRowCells(product) {
+  return [
+    renderCellEllipsis(product.customer?.name || "—"),
+    `<span class="cell-nowrap">${escCell(product.customer?.code || "—")}</span>`,
+    `<strong class="cell-nowrap">${escCell(product.sku || "—")}</strong>`,
+    renderCellEllipsis(product.name || "—"),
+    `<span class="cell-nowrap">${renderCellEllipsis(product.warehouse || "—")}</span>`,
+    `<span class="cell-nowrap">${escCell(product.barcode || "—")}</span>`
+  ];
 }
 
 const STOCK_COLUMNS_FULL = [
@@ -637,14 +669,13 @@ function renderControlCenterTable(rows) {
   const total = stockRowsCache.length;
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("ccTableCount", shown, total, "saldos");
-  if (!Array.isArray(rows) || rows.length === 0) {
-    ccInventoryList.innerHTML = renderOperationalEmpty(
-      "Sin existencias con los filtros actuales. Carga inventario desde el módulo Inventario."
-    );
-    return;
-  }
-  const body = rows.map((row) => stockRowHtml(row, { includeWarehouse: false })).join("");
-  ccInventoryList.innerHTML = renderOperationalTableHtml(STOCK_COLUMNS_CC, body, { compact: true });
+  renderDataGrid(ccInventoryList, {
+    columns: STOCK_COLUMNS_CC,
+    rowCellsList: Array.isArray(rows) ? rows.map((row) => stockRowCells(row, { includeWarehouse: false })) : [],
+    colsClass: "data-grid-cols-stock-cc",
+    sizeClass: "data-grid-size-compact",
+    emptyMessage: "Sin existencias con los filtros actuales. Carga inventario desde el módulo Inventario."
+  });
 }
 
 function applyControlCenterFilters() {
@@ -704,14 +735,13 @@ function renderStockTable(rows) {
   const total = stockRowsCache.length;
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("inventoryTableCount", shown, total, "saldos");
-  if (!Array.isArray(rows) || rows.length === 0) {
-    inventoryList.innerHTML = renderOperationalEmpty(
-      "Sin registros con los filtros actuales. Ajusta filtros o carga inventario."
-    );
-    return;
-  }
-  const body = rows.map((row) => stockRowHtml(row, { includeWarehouse: true })).join("");
-  inventoryList.innerHTML = renderOperationalTableHtml(STOCK_COLUMNS_FULL, body);
+  renderDataGrid(inventoryList, {
+    columns: STOCK_COLUMNS_FULL,
+    rowCellsList: Array.isArray(rows) ? rows.map((row) => stockRowCells(row, { includeWarehouse: true })) : [],
+    colsClass: "data-grid-cols-stock",
+    sizeClass: "data-grid-size-inventory",
+    emptyMessage: "Sin registros con los filtros actuales. Ajusta filtros o carga inventario."
+  });
 }
 
 function applyInventoryFilters() {
@@ -723,9 +753,11 @@ function applyInventoryFilters() {
 function filterProductRows(rows) {
   const f = getCatalogFilterValues();
   return (Array.isArray(rows) ? rows : []).filter((product) => {
-    const cliente = `${product.customer?.name || ""} ${product.customer?.code || ""}`;
+    const cliente = product.customer?.name || "";
+    const customer = product.customer?.code || "";
     return (
       matchesFilter(cliente, f.cliente) &&
+      matchesFilter(customer, f.customer) &&
       matchesFilter(product.sku, f.sku) &&
       matchesFilter(product.name, f.producto)
     );
@@ -737,25 +769,13 @@ function renderProductsTable(rows) {
   const total = productsCache.length;
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("catalogTableCount", shown, total, "productos");
-  if (!Array.isArray(rows) || rows.length === 0) {
-    productsList.innerHTML = renderOperationalEmpty("Sin productos con los filtros actuales.");
-    return;
-  }
-  const body = rows
-    .map((product) => {
-      const cliente = product.customer?.name || "—";
-      const customer = product.customer?.code || "—";
-      return `<tr>
-        <td class="col-sticky-cliente">${renderCellEllipsis(cliente, 160)}</td>
-        <td class="cell-nowrap">${escCell(customer)}</td>
-        <td class="col-sticky-sku cell-nowrap"><strong>${escCell(product.sku || "—")}</strong></td>
-        <td>${renderCellEllipsis(product.name || "—", 240)}</td>
-        <td class="cell-nowrap">${renderCellEllipsis(product.warehouse || "—", 140)}</td>
-        <td class="cell-nowrap">${escCell(product.barcode || "—")}</td>
-      </tr>`;
-    })
-    .join("");
-  productsList.innerHTML = renderOperationalTableHtml(CATALOG_COLUMNS, body);
+  renderDataGrid(productsList, {
+    columns: CATALOG_COLUMNS,
+    rowCellsList: Array.isArray(rows) ? rows.map(catalogRowCells) : [],
+    colsClass: "data-grid-cols-catalog",
+    sizeClass: "data-grid-size-catalog",
+    emptyMessage: "Sin productos con los filtros actuales."
+  });
 }
 
 function applyCatalogFilters() {
@@ -773,7 +793,7 @@ function clearInventoryFilters() {
 }
 
 function clearCatalogFilters() {
-  ["catFilterCliente", "catFilterSku", "catFilterProducto"].forEach((id) => {
+  ["catFilterCliente", "catFilterCustomer", "catFilterSku", "catFilterProducto"].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
@@ -798,7 +818,7 @@ function wireInventoryFilterInputs() {
 }
 
 function wireCatalogFilterInputs() {
-  ["catFilterCliente", "catFilterSku", "catFilterProducto"].forEach((id) => {
+  ["catFilterCliente", "catFilterCustomer", "catFilterSku", "catFilterProducto"].forEach((id) => {
     const el = document.getElementById(id);
     if (el && el.dataset.filterWired !== "1") {
       el.dataset.filterWired = "1";
@@ -2061,7 +2081,15 @@ async function loadStockStrip() {
     stockRowsCache = [];
     updateInventorySummary([]);
     updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
-    if (inventoryList) inventoryList.innerHTML = renderOperationalEmpty("Las existencias solo aplican a roles operativos.");
+    if (inventoryList) {
+      renderDataGrid(inventoryList, {
+        columns: STOCK_COLUMNS_FULL,
+        rowCellsList: [],
+        colsClass: "data-grid-cols-stock",
+        sizeClass: "data-grid-size-inventory",
+        emptyMessage: "Las existencias solo aplican a roles operativos."
+      });
+    }
     applyControlCenterFilters();
     return;
   }
@@ -2070,7 +2098,15 @@ async function loadStockStrip() {
     stockRowsCache = [];
     updateInventorySummary([]);
     updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
-    if (inventoryList) inventoryList.innerHTML = renderOperationalEmpty("No se pudo cargar existencias.");
+    if (inventoryList) {
+      renderDataGrid(inventoryList, {
+        columns: STOCK_COLUMNS_FULL,
+        rowCellsList: [],
+        colsClass: "data-grid-cols-stock",
+        sizeClass: "data-grid-size-inventory",
+        emptyMessage: "No se pudo cargar existencias."
+      });
+    }
     applyControlCenterFilters();
     return;
   }
@@ -2080,9 +2116,13 @@ async function loadStockStrip() {
     updateInventorySummary([]);
     updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
     if (inventoryList) {
-      inventoryList.innerHTML = renderOperationalEmpty(
-        "Sin registros de existencias. Usa Carga avanzada para importar saldos."
-      );
+      renderDataGrid(inventoryList, {
+        columns: STOCK_COLUMNS_FULL,
+        rowCellsList: [],
+        colsClass: "data-grid-cols-stock",
+        sizeClass: "data-grid-size-inventory",
+        emptyMessage: "Sin registros de existencias. Usa Carga avanzada para importar saldos."
+      });
     }
     applyControlCenterFilters();
     return;
