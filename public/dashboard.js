@@ -319,7 +319,13 @@ const GRID_SORT_PREFIX = "logitec_grid_sort_";
 const GRID_DENSITY_KEY = "logitec_grid_density";
 const GRID_SELECTION_PREFIX = "logitec_grid_sel_";
 const ACTIVE_CLIENT_KEY = "logitec_active_client";
+const ACTIVE_PROJECT_KEY = "logitec_active_project";
 const ACTIVE_CLIENT_GENERAL = "GENERAL";
+const ACTIVE_PROJECT_ALL = "ALL";
+const PRIMARY_CLIENT_AVIAT = "AVIAT";
+const PRIMARY_CLIENT_AVIAT_NAME = "AVIAT";
+const EXTRA_PRIMARY_CLIENTS_KEY = "logitec_primary_clients";
+const AVIAT_TEMP_PROJECTS_KEY = "logitec_aviat_temp_projects";
 
 const GRID_DEFAULT_WIDTHS = {
   inventory_general: [200, 120, 100, 160, 260, 110, 140, 110, 90],
@@ -351,15 +357,115 @@ function getActiveClient() {
   return localStorage.getItem(ACTIVE_CLIENT_KEY) || ACTIVE_CLIENT_GENERAL;
 }
 
+function getActiveProject() {
+  return localStorage.getItem(ACTIVE_PROJECT_KEY) || ACTIVE_PROJECT_ALL;
+}
+
+function getExtraPrimaryClients() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(EXTRA_PRIMARY_CLIENTS_KEY) || "[]");
+    return Array.isArray(raw) ? raw : [];
+  } catch (_e) {
+    return [];
+  }
+}
+
+function getPrimaryClients() {
+  const list = [
+    { code: ACTIVE_CLIENT_GENERAL, name: "Vista general" },
+    { code: PRIMARY_CLIENT_AVIAT, name: PRIMARY_CLIENT_AVIAT_NAME }
+  ];
+  for (const item of getExtraPrimaryClients()) {
+    const code = String(item?.code || "").trim().toUpperCase();
+    if (!code || code === ACTIVE_CLIENT_GENERAL || code === PRIMARY_CLIENT_AVIAT) continue;
+    list.push({ code, name: item.name || code });
+  }
+  return list;
+}
+
+function isKnownPrimaryClientCode(code) {
+  const upper = String(code || "").trim().toUpperCase();
+  return getPrimaryClients().some((c) => c.code === upper);
+}
+
+function getAviatTempProjects() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(AVIAT_TEMP_PROJECTS_KEY) || "[]");
+    return Array.isArray(raw) ? raw : [];
+  } catch (_e) {
+    return [];
+  }
+}
+
+function getProjectsForPrimaryClient(clientCode) {
+  const client = String(clientCode || "").trim().toUpperCase();
+  if (client === ACTIVE_CLIENT_GENERAL) return [];
+  if (client !== PRIMARY_CLIENT_AVIAT) return [];
+  const map = new Map();
+  for (const c of clientsCache) {
+    if (!c?.code) continue;
+    map.set(String(c.code).toUpperCase(), { code: c.code, name: c.name || c.code });
+  }
+  for (const p of productsCache) {
+    const code = p.customer?.code;
+    if (!code) continue;
+    map.set(String(code).toUpperCase(), { code, name: p.customer?.name || code });
+  }
+  for (const t of getAviatTempProjects()) {
+    const code = String(t?.code || "").trim();
+    if (!code) continue;
+    map.set(code.toUpperCase(), { code, name: t.name || code });
+  }
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
+}
+
+function getPrimaryClientLabel(code) {
+  const match = getPrimaryClients().find((c) => c.code === String(code || "").toUpperCase());
+  return match?.name || code || "";
+}
+
+function migrateLegacyActiveClientState() {
+  const stored = String(localStorage.getItem(ACTIVE_CLIENT_KEY) || "").trim().toUpperCase();
+  if (!stored || stored === ACTIVE_CLIENT_GENERAL || stored === PRIMARY_CLIENT_AVIAT) return;
+  if (isKnownPrimaryClientCode(stored)) return;
+  localStorage.setItem(ACTIVE_CLIENT_KEY, PRIMARY_CLIENT_AVIAT);
+  localStorage.setItem(ACTIVE_PROJECT_KEY, stored);
+}
+
 function setActiveClient(code) {
   const value = code && String(code).trim() ? String(code).trim().toUpperCase() : ACTIVE_CLIENT_GENERAL;
   localStorage.setItem(ACTIVE_CLIENT_KEY, value);
+  if (value === ACTIVE_CLIENT_GENERAL) {
+    localStorage.setItem(ACTIVE_PROJECT_KEY, ACTIVE_PROJECT_ALL);
+  } else if (value !== PRIMARY_CLIENT_AVIAT) {
+    localStorage.setItem(ACTIVE_PROJECT_KEY, ACTIVE_PROJECT_ALL);
+  } else if (!localStorage.getItem(ACTIVE_PROJECT_KEY)) {
+    localStorage.setItem(ACTIVE_PROJECT_KEY, ACTIVE_PROJECT_ALL);
+  }
+  updateActiveClientUi();
+  refreshClientScopedViews();
+}
+
+function setActiveProject(code) {
+  const value = code && String(code).trim() ? String(code).trim().toUpperCase() : ACTIVE_PROJECT_ALL;
+  localStorage.setItem(ACTIVE_PROJECT_KEY, value);
+  if (getActiveClient() === ACTIVE_CLIENT_GENERAL && value !== ACTIVE_PROJECT_ALL) {
+    localStorage.setItem(ACTIVE_CLIENT_KEY, PRIMARY_CLIENT_AVIAT);
+  }
   updateActiveClientUi();
   refreshClientScopedViews();
 }
 
 function isGeneralView() {
   return getActiveClient() === ACTIVE_CLIENT_GENERAL;
+}
+
+function isAviatView() {
+  return getActiveClient() === PRIMARY_CLIENT_AVIAT;
+}
+
+function isPrimaryClientView() {
+  return !isGeneralView();
 }
 
 function getInventoryGridId() {
@@ -411,49 +517,103 @@ function resolveResetGridId(gridId) {
 function getActiveClientRecord() {
   const active = getActiveClient();
   if (active === ACTIVE_CLIENT_GENERAL) return null;
-  return (Array.isArray(clientsCache) ? clientsCache : []).find(
-    (c) => String(c.code || "").toUpperCase() === active
-  );
+  if (active === PRIMARY_CLIENT_AVIAT) return { code: PRIMARY_CLIENT_AVIAT, name: PRIMARY_CLIENT_AVIAT_NAME };
+  return getExtraPrimaryClients().find((c) => String(c.code || "").toUpperCase() === active) || { code: active, name: active };
 }
 
 function getActiveClientDisplayLabel() {
   if (isGeneralView()) return "Vista general";
-  const rec = getActiveClientRecord();
-  if (rec?.name) return rec.name;
-  return getActiveClient();
+  return getPrimaryClientLabel(getActiveClient());
 }
 
-function rowClientCode(row) {
+function getActiveProjectDisplayLabel() {
+  if (isGeneralView()) return "";
+  const project = getActiveProject();
+  if (project === ACTIVE_PROJECT_ALL) return "Todos los proyectos";
+  const match = getProjectsForPrimaryClient(getActiveClient()).find(
+    (p) => String(p.code).toUpperCase() === project
+  );
+  return match?.name || project;
+}
+
+function getProjectCodeFromRow(row) {
   return (
     row?.product?.customer?.code ||
     row?.customer?.code ||
+    row?.project?.code ||
     row?.code ||
     parseRequisitionNotes(row?.notes)?.customerCode ||
     ""
   );
 }
 
-function rowClientName(row) {
+function getProjectNameFromRow(row) {
   return (
     row?.product?.customer?.name ||
     row?.customer?.name ||
+    row?.project?.name ||
     row?.name ||
     parseRequisitionNotes(row?.notes)?.customerName ||
+    getProjectCodeFromRow(row) ||
     ""
   );
 }
 
+function getPrimaryClientFromRow(row) {
+  return PRIMARY_CLIENT_AVIAT;
+}
+
+function getPrimaryClientNameFromRow(_row) {
+  return PRIMARY_CLIENT_AVIAT_NAME;
+}
+
+function rowClientCode(row) {
+  return getProjectCodeFromRow(row);
+}
+
+function rowClientName(row) {
+  return getProjectNameFromRow(row);
+}
+
 function rowMatchesActiveClient(row) {
   if (isGeneralView()) return true;
-  const active = getActiveClient().toUpperCase();
-  const code = String(rowClientCode(row) || "").toUpperCase();
-  const name = String(rowClientName(row) || "").toUpperCase();
-  return code === active || name === active;
+  return getPrimaryClientFromRow(row).toUpperCase() === getActiveClient().toUpperCase();
+}
+
+function rowMatchesActiveProject(row) {
+  if (isGeneralView()) return true;
+  const activeProject = getActiveProject();
+  if (activeProject === ACTIVE_PROJECT_ALL) return true;
+  const code = String(getProjectCodeFromRow(row) || "").toUpperCase();
+  const name = String(getProjectNameFromRow(row) || "").toUpperCase();
+  const target = activeProject.toUpperCase();
+  return code === target || name === target;
 }
 
 function filterRowsByActiveClient(rows) {
   if (isGeneralView()) return Array.isArray(rows) ? rows : [];
-  return (Array.isArray(rows) ? rows : []).filter((row) => rowMatchesActiveClient(row));
+  return (Array.isArray(rows) ? rows : []).filter(
+    (row) => rowMatchesActiveClient(row) && rowMatchesActiveProject(row)
+  );
+}
+
+function getScopeSummaryText() {
+  if (isGeneralView()) return "Mostrando información general de todos los clientes/proyectos.";
+  if (isAviatView() && getActiveProject() === ACTIVE_PROJECT_ALL) {
+    return "Mostrando todos los proyectos de AVIAT";
+  }
+  if (isAviatView()) {
+    return `Mostrando proyecto ${getActiveProjectDisplayLabel()} de AVIAT`;
+  }
+  return `Mostrando información de: ${getActiveClientDisplayLabel()}.`;
+}
+
+function buildScopeExportFilename(baseName) {
+  if (isGeneralView()) return `logitec_${baseName}`;
+  const client = getActiveClient();
+  const project = getActiveProject();
+  if (project === ACTIVE_PROJECT_ALL) return `${baseName}_${client}`;
+  return `${baseName}_${client}_${project}`;
 }
 
 function extractLoteFromText(text) {
@@ -488,30 +648,51 @@ function buildOpsReference(lote, referenceRaw, kind) {
 
 function updateActiveClientUi() {
   const label = document.getElementById("activeClientLabel");
+  const projectLabel = document.getElementById("activeProjectLabel");
   const scopeInv = document.getElementById("inventoryClientScope");
   const scopeCat = document.getElementById("catalogClientScope");
   const scopeCc = document.getElementById("controlClientScope");
-  const display = getActiveClientDisplayLabel();
+  const ccTitle = document.getElementById("ccModuleTitle");
+  const scopeText = getScopeSummaryText();
+  const clientDisplay = getActiveClientDisplayLabel();
+  const projectDisplay = getActiveProjectDisplayLabel();
   if (label) {
-    label.textContent = display;
+    label.textContent = clientDisplay;
     label.classList.toggle("is-general", isGeneralView());
   }
-  const scopeGeneral = "Mostrando información general de todos los clientes/proyectos.";
-  const scopeActive = `Mostrando información de: ${display}.`;
-  if (scopeInv) scopeInv.textContent = isGeneralView() ? scopeGeneral : scopeActive;
-  if (scopeCat) scopeCat.textContent = isGeneralView() ? scopeGeneral : scopeActive;
-  if (scopeCc) scopeCc.textContent = isGeneralView() ? scopeGeneral : scopeActive;
+  if (projectLabel) {
+    projectLabel.textContent = isGeneralView() ? "" : projectDisplay;
+    projectLabel.closest(".active-project-bar")?.classList.toggle("hidden", isGeneralView());
+  }
+  if (scopeInv) scopeInv.textContent = scopeText;
+  if (scopeCat) scopeCat.textContent = scopeText;
+  if (scopeCc) scopeCc.textContent = scopeText;
+  if (ccTitle) {
+    ccTitle.textContent = isGeneralView() ? "Centro de Control" : `Centro de Control — ${clientDisplay}`;
+  }
   document.querySelectorAll("[data-active-client-pill]").forEach((el) => {
-    el.textContent = display;
+    el.textContent = clientDisplay;
     el.classList.toggle("is-general", isGeneralView());
   });
+  document.querySelectorAll("[data-active-project-pill]").forEach((el) => {
+    el.textContent = isGeneralView() ? "" : projectDisplay;
+  });
+  renderAviatProjectChips(document.getElementById("aviatProjectChips"));
+  renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
   updateViewModeUi();
 }
 
 function updateViewModeUi() {
   const general = isGeneralView();
+  const aviat = isAviatView();
   document.querySelectorAll(".view-general-only").forEach((el) => {
     el.classList.toggle("hidden", !general);
+  });
+  document.querySelectorAll(".view-aviat-only").forEach((el) => {
+    el.classList.toggle("hidden", !aviat);
+  });
+  document.querySelectorAll(".view-primary-client-only").forEach((el) => {
+    el.classList.toggle("hidden", general);
   });
 }
 
@@ -541,42 +722,74 @@ function refreshClientScopedViews() {
 }
 
 function applyActiveClientToOperationalSelects() {
-  const active = getActiveClient();
-  const isLocked = active !== ACTIVE_CLIENT_GENERAL;
+  const activeClient = getActiveClient();
+  const activeProject = getActiveProject();
+  const isPrimaryLocked = activeClient !== ACTIVE_CLIENT_GENERAL;
+  populateOperationalSelects();
   ["inboundCustomer", "outboundCustomer", "reqCustomer"].forEach((id) => {
     const sel = document.getElementById(id);
     if (!sel) return;
-    if (isLocked) sel.value = active;
-    sel.disabled = isLocked;
+    sel.disabled = false;
+    if (isPrimaryLocked && activeProject !== ACTIVE_PROJECT_ALL) {
+      sel.value = activeProject;
+      sel.disabled = true;
+    }
   });
-  const rec = getActiveClientRecord();
-  if (rec) {
-    [
-      ["inboundCliente", rec.name],
-      ["outboundCliente", rec.name],
-      ["reqCliente", rec.name]
-    ].forEach(([id, val]) => {
-      const el = document.getElementById(id);
-      if (el) el.value = val || "";
-    });
-  }
-  const projectCode = isLocked ? active : document.getElementById("inboundCustomer")?.value || "";
+  const primaryName = isPrimaryLocked ? getPrimaryClientLabel(activeClient) : "";
+  [
+    ["inboundCliente", primaryName],
+    ["outboundCliente", primaryName],
+    ["reqCliente", primaryName]
+  ].forEach(([id, val]) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val || "";
+  });
+  const projectCode =
+    (isPrimaryLocked && activeProject !== ACTIVE_PROJECT_ALL
+      ? activeProject
+      : document.getElementById("inboundCustomer")?.value) || "";
   fillSkuSelect("inboundSku", projectCode, "inboundProduct");
   fillSkuSelect("outboundSku", document.getElementById("outboundCustomer")?.value || projectCode, "outboundProduct");
   fillSkuSelect("reqSku", document.getElementById("reqCustomer")?.value || projectCode, null);
 }
 
-function renderActiveClientPickerList(container) {
+function renderAviatProjectChips(container) {
   if (!container) return;
-  const clients = (Array.isArray(clientsCache) ? clientsCache : []).slice().sort((a, b) => a.name.localeCompare(b.name, "es"));
-  const generalBtn = `<button type="button" class="client-pick-btn${isGeneralView() ? " active" : ""}" data-pick-client="${ACTIVE_CLIENT_GENERAL}">Vista general</button>`;
-  const clientBtns = clients
+  if (!isAviatView()) {
+    container.innerHTML = "";
+    container.classList.add("hidden");
+    return;
+  }
+  container.classList.remove("hidden");
+  const projects = getProjectsForPrimaryClient(PRIMARY_CLIENT_AVIAT);
+  const activeProject = getActiveProject();
+  const allChip = `<button type="button" class="project-chip${activeProject === ACTIVE_PROJECT_ALL ? " active" : ""}" data-pick-project="${ACTIVE_PROJECT_ALL}">Todos los proyectos</button>`;
+  const projectChips = projects
     .map(
-      (c) =>
-        `<button type="button" class="client-pick-btn${getActiveClient() === String(c.code).toUpperCase() ? " active" : ""}" data-pick-client="${escCell(c.code)}" title="${escCell(c.code)}">${escCell(c.name)} <span class="client-pick-code">${escCell(c.code)}</span></button>`
+      (p) =>
+        `<button type="button" class="project-chip${activeProject === String(p.code).toUpperCase() ? " active" : ""}" data-pick-project="${escCell(p.code)}" title="${escCell(p.code)}">${escCell(p.name)}</button>`
     )
     .join("");
-  container.innerHTML = `${generalBtn}${clientBtns || '<p class="subtitle" style="margin:8px 0 0">No hay clientes registrados aún.</p>'}`;
+  container.innerHTML = `<div class="project-chips-label">Proyectos de AVIAT</div><div class="project-chips-row">${allChip}${projectChips || '<span class="filter-hint">Sin proyectos detectados aún.</span>'}</div>`;
+  container.querySelectorAll("[data-pick-project]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setActiveProject(btn.getAttribute("data-pick-project"));
+    });
+  });
+}
+
+function renderActiveClientPickerList(container) {
+  if (!container) return;
+  const primaries = getPrimaryClients();
+  const clientBtns = primaries
+    .map(
+      (c) =>
+        `<button type="button" class="client-pick-btn${getActiveClient() === c.code ? " active" : ""}" data-pick-client="${escCell(c.code)}" title="${escCell(c.code)}">${escCell(c.name)}${c.code !== ACTIVE_CLIENT_GENERAL ? ` <span class="client-pick-code">${escCell(c.code)}</span>` : ""}</button>`
+    )
+    .join("");
+  container.innerHTML =
+    clientBtns ||
+    `<button type="button" class="client-pick-btn${isGeneralView() ? " active" : ""}" data-pick-client="${ACTIVE_CLIENT_GENERAL}">Vista general</button>`;
   container.querySelectorAll("[data-pick-client]").forEach((btn) => {
     btn.addEventListener("click", () => {
       setActiveClient(btn.getAttribute("data-pick-client"));
@@ -601,7 +814,11 @@ function wireActiveClientUi() {
   });
   document.getElementById("openNewClientModalBtn")?.addEventListener("click", () => openModal("newClientModal"));
   document.getElementById("openNewClientFromCcBtn")?.addEventListener("click", () => openModal("newClientModal"));
+  document.getElementById("openNewAviatProjectBtn")?.addEventListener("click", () => openModal("newAviatProjectModal"));
+  document.getElementById("openNewAviatProjectFromCcBtn")?.addEventListener("click", () => openModal("newAviatProjectModal"));
   document.getElementById("newClientForm")?.addEventListener("submit", submitNewClient);
+  document.getElementById("newAviatProjectForm")?.addEventListener("submit", submitNewAviatProject);
+  migrateLegacyActiveClientState();
   updateActiveClientUi();
 }
 
@@ -611,30 +828,76 @@ async function submitNewClient(event) {
   const btn = document.getElementById("newClientSubmitBtn");
   if (errEl) errEl.textContent = "";
   const name = document.getElementById("newClientName")?.value?.trim();
-  const code = document.getElementById("newClientCode")?.value?.trim();
+  const codeRaw = document.getElementById("newClientCode")?.value?.trim();
   if (!name) {
-    if (errEl) errEl.textContent = "El nombre del cliente es obligatorio.";
+    if (errEl) errEl.textContent = "El nombre del cliente principal es obligatorio.";
     return;
   }
+  const code = (codeRaw || normalizeCustomerCode(name)).toUpperCase();
+  if (code === ACTIVE_CLIENT_GENERAL || code === PRIMARY_CLIENT_AVIAT) {
+    if (errEl) errEl.textContent = "Ese código está reservado.";
+    return;
+  }
+  if (isKnownPrimaryClientCode(code)) {
+    if (errEl) errEl.textContent = "Ya existe un cliente principal con ese código.";
+    return;
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const extras = getExtraPrimaryClients();
+    extras.push({ code, name });
+    localStorage.setItem(EXTRA_PRIMARY_CLIENTS_KEY, JSON.stringify(extras));
+    closeModal("newClientModal");
+    document.getElementById("newClientForm")?.reset();
+    renderActiveClientPickerList(document.getElementById("activeClientPickerList"));
+    renderActiveClientPickerList(document.getElementById("ccClientPickerList"));
+    setActiveClient(code);
+  } catch (_e) {
+    if (errEl) errEl.textContent = "No se pudo guardar el cliente principal.";
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function submitNewAviatProject(event) {
+  event.preventDefault();
+  const errEl = document.getElementById("newAviatProjectError");
+  const btn = document.getElementById("newAviatProjectSubmitBtn");
+  if (errEl) errEl.textContent = "";
+  const name = document.getElementById("newAviatProjectName")?.value?.trim();
+  const codeRaw = document.getElementById("newAviatProjectCode")?.value?.trim();
+  if (!name) {
+    if (errEl) errEl.textContent = "El nombre del proyecto es obligatorio.";
+    return;
+  }
+  const code = codeRaw || normalizeCustomerCode(name);
   if (btn) btn.disabled = true;
   try {
     const response = await authenticatedFetch("/api/catalog/clients", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, code: code || undefined, active: true })
+      body: JSON.stringify({ name, code, active: true })
     });
-    if (!response) return;
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (errEl) errEl.textContent = data.message || "No se pudo crear el cliente.";
+    if (response?.ok) {
+      const data = await response.json().catch(() => ({}));
+      closeModal("newAviatProjectModal");
+      document.getElementById("newAviatProjectForm")?.reset();
+      await loadCatalogData();
+      setActiveClient(PRIMARY_CLIENT_AVIAT);
+      if (data.code) setActiveProject(String(data.code).toUpperCase());
       return;
     }
-    closeModal("newClientModal");
-    document.getElementById("newClientForm")?.reset();
-    await loadCatalogData();
-    renderActiveClientPickerList(document.getElementById("activeClientPickerList"));
-    renderActiveClientPickerList(document.getElementById("ccClientPickerList"));
-    if (data.code) setActiveClient(data.code);
+    const temp = getAviatTempProjects();
+    temp.push({ code, name });
+    localStorage.setItem(AVIAT_TEMP_PROJECTS_KEY, JSON.stringify(temp));
+    closeModal("newAviatProjectModal");
+    document.getElementById("newAviatProjectForm")?.reset();
+    setActiveClient(PRIMARY_CLIENT_AVIAT);
+    setActiveProject(String(code).toUpperCase());
+    if (errEl) {
+      errEl.textContent =
+        "Proyecto guardado temporalmente en este navegador. Fase 2: persistencia formal ClientePrincipal → Proyecto.";
+    }
   } catch (_e) {
     if (errEl) errEl.textContent = "Error de red.";
   } finally {
@@ -905,8 +1168,8 @@ function openInventoryDetail(row) {
   const p = row.product || {};
   const fields = isGeneralView()
     ? [
-        { label: "Cliente", value: p.customer?.name },
-        { label: "Proyecto", value: p.customer?.code },
+        { label: "Cliente principal", value: getPrimaryClientNameFromRow(row) },
+        { label: "Proyecto", value: getProjectNameFromRow(row) },
         { label: "Lote", value: extractLoteFromRow(row) },
         { label: "SKU / Código de barras", value: formatSkuBarcode(p) },
         { label: "Producto", value: p.name },
@@ -916,7 +1179,7 @@ function openInventoryDetail(row) {
         { label: "Cantidad", value: formatQty(row.qty) }
       ]
     : [
-        { label: "Proyecto", value: p.customer?.code },
+        { label: "Proyecto", value: getProjectNameFromRow(row) },
         { label: "Lote", value: extractLoteFromRow(row) },
         { label: "SKU / Código de barras", value: formatSkuBarcode(p) },
         { label: "Producto", value: p.name },
@@ -990,15 +1253,15 @@ function openInventoryDetail(row) {
 function openCatalogDetail(product) {
   const fields = isGeneralView()
     ? [
-        { label: "Cliente", value: product.customer?.name },
-        { label: "Proyecto", value: product.customer?.code },
+        { label: "Cliente principal", value: getPrimaryClientNameFromRow(product) },
+        { label: "Proyecto", value: getProjectNameFromRow(product) },
         { label: "SKU / Código de barras", value: formatSkuBarcode(product) },
         { label: "Producto", value: product.name },
         { label: "Almacén", value: product.warehouse },
         { label: "Código de barras", value: product.barcode }
       ]
     : [
-        { label: "Proyecto", value: product.customer?.code },
+        { label: "Proyecto", value: getProjectNameFromRow(product) },
         { label: "SKU / Código de barras", value: formatSkuBarcode(product) },
         { label: "Producto", value: product.name },
         { label: "Almacén", value: product.warehouse },
@@ -1493,12 +1756,14 @@ function getControlCenterFilterValues() {
 function filterStockRowsWithFilters(rows, filters) {
   return (Array.isArray(rows) ? rows : []).filter((row) => {
     const p = row.product || {};
-    const cliente = p.customer?.name || "";
-    const customer = p.customer?.code || "";
+    const cliente = getPrimaryClientNameFromRow(row);
+    const proyecto = getProjectNameFromRow(row);
+    const proyectoCode = getProjectCodeFromRow(row);
     const lote = extractLoteFromRow(row);
     return (
       matchesFilter(cliente, filters.cliente) &&
-      matchesFilter(customer, filters.customer) &&
+      matchesFilter(proyecto, filters.customer) &&
+      matchesFilter(proyectoCode, filters.customer) &&
       matchesFilter(lote, filters.lote) &&
       matchesFilter(p.sku, filters.sku) &&
       matchesFilter(p.name, filters.producto) &&
@@ -1522,9 +1787,7 @@ function updateControlCenterKpis() {
     scopedProducts.length > 0
       ? scopedProducts.length
       : new Set(list.map((r) => r.product?.sku).filter(Boolean)).size;
-  const customers = new Set(
-    list.map((r) => r.product?.customer?.code || r.product?.customer?.name).filter(Boolean)
-  );
+  const projects = new Set(list.map((r) => getProjectCodeFromRow(r)).filter(Boolean));
   const locations = new Set(list.map((r) => r.location?.code).filter(Boolean));
   const stockTotal = sumStockQty(list);
   const setKpi = (id, val) => {
@@ -1532,7 +1795,7 @@ function updateControlCenterKpis() {
     if (el) el.textContent = val;
   };
   setKpi("ccKpiProducts", productCount > 0 ? String(productCount) : list.length ? String(new Set(list.map((r) => r.product?.sku).filter(Boolean)).size) : "0");
-  setKpi("ccKpiCustomers", customers.size ? String(customers.size) : "0");
+  setKpi("ccKpiCustomers", projects.size ? String(projects.size) : "0");
   setKpi("ccKpiLocations", locations.size ? String(locations.size) : "0");
   setKpi("ccKpiStock", list.length ? formatQty(stockTotal) : "0");
   setKpi("ccKpiMovements", String(filterRowsByActiveClient(movementsRowsCache).length || movementsCountCache));
@@ -1542,9 +1805,9 @@ function updateControlCenterKpis() {
 function stockRowCells(row, { includeWarehouse = true } = {}) {
   const p = row.product || {};
   const cells = [];
-  if (isGeneralView()) cells.push(renderCellEllipsis(p.customer?.name || "—"));
+  if (isGeneralView()) cells.push(renderCellEllipsis(getPrimaryClientNameFromRow(row)));
   cells.push(
-    `<span class="cell-nowrap">${escCell(p.customer?.code || "—")}</span>`,
+    renderCellEllipsis(getProjectNameFromRow(row)),
     renderCellEllipsis(extractLoteFromRow(row)),
     `<strong class="cell-nowrap">${escCell(formatSkuBarcode(p))}</strong>`,
     renderCellEllipsis(p.name || "—")
@@ -1560,9 +1823,9 @@ function stockRowCells(row, { includeWarehouse = true } = {}) {
 
 function catalogRowCells(product) {
   const cells = [];
-  if (isGeneralView()) cells.push(renderCellEllipsis(product.customer?.name || "—"));
+  if (isGeneralView()) cells.push(renderCellEllipsis(getPrimaryClientNameFromRow(product)));
   cells.push(
-    `<span class="cell-nowrap">${escCell(product.customer?.code || "—")}</span>`,
+    renderCellEllipsis(getProjectNameFromRow(product)),
     `<strong class="cell-nowrap">${escCell(formatSkuBarcode(product))}</strong>`,
     renderCellEllipsis(product.name || "—"),
     `<span class="cell-nowrap">${renderCellEllipsis(product.warehouse || "—")}</span>`,
@@ -1571,8 +1834,8 @@ function catalogRowCells(product) {
   return cells;
 }
 
-const STOCK_COL_CLIENTE = { label: "Cliente", sortKey: (r) => r.product?.customer?.name || "", sortType: "text" };
-const STOCK_COL_PROYECTO = { label: "Proyecto", sortKey: (r) => r.product?.customer?.code || "", sortType: "text" };
+const STOCK_COL_CLIENTE = { label: "Cliente", sortKey: (r) => getPrimaryClientNameFromRow(r), sortType: "text" };
+const STOCK_COL_PROYECTO = { label: "Proyecto", sortKey: (r) => getProjectNameFromRow(r), sortType: "text" };
 const STOCK_COL_LOTE = { label: "Lote", sortKey: (r) => extractLoteFromRow(r), sortType: "text" };
 const STOCK_COL_SKU = { label: "SKU / Código de barras", sortKey: (r) => r.product?.sku || "", sortType: "text" };
 const STOCK_COL_PRODUCTO = { label: "Producto", sortKey: (r) => r.product?.name || "", sortType: "text" };
@@ -1595,8 +1858,8 @@ function getStockColumnsCc() {
   return [...cols, STOCK_COL_UBICACION, STOCK_COL_STATUS, STOCK_COL_CANTIDAD];
 }
 
-const CAT_COL_CLIENTE = { label: "Cliente", sortKey: (p) => p.customer?.name || "" };
-const CAT_COL_PROYECTO = { label: "Proyecto", sortKey: (p) => p.customer?.code || "" };
+const CAT_COL_CLIENTE = { label: "Cliente", sortKey: (p) => getPrimaryClientNameFromRow(p) };
+const CAT_COL_PROYECTO = { label: "Proyecto", sortKey: (p) => getProjectNameFromRow(p) };
 const CAT_COL_SKU = { label: "SKU / Código de barras", sortKey: (p) => p.sku || "" };
 const CAT_COL_PRODUCTO = { label: "Producto", sortKey: (p) => p.name || "" };
 const CAT_COL_ALMACEN = { label: "Almacén", sortKey: (p) => p.warehouse || "" };
@@ -1609,8 +1872,8 @@ function getCatalogColumns() {
 }
 
 const CLIENTS_COLUMNS = [
-  { label: "Cliente", sortKey: (r) => r.name || "" },
-  { label: "Proyecto", sortKey: (r) => r.code || "" },
+  { label: "Cliente", sortKey: (r) => getPrimaryClientNameFromRow(r) },
+  { label: "Proyecto", sortKey: (r) => r.name || r.code || "" },
   { label: "Productos", align: "right", sortKey: (r) => r.products || 0, sortType: "number" },
   { label: "Saldos asociados", align: "right", sortKey: (r) => r.stock || 0, sortType: "number" },
   { label: "Estado", sortKey: (r) => (r.products > 0 ? "Activo" : "Sin catálogo") }
@@ -1618,8 +1881,8 @@ const CLIENTS_COLUMNS = [
 
 const TRACE_COLS_BASE = [
   { label: "Fecha", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatDateShort(r.createdAt), title: (r) => formatDateShort(r.createdAt) },
-  { label: "Cliente", sortKey: (r) => r.customer?.name || "", render: (r) => renderCellWithClamp(r.customer?.name || "—", "cell-truncate", 18), title: (r) => r.customer?.name || "" },
-  { label: "Proyecto", sortKey: (r) => r.customer?.code || "", render: (r) => escCell(r.customer?.code || "—"), title: (r) => r.customer?.code || "" },
+  { label: "Cliente", sortKey: (r) => getPrimaryClientNameFromRow(r), render: (r) => renderCellWithClamp(getPrimaryClientNameFromRow(r), "cell-truncate", 18), title: (r) => getPrimaryClientNameFromRow(r) },
+  { label: "Proyecto", sortKey: (r) => getProjectNameFromRow(r), render: (r) => escCell(getProjectNameFromRow(r) || "—"), title: (r) => getProjectNameFromRow(r) || "" },
   { label: "Lote", sortKey: (r) => extractLoteFromRow(r), render: (r) => renderCellWithClamp(extractLoteFromRow(r), "cell-truncate", 16), title: (r) => extractLoteFromRow(r) },
   { label: "Tipo", sortKey: (r) => r.type || "", render: (r) => statusBadge(r.type) },
   { label: "SKU / Código", sortKey: (r) => r.product?.sku || "", render: (r) => escCell(formatSkuBarcode(r.product)), title: (r) => r.product?.sku || "" },
@@ -1648,8 +1911,8 @@ const TASK_COLUMNS = [
 
 const MOVEMENT_COLS_BASE = [
   { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
-  { label: "Cliente", sortKey: (m) => m.product?.customer?.name || "", render: (m) => renderCellWithClamp(m.product?.customer?.name, "cell-truncate", 20), title: (m) => m.product?.customer?.name || "" },
-  { label: "Proyecto", sortKey: (m) => m.product?.customer?.code || "", render: (m) => escCell(m.product?.customer?.code || "—"), title: (m) => m.product?.customer?.code || "" },
+  { label: "Cliente", sortKey: (m) => getPrimaryClientNameFromRow(m), render: (m) => renderCellWithClamp(getPrimaryClientNameFromRow(m), "cell-truncate", 20), title: (m) => getPrimaryClientNameFromRow(m) },
+  { label: "Proyecto", sortKey: (m) => getProjectNameFromRow(m), render: (m) => escCell(getProjectNameFromRow(m) || "—"), title: (m) => getProjectNameFromRow(m) || "" },
   { label: "Lote", sortKey: (m) => extractLoteFromRow(m), render: (m) => renderCellWithClamp(extractLoteFromRow(m), "cell-truncate", 16), title: (m) => extractLoteFromRow(m) },
   { label: "Tipo", sortKey: (m) => m.movementType || "", render: (m) => statusBadge(m.movementType) },
   { label: "SKU / Código", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(formatSkuBarcode(m.product)), title: (m) => m.product?.sku || "" },
@@ -1668,8 +1931,8 @@ function getMovementColumns() {
 
 const OPS_MOVEMENT_COLS_BASE = [
   { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
-  { label: "Cliente", sortKey: (m) => m.product?.customer?.name || "", render: (m) => renderCellWithClamp(m.product?.customer?.name || "—", "cell-truncate", 22), title: (m) => m.product?.customer?.name || "" },
-  { label: "Proyecto", sortKey: (m) => m.product?.customer?.code || "", render: (m) => escCell(m.product?.customer?.code || "—"), title: (m) => m.product?.customer?.code || "" },
+  { label: "Cliente", sortKey: (m) => getPrimaryClientNameFromRow(m), render: (m) => renderCellWithClamp(getPrimaryClientNameFromRow(m) || "—", "cell-truncate", 22), title: (m) => getPrimaryClientNameFromRow(m) || "" },
+  { label: "Proyecto", sortKey: (m) => getProjectNameFromRow(m), render: (m) => escCell(getProjectNameFromRow(m) || "—"), title: (m) => getProjectNameFromRow(m) || "" },
   { label: "Lote", sortKey: (m) => extractLoteFromRow(m), render: (m) => renderCellWithClamp(extractLoteFromRow(m), "cell-truncate", 16), title: (m) => extractLoteFromRow(m) },
   { label: "Referencia", sortKey: (m) => m.reference || "", render: (m) => renderCellWithClamp(m.reference, "cell-truncate", 18), title: (m) => m.reference || "" },
   { label: "SKU / Código", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(formatSkuBarcode(m.product)), title: (m) => m.product?.sku || "" },
@@ -1769,7 +2032,7 @@ function wireModals() {
   document.querySelectorAll("[data-close-modal]").forEach((btn) => {
     btn.addEventListener("click", () => closeModal(btn.getAttribute("data-close-modal")));
   });
-  ["catalogImportModal", "inventoryImportModal", "activeClientModal", "newClientModal"].forEach((id) => {
+  ["catalogImportModal", "inventoryImportModal", "activeClientModal", "newClientModal", "newAviatProjectModal"].forEach((id) => {
     const overlay = document.getElementById(id);
     if (!overlay || overlay.dataset.modalWired === "1") return;
     overlay.dataset.modalWired = "1";
@@ -1845,14 +2108,14 @@ function renderClientsModule() {
   let rows = Array.from(stats.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
   rows = filterRowsByActiveClient(rows);
   const countEl = document.getElementById("clientsTableCount");
-  if (countEl) countEl.textContent = `Mostrando ${rows.length} cliente${rows.length === 1 ? "" : "s"}`;
+  if (countEl) countEl.textContent = `Mostrando ${rows.length} proyecto${rows.length === 1 ? "" : "s"} de AVIAT`;
   renderDataGrid(clientsModuleList, {
     gridId: "clients",
     columns: CLIENTS_COLUMNS,
     rowDataList: rows,
     rowCellsFn: (r) => [
-      renderCellEllipsis(r.name),
-      `<span class="cell-nowrap">${escCell(r.code)}</span>`,
+      renderCellEllipsis(getPrimaryClientNameFromRow(r)),
+      renderCellEllipsis(r.name || r.code || "—"),
       String(r.products),
       formatQty(r.stock),
       `<span class="status-chip">${r.products > 0 ? "Activo" : "Sin catálogo"}</span>`
@@ -1973,11 +2236,13 @@ function applyInventoryFilters() {
 function filterProductRows(rows) {
   const f = getCatalogFilterValues();
   return filterRowsByActiveClient(rows).filter((product) => {
-    const cliente = product.customer?.name || "";
-    const customer = product.customer?.code || "";
+    const cliente = getPrimaryClientNameFromRow(product);
+    const proyecto = getProjectNameFromRow(product);
+    const proyectoCode = getProjectCodeFromRow(product);
     return (
       matchesFilter(cliente, f.cliente) &&
-      matchesFilter(customer, f.customer) &&
+      matchesFilter(proyecto, f.customer) &&
+      matchesFilter(proyectoCode, f.customer) &&
       matchesFilter(product.sku, f.sku) &&
       matchesFilter(product.name, f.producto)
     );
@@ -2864,7 +3129,9 @@ function buildTraceabilityParams() {
   const cliente = document.getElementById("traceCliente")?.value?.trim();
   const from = document.getElementById("traceFrom")?.value?.trim();
   const to = document.getElementById("traceTo")?.value?.trim();
-  if (!customer && !isGeneralView()) customer = getActiveClient();
+  if (!customer && !isGeneralView() && getActiveProject() !== ACTIVE_PROJECT_ALL) {
+    customer = getActiveProject();
+  }
   if (wh) params.set("warehouse", wh);
   if (uid) params.set("userId", uid);
   if (typ) params.set("type", typ);
@@ -2878,8 +3145,8 @@ function buildTraceabilityParams() {
 }
 
 const STOCK_EXPORT_COLS_BASE = [
-  { label: "cliente", value: (r) => r.product?.customer?.name || "" },
-  { label: "proyecto", value: (r) => r.product?.customer?.code || "" },
+  { label: "cliente", value: (r) => getPrimaryClientNameFromRow(r) },
+  { label: "proyecto", value: (r) => getProjectNameFromRow(r) },
   { label: "lote", value: (r) => extractLoteFromRow(r) },
   { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r.product) },
   { label: "producto", value: (r) => r.product?.name || "" },
@@ -2895,8 +3162,8 @@ function getStockExportColumns() {
 }
 
 const CATALOG_EXPORT_COLS_BASE = [
-  { label: "cliente", value: (r) => r.customer?.name || "" },
-  { label: "proyecto", value: (r) => r.customer?.code || "" },
+  { label: "cliente", value: (r) => getPrimaryClientNameFromRow(r) },
+  { label: "proyecto", value: (r) => getProjectNameFromRow(r) },
   { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r) },
   { label: "producto", value: (r) => r.name || "" },
   { label: "almacen", value: (r) => r.warehouse || "" },
@@ -2910,8 +3177,8 @@ function getCatalogExportColumns() {
 
 const MOVEMENT_EXPORT_COLS_BASE = [
   { label: "fecha", value: (r) => formatExportDate(r.createdAt) },
-  { label: "cliente", value: (r) => r.product?.customer?.name || "" },
-  { label: "proyecto", value: (r) => r.product?.customer?.code || "" },
+  { label: "cliente", value: (r) => getPrimaryClientNameFromRow(r) },
+  { label: "proyecto", value: (r) => getProjectNameFromRow(r) },
   { label: "lote", value: (r) => extractLoteFromRow(r) },
   { label: "tipo", value: (r) => r.movementType || r.type || "" },
   { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r.product) },
@@ -2930,8 +3197,8 @@ function getMovementExportColumns() {
 
 const TRACE_EXPORT_COLS_BASE = [
   { label: "fecha", value: (r) => formatExportDate(r.createdAt) },
-  { label: "cliente", value: (r) => r.customer?.name || "" },
-  { label: "proyecto", value: (r) => r.customer?.code || "" },
+  { label: "cliente", value: (r) => getPrimaryClientNameFromRow(r) },
+  { label: "proyecto", value: (r) => getProjectNameFromRow(r) },
   { label: "lote", value: (r) => extractLoteFromRow(r) },
   { label: "tipo", value: (r) => r.type || "" },
   { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r.product) },
@@ -2958,7 +3225,7 @@ async function exportStockCsv() {
     window.alert(isGeneralView() ? "No hay existencias para exportar." : "No hay existencias del cliente activo para exportar.");
     return;
   }
-  exportToCsv(isGeneralView() ? "logitec_inventario" : `logitec_inventario_${getActiveClient()}`, rows, getStockExportColumns());
+  exportToCsv(isGeneralView() ? "logitec_inventario" : buildScopeExportFilename("inventario"), rows, getStockExportColumns());
 }
 
 async function exportStockCsvFiltered() {
@@ -2990,7 +3257,7 @@ async function exportMovementsCsv() {
     window.alert(isGeneralView() ? "No hay movimientos para exportar." : "No hay movimientos del cliente activo para exportar.");
     return;
   }
-  exportToCsv(isGeneralView() ? "logitec_movimientos" : `logitec_movimientos_${getActiveClient()}`, rows, getMovementExportColumns());
+  exportToCsv(isGeneralView() ? "logitec_movimientos" : buildScopeExportFilename("movimientos"), rows, getMovementExportColumns());
 }
 
 async function exportTraceabilityCsv() {
@@ -3005,7 +3272,7 @@ async function exportTraceabilityCsv() {
     window.alert(isGeneralView() ? "No hay registros de trazabilidad para exportar." : "No hay trazabilidad del cliente activo para exportar.");
     return;
   }
-  exportToCsv(isGeneralView() ? "logitec_trazabilidad" : `logitec_trazabilidad_${getActiveClient()}`, rows, getTraceExportColumns());
+  exportToCsv(isGeneralView() ? "logitec_trazabilidad" : buildScopeExportFilename("trazabilidad"), rows, getTraceExportColumns());
 }
 
 async function exportProductsCsv() {
@@ -3019,7 +3286,7 @@ async function exportProductsCsv() {
     window.alert(isGeneralView() ? "No hay productos para exportar." : "No hay productos del cliente activo para exportar.");
     return;
   }
-  exportToCsv(isGeneralView() ? "logitec_catalogo" : `logitec_catalogo_${getActiveClient()}`, rows, getCatalogExportColumns());
+  exportToCsv(isGeneralView() ? "logitec_catalogo" : buildScopeExportFilename("catalogo"), rows, getCatalogExportColumns());
 }
 
 async function loadCurrentUser() {
@@ -3074,10 +3341,7 @@ async function loadScanEvents() {
   const scans = await response.json();
   let rows = Array.isArray(scans) ? scans : [];
   if (!isGeneralView()) {
-    rows = rows.filter((scan) => {
-      const code = scan.product?.customer?.code || "";
-      return code && code.toUpperCase() === getActiveClient();
-    });
+    rows = rows.filter((scan) => rowMatchesActiveClient(scan) && rowMatchesActiveProject(scan));
   }
   const showOperator =
     currentRole === "ADMIN" || currentRole === "SUPERVISOR" || currentRole === "OPERATOR";
@@ -3471,20 +3735,18 @@ async function loadInventoryMovements() {
   if (moduleOutbound && !moduleOutbound.classList.contains("hidden")) void loadOutboundList();
 }
 
+function getProjectsForSelect() {
+  if (isGeneralView()) return getProjectsForPrimaryClient(PRIMARY_CLIENT_AVIAT);
+  const client = getActiveClient();
+  const projects = getProjectsForPrimaryClient(client);
+  if (getActiveProject() !== ACTIVE_PROJECT_ALL) {
+    return projects.filter((p) => String(p.code).toUpperCase() === getActiveProject());
+  }
+  return projects;
+}
+
 function getCustomersForSelect() {
-  const map = new Map();
-  const productSource = filterRowsByActiveClient(productsCache);
-  for (const p of productSource) {
-    const code = p.customer?.code;
-    if (!code) continue;
-    map.set(code, { code, name: p.customer?.name || code });
-  }
-  for (const c of clientsCache) {
-    if (c.code && (isGeneralView() || String(c.code).toUpperCase() === getActiveClient())) {
-      map.set(c.code, { code: c.code, name: c.name || c.code });
-    }
-  }
-  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
+  return getProjectsForSelect();
 }
 
 function fillCustomerSelect(selectId, clienteInputId) {
@@ -3574,12 +3836,16 @@ async function submitOperationalMovement(kind) {
     setOpsMessage(msgId, "SKU inexistente en catálogo.", false);
     return;
   }
-  if (!isGeneralView() && customerCode && customerCode.toUpperCase() !== getActiveClient()) {
-    setOpsMessage(msgId, "No puede registrar operaciones de otro cliente mientras hay un cliente activo.", false);
+  if (!isGeneralView() && !customerCode) {
+    setOpsMessage(msgId, "Seleccione un proyecto antes de registrar la operación.", false);
     return;
   }
-  if (!isGeneralView() && product.customer?.code && product.customer.code.toUpperCase() !== getActiveClient()) {
-    setOpsMessage(msgId, "El SKU no pertenece al cliente activo.", false);
+  if (!isGeneralView() && !rowMatchesActiveClient({ product })) {
+    setOpsMessage(msgId, "No puede registrar operaciones fuera del cliente activo.", false);
+    return;
+  }
+  if (!isGeneralView() && !rowMatchesActiveProject({ product })) {
+    setOpsMessage(msgId, "El SKU no pertenece al proyecto activo.", false);
     return;
   }
   if (customerCode && product.customer?.code !== customerCode) {
@@ -3703,11 +3969,8 @@ function formatReqLote(task) {
   return extractLoteFromText(task.reference) || "N/D";
 }
 
-function formatReqCliente(task) {
-  const parsed = parseRequisitionNotes(task.notes);
-  if (parsed?.customerName) return parsed.customerName;
-  if (parsed?.customerCode) return parsed.customerCode;
-  return "—";
+function formatReqCliente(_task) {
+  return PRIMARY_CLIENT_AVIAT_NAME;
 }
 
 async function loadRequisitionsList() {
@@ -3758,9 +4021,16 @@ async function submitRequisition() {
     setOpsMessage("reqMessage", "Indique folio o referencia.", false);
     return;
   }
-  if (!isGeneralView() && customerCode && customerCode.toUpperCase() !== getActiveClient()) {
-    setOpsMessage("reqMessage", "No puede crear requisiciones de otro cliente.", false);
+  if (!isGeneralView() && !customerCode) {
+    setOpsMessage("reqMessage", "Seleccione un proyecto antes de crear la requisición.", false);
     return;
+  }
+  if (!isGeneralView() && sku) {
+    const product = findProductBySku(sku);
+    if (product && !rowMatchesActiveProject({ product })) {
+      setOpsMessage("reqMessage", "El SKU no pertenece al proyecto activo.", false);
+      return;
+    }
   }
   if (sku && !findProductBySku(sku)) {
     setOpsMessage("reqMessage", "SKU inexistente en catálogo.", false);
@@ -4529,8 +4799,8 @@ async function scanCode(event) {
     }
 
     const product = payload.product;
-    if (!isGeneralView() && product?.customer?.code && product.customer.code.toUpperCase() !== getActiveClient()) {
-      scanHint.textContent = "Este producto pertenece a otro cliente. Cambie el cliente activo para escanearlo.";
+    if (!isGeneralView() && product && (!rowMatchesActiveClient({ product }) || !rowMatchesActiveProject({ product }))) {
+      scanHint.textContent = "Este producto no pertenece al cliente/proyecto activo.";
       setScanResult("Resultado: ERROR — producto de otro cliente.", "error");
       resetPickingFlow();
       await loadScanEvents();
