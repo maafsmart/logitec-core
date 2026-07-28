@@ -322,15 +322,23 @@ const ACTIVE_CLIENT_KEY = "logitec_active_client";
 const ACTIVE_CLIENT_GENERAL = "GENERAL";
 
 const GRID_DEFAULT_WIDTHS = {
-  inventory: [200, 120, 100, 160, 260, 110, 140, 110, 90],
-  catalog: [200, 120, 160, 260, 110, 150],
+  inventory_general: [200, 120, 100, 160, 260, 110, 140, 110, 90],
+  inventory_client: [120, 100, 160, 260, 110, 140, 110, 90],
+  catalog_general: [200, 120, 160, 260, 110, 150],
+  catalog_client: [120, 160, 260, 110, 150],
+  stock_cc_general: [200, 120, 100, 160, 260, 140, 110, 90],
+  stock_cc_client: [120, 100, 160, 260, 140, 110, 90],
+  movements_general: [130, 140, 120, 90, 90, 140, 200, 80, 80, 120, 120, 140],
+  movements_client: [130, 120, 90, 90, 140, 200, 80, 80, 120, 120, 140],
+  traceability_general: [130, 140, 120, 90, 90, 120, 160, 120, 70, 90, 140],
+  traceability_client: [130, 120, 90, 90, 120, 160, 120, 70, 90, 140],
+  inbound_general: [130, 140, 120, 100, 160, 200, 90, 90, 90, 90],
+  inbound_client: [130, 120, 100, 160, 200, 90, 90, 90, 90],
+  outbound_general: [130, 140, 120, 100, 160, 200, 90, 90, 90, 90],
+  outbound_client: [130, 120, 100, 160, 200, 90, 90, 90, 90],
+  requisitions_general: [110, 140, 110, 100, 80, 180, 100, 90],
+  requisitions_client: [110, 110, 100, 80, 180, 100, 90],
   clients: [200, 120, 100, 120, 100],
-  stock_cc: [200, 120, 100, 160, 260, 140, 110, 90],
-  movements: [130, 140, 120, 90, 90, 140, 200, 80, 80, 120, 120, 140],
-  traceability: [130, 140, 120, 90, 90, 120, 160, 120, 70, 90, 140],
-  inbound: [130, 140, 120, 100, 160, 200, 90, 90, 90, 90],
-  outbound: [130, 140, 120, 100, 160, 200, 90, 90, 90, 90],
-  requisitions: [110, 140, 110, 100, 80, 180, 100, 90],
   tasks: [130, 90, 100, 110, 140, 140, 80],
   incidents: [130, 100, 110, 140, 120, 200],
   picking: [140, 120, 90, 200],
@@ -352,6 +360,52 @@ function setActiveClient(code) {
 
 function isGeneralView() {
   return getActiveClient() === ACTIVE_CLIENT_GENERAL;
+}
+
+function getInventoryGridId() {
+  return isGeneralView() ? "inventory_general" : "inventory_client";
+}
+
+function getCatalogGridId() {
+  return isGeneralView() ? "catalog_general" : "catalog_client";
+}
+
+function getStockCcGridId() {
+  return isGeneralView() ? "stock_cc_general" : "stock_cc_client";
+}
+
+function getMovementsGridId() {
+  return isGeneralView() ? "movements_general" : "movements_client";
+}
+
+function getTraceGridId() {
+  return isGeneralView() ? "traceability_general" : "traceability_client";
+}
+
+function getInboundGridId() {
+  return isGeneralView() ? "inbound_general" : "inbound_client";
+}
+
+function getOutboundGridId() {
+  return isGeneralView() ? "outbound_general" : "outbound_client";
+}
+
+function getRequisitionsGridId() {
+  return isGeneralView() ? "requisitions_general" : "requisitions_client";
+}
+
+function resolveResetGridId(gridId) {
+  const map = {
+    inventory: getInventoryGridId,
+    catalog: getCatalogGridId,
+    stock_cc: getStockCcGridId,
+    movements: getMovementsGridId,
+    traceability: getTraceGridId,
+    inbound: getInboundGridId,
+    outbound: getOutboundGridId,
+    requisitions: getRequisitionsGridId
+  };
+  return map[gridId] ? map[gridId]() : gridId;
 }
 
 function getActiveClientRecord() {
@@ -442,22 +496,32 @@ function updateActiveClientUi() {
     label.textContent = display;
     label.classList.toggle("is-general", isGeneralView());
   }
-  const scopeText = isGeneralView()
-    ? "Vista administrativa general — mostrando todos los clientes"
-    : `Mostrando operación de: ${display}`;
-  if (scopeInv) scopeInv.textContent = isGeneralView() ? "Mostrando inventario: Vista general" : `Mostrando inventario de: ${display}`;
-  if (scopeCat) scopeCat.textContent = isGeneralView() ? "Mostrando catálogo: Vista general" : `Mostrando catálogo de: ${display}`;
-  if (scopeCc) scopeCc.textContent = scopeText;
+  const scopeGeneral = "Mostrando información general de todos los clientes/proyectos.";
+  const scopeActive = `Mostrando información de: ${display}.`;
+  if (scopeInv) scopeInv.textContent = isGeneralView() ? scopeGeneral : scopeActive;
+  if (scopeCat) scopeCat.textContent = isGeneralView() ? scopeGeneral : scopeActive;
+  if (scopeCc) scopeCc.textContent = isGeneralView() ? scopeGeneral : scopeActive;
   document.querySelectorAll("[data-active-client-pill]").forEach((el) => {
     el.textContent = display;
     el.classList.toggle("is-general", isGeneralView());
+  });
+  updateViewModeUi();
+}
+
+function updateViewModeUi() {
+  const general = isGeneralView();
+  document.querySelectorAll(".view-general-only").forEach((el) => {
+    el.classList.toggle("hidden", !general);
   });
 }
 
 function refreshClientScopedViews() {
   applyActiveClientToOperationalSelects();
   if (moduleControlCenter && !moduleControlCenter.classList.contains("hidden")) refreshControlCenter();
-  if (moduleInventory && !moduleInventory.classList.contains("hidden")) applyInventoryFilters();
+  if (moduleInventory && !moduleInventory.classList.contains("hidden")) {
+    applyInventoryFilters();
+    void loadInventoryMovements();
+  }
   if (moduleCatalog && !moduleCatalog.classList.contains("hidden")) applyCatalogFilters();
   if (moduleClients && !moduleClients.classList.contains("hidden")) renderClientsModule();
   if (moduleInbound && !moduleInbound.classList.contains("hidden")) {
@@ -839,17 +903,29 @@ function applyOperationalPrefillToForm(prefix) {
 
 function openInventoryDetail(row) {
   const p = row.product || {};
-  openDetailDrawer("Detalle de inventario", [
-    { label: "Cliente", value: p.customer?.name },
-    { label: "Proyecto", value: p.customer?.code },
-    { label: "Lote", value: extractLoteFromRow(row) },
-    { label: "SKU / Código de barras", value: formatSkuBarcode(p) },
-    { label: "Producto", value: p.name },
-    { label: "Almacén", value: row.location?.warehouse },
-    { label: "Ubicación", value: row.location?.code },
-    { label: "Status", value: row.status },
-    { label: "Cantidad", value: formatQty(row.qty) }
-  ], [
+  const fields = isGeneralView()
+    ? [
+        { label: "Cliente", value: p.customer?.name },
+        { label: "Proyecto", value: p.customer?.code },
+        { label: "Lote", value: extractLoteFromRow(row) },
+        { label: "SKU / Código de barras", value: formatSkuBarcode(p) },
+        { label: "Producto", value: p.name },
+        { label: "Almacén", value: row.location?.warehouse },
+        { label: "Ubicación", value: row.location?.code },
+        { label: "Status", value: row.status },
+        { label: "Cantidad", value: formatQty(row.qty) }
+      ]
+    : [
+        { label: "Proyecto", value: p.customer?.code },
+        { label: "Lote", value: extractLoteFromRow(row) },
+        { label: "SKU / Código de barras", value: formatSkuBarcode(p) },
+        { label: "Producto", value: p.name },
+        { label: "Almacén", value: row.location?.warehouse },
+        { label: "Ubicación", value: row.location?.code },
+        { label: "Status", value: row.status },
+        { label: "Cantidad", value: formatQty(row.qty) }
+      ];
+  openDetailDrawer("Detalle de inventario", fields, [
     {
       id: "inbound",
       label: "Registrar entrada",
@@ -912,14 +988,23 @@ function openInventoryDetail(row) {
 }
 
 function openCatalogDetail(product) {
-  openDetailDrawer("Detalle de producto", [
-    { label: "Cliente", value: product.customer?.name },
-    { label: "Proyecto", value: product.customer?.code },
-    { label: "SKU / Código de barras", value: formatSkuBarcode(product) },
-    { label: "Producto", value: product.name },
-    { label: "Almacén", value: product.warehouse },
-    { label: "Código de barras", value: product.barcode }
-  ], [
+  const fields = isGeneralView()
+    ? [
+        { label: "Cliente", value: product.customer?.name },
+        { label: "Proyecto", value: product.customer?.code },
+        { label: "SKU / Código de barras", value: formatSkuBarcode(product) },
+        { label: "Producto", value: product.name },
+        { label: "Almacén", value: product.warehouse },
+        { label: "Código de barras", value: product.barcode }
+      ]
+    : [
+        { label: "Proyecto", value: product.customer?.code },
+        { label: "SKU / Código de barras", value: formatSkuBarcode(product) },
+        { label: "Producto", value: product.name },
+        { label: "Almacén", value: product.warehouse },
+        { label: "Código de barras", value: product.barcode }
+      ];
+  openDetailDrawer("Detalle de producto", fields, [
     {
       id: "inventory",
       label: "Ver inventario",
@@ -1129,7 +1214,7 @@ function wireGridToolbars() {
     btn.addEventListener("click", () => {
       const gridId = btn.getAttribute("data-reset-grid");
       if (!gridId) return;
-      resetGridSettings(gridId);
+      resetGridSettings(resolveResetGridId(gridId));
       if (gridId === "picking") resetGridSettings("picking_op");
       reloadGridById(gridId);
     });
@@ -1345,6 +1430,7 @@ function getInventoryFilterValues() {
   return {
     cliente: document.getElementById("invFilterCliente")?.value?.trim() || "",
     customer: document.getElementById("invFilterCustomer")?.value?.trim() || "",
+    lote: document.getElementById("invFilterLote")?.value?.trim() || "",
     sku: document.getElementById("invFilterSku")?.value?.trim() || "",
     producto: document.getElementById("invFilterProducto")?.value?.trim() || "",
     ubicacion: document.getElementById("invFilterUbicacion")?.value?.trim() || "",
@@ -1409,9 +1495,11 @@ function filterStockRowsWithFilters(rows, filters) {
     const p = row.product || {};
     const cliente = p.customer?.name || "";
     const customer = p.customer?.code || "";
+    const lote = extractLoteFromRow(row);
     return (
       matchesFilter(cliente, filters.cliente) &&
       matchesFilter(customer, filters.customer) &&
+      matchesFilter(lote, filters.lote) &&
       matchesFilter(p.sku, filters.sku) &&
       matchesFilter(p.name, filters.producto) &&
       matchesFilter(row.location?.code, filters.ubicacion) &&
@@ -1453,13 +1541,14 @@ function updateControlCenterKpis() {
 
 function stockRowCells(row, { includeWarehouse = true } = {}) {
   const p = row.product || {};
-  const cells = [
-    renderCellEllipsis(p.customer?.name || "—"),
+  const cells = [];
+  if (isGeneralView()) cells.push(renderCellEllipsis(p.customer?.name || "—"));
+  cells.push(
     `<span class="cell-nowrap">${escCell(p.customer?.code || "—")}</span>`,
     renderCellEllipsis(extractLoteFromRow(row)),
     `<strong class="cell-nowrap">${escCell(formatSkuBarcode(p))}</strong>`,
     renderCellEllipsis(p.name || "—")
-  ];
+  );
   if (includeWarehouse) cells.push(renderCellEllipsis(row.location?.warehouse || "—"));
   cells.push(
     renderCellEllipsis(row.location?.code || "—"),
@@ -1470,47 +1559,54 @@ function stockRowCells(row, { includeWarehouse = true } = {}) {
 }
 
 function catalogRowCells(product) {
-  return [
-    renderCellEllipsis(product.customer?.name || "—"),
+  const cells = [];
+  if (isGeneralView()) cells.push(renderCellEllipsis(product.customer?.name || "—"));
+  cells.push(
     `<span class="cell-nowrap">${escCell(product.customer?.code || "—")}</span>`,
     `<strong class="cell-nowrap">${escCell(formatSkuBarcode(product))}</strong>`,
     renderCellEllipsis(product.name || "—"),
     `<span class="cell-nowrap">${renderCellEllipsis(product.warehouse || "—")}</span>`,
     `<span class="cell-nowrap">${escCell(product.barcode || "—")}</span>`
-  ];
+  );
+  return cells;
 }
 
-const STOCK_COLUMNS_FULL = [
-  { label: "Cliente", sortKey: (r) => r.product?.customer?.name || "", sortType: "text" },
-  { label: "Proyecto", sortKey: (r) => r.product?.customer?.code || "", sortType: "text" },
-  { label: "Lote", sortKey: (r) => extractLoteFromRow(r), sortType: "text" },
-  { label: "SKU / Código de barras", sortKey: (r) => r.product?.sku || "", sortType: "text" },
-  { label: "Producto", sortKey: (r) => r.product?.name || "", sortType: "text" },
-  { label: "Almacén", sortKey: (r) => r.location?.warehouse || "", sortType: "text" },
-  { label: "Ubicación", sortKey: (r) => r.location?.code || "", sortType: "text" },
-  { label: "Status", sortKey: (r) => r.status || "", sortType: "text" },
-  { label: "Cantidad", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number" }
-];
+const STOCK_COL_CLIENTE = { label: "Cliente", sortKey: (r) => r.product?.customer?.name || "", sortType: "text" };
+const STOCK_COL_PROYECTO = { label: "Proyecto", sortKey: (r) => r.product?.customer?.code || "", sortType: "text" };
+const STOCK_COL_LOTE = { label: "Lote", sortKey: (r) => extractLoteFromRow(r), sortType: "text" };
+const STOCK_COL_SKU = { label: "SKU / Código de barras", sortKey: (r) => r.product?.sku || "", sortType: "text" };
+const STOCK_COL_PRODUCTO = { label: "Producto", sortKey: (r) => r.product?.name || "", sortType: "text" };
+const STOCK_COL_ALMACEN = { label: "Almacén", sortKey: (r) => r.location?.warehouse || "", sortType: "text" };
+const STOCK_COL_UBICACION = { label: "Ubicación", sortKey: (r) => r.location?.code || "", sortType: "text" };
+const STOCK_COL_STATUS = { label: "Status", sortKey: (r) => r.status || "", sortType: "text" };
+const STOCK_COL_CANTIDAD = { label: "Cantidad", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number" };
 
-const STOCK_COLUMNS_CC = [
-  { label: "Cliente", sortKey: (r) => r.product?.customer?.name || "" },
-  { label: "Proyecto", sortKey: (r) => r.product?.customer?.code || "" },
-  { label: "Lote", sortKey: (r) => extractLoteFromRow(r) },
-  { label: "SKU / Código de barras", sortKey: (r) => r.product?.sku || "" },
-  { label: "Producto", sortKey: (r) => r.product?.name || "" },
-  { label: "Ubicación", sortKey: (r) => r.location?.code || "" },
-  { label: "Status", sortKey: (r) => r.status || "" },
-  { label: "Cantidad", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number" }
-];
+function getStockColumnsFull() {
+  const cols = isGeneralView()
+    ? [STOCK_COL_CLIENTE, STOCK_COL_PROYECTO, STOCK_COL_LOTE, STOCK_COL_SKU, STOCK_COL_PRODUCTO, STOCK_COL_ALMACEN]
+    : [STOCK_COL_PROYECTO, STOCK_COL_LOTE, STOCK_COL_SKU, STOCK_COL_PRODUCTO, STOCK_COL_ALMACEN];
+  return [...cols, STOCK_COL_UBICACION, STOCK_COL_STATUS, STOCK_COL_CANTIDAD];
+}
 
-const CATALOG_COLUMNS = [
-  { label: "Cliente", sortKey: (p) => p.customer?.name || "" },
-  { label: "Proyecto", sortKey: (p) => p.customer?.code || "" },
-  { label: "SKU / Código de barras", sortKey: (p) => p.sku || "" },
-  { label: "Producto", sortKey: (p) => p.name || "" },
-  { label: "Almacén", sortKey: (p) => p.warehouse || "" },
-  { label: "Código de barras", sortKey: (p) => p.barcode || "" }
-];
+function getStockColumnsCc() {
+  const cols = isGeneralView()
+    ? [STOCK_COL_CLIENTE, STOCK_COL_PROYECTO, STOCK_COL_LOTE, STOCK_COL_SKU, STOCK_COL_PRODUCTO]
+    : [STOCK_COL_PROYECTO, STOCK_COL_LOTE, STOCK_COL_SKU, STOCK_COL_PRODUCTO];
+  return [...cols, STOCK_COL_UBICACION, STOCK_COL_STATUS, STOCK_COL_CANTIDAD];
+}
+
+const CAT_COL_CLIENTE = { label: "Cliente", sortKey: (p) => p.customer?.name || "" };
+const CAT_COL_PROYECTO = { label: "Proyecto", sortKey: (p) => p.customer?.code || "" };
+const CAT_COL_SKU = { label: "SKU / Código de barras", sortKey: (p) => p.sku || "" };
+const CAT_COL_PRODUCTO = { label: "Producto", sortKey: (p) => p.name || "" };
+const CAT_COL_ALMACEN = { label: "Almacén", sortKey: (p) => p.warehouse || "" };
+const CAT_COL_BARCODE = { label: "Código de barras", sortKey: (p) => p.barcode || "" };
+
+function getCatalogColumns() {
+  return isGeneralView()
+    ? [CAT_COL_CLIENTE, CAT_COL_PROYECTO, CAT_COL_SKU, CAT_COL_PRODUCTO, CAT_COL_ALMACEN, CAT_COL_BARCODE]
+    : [CAT_COL_PROYECTO, CAT_COL_SKU, CAT_COL_PRODUCTO, CAT_COL_ALMACEN, CAT_COL_BARCODE];
+}
 
 const CLIENTS_COLUMNS = [
   { label: "Cliente", sortKey: (r) => r.name || "" },
@@ -1520,7 +1616,7 @@ const CLIENTS_COLUMNS = [
   { label: "Estado", sortKey: (r) => (r.products > 0 ? "Activo" : "Sin catálogo") }
 ];
 
-const TRACE_COLUMNS = [
+const TRACE_COLS_BASE = [
   { label: "Fecha", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatDateShort(r.createdAt), title: (r) => formatDateShort(r.createdAt) },
   { label: "Cliente", sortKey: (r) => r.customer?.name || "", render: (r) => renderCellWithClamp(r.customer?.name || "—", "cell-truncate", 18), title: (r) => r.customer?.name || "" },
   { label: "Proyecto", sortKey: (r) => r.customer?.code || "", render: (r) => escCell(r.customer?.code || "—"), title: (r) => r.customer?.code || "" },
@@ -1535,6 +1631,11 @@ const TRACE_COLUMNS = [
   { label: "Referencia", sortKey: (r) => r.reference || "", render: (r) => renderCellWithClamp(r.reference, "cell-truncate", 24), title: (r) => r.reference || "" }
 ];
 
+function getTraceColumns() {
+  if (isGeneralView()) return TRACE_COLS_BASE;
+  return TRACE_COLS_BASE.filter((c) => c.label !== "Cliente");
+}
+
 const TASK_COLUMNS = [
   { label: "Creado", sortKey: (t) => t.createdAt, sortType: "date", render: (t) => formatDateShort(t.createdAt) },
   { label: "Tipo", sortKey: (t) => t.type || "", render: (t) => statusBadge(t.type) },
@@ -1545,7 +1646,7 @@ const TASK_COLUMNS = [
   { label: "Prioridad", align: "right", sortKey: (t) => t.priority ?? 0, sortType: "number", render: (t) => String(t.priority ?? 0) }
 ];
 
-const MOVEMENT_COLUMNS = [
+const MOVEMENT_COLS_BASE = [
   { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
   { label: "Cliente", sortKey: (m) => m.product?.customer?.name || "", render: (m) => renderCellWithClamp(m.product?.customer?.name, "cell-truncate", 20), title: (m) => m.product?.customer?.name || "" },
   { label: "Proyecto", sortKey: (m) => m.product?.customer?.code || "", render: (m) => escCell(m.product?.customer?.code || "—"), title: (m) => m.product?.customer?.code || "" },
@@ -1560,7 +1661,12 @@ const MOVEMENT_COLUMNS = [
   { label: "Referencia", sortKey: (m) => m.reference || "", render: (m) => renderCellWithClamp(m.reference, "cell-truncate", 20), title: (m) => m.reference || "" }
 ];
 
-const OPS_MOVEMENT_COLUMNS = [
+function getMovementColumns() {
+  if (isGeneralView()) return MOVEMENT_COLS_BASE;
+  return MOVEMENT_COLS_BASE.filter((c) => c.label !== "Cliente");
+}
+
+const OPS_MOVEMENT_COLS_BASE = [
   { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
   { label: "Cliente", sortKey: (m) => m.product?.customer?.name || "", render: (m) => renderCellWithClamp(m.product?.customer?.name || "—", "cell-truncate", 22), title: (m) => m.product?.customer?.name || "" },
   { label: "Proyecto", sortKey: (m) => m.product?.customer?.code || "", render: (m) => escCell(m.product?.customer?.code || "—"), title: (m) => m.product?.customer?.code || "" },
@@ -1571,7 +1677,12 @@ const OPS_MOVEMENT_COLUMNS = [
   { label: "Cantidad", align: "right", sortKey: (m) => Number(m.qty) || 0, sortType: "number", render: (m) => formatQty(m.qty) }
 ];
 
-const REQ_COLUMNS = [
+function getOpsMovementColumns() {
+  if (isGeneralView()) return OPS_MOVEMENT_COLS_BASE;
+  return OPS_MOVEMENT_COLS_BASE.filter((c) => c.label !== "Cliente");
+}
+
+const REQ_COLS_BASE = [
   { label: "Folio", sortKey: (t) => t.reference || "", render: (t) => renderCellWithClamp(t.reference, "cell-truncate", 18), title: (t) => t.reference || "" },
   { label: "Cliente", sortKey: (t) => formatReqCliente(t), render: (t) => renderCellWithClamp(formatReqCliente(t), "cell-truncate", 22), title: (t) => formatReqCliente(t) },
   { label: "Proyecto", sortKey: (t) => formatReqProyecto(t), render: (t) => renderCellWithClamp(formatReqProyecto(t), "cell-truncate", 16), title: (t) => formatReqProyecto(t) },
@@ -1581,6 +1692,11 @@ const REQ_COLUMNS = [
   { label: "Estado", sortKey: (t) => t.status || "", render: (t) => statusBadge(t.status) },
   { label: "Picking", sortKey: (t) => t.status || "", render: (t) => (t.status === "COMPLETED" ? statusBadge("COMPLETED") : t.status === "IN_PROGRESS" ? statusBadge("IN_PROGRESS") : statusBadge("PENDING")) }
 ];
+
+function getReqColumns() {
+  if (isGeneralView()) return REQ_COLS_BASE;
+  return REQ_COLS_BASE.filter((c) => c.label !== "Cliente");
+}
 
 const INCIDENT_COLUMNS = [
   { label: "Fecha", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatDateShort(r.createdAt) },
@@ -1766,8 +1882,8 @@ function renderControlCenterTable(rows) {
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("ccTableCount", shown, total, "saldos");
   renderDataGrid(ccInventoryList, {
-    gridId: "stock_cc",
-    columns: STOCK_COLUMNS_CC,
+    gridId: getStockCcGridId(),
+    columns: getStockColumnsCc(),
     rowDataList: Array.isArray(rows) ? rows : [],
     rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: false }),
     colsClass: "data-grid-cols-stock-cc",
@@ -1837,8 +1953,8 @@ function renderStockTable(rows) {
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("inventoryTableCount", shown, total, "saldos");
   renderDataGrid(inventoryList, {
-    gridId: "inventory",
-    columns: STOCK_COLUMNS_FULL,
+    gridId: getInventoryGridId(),
+    columns: getStockColumnsFull(),
     rowDataList: Array.isArray(rows) ? rows : [],
     rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true }),
     colsClass: "data-grid-cols-stock",
@@ -1874,8 +1990,8 @@ function renderProductsTable(rows) {
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("catalogTableCount", shown, total, "productos");
   renderDataGrid(productsList, {
-    gridId: "catalog",
-    columns: CATALOG_COLUMNS,
+    gridId: getCatalogGridId(),
+    columns: getCatalogColumns(),
     rowDataList: Array.isArray(rows) ? rows : [],
     rowCellsFn: catalogRowCells,
     colsClass: "data-grid-cols-catalog",
@@ -1890,7 +2006,7 @@ function applyCatalogFilters() {
 }
 
 function clearInventoryFilters() {
-  ["invFilterCliente", "invFilterCustomer", "invFilterSku", "invFilterProducto", "invFilterUbicacion", "invFilterStatus"].forEach(
+  ["invFilterCliente", "invFilterCustomer", "invFilterLote", "invFilterSku", "invFilterProducto", "invFilterUbicacion", "invFilterStatus"].forEach(
     (id) => {
       const el = document.getElementById(id);
       if (el) el.value = "";
@@ -1908,7 +2024,7 @@ function clearCatalogFilters() {
 }
 
 function wireInventoryFilterInputs() {
-  ["invFilterCliente", "invFilterCustomer", "invFilterSku", "invFilterProducto", "invFilterUbicacion", "invFilterStatus"].forEach(
+  ["invFilterCliente", "invFilterCustomer", "invFilterLote", "invFilterSku", "invFilterProducto", "invFilterUbicacion", "invFilterStatus"].forEach(
     (id) => {
       const el = document.getElementById(id);
       if (el && el.dataset.filterWired !== "1") {
@@ -2761,7 +2877,7 @@ function buildTraceabilityParams() {
   return params;
 }
 
-const STOCK_EXPORT_COLUMNS = [
+const STOCK_EXPORT_COLS_BASE = [
   { label: "cliente", value: (r) => r.product?.customer?.name || "" },
   { label: "proyecto", value: (r) => r.product?.customer?.code || "" },
   { label: "lote", value: (r) => extractLoteFromRow(r) },
@@ -2773,7 +2889,12 @@ const STOCK_EXPORT_COLUMNS = [
   { label: "cantidad", value: (r) => formatQty(r.qty) }
 ];
 
-const CATALOG_EXPORT_COLUMNS = [
+function getStockExportColumns() {
+  if (isGeneralView()) return STOCK_EXPORT_COLS_BASE;
+  return STOCK_EXPORT_COLS_BASE.filter((c) => c.label !== "cliente");
+}
+
+const CATALOG_EXPORT_COLS_BASE = [
   { label: "cliente", value: (r) => r.customer?.name || "" },
   { label: "proyecto", value: (r) => r.customer?.code || "" },
   { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r) },
@@ -2782,7 +2903,12 @@ const CATALOG_EXPORT_COLUMNS = [
   { label: "codigo_barras", value: (r) => r.barcode || "" }
 ];
 
-const MOVEMENT_EXPORT_COLUMNS = [
+function getCatalogExportColumns() {
+  if (isGeneralView()) return CATALOG_EXPORT_COLS_BASE;
+  return CATALOG_EXPORT_COLS_BASE.filter((c) => c.label !== "cliente");
+}
+
+const MOVEMENT_EXPORT_COLS_BASE = [
   { label: "fecha", value: (r) => formatExportDate(r.createdAt) },
   { label: "cliente", value: (r) => r.product?.customer?.name || "" },
   { label: "proyecto", value: (r) => r.product?.customer?.code || "" },
@@ -2797,6 +2923,30 @@ const MOVEMENT_EXPORT_COLUMNS = [
   { label: "referencia", value: (r) => r.reference || "" }
 ];
 
+function getMovementExportColumns() {
+  if (isGeneralView()) return MOVEMENT_EXPORT_COLS_BASE;
+  return MOVEMENT_EXPORT_COLS_BASE.filter((c) => c.label !== "cliente");
+}
+
+const TRACE_EXPORT_COLS_BASE = [
+  { label: "fecha", value: (r) => formatExportDate(r.createdAt) },
+  { label: "cliente", value: (r) => r.customer?.name || "" },
+  { label: "proyecto", value: (r) => r.customer?.code || "" },
+  { label: "lote", value: (r) => extractLoteFromRow(r) },
+  { label: "tipo", value: (r) => r.type || "" },
+  { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r.product) },
+  { label: "producto", value: (r) => r.product?.name || "" },
+  { label: "cantidad", value: (r) => formatQty(r.qty) },
+  { label: "ubicacion", value: (r) => r.location || r.warehouse || "" },
+  { label: "resultado", value: (r) => r.result || "" },
+  { label: "referencia", value: (r) => r.reference || "" }
+];
+
+function getTraceExportColumns() {
+  if (isGeneralView()) return TRACE_EXPORT_COLS_BASE;
+  return TRACE_EXPORT_COLS_BASE.filter((c) => c.label !== "cliente");
+}
+
 async function exportStockCsv() {
   const response = await authenticatedFetch("/api/inventory/stock");
   if (!response?.ok) {
@@ -2808,7 +2958,7 @@ async function exportStockCsv() {
     window.alert(isGeneralView() ? "No hay existencias para exportar." : "No hay existencias del cliente activo para exportar.");
     return;
   }
-  exportToCsv(isGeneralView() ? "logitec_inventario" : `logitec_inventario_${getActiveClient()}`, rows, STOCK_EXPORT_COLUMNS);
+  exportToCsv(isGeneralView() ? "logitec_inventario" : `logitec_inventario_${getActiveClient()}`, rows, getStockExportColumns());
 }
 
 async function exportStockCsvFiltered() {
@@ -2817,7 +2967,7 @@ async function exportStockCsvFiltered() {
     window.alert("No hay registros con los filtros actuales.");
     return;
   }
-  exportToCsv("logitec_inventario_filtrado", rows, STOCK_EXPORT_COLUMNS);
+  exportToCsv("logitec_inventario_filtrado", rows, getStockExportColumns());
 }
 
 async function exportProductsCsvFiltered() {
@@ -2826,7 +2976,7 @@ async function exportProductsCsvFiltered() {
     window.alert("No hay productos con los filtros actuales.");
     return;
   }
-  exportToCsv("logitec_catalogo_filtrado", rows, CATALOG_EXPORT_COLUMNS);
+  exportToCsv("logitec_catalogo_filtrado", rows, getCatalogExportColumns());
 }
 
 async function exportMovementsCsv() {
@@ -2840,7 +2990,7 @@ async function exportMovementsCsv() {
     window.alert(isGeneralView() ? "No hay movimientos para exportar." : "No hay movimientos del cliente activo para exportar.");
     return;
   }
-  exportToCsv(isGeneralView() ? "logitec_movimientos" : `logitec_movimientos_${getActiveClient()}`, rows, MOVEMENT_EXPORT_COLUMNS);
+  exportToCsv(isGeneralView() ? "logitec_movimientos" : `logitec_movimientos_${getActiveClient()}`, rows, getMovementExportColumns());
 }
 
 async function exportTraceabilityCsv() {
@@ -2855,19 +3005,7 @@ async function exportTraceabilityCsv() {
     window.alert(isGeneralView() ? "No hay registros de trazabilidad para exportar." : "No hay trazabilidad del cliente activo para exportar.");
     return;
   }
-  exportToCsv(isGeneralView() ? "logitec_trazabilidad" : `logitec_trazabilidad_${getActiveClient()}`, rows, [
-    { label: "fecha", value: (r) => formatExportDate(r.createdAt) },
-    { label: "cliente", value: (r) => r.customer?.name || "" },
-    { label: "proyecto", value: (r) => r.customer?.code || "" },
-    { label: "lote", value: (r) => extractLoteFromRow(r) },
-    { label: "tipo", value: (r) => r.type || "" },
-    { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r.product) },
-    { label: "producto", value: (r) => r.product?.name || "" },
-    { label: "cantidad", value: (r) => formatQty(r.qty) },
-    { label: "ubicacion", value: (r) => r.location || r.warehouse || "" },
-    { label: "resultado", value: (r) => r.result || "" },
-    { label: "referencia", value: (r) => r.reference || "" }
-  ]);
+  exportToCsv(isGeneralView() ? "logitec_trazabilidad" : `logitec_trazabilidad_${getActiveClient()}`, rows, getTraceExportColumns());
 }
 
 async function exportProductsCsv() {
@@ -2881,7 +3019,7 @@ async function exportProductsCsv() {
     window.alert(isGeneralView() ? "No hay productos para exportar." : "No hay productos del cliente activo para exportar.");
     return;
   }
-  exportToCsv(isGeneralView() ? "logitec_catalogo" : `logitec_catalogo_${getActiveClient()}`, rows, CATALOG_EXPORT_COLUMNS);
+  exportToCsv(isGeneralView() ? "logitec_catalogo" : `logitec_catalogo_${getActiveClient()}`, rows, getCatalogExportColumns());
 }
 
 async function loadCurrentUser() {
@@ -3012,16 +3150,16 @@ async function loadTraceability() {
     if (!Array.isArray(rows) || rows.length === 0) {
       traceList.innerHTML = "";
       renderExcelTable(traceList, {
-        gridId: "traceability",
-        columns: TRACE_COLUMNS,
+        gridId: getTraceGridId(),
+        columns: getTraceColumns(),
         rows: [],
         emptyMessage: "Sin registros operativos aún"
       });
       return;
     }
     renderExcelTable(traceList, {
-      gridId: "traceability",
-      columns: TRACE_COLUMNS,
+      gridId: getTraceGridId(),
+      columns: getTraceColumns(),
       rows,
       emptyMessage: "Sin registros operativos aún"
     });
@@ -3235,8 +3373,8 @@ async function loadStockStrip() {
     updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
     if (inventoryList) {
       renderDataGrid(inventoryList, {
-        gridId: "inventory",
-        columns: STOCK_COLUMNS_FULL,
+        gridId: getInventoryGridId(),
+        columns: getStockColumnsFull(),
         rowDataList: [],
         rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true }),
         colsClass: "data-grid-cols-stock",
@@ -3254,8 +3392,8 @@ async function loadStockStrip() {
     updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
     if (inventoryList) {
       renderDataGrid(inventoryList, {
-        gridId: "inventory",
-        columns: STOCK_COLUMNS_FULL,
+        gridId: getInventoryGridId(),
+        columns: getStockColumnsFull(),
         rowDataList: [],
         rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true }),
         colsClass: "data-grid-cols-stock",
@@ -3273,8 +3411,8 @@ async function loadStockStrip() {
     updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
     if (inventoryList) {
       renderDataGrid(inventoryList, {
-        gridId: "inventory",
-        columns: STOCK_COLUMNS_FULL,
+        gridId: getInventoryGridId(),
+        columns: getStockColumnsFull(),
         rowDataList: [],
         rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true }),
         colsClass: "data-grid-cols-stock",
@@ -3310,16 +3448,16 @@ async function loadInventoryMovements() {
   updateInventorySummary(stockRowsCache);
   if (!Array.isArray(rows) || rows.length === 0) {
     renderExcelTable(inventoryMovementsList, {
-      gridId: "movements",
-      columns: MOVEMENT_COLUMNS,
+      gridId: getMovementsGridId(),
+      columns: getMovementColumns(),
       rows: [],
       emptyMessage: "Sin registros operativos aún"
     });
     return;
   }
   renderExcelTable(inventoryMovementsList, {
-    gridId: "movements",
-    columns: MOVEMENT_COLUMNS,
+    gridId: getMovementsGridId(),
+    columns: getMovementColumns(),
     rows: filterRowsByActiveClient(rows),
     emptyMessage: "Sin registros operativos aún"
   });
@@ -3491,7 +3629,7 @@ function renderMovementOpsTable(containerId, rows, gridId, emptyMsg) {
   const container = document.getElementById(containerId);
   if (!container) return;
   const cols = [
-    ...OPS_MOVEMENT_COLUMNS,
+    ...getOpsMovementColumns(),
     { label: "Estado", sortKey: () => "OK", render: () => statusBadge("COMPLETED") }
   ];
   renderExcelTable(container, {
@@ -3516,7 +3654,7 @@ async function loadInboundList() {
   );
   const meta = document.getElementById("inboundTableMeta");
   if (meta) meta.textContent = `${inbound.length} entrada(s) registrada(s)`;
-  renderMovementOpsTable("inboundList", inbound, "inbound", "Sin registros operativos aún");
+  renderMovementOpsTable("inboundList", inbound, getInboundGridId(), "Sin registros operativos aún");
 }
 
 async function loadOutboundList() {
@@ -3533,7 +3671,7 @@ async function loadOutboundList() {
   );
   const meta = document.getElementById("outboundTableMeta");
   if (meta) meta.textContent = `${outbound.length} salida(s) registrada(s)`;
-  renderMovementOpsTable("outboundList", outbound, "outbound", "Sin registros operativos aún");
+  renderMovementOpsTable("outboundList", outbound, getOutboundGridId(), "Sin registros operativos aún");
 }
 
 function parseRequisitionNotes(notes) {
@@ -3586,16 +3724,16 @@ async function loadRequisitionsList() {
     if (meta) meta.textContent = `${rows.length} requisición(es)`;
     if (!rows.length) {
       renderExcelTable(container, {
-        gridId: "requisitions",
-        columns: REQ_COLUMNS,
+        gridId: getRequisitionsGridId(),
+        columns: getReqColumns(),
         rows: [],
         emptyMessage: "Sin registros operativos aún"
       });
       return;
     }
     renderExcelTable(container, {
-      gridId: "requisitions",
-      columns: REQ_COLUMNS,
+      gridId: getRequisitionsGridId(),
+      columns: getReqColumns(),
       rows,
       emptyMessage: "Sin registros operativos aún"
     });

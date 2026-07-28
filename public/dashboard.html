@@ -2026,7 +2026,7 @@
             <section class="client-work-panel card-panel" aria-label="Selección de cliente de trabajo">
               <div class="client-work-header">
                 <h4 class="secondary-panel-title" style="margin:0">Selecciona cliente de trabajo</h4>
-                <p id="controlClientScope" class="filter-hint" style="margin:4px 0 0">Vista administrativa general — mostrando todos los clientes</p>
+                <p id="controlClientScope" class="filter-hint" style="margin:4px 0 0">Mostrando información general de todos los clientes/proyectos.</p>
               </div>
               <div id="ccClientPickerList" class="client-picker-grid"></div>
               <div class="page-toolbar" style="margin-top:10px">
@@ -2115,7 +2115,7 @@
               <h4 class="cc-section-title">Búsqueda rápida de inventario</h4>
               <div class="cc-search-bar">
                 <div class="filter-strip" id="ccFilterStrip">
-                  <div class="field compact">
+                  <div class="field compact view-general-only">
                     <label for="ccFilterCliente">Cliente</label>
                     <input id="ccFilterCliente" type="text" placeholder="Nombre" autocomplete="off" />
                   </div>
@@ -2217,7 +2217,7 @@
                 <label for="traceCustomer">Proyecto</label>
                 <input id="traceCustomer" type="text" placeholder="Código proyecto" />
               </div>
-              <div class="field compact">
+              <div class="field compact view-general-only">
                 <label for="traceCliente">Cliente</label>
                 <input id="traceCliente" type="text" placeholder="Nombre" />
               </div>
@@ -2485,13 +2485,17 @@
             <div class="operational-panel card-panel">
               <div class="operational-filters-bar" style="border:0;border-radius:0;padding:0 0 12px;background:transparent">
                 <div class="filter-strip" id="inventoryFilterStrip">
-                  <div class="field compact">
+                  <div class="field compact view-general-only">
                     <label for="invFilterCliente">Cliente</label>
                     <input id="invFilterCliente" type="text" placeholder="Nombre" autocomplete="off" />
                   </div>
                   <div class="field compact">
                     <label for="invFilterCustomer">Proyecto</label>
                     <input id="invFilterCustomer" type="text" placeholder="Código proyecto" autocomplete="off" />
+                  </div>
+                  <div class="field compact">
+                    <label for="invFilterLote">Lote</label>
+                    <input id="invFilterLote" type="text" placeholder="Sales Order / lote" autocomplete="off" />
                   </div>
                   <div class="field compact">
                     <label for="invFilterSku">SKU</label>
@@ -2512,7 +2516,7 @@
                   <button type="button" id="inventoryClearFiltersBtn" class="btn-secondary btn-compact">Limpiar filtros</button>
                 </div>
               </div>
-              <p id="inventoryClientScope" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando inventario: Vista general</p>
+              <p id="inventoryClientScope" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando información general de todos los clientes/proyectos.</p>
               <p id="inventoryTableCount" class="operational-table-meta">Mostrando 0 de 0 saldos</p>
               <div id="inventoryList">Cargando...</div>
             </div>
@@ -2583,7 +2587,7 @@
             <div class="operational-panel card-panel">
               <div class="operational-filters-bar" style="border:0;border-radius:0;padding:0 0 12px;background:transparent">
                 <div class="filter-strip" id="catalogFilterStrip">
-                  <div class="field compact">
+                  <div class="field compact view-general-only">
                     <label for="catFilterCliente">Cliente</label>
                     <input id="catFilterCliente" type="text" placeholder="Nombre" autocomplete="off" />
                   </div>
@@ -2602,7 +2606,7 @@
                   <button type="button" id="catalogClearFiltersBtn" class="btn-secondary btn-compact">Limpiar filtros</button>
                 </div>
               </div>
-              <p id="catalogClientScope" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando catálogo: Vista general</p>
+              <p id="catalogClientScope" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando información general de todos los clientes/proyectos.</p>
               <p id="catalogTableCount" class="operational-table-meta">Mostrando 0 de 0 productos</p>
               <div id="productsList"></div>
             </div>
@@ -2703,6 +2707,10 @@
                   <select id="inboundCustomer"><option value="">— Seleccionar —</option></select>
                 </div>
                 <div class="field">
+                  <label for="inboundLote">Lote (Sales Order)</label>
+                  <input id="inboundLote" type="text" placeholder="Ej. SO-2026-001" />
+                </div>
+                <div class="field view-general-only">
                   <label for="inboundCliente">Cliente</label>
                   <input id="inboundCliente" type="text" class="field-readonly" readonly placeholder="Se completa al elegir proyecto" />
                 </div>
@@ -2732,10 +2740,6 @@
                     <option value="AVAILABLE">AVAILABLE</option>
                     <option value="OPERATIONS">OPERATIONS</option>
                   </select>
-                </div>
-                <div class="field">
-                  <label for="inboundLote">Lote (Sales Order)</label>
-                  <input id="inboundLote" type="text" placeholder="Ej. SO-2026-001" />
                 </div>
                 <div class="field">
                   <label for="inboundReference">Referencia de entrada</label>
@@ -2774,6 +2778,10 @@
                   <select id="outboundCustomer"><option value="">— Seleccionar —</option></select>
                 </div>
                 <div class="field">
+                  <label for="outboundLote">Lote (Sales Order)</label>
+                  <input id="outboundLote" type="text" placeholder="Ej. SO-2026-001" />
+                </div>
+                <div class="field view-general-only">
                   <label for="outboundCliente">Cliente</label>
                   <input id="outboundCliente" type="text" class="field-readonly" readonly placeholder="Se completa al elegir proyecto" />
                 </div>
@@ -2803,10 +2811,6 @@
                     <option value="AVAILABLE">AVAILABLE</option>
                     <option value="OPERATIONS">OPERATIONS</option>
                   </select>
-                </div>
-                <div class="field">
-                  <label for="outboundLote">Lote (Sales Order)</label>
-                  <input id="outboundLote" type="text" placeholder="Ej. SO-2026-001" />
                 </div>
                 <div class="field">
                   <label for="outboundReference">Referencia de salida</label>
@@ -2849,12 +2853,12 @@
                   <select id="reqCustomer"><option value="">— Seleccionar —</option></select>
                 </div>
                 <div class="field">
-                  <label for="reqCliente">Cliente</label>
-                  <input id="reqCliente" type="text" class="field-readonly" readonly />
-                </div>
-                <div class="field">
                   <label for="reqLote">Lote (Sales Order)</label>
                   <input id="reqLote" type="text" placeholder="Ej. SO-2026-001" />
+                </div>
+                <div class="field view-general-only">
+                  <label for="reqCliente">Cliente</label>
+                  <input id="reqCliente" type="text" class="field-readonly" readonly />
                 </div>
                 <div class="field">
                   <label for="reqPriority">Prioridad</label>
@@ -3018,6 +3022,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=30"></script>
+    <script src="/dashboard.js?v=31"></script>
   </body>
 </html>
