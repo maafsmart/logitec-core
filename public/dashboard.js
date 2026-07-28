@@ -125,6 +125,267 @@ let pendingConflictsCache = 0;
 
 let clientsCache = [];
 
+const PRIMARY_CLIENT_AVIAT = "AVIAT";
+const PRIMARY_CLIENT_AVIAT_NAME = "AVIAT";
+const AVIAT_PROJECT_FILTER_KEY = "logitec_aviat_project_filter";
+const AVIAT_PROJECT_ALL = "ALL";
+let aviatProjectFilterFallback = false;
+
+function getActiveAviatProject() {
+  const raw = localStorage.getItem(AVIAT_PROJECT_FILTER_KEY);
+  if (!raw || String(raw).trim().toUpperCase() === AVIAT_PROJECT_ALL) return AVIAT_PROJECT_ALL;
+  return String(raw).trim().toUpperCase();
+}
+
+function setActiveAviatProject(code) {
+  const value = code && String(code).trim() ? String(code).trim().toUpperCase() : AVIAT_PROJECT_ALL;
+  localStorage.setItem(AVIAT_PROJECT_FILTER_KEY, value);
+  aviatProjectFilterFallback = false;
+  updateAviatHeaderUi();
+  refreshAviatScopedViews();
+}
+
+function normalizeProjectToken(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+}
+
+function normalizeProjectCode(value) {
+  return normalizeProjectToken(value).replace(/\s+/g, "_");
+}
+
+function getAviatProjectFromRow(row) {
+  const code =
+    row?.product?.customer?.code ||
+    row?.customer?.code ||
+    (typeof row?.customer === "string" ? row.customer : "") ||
+    row?.project?.code ||
+    (typeof row?.project === "string" ? row.project : "") ||
+    row?.codigo_proyecto ||
+    row?.code ||
+    parseRequisitionNotes(row?.notes)?.customerCode ||
+    "";
+  const name =
+    row?.product?.customer?.name ||
+    row?.customer?.name ||
+    row?.project?.name ||
+    row?.customerName ||
+    row?.proyecto ||
+    row?.name ||
+    parseRequisitionNotes(row?.notes)?.customerName ||
+    code ||
+    "";
+  const normalizedCode = String(code || "").trim();
+  const normalizedName = String(name || normalizedCode || "").trim();
+  return {
+    code: normalizedCode,
+    name: normalizedName || normalizedCode
+  };
+}
+
+function getAviatProjectDisplayFromRow(row) {
+  const project = getAviatProjectFromRow(row);
+  return project.name || project.code || "—";
+}
+
+function aviatProjectTokensFromRow(row) {
+  const tokens = new Set();
+  const add = (value) => {
+    if (value == null || value === "") return;
+    tokens.add(normalizeProjectToken(value));
+    tokens.add(normalizeProjectCode(value));
+  };
+  const project = getAviatProjectFromRow(row);
+  add(project.code);
+  add(project.name);
+  add(row?.customerName);
+  add(row?.codigo_proyecto);
+  add(row?.proyecto);
+  if (typeof row?.customer === "string") add(row.customer);
+  return tokens;
+}
+
+function rowMatchesAviatProject(row) {
+  const activeProject = getActiveAviatProject();
+  if (activeProject === AVIAT_PROJECT_ALL) return true;
+  const tokens = aviatProjectTokensFromRow(row);
+  const target = normalizeProjectToken(activeProject);
+  const targetCode = normalizeProjectCode(activeProject);
+  return tokens.has(target) || tokens.has(targetCode);
+}
+
+function filterRowsByAviatProject(rows) {
+  const source = Array.isArray(rows) ? rows : [];
+  if (getActiveAviatProject() === AVIAT_PROJECT_ALL) {
+    return source;
+  }
+  const filtered = source.filter((row) => rowMatchesAviatProject(row));
+  if (source.length > 0 && filtered.length === 0) {
+    localStorage.setItem(AVIAT_PROJECT_FILTER_KEY, AVIAT_PROJECT_ALL);
+    aviatProjectFilterFallback = true;
+    queueMicrotask(() => updateAviatHeaderUi());
+    return source;
+  }
+  aviatProjectFilterFallback = false;
+  return filtered;
+}
+
+function collectAviatProjectsFromData() {
+  const map = new Map();
+  const add = (code, name) => {
+    const normalizedCode = String(code || "").trim();
+    if (!normalizedCode || normalizedCode === "—") return;
+    const upper = normalizedCode.toUpperCase();
+    if (upper === PRIMARY_CLIENT_AVIAT) return;
+    const label = String(name || normalizedCode).trim() || normalizedCode;
+    const existing = map.get(upper);
+    if (!existing || label.length > String(existing.name || "").length) {
+      map.set(upper, { code: normalizedCode, name: label });
+    }
+  };
+  for (const c of clientsCache) add(c.code, c.name || c.code);
+  for (const p of productsCache) add(p.customer?.code, p.customer?.name);
+  for (const row of stockRowsCache) {
+    const project = getAviatProjectFromRow(row);
+    add(project.code, project.name);
+  }
+  for (const m of movementsRowsCache) {
+    const project = getAviatProjectFromRow(m);
+    add(project.code, project.name);
+  }
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
+}
+
+function getActiveAviatProjectDisplayLabel() {
+  const active = getActiveAviatProject();
+  if (active === AVIAT_PROJECT_ALL) return "Todos los proyectos";
+  const match = collectAviatProjectsFromData().find((p) => normalizeProjectCode(p.code) === normalizeProjectCode(active));
+  return match?.name || active;
+}
+
+function getAviatScopeSummaryText() {
+  if (getActiveAviatProject() === AVIAT_PROJECT_ALL) {
+    return aviatProjectFilterFallback
+      ? "No se encontraron registros para ese proyecto. Mostrando todos los proyectos de AVIAT."
+      : "Mostrando todos los proyectos de AVIAT";
+  }
+  return `Mostrando proyecto ${getActiveAviatProjectDisplayLabel()} de AVIAT`;
+}
+
+function getAviatExportBasename(kind) {
+  const project = getActiveAviatProject();
+  if (project === AVIAT_PROJECT_ALL) return `${kind}_AVIAT`;
+  return `${kind}_AVIAT_${project}`;
+}
+
+function updateAviatHeaderUi() {
+  const scopeText = getAviatScopeSummaryText();
+  const projectLabel = getActiveAviatProjectDisplayLabel();
+  document.querySelectorAll("[data-aviat-primary-label]").forEach((el) => {
+    el.textContent = PRIMARY_CLIENT_AVIAT_NAME;
+  });
+  document.querySelectorAll("[data-aviat-project-label]").forEach((el) => {
+    el.textContent = projectLabel;
+  });
+  ["aviatScopeControl", "aviatScopeInventory", "aviatScopeCatalog", "aviatScopeTrace"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = scopeText;
+  });
+  const ccTitle = document.getElementById("ccModuleTitle");
+  if (ccTitle) ccTitle.textContent = `Centro de Control — ${PRIMARY_CLIENT_AVIAT_NAME}`;
+  const invTitle = document.getElementById("inventoryModuleTitle");
+  if (invTitle) invTitle.textContent = `Inventario de ${PRIMARY_CLIENT_AVIAT_NAME}`;
+  const catTitle = document.getElementById("catalogModuleTitle");
+  if (catTitle) catTitle.textContent = `Catálogo de ${PRIMARY_CLIENT_AVIAT_NAME}`;
+  const notice = document.getElementById("aviatFilterFallbackNotice");
+  if (notice) {
+    if (aviatProjectFilterFallback) {
+      notice.textContent = "No se encontraron registros para ese proyecto. Se restauró Todos los proyectos de AVIAT.";
+      notice.classList.remove("hidden");
+    } else {
+      notice.classList.add("hidden");
+    }
+  }
+  renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
+}
+
+function renderAviatProjectChips(container) {
+  if (!container) return;
+  const projects = collectAviatProjectsFromData();
+  const activeProject = getActiveAviatProject();
+  const allChip = `<button type="button" class="project-chip${activeProject === AVIAT_PROJECT_ALL ? " active" : ""}" data-pick-aviat-project="${AVIAT_PROJECT_ALL}">Todos los proyectos</button>`;
+  const projectChips = projects
+    .map(
+      (p) =>
+        `<button type="button" class="project-chip${activeProject === String(p.code).toUpperCase() ? " active" : ""}" data-pick-aviat-project="${escCell(p.code)}" title="${escCell(p.code)}">${escCell(p.name)}</button>`
+    )
+    .join("");
+  const emptyMsg =
+    productsCache.length || stockRowsCache.length
+      ? "No se detectaron proyectos. Revisa carga de catálogo."
+      : "Cargando proyectos de AVIAT…";
+  container.innerHTML = `<div class="project-chips-label">Proyectos de ${escCell(PRIMARY_CLIENT_AVIAT_NAME)}</div><div class="project-chips-row">${allChip}${projectChips || `<span class="filter-hint">${emptyMsg}</span>`}</div>`;
+  container.querySelectorAll("[data-pick-aviat-project]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setActiveAviatProject(btn.getAttribute("data-pick-aviat-project"));
+    });
+  });
+}
+
+function refreshAviatScopedViews() {
+  updateAviatHeaderUi();
+  if (moduleControlCenter && !moduleControlCenter.classList.contains("hidden")) refreshControlCenter();
+  if (moduleInventory && !moduleInventory.classList.contains("hidden")) {
+    applyInventoryFilters();
+    void loadInventoryMovements();
+  }
+  if (moduleCatalog && !moduleCatalog.classList.contains("hidden")) applyCatalogFilters();
+  if (moduleClients && !moduleClients.classList.contains("hidden")) renderClientsModule();
+  if (moduleTraceability && !moduleTraceability.classList.contains("hidden")) void loadTraceability();
+  if (moduleInbound && !moduleInbound.classList.contains("hidden")) void loadInboundList();
+  if (moduleOutbound && !moduleOutbound.classList.contains("hidden")) void loadOutboundList();
+  if (moduleRequisitions && !moduleRequisitions.classList.contains("hidden")) void loadRequisitionsList();
+}
+
+function wireAviatProjectUi() {
+  if (!localStorage.getItem(AVIAT_PROJECT_FILTER_KEY)) {
+    localStorage.setItem(AVIAT_PROJECT_FILTER_KEY, AVIAT_PROJECT_ALL);
+  }
+  updateAviatHeaderUi();
+}
+
+function extractLoteFromText(text) {
+  if (!text) return "";
+  const match = String(text).match(/LOTE:([^|]+)/i);
+  return match ? match[1].trim() : "";
+}
+
+function extractLoteFromRow(row) {
+  const fromRef = extractLoteFromText(row?.reference);
+  if (fromRef) return fromRef;
+  const fromNotes = extractLoteFromText(row?.notes);
+  if (fromNotes) return fromNotes;
+  const parsed = parseRequisitionNotes(row?.notes);
+  if (parsed?.lote) return String(parsed.lote);
+  return "N/D";
+}
+
+function formatSkuBarcode(product) {
+  const p = product || {};
+  const sku = p.sku || "—";
+  const barcode = p.barcode;
+  if (barcode && barcode !== sku) return `${sku} / ${barcode}`;
+  return sku;
+}
+
+function buildOpsReference(lote, referenceRaw, kind) {
+  const base = referenceRaw || (kind === "in" ? "ENTRADA_OPERATIVA" : "SALIDA_OPERATIVA");
+  if (lote) return `LOTE:${lote} | ${base}`;
+  return base;
+}
+
 const roleModules = {
   ADMIN: ["control", "clients", "catalog", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "reports", "users", "account"],
   SUPERVISOR: ["control", "clients", "catalog", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "reports", "account"],
@@ -231,8 +492,14 @@ function activateModule(moduleName) {
 
   if (showControl) refreshControlCenter();
   if (showClients) renderClientsModule();
-  if (showInventory) applyInventoryFilters();
-  if (showCatalog) applyCatalogFilters();
+  if (showInventory) {
+    updateAviatHeaderUi();
+    applyInventoryFilters();
+  }
+  if (showCatalog) {
+    updateAviatHeaderUi();
+    applyCatalogFilters();
+  }
   if (showInbound) {
     populateOperationalSelects();
     applyOperationalPrefillToForm("inbound");
@@ -320,15 +587,15 @@ const GRID_DENSITY_KEY = "logitec_grid_density";
 const GRID_SELECTION_PREFIX = "logitec_grid_sel_";
 
 const GRID_DEFAULT_WIDTHS = {
-  inventory: [200, 120, 150, 260, 110, 140, 110, 90],
-  catalog: [200, 120, 150, 260, 110, 150],
+  inventory: [140, 90, 170, 260, 110, 140, 110, 90],
+  catalog: [140, 90, 170, 260, 110, 150],
   clients: [200, 120, 100, 120, 100],
-  stock_cc: [200, 120, 150, 260, 140, 110, 90],
-  movements: [140, 90, 120, 200, 160, 120, 80, 80, 120, 120, 140],
-  traceability: [140, 120, 90, 100, 120, 160, 120, 120, 70, 90, 140],
-  inbound: [140, 160, 140, 110, 120, 120, 90, 90],
-  outbound: [140, 160, 140, 110, 120, 120, 90, 90],
-  requisitions: [120, 160, 90, 200, 110, 100],
+  stock_cc: [140, 90, 170, 260, 140, 110, 90],
+  movements: [130, 140, 90, 90, 170, 220, 80, 80, 120, 120, 140],
+  traceability: [130, 140, 90, 90, 170, 220, 80, 80, 120, 120, 140],
+  inbound: [140, 90, 170, 90, 90, 120, 120, 90],
+  outbound: [140, 90, 170, 90, 90, 120, 120, 90],
+  requisitions: [120, 140, 90, 200, 110, 100],
   tasks: [130, 90, 100, 110, 140, 140, 80],
   incidents: [130, 100, 110, 140, 120, 200],
   picking: [140, 120, 90, 200],
@@ -599,9 +866,10 @@ function applyOperationalPrefillToForm(prefix) {
 function openInventoryDetail(row) {
   const p = row.product || {};
   openDetailDrawer("Detalle de inventario", [
-    { label: "Cliente", value: p.customer?.name },
-    { label: "Customer", value: p.customer?.code },
-    { label: "SKU", value: p.sku },
+    { label: "Cliente principal", value: PRIMARY_CLIENT_AVIAT_NAME },
+    { label: "Proyecto", value: getAviatProjectDisplayFromRow(row) },
+    { label: "Lote", value: extractLoteFromRow(row) },
+    { label: "SKU / Código de barras", value: formatSkuBarcode(p) },
     { label: "Producto", value: p.name },
     { label: "Almacén", value: row.location?.warehouse },
     { label: "Ubicación", value: row.location?.code },
@@ -671,9 +939,10 @@ function openInventoryDetail(row) {
 
 function openCatalogDetail(product) {
   openDetailDrawer("Detalle de producto", [
-    { label: "Cliente", value: product.customer?.name },
-    { label: "Customer", value: product.customer?.code },
-    { label: "SKU", value: product.sku },
+    { label: "Cliente principal", value: PRIMARY_CLIENT_AVIAT_NAME },
+    { label: "Proyecto", value: getAviatProjectDisplayFromRow(product) },
+    { label: "Lote", value: "N/D" },
+    { label: "SKU / Código de barras", value: formatSkuBarcode(product) },
     { label: "Producto", value: product.name },
     { label: "Almacén", value: product.warehouse },
     { label: "Código de barras", value: product.barcode }
@@ -1103,6 +1372,7 @@ function getInventoryFilterValues() {
   return {
     cliente: document.getElementById("invFilterCliente")?.value?.trim() || "",
     customer: document.getElementById("invFilterCustomer")?.value?.trim() || "",
+    lote: document.getElementById("invFilterLote")?.value?.trim() || "",
     sku: document.getElementById("invFilterSku")?.value?.trim() || "",
     producto: document.getElementById("invFilterProducto")?.value?.trim() || "",
     ubicacion: document.getElementById("invFilterUbicacion")?.value?.trim() || "",
@@ -1114,6 +1384,7 @@ function getCatalogFilterValues() {
   return {
     cliente: document.getElementById("catFilterCliente")?.value?.trim() || "",
     customer: document.getElementById("catFilterCustomer")?.value?.trim() || "",
+    lote: document.getElementById("catFilterLote")?.value?.trim() || "",
     sku: document.getElementById("catFilterSku")?.value?.trim() || "",
     producto: document.getElementById("catFilterProducto")?.value?.trim() || ""
   };
@@ -1165,11 +1436,12 @@ function getControlCenterFilterValues() {
 function filterStockRowsWithFilters(rows, filters) {
   return (Array.isArray(rows) ? rows : []).filter((row) => {
     const p = row.product || {};
-    const cliente = p.customer?.name || "";
-    const customer = p.customer?.code || "";
+    const project = getAviatProjectFromRow(row);
+    const lote = extractLoteFromRow(row);
     return (
-      matchesFilter(cliente, filters.cliente) &&
-      matchesFilter(customer, filters.customer) &&
+      matchesFilter(project.name, filters.cliente) &&
+      matchesFilter(project.code, filters.customer) &&
+      matchesFilter(lote, filters.lote) &&
       matchesFilter(p.sku, filters.sku) &&
       matchesFilter(p.name, filters.producto) &&
       matchesFilter(row.location?.code, filters.ubicacion) &&
@@ -1186,14 +1458,20 @@ function sumStockQty(rows) {
 }
 
 function updateControlCenterKpis() {
-  const list = Array.isArray(stockRowsCache) ? stockRowsCache : [];
+  const list = filterRowsByAviatProject(Array.isArray(stockRowsCache) ? stockRowsCache : []);
+  const scopedProducts = filterRowsByAviatProject(productsCache);
   const productCount =
-    productsCache.length > 0
-      ? productsCache.length
+    scopedProducts.length > 0
+      ? scopedProducts.length
       : new Set(list.map((r) => r.product?.sku).filter(Boolean)).size;
-  const customers = new Set(
-    list.map((r) => r.product?.customer?.code || r.product?.customer?.name).filter(Boolean)
-  );
+  const projects = new Set();
+  list.forEach((r) => {
+    const code = getAviatProjectFromRow(r).code;
+    if (code) projects.add(code);
+  });
+  collectAviatProjectsFromData().forEach((p) => {
+    if (p.code) projects.add(p.code);
+  });
   const locations = new Set(list.map((r) => r.location?.code).filter(Boolean));
   const stockTotal = sumStockQty(list);
   const setKpi = (id, val) => {
@@ -1201,19 +1479,19 @@ function updateControlCenterKpis() {
     if (el) el.textContent = val;
   };
   setKpi("ccKpiProducts", productCount > 0 ? String(productCount) : list.length ? String(new Set(list.map((r) => r.product?.sku).filter(Boolean)).size) : "0");
-  setKpi("ccKpiCustomers", customers.size ? String(customers.size) : "0");
+  setKpi("ccKpiCustomers", projects.size ? String(projects.size) : "0");
   setKpi("ccKpiLocations", locations.size ? String(locations.size) : "0");
   setKpi("ccKpiStock", list.length ? formatQty(stockTotal) : "0");
-  setKpi("ccKpiMovements", String(movementsCountCache));
-  setKpi("ccKpiConflicts", String(pendingConflictsCache));
+  setKpi("ccKpiMovements", String(filterRowsByAviatProject(movementsRowsCache).length || movementsCountCache));
+  setKpi("ccKpiConflicts", String(countStockConflicts(list)));
 }
 
 function stockRowCells(row, { includeWarehouse = true } = {}) {
   const p = row.product || {};
   const cells = [
-    renderCellEllipsis(p.customer?.name || "—"),
-    `<span class="cell-nowrap">${escCell(p.customer?.code || "—")}</span>`,
-    `<strong class="cell-nowrap">${escCell(p.sku || "—")}</strong>`,
+    renderCellEllipsis(getAviatProjectDisplayFromRow(row)),
+    renderCellEllipsis(extractLoteFromRow(row)),
+    `<strong class="cell-nowrap">${escCell(formatSkuBarcode(p))}</strong>`,
     renderCellEllipsis(p.name || "—")
   ];
   if (includeWarehouse) cells.push(renderCellEllipsis(row.location?.warehouse || "—"));
@@ -1227,9 +1505,9 @@ function stockRowCells(row, { includeWarehouse = true } = {}) {
 
 function catalogRowCells(product) {
   return [
-    renderCellEllipsis(product.customer?.name || "—"),
-    `<span class="cell-nowrap">${escCell(product.customer?.code || "—")}</span>`,
-    `<strong class="cell-nowrap">${escCell(product.sku || "—")}</strong>`,
+    renderCellEllipsis(getAviatProjectDisplayFromRow(product)),
+    renderCellEllipsis("N/D"),
+    `<strong class="cell-nowrap">${escCell(formatSkuBarcode(product))}</strong>`,
     renderCellEllipsis(product.name || "—"),
     `<span class="cell-nowrap">${renderCellEllipsis(product.warehouse || "—")}</span>`,
     `<span class="cell-nowrap">${escCell(product.barcode || "—")}</span>`
@@ -1237,9 +1515,9 @@ function catalogRowCells(product) {
 }
 
 const STOCK_COLUMNS_FULL = [
-  { label: "Cliente", sortKey: (r) => r.product?.customer?.name || "", sortType: "text" },
-  { label: "Customer", sortKey: (r) => r.product?.customer?.code || "", sortType: "text" },
-  { label: "SKU", sortKey: (r) => r.product?.sku || "", sortType: "text" },
+  { label: "Proyecto", sortKey: (r) => getAviatProjectDisplayFromRow(r), sortType: "text" },
+  { label: "Lote", sortKey: (r) => extractLoteFromRow(r), sortType: "text" },
+  { label: "SKU / Código de barras", sortKey: (r) => r.product?.sku || "", sortType: "text" },
   { label: "Producto", sortKey: (r) => r.product?.name || "", sortType: "text" },
   { label: "Almacén", sortKey: (r) => r.location?.warehouse || "", sortType: "text" },
   { label: "Ubicación", sortKey: (r) => r.location?.code || "", sortType: "text" },
@@ -1248,9 +1526,9 @@ const STOCK_COLUMNS_FULL = [
 ];
 
 const STOCK_COLUMNS_CC = [
-  { label: "Cliente", sortKey: (r) => r.product?.customer?.name || "" },
-  { label: "Customer", sortKey: (r) => r.product?.customer?.code || "" },
-  { label: "SKU", sortKey: (r) => r.product?.sku || "" },
+  { label: "Proyecto", sortKey: (r) => getAviatProjectDisplayFromRow(r) },
+  { label: "Lote", sortKey: (r) => extractLoteFromRow(r) },
+  { label: "SKU / Código de barras", sortKey: (r) => r.product?.sku || "" },
   { label: "Producto", sortKey: (r) => r.product?.name || "" },
   { label: "Ubicación", sortKey: (r) => r.location?.code || "" },
   { label: "Status", sortKey: (r) => r.status || "" },
@@ -1258,17 +1536,17 @@ const STOCK_COLUMNS_CC = [
 ];
 
 const CATALOG_COLUMNS = [
-  { label: "Cliente", sortKey: (p) => p.customer?.name || "" },
-  { label: "Customer", sortKey: (p) => p.customer?.code || "" },
-  { label: "SKU", sortKey: (p) => p.sku || "" },
+  { label: "Proyecto", sortKey: (p) => getAviatProjectDisplayFromRow(p) },
+  { label: "Lote", sortKey: () => "N/D" },
+  { label: "SKU / Código de barras", sortKey: (p) => p.sku || "" },
   { label: "Producto", sortKey: (p) => p.name || "" },
   { label: "Almacén", sortKey: (p) => p.warehouse || "" },
   { label: "Código de barras", sortKey: (p) => p.barcode || "" }
 ];
 
 const CLIENTS_COLUMNS = [
-  { label: "Cliente", sortKey: (r) => r.name || "" },
-  { label: "Customer", sortKey: (r) => r.code || "" },
+  { label: "Proyecto", sortKey: (r) => r.name || "" },
+  { label: "Código", sortKey: (r) => r.code || "" },
   { label: "Productos", align: "right", sortKey: (r) => r.products || 0, sortType: "number" },
   { label: "Saldos asociados", align: "right", sortKey: (r) => r.stock || 0, sortType: "number" },
   { label: "Estado", sortKey: (r) => (r.products > 0 ? "Activo" : "Sin catálogo") }
@@ -1276,15 +1554,15 @@ const CLIENTS_COLUMNS = [
 
 const TRACE_COLUMNS = [
   { label: "Fecha", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatDateShort(r.createdAt), title: (r) => formatDateShort(r.createdAt) },
-  { label: "Usuario", sortKey: (r) => r.user?.fullName || "", render: (r) => renderCellWithClamp(r.user?.fullName || "—", "cell-truncate", 20), title: (r) => r.user?.fullName || "" },
-  { label: "Tipo", sortKey: (r) => r.type || "", render: (r) => statusBadge(r.type) },
-  { label: "Subtipo", sortKey: (r) => r.subtype || "", render: (r) => renderCellWithClamp(r.subtype, "cell-truncate", 18), title: (r) => r.subtype || "" },
-  { label: "SKU", sortKey: (r) => r.product?.sku || "", render: (r) => escCell(r.product?.sku || "—"), title: (r) => r.product?.sku || "" },
-  { label: "Cliente", sortKey: (r) => r.customer?.name || "", render: (r) => renderCellWithClamp(r.customer?.name || "—", "cell-truncate", 18), title: (r) => r.customer?.name || "" },
-  { label: "Customer", sortKey: (r) => r.customer?.code || "", render: (r) => escCell(r.customer?.code || "—"), title: (r) => r.customer?.code || "" },
+  { label: "Proyecto", sortKey: (r) => getAviatProjectDisplayFromRow(r), render: (r) => renderCellWithClamp(getAviatProjectDisplayFromRow(r), "cell-truncate", 22), title: (r) => getAviatProjectDisplayFromRow(r) },
+  { label: "Lote", sortKey: (r) => extractLoteFromRow(r), render: (r) => renderCellEllipsis(extractLoteFromRow(r)), title: (r) => extractLoteFromRow(r) },
+  { label: "Tipo", sortKey: (r) => r.type || r.subtype || "", render: (r) => statusBadge(r.subtype || r.type) },
+  { label: "SKU / Código", sortKey: (r) => r.product?.sku || "", render: (r) => escCell(formatSkuBarcode(r.product)), title: (r) => r.product?.sku || "" },
+  { label: "Producto", sortKey: (r) => r.product?.name || "", render: (r) => renderCellWithClamp(r.product?.name || "—", "cell-truncate", 28), title: (r) => r.product?.name || "" },
+  { label: "Antes", align: "right", sortKey: () => 0, sortType: "number", render: () => "—" },
+  { label: "Después", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number", render: (r) => formatQty(r.qty) },
   { label: "Ubicación", sortKey: (r) => r.location || r.warehouse || "", render: (r) => renderCellWithClamp(r.location || r.warehouse, "cell-truncate", 22), title: (r) => r.location || r.warehouse || "" },
-  { label: "Cant.", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number", render: (r) => formatQty(r.qty) },
-  { label: "Resultado", sortKey: (r) => r.result || "", render: (r) => statusBadge(r.result) },
+  { label: "Usuario", sortKey: (r) => r.user?.fullName || "", render: (r) => renderCellWithClamp(r.user?.fullName || "—", "cell-truncate", 20), title: (r) => r.user?.fullName || "" },
   { label: "Referencia", sortKey: (r) => r.reference || "", render: (r) => renderCellWithClamp(r.reference, "cell-truncate", 24), title: (r) => r.reference || "" }
 ];
 
@@ -1300,11 +1578,11 @@ const TASK_COLUMNS = [
 
 const MOVEMENT_COLUMNS = [
   { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
+  { label: "Proyecto", sortKey: (m) => getAviatProjectDisplayFromRow(m), render: (m) => renderCellWithClamp(getAviatProjectDisplayFromRow(m), "cell-truncate", 22), title: (m) => getAviatProjectDisplayFromRow(m) },
+  { label: "Lote", sortKey: (m) => extractLoteFromRow(m), render: (m) => renderCellEllipsis(extractLoteFromRow(m)), title: (m) => extractLoteFromRow(m) },
   { label: "Tipo", sortKey: (m) => m.movementType || "", render: (m) => statusBadge(m.movementType) },
-  { label: "SKU", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(m.product?.sku || "—"), title: (m) => m.product?.sku || "" },
+  { label: "SKU / Código", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(formatSkuBarcode(m.product)), title: (m) => m.product?.sku || "" },
   { label: "Producto", sortKey: (m) => m.product?.name || "", render: (m) => renderCellWithClamp(m.product?.name, "cell-truncate", 28), title: (m) => m.product?.name || "" },
-  { label: "Cliente", sortKey: (m) => m.product?.customer?.name || "", render: (m) => renderCellWithClamp(m.product?.customer?.name, "cell-truncate", 20), title: (m) => m.product?.customer?.name || "" },
-  { label: "Customer", sortKey: (m) => m.product?.customer?.code || "", render: (m) => escCell(m.product?.customer?.code || "—"), title: (m) => m.product?.customer?.code || "" },
   { label: "Antes", align: "right", sortKey: (m) => Number(m.quantityBefore) || 0, sortType: "number", render: (m) => formatQty(m.quantityBefore) },
   { label: "Después", align: "right", sortKey: (m) => Number(m.quantityAfter) || 0, sortType: "number", render: (m) => formatQty(m.quantityAfter) },
   { label: "Ubicación", sortKey: (m) => m.toLocation?.code || m.fromLocation?.code || "", render: (m) => renderCellWithClamp(m.toLocation?.code || m.fromLocation?.code || m.warehouse, "cell-truncate", 20), title: (m) => m.toLocation?.code || m.fromLocation?.code || "" },
@@ -1314,17 +1592,17 @@ const MOVEMENT_COLUMNS = [
 
 const OPS_MOVEMENT_COLUMNS = [
   { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
-  { label: "Cliente", sortKey: (m) => m.product?.customer?.name || "", render: (m) => renderCellWithClamp(m.product?.customer?.name || "—", "cell-truncate", 22), title: (m) => m.product?.customer?.name || "" },
-  { label: "Customer", sortKey: (m) => m.product?.customer?.code || "", render: (m) => escCell(m.product?.customer?.code || "—"), title: (m) => m.product?.customer?.code || "" },
+  { label: "Proyecto", sortKey: (m) => getAviatProjectDisplayFromRow(m), render: (m) => renderCellWithClamp(getAviatProjectDisplayFromRow(m), "cell-truncate", 22), title: (m) => getAviatProjectDisplayFromRow(m) },
+  { label: "Lote", sortKey: (m) => extractLoteFromRow(m), render: (m) => renderCellEllipsis(extractLoteFromRow(m)), title: (m) => extractLoteFromRow(m) },
   { label: "Referencia", sortKey: (m) => m.reference || "", render: (m) => renderCellWithClamp(m.reference, "cell-truncate", 18), title: (m) => m.reference || "" },
-  { label: "SKU", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(m.product?.sku || "—"), title: (m) => m.product?.sku || "" },
+  { label: "SKU / Código", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(formatSkuBarcode(m.product)), title: (m) => m.product?.sku || "" },
   { label: "Producto", sortKey: (m) => m.product?.name || "", render: (m) => renderCellWithClamp(m.product?.name, "cell-truncate", 24), title: (m) => m.product?.name || "" },
   { label: "Cantidad", align: "right", sortKey: (m) => Number(m.qty) || 0, sortType: "number", render: (m) => formatQty(m.qty) }
 ];
 
 const REQ_COLUMNS = [
   { label: "Folio", sortKey: (t) => t.reference || "", render: (t) => renderCellWithClamp(t.reference, "cell-truncate", 18), title: (t) => t.reference || "" },
-  { label: "Cliente", sortKey: (t) => formatReqCliente(t), render: (t) => renderCellWithClamp(formatReqCliente(t), "cell-truncate", 22), title: (t) => formatReqCliente(t) },
+  { label: "Proyecto", sortKey: (t) => formatReqProyecto(t), render: (t) => renderCellWithClamp(formatReqProyecto(t), "cell-truncate", 22), title: (t) => formatReqProyecto(t) },
   { label: "Prioridad", align: "right", sortKey: (t) => t.priority ?? 0, sortType: "number", render: (t) => String(t.priority ?? 0) },
   { label: "Productos", sortKey: (t) => formatReqProducts(t), render: (t) => renderCellWithClamp(formatReqProducts(t), "cell-truncate", 28), title: (t) => formatReqProducts(t) },
   { label: "Estado", sortKey: (t) => t.status || "", render: (t) => statusBadge(t.status) },
@@ -1475,23 +1753,23 @@ function buildClientStatsMap() {
 function renderClientsModule() {
   if (!clientsModuleList) return;
   const stats = buildClientStatsMap();
-  const rows = Array.from(stats.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
+  const rows = filterRowsByAviatProject(Array.from(stats.values()).sort((a, b) => a.name.localeCompare(b.name, "es")));
   const countEl = document.getElementById("clientsTableCount");
-  if (countEl) countEl.textContent = `Mostrando ${rows.length} cliente${rows.length === 1 ? "" : "s"}`;
+  if (countEl) countEl.textContent = `Mostrando ${rows.length} proyecto${rows.length === 1 ? "" : "s"} de ${PRIMARY_CLIENT_AVIAT_NAME}`;
   renderDataGrid(clientsModuleList, {
     gridId: "clients",
     columns: CLIENTS_COLUMNS,
     rowDataList: rows,
     rowCellsFn: (r) => [
-      renderCellEllipsis(r.name),
-      `<span class="cell-nowrap">${escCell(r.code)}</span>`,
+      renderCellEllipsis(r.name || r.code || "—"),
+      `<span class="cell-nowrap">${escCell(r.code || "—")}</span>`,
       String(r.products),
       formatQty(r.stock),
       `<span class="status-chip">${r.products > 0 ? "Activo" : "Sin catálogo"}</span>`
     ],
     colsClass: "data-grid-cols-clients",
     sizeClass: "data-grid-size-catalog",
-    emptyMessage: "No hay clientes detectados. Carga catálogo o inventario para ver clientes."
+    emptyMessage: "No hay proyectos detectados. Carga catálogo o inventario para ver proyectos de AVIAT."
   });
   const adminZone = document.getElementById("clientsAdminZone");
   const adminList = clientsAdminList;
@@ -1527,10 +1805,13 @@ function renderControlCenterTable(rows) {
 
 function applyControlCenterFilters() {
   updateControlCenterKpis();
-  renderControlCenterTable(filterStockRowsWithFilters(stockRowsCache, getControlCenterFilterValues()));
+  updateAviatHeaderUi();
+  const scoped = filterRowsByAviatProject(stockRowsCache);
+  renderControlCenterTable(filterStockRowsWithFilters(scoped, getControlCenterFilterValues()));
 }
 
 function refreshControlCenter() {
+  updateAviatHeaderUi();
   updateControlCenterKpis();
   applyControlCenterFilters();
 }
@@ -1574,14 +1855,16 @@ function wireQuickActions() {
 }
 
 function filterStockRows(rows) {
-  return filterStockRowsWithFilters(rows, getInventoryFilterValues());
+  const scoped = filterRowsByAviatProject(rows);
+  return filterStockRowsWithFilters(scoped, getInventoryFilterValues());
 }
 
 function renderStockTable(rows) {
   if (!inventoryList) return;
-  const total = stockRowsCache.length;
+  const total = filterRowsByAviatProject(stockRowsCache).length;
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("inventoryTableCount", shown, total, "saldos");
+  updateAviatHeaderUi();
   renderDataGrid(inventoryList, {
     gridId: "inventory",
     columns: STOCK_COLUMNS_FULL,
@@ -1595,19 +1878,20 @@ function renderStockTable(rows) {
 }
 
 function applyInventoryFilters() {
-  updateInventorySummary(stockRowsCache);
+  const scoped = filterRowsByAviatProject(stockRowsCache);
+  updateInventorySummary(scoped);
   renderStockTable(filterStockRows(stockRowsCache));
   applyControlCenterFilters();
 }
 
 function filterProductRows(rows) {
   const f = getCatalogFilterValues();
-  return (Array.isArray(rows) ? rows : []).filter((product) => {
-    const cliente = product.customer?.name || "";
-    const customer = product.customer?.code || "";
+  return filterRowsByAviatProject(rows).filter((product) => {
+    const project = getAviatProjectFromRow(product);
     return (
-      matchesFilter(cliente, f.cliente) &&
-      matchesFilter(customer, f.customer) &&
+      matchesFilter(project.name, f.cliente) &&
+      matchesFilter(project.code, f.customer) &&
+      matchesFilter("N/D", f.lote) &&
       matchesFilter(product.sku, f.sku) &&
       matchesFilter(product.name, f.producto)
     );
@@ -1616,9 +1900,10 @@ function filterProductRows(rows) {
 
 function renderProductsTable(rows) {
   if (!productsList) return;
-  const total = productsCache.length;
+  const total = filterRowsByAviatProject(productsCache).length;
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("catalogTableCount", shown, total, "productos");
+  updateAviatHeaderUi();
   renderDataGrid(productsList, {
     gridId: "catalog",
     columns: CATALOG_COLUMNS,
@@ -1636,7 +1921,7 @@ function applyCatalogFilters() {
 }
 
 function clearInventoryFilters() {
-  ["invFilterCliente", "invFilterCustomer", "invFilterSku", "invFilterProducto", "invFilterUbicacion", "invFilterStatus"].forEach(
+  ["invFilterCliente", "invFilterCustomer", "invFilterLote", "invFilterSku", "invFilterProducto", "invFilterUbicacion", "invFilterStatus"].forEach(
     (id) => {
       const el = document.getElementById(id);
       if (el) el.value = "";
@@ -1646,7 +1931,7 @@ function clearInventoryFilters() {
 }
 
 function clearCatalogFilters() {
-  ["catFilterCliente", "catFilterCustomer", "catFilterSku", "catFilterProducto"].forEach((id) => {
+  ["catFilterCliente", "catFilterCustomer", "catFilterLote", "catFilterSku", "catFilterProducto"].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
@@ -1654,7 +1939,7 @@ function clearCatalogFilters() {
 }
 
 function wireInventoryFilterInputs() {
-  ["invFilterCliente", "invFilterCustomer", "invFilterSku", "invFilterProducto", "invFilterUbicacion", "invFilterStatus"].forEach(
+  ["invFilterCliente", "invFilterCustomer", "invFilterLote", "invFilterSku", "invFilterProducto", "invFilterUbicacion", "invFilterStatus"].forEach(
     (id) => {
       const el = document.getElementById(id);
       if (el && el.dataset.filterWired !== "1") {
@@ -1671,7 +1956,7 @@ function wireInventoryFilterInputs() {
 }
 
 function wireCatalogFilterInputs() {
-  ["catFilterCliente", "catFilterCustomer", "catFilterSku", "catFilterProducto"].forEach((id) => {
+  ["catFilterCliente", "catFilterCustomer", "catFilterLote", "catFilterSku", "catFilterProducto"].forEach((id) => {
     const el = document.getElementById(id);
     if (el && el.dataset.filterWired !== "1") {
       el.dataset.filterWired = "1";
@@ -2507,9 +2792,9 @@ function buildTraceabilityParams() {
 }
 
 const STOCK_EXPORT_COLUMNS = [
-  { label: "cliente", value: (r) => r.product?.customer?.name || "" },
-  { label: "customer", value: (r) => r.product?.customer?.code || "" },
-  { label: "sku", value: (r) => r.product?.sku || "" },
+  { label: "proyecto", value: (r) => getAviatProjectDisplayFromRow(r) },
+  { label: "lote", value: (r) => extractLoteFromRow(r) },
+  { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r.product) },
   { label: "producto", value: (r) => r.product?.name || "" },
   { label: "almacen", value: (r) => r.location?.warehouse || "" },
   { label: "ubicacion", value: (r) => r.location?.code || "" },
@@ -2518,12 +2803,26 @@ const STOCK_EXPORT_COLUMNS = [
 ];
 
 const CATALOG_EXPORT_COLUMNS = [
-  { label: "cliente", value: (r) => r.customer?.name || "" },
-  { label: "customer", value: (r) => r.customer?.code || "" },
-  { label: "sku", value: (r) => r.sku || "" },
+  { label: "proyecto", value: (r) => getAviatProjectDisplayFromRow(r) },
+  { label: "lote", value: () => "N/D" },
+  { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r) },
   { label: "producto", value: (r) => r.name || "" },
   { label: "almacen", value: (r) => r.warehouse || "" },
   { label: "codigo_barras", value: (r) => r.barcode || "" }
+];
+
+const MOVEMENT_EXPORT_COLUMNS = [
+  { label: "fecha", value: (r) => formatExportDate(r.createdAt) },
+  { label: "proyecto", value: (r) => getAviatProjectDisplayFromRow(r) },
+  { label: "lote", value: (r) => extractLoteFromRow(r) },
+  { label: "tipo", value: (r) => r.movementType || r.type || "" },
+  { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r.product) },
+  { label: "producto", value: (r) => r.product?.name || "" },
+  { label: "antes", value: (r) => formatQty(r.quantityBefore) },
+  { label: "despues", value: (r) => formatQty(r.quantityAfter) },
+  { label: "ubicacion", value: (r) => r.toLocation?.code || r.fromLocation?.code || "" },
+  { label: "usuario", value: (r) => r.user?.fullName || r.user?.email || "" },
+  { label: "referencia", value: (r) => r.reference || "" }
 ];
 
 async function exportStockCsv() {
@@ -2532,12 +2831,12 @@ async function exportStockCsv() {
     window.alert("No se pudo exportar existencias.");
     return;
   }
-  const rows = await response.json();
+  const rows = filterRowsByAviatProject(await response.json());
   if (!Array.isArray(rows) || rows.length === 0) {
     window.alert("No hay existencias para exportar.");
     return;
   }
-  exportToCsv("logitec_inventario", rows, STOCK_EXPORT_COLUMNS);
+  exportToCsv(getAviatExportBasename("inventario"), rows, STOCK_EXPORT_COLUMNS);
 }
 
 async function exportStockCsvFiltered() {
@@ -2546,7 +2845,7 @@ async function exportStockCsvFiltered() {
     window.alert("No hay registros con los filtros actuales.");
     return;
   }
-  exportToCsv("logitec_inventario_filtrado", rows, STOCK_EXPORT_COLUMNS);
+  exportToCsv(`${getAviatExportBasename("inventario")}_filtrado`, rows, STOCK_EXPORT_COLUMNS);
 }
 
 async function exportProductsCsvFiltered() {
@@ -2555,7 +2854,7 @@ async function exportProductsCsvFiltered() {
     window.alert("No hay productos con los filtros actuales.");
     return;
   }
-  exportToCsv("logitec_catalogo_filtrado", rows, CATALOG_EXPORT_COLUMNS);
+  exportToCsv(`${getAviatExportBasename("catalogo")}_filtrado`, rows, CATALOG_EXPORT_COLUMNS);
 }
 
 async function exportMovementsCsv() {
@@ -2564,26 +2863,12 @@ async function exportMovementsCsv() {
     window.alert("No se pudo exportar movimientos.");
     return;
   }
-  const rows = await response.json();
+  const rows = filterRowsByAviatProject(await response.json());
   if (!Array.isArray(rows) || rows.length === 0) {
     window.alert("No hay movimientos para exportar.");
     return;
   }
-  exportToCsv("logitec_movimientos", rows, [
-    { label: "fecha", value: (r) => formatExportDate(r.createdAt) },
-    { label: "usuario", value: (r) => r.user?.fullName || r.user?.email || "" },
-    { label: "tipo", value: (r) => r.movementType || r.type || "" },
-    { label: "cliente", value: (r) => r.product?.customer?.name || r.product?.customer?.code || "" },
-    { label: "sku", value: (r) => r.product?.sku || "" },
-    { label: "producto", value: (r) => r.product?.name || "" },
-    { label: "antes", value: (r) => formatQty(r.quantityBefore) },
-    { label: "despues", value: (r) => formatQty(r.quantityAfter) },
-    { label: "almacen", value: (r) => r.warehouse || "" },
-    { label: "ubicacion", value: (r) => r.toLocation?.code || r.fromLocation?.code || "" },
-    { label: "status", value: () => "" },
-    { label: "referencia", value: (r) => r.reference || "" },
-    { label: "notas", value: (r) => r.notes || "" }
-  ]);
+  exportToCsv(getAviatExportBasename("movimientos"), rows, MOVEMENT_EXPORT_COLUMNS);
 }
 
 async function exportTraceabilityCsv() {
@@ -2617,12 +2902,12 @@ async function exportProductsCsv() {
     window.alert("No se pudo exportar productos.");
     return;
   }
-  const rows = await response.json();
+  const rows = filterRowsByAviatProject(await response.json());
   if (!Array.isArray(rows) || rows.length === 0) {
     window.alert("No hay productos para exportar.");
     return;
   }
-  exportToCsv("logitec_catalogo", rows, CATALOG_EXPORT_COLUMNS);
+  exportToCsv(getAviatExportBasename("catalogo"), rows, CATALOG_EXPORT_COLUMNS);
 }
 
 async function loadCurrentUser() {
@@ -2743,8 +3028,10 @@ async function loadTraceability() {
       return;
     }
     const rows = await response.json();
-    if (traceMessage) traceMessage.textContent = `${Array.isArray(rows) ? rows.length : 0} registros.`;
-    if (!Array.isArray(rows) || rows.length === 0) {
+    updateAviatHeaderUi();
+    if (traceMessage) traceMessage.textContent = `${Array.isArray(rows) ? rows.length : 0} registros. ${getAviatScopeSummaryText()}`;
+    const scopedRows = filterRowsByAviatProject(Array.isArray(rows) ? rows : []);
+    if (!scopedRows.length) {
       traceList.innerHTML = "";
       renderExcelTable(traceList, {
         gridId: "traceability",
@@ -2757,7 +3044,7 @@ async function loadTraceability() {
     renderExcelTable(traceList, {
       gridId: "traceability",
       columns: TRACE_COLUMNS,
-      rows,
+      rows: scopedRows,
       emptyMessage: "Sin registros operativos aún"
     });
   } catch (_e) {
@@ -3022,6 +3309,8 @@ async function loadStockStrip() {
   }
   applyInventoryFilters();
   renderClientsModule();
+  renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
+  updateAviatHeaderUi();
 }
 
 async function loadInventoryMovements() {
@@ -3042,8 +3331,9 @@ async function loadInventoryMovements() {
   const rows = await response.json();
   movementsCountCache = Array.isArray(rows) ? rows.length : 0;
   movementsRowsCache = Array.isArray(rows) ? rows : [];
-  updateInventorySummary(stockRowsCache);
-  if (!Array.isArray(rows) || rows.length === 0) {
+  const scopedRows = filterRowsByAviatProject(rows);
+  updateInventorySummary(filterRowsByAviatProject(stockRowsCache));
+  if (!Array.isArray(scopedRows) || scopedRows.length === 0) {
     renderExcelTable(inventoryMovementsList, {
       gridId: "movements",
       columns: MOVEMENT_COLUMNS,
@@ -3055,10 +3345,10 @@ async function loadInventoryMovements() {
   renderExcelTable(inventoryMovementsList, {
     gridId: "movements",
     columns: MOVEMENT_COLUMNS,
-    rows,
+    rows: scopedRows,
     emptyMessage: "Sin registros operativos aún"
   });
-  if (rows.length >= 200) {
+  if (scopedRows.length >= 200) {
     inventoryMovementsList.insertAdjacentHTML(
       "beforeend",
       '<p class="filter-hint" style="margin:8px 0 0">Mostrando los últimos 200 movimientos. Usa Exportar movimientos CSV para ver más.</p>'
@@ -3087,7 +3377,7 @@ function fillCustomerSelect(selectId, clienteInputId) {
   const prev = sel.value;
   const customers = getCustomersForSelect();
   sel.innerHTML =
-    '<option value="">— Seleccionar customer —</option>' +
+    '<option value="">— Seleccionar proyecto —</option>' +
     customers.map((c) => `<option value="${escCell(c.code)}">${escCell(c.name)} (${escCell(c.code)})</option>`).join("");
   if (prev) sel.value = prev;
   if (clienteInputId) {
@@ -3150,7 +3440,12 @@ async function submitOperationalMovement(kind) {
   const status = document.getElementById(`${prefix}Status`)?.value || "AVAILABLE";
   const referenceRaw = document.getElementById(`${prefix}Reference`)?.value?.trim();
   const notes = document.getElementById(`${prefix}Notes`)?.value?.trim();
+  const lote = document.getElementById(`${prefix}Lote`)?.value?.trim();
 
+  if (!customerCode) {
+    setOpsMessage(msgId, "Seleccione un proyecto.", false);
+    return;
+  }
   if (!sku) {
     setOpsMessage(msgId, "Seleccione un SKU del catálogo.", false);
     return;
@@ -3174,8 +3469,7 @@ async function submitOperationalMovement(kind) {
     return;
   }
 
-  const reference =
-    referenceRaw || (kind === "in" ? "ENTRADA_OPERATIVA" : "SALIDA_OPERATIVA");
+  const reference = buildOpsReference(lote, referenceRaw, kind);
 
   if (btn) btn.disabled = true;
   try {
@@ -3237,8 +3531,8 @@ async function loadInboundList() {
       movementsCountCache = movementsRowsCache.length;
     }
   }
-  const inbound = movementsRowsCache.filter(
-    (m) => m.movementType === "IN" || m.type === "INBOUND"
+  const inbound = filterRowsByAviatProject(
+    movementsRowsCache.filter((m) => m.movementType === "IN" || m.type === "INBOUND")
   );
   const meta = document.getElementById("inboundTableMeta");
   if (meta) meta.textContent = `${inbound.length} entrada(s) registrada(s)`;
@@ -3254,8 +3548,8 @@ async function loadOutboundList() {
       movementsCountCache = movementsRowsCache.length;
     }
   }
-  const outbound = movementsRowsCache.filter(
-    (m) => m.movementType === "OUT" && m.type !== "PICK"
+  const outbound = filterRowsByAviatProject(
+    movementsRowsCache.filter((m) => m.movementType === "OUT" && m.type !== "PICK")
   );
   const meta = document.getElementById("outboundTableMeta");
   if (meta) meta.textContent = `${outbound.length} salida(s) registrada(s)`;
@@ -3280,11 +3574,15 @@ function formatReqProducts(task) {
   return task.notes ? String(task.notes).slice(0, 48) : "—";
 }
 
-function formatReqCliente(task) {
+function formatReqProyecto(task) {
   const parsed = parseRequisitionNotes(task.notes);
   if (parsed?.customerName) return parsed.customerName;
   if (parsed?.customerCode) return parsed.customerCode;
   return "—";
+}
+
+function formatReqCliente(task) {
+  return formatReqProyecto(task);
 }
 
 async function loadRequisitionsList() {
@@ -3296,7 +3594,7 @@ async function loadRequisitionsList() {
       container.innerHTML = '<div class="data-grid-empty" style="padding:16px">No se pudieron cargar requisiciones.</div>';
       return;
     }
-    const rows = (await response.json()).filter((t) => t.type === "PICK");
+    const rows = filterRowsByAviatProject((await response.json()).filter((t) => t.type === "PICK"));
     const meta = document.getElementById("reqTableMeta");
     if (meta) meta.textContent = `${rows.length} requisición(es)`;
     if (!rows.length) {
@@ -3334,6 +3632,11 @@ async function submitRequisition() {
     setOpsMessage("reqMessage", "Indique folio o referencia.", false);
     return;
   }
+  if (!customerCode) {
+    setOpsMessage("reqMessage", "Seleccione un proyecto.", false);
+    return;
+  }
+  const lote = document.getElementById("reqLote")?.value?.trim();
   if (sku && !findProductBySku(sku)) {
     setOpsMessage("reqMessage", "SKU inexistente en catálogo.", false);
     return;
@@ -3346,6 +3649,7 @@ async function submitRequisition() {
   const notesPayload = {
     customerCode: customerCode || null,
     customerName: customerName || null,
+    lote: lote || null,
     sku: sku || null,
     qty: Number.isFinite(qty) ? qty : null,
     detail: extraNotes || null
@@ -3567,6 +3871,8 @@ async function loadCatalogData() {
   if (clientsList) clientsList.innerHTML = "";
   renderClientsModule();
   populateOperationalSelects();
+  renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
+  updateAviatHeaderUi();
 }
 
 async function deleteCustomerById(customerId) {
@@ -4259,6 +4565,7 @@ wireOperationalForms();
 wireControlCenterFilters();
 wireQuickActions();
 wireModals();
+wireAviatProjectUi();
 initGridDensity();
 wireGridToolbars();
 updateAppDateTime();

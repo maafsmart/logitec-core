@@ -1939,6 +1939,63 @@
           min-height: 56px;
         }
       }
+      .aviat-context-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 18px;
+        align-items: center;
+        margin-bottom: 14px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(108, 168, 255, 0.25);
+        background: rgba(20, 39, 77, 0.65);
+        font-size: 0.92rem;
+      }
+      .aviat-context-bar strong {
+        color: #eaf0ff;
+      }
+      .aviat-filter-notice {
+        margin: 0 0 12px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(245, 158, 11, 0.4);
+        background: rgba(245, 158, 11, 0.1);
+        color: #fde68a;
+        font-size: 0.88rem;
+      }
+      .project-chips-label {
+        margin: 0 0 8px;
+        font-size: 0.88rem;
+        font-weight: 700;
+        color: var(--muted);
+      }
+      .project-chips-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .project-chip {
+        padding: 8px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(108, 168, 255, 0.35);
+        background: #152a52;
+        color: #eaf0ff;
+        font-size: 0.82rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .project-chip.active {
+        border-color: #6ca8ff;
+        background: linear-gradient(180deg, #1f4a9a 0%, #17356b 100%);
+      }
+      .ops-aviat-banner {
+        margin: 0 0 12px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: rgba(108, 168, 255, 0.12);
+        border: 1px solid rgba(108, 168, 255, 0.25);
+        font-size: 0.9rem;
+      }
     </style>
   </head>
   <body>
@@ -1949,6 +2006,10 @@
           <p>Control operativo de almacén</p>
         </div>
         <div class="app-topbar-meta">
+          <div class="aviat-context-bar">
+            <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
+            <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
+          </div>
           <div class="app-user-block">
             <strong id="sessionDisplayName">Cargando sesión...</strong>
             <span><span id="sessionEmailInline">—</span><span id="sessionRoleInline"></span></span>
@@ -1977,9 +2038,18 @@
         <main class="content">
           <div id="moduleControlCenter" class="module-pane hidden">
             <header class="cc-hero">
-              <h2 class="cc-title">LOGITEC CORE WMS</h2>
+              <h2 class="cc-title" id="ccModuleTitle">Centro de Control — AVIAT</h2>
               <p class="cc-tagline">Control operativo de almacén, inventario y trazabilidad</p>
             </header>
+            <div class="aviat-context-bar">
+              <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
+              <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
+            </div>
+            <p id="aviatScopeControl" class="operational-table-meta" style="margin:0 0 10px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
+            <p id="aviatFilterFallbackNotice" class="aviat-filter-notice hidden">No se encontraron registros para ese proyecto. Mostrando todos los proyectos de AVIAT.</p>
+            <section class="card-panel" aria-label="Proyectos de AVIAT" style="margin-bottom:16px">
+              <div id="ccAviatProjectChips"></div>
+            </section>
             <div class="kpi-grid" aria-label="Indicadores operativos">
               <div class="kpi-card accent">
                 <span class="kpi-value" id="ccKpiProducts">—</span>
@@ -1987,7 +2057,7 @@
               </div>
               <div class="kpi-card">
                 <span class="kpi-value" id="ccKpiCustomers">—</span>
-                <span class="kpi-label">Clientes</span>
+                <span class="kpi-label">Proyectos</span>
               </div>
               <div class="kpi-card">
                 <span class="kpi-value" id="ccKpiLocations">—</span>
@@ -2062,11 +2132,11 @@
               <div class="cc-search-bar">
                 <div class="filter-strip" id="ccFilterStrip">
                   <div class="field compact">
-                    <label for="ccFilterCliente">Cliente</label>
-                    <input id="ccFilterCliente" type="text" placeholder="Nombre" autocomplete="off" />
+                    <label for="ccFilterCliente">Proyecto</label>
+                    <input id="ccFilterCliente" type="text" placeholder="Nombre proyecto" autocomplete="off" />
                   </div>
                   <div class="field compact">
-                    <label for="ccFilterCustomer">Customer</label>
+                    <label for="ccFilterCustomer">Código proyecto</label>
                     <input id="ccFilterCustomer" type="text" placeholder="Código" autocomplete="off" />
                   </div>
                   <div class="field compact">
@@ -2138,9 +2208,14 @@
           </div>
           <div id="moduleTraceability" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Consulta de trazabilidad</h3>
+              <h3>Consulta de trazabilidad — AVIAT</h3>
               <p class="module-lead">Auditoría de movimientos, importaciones, picking y operaciones registradas en el sistema.</p>
             </div>
+            <div class="aviat-context-bar">
+              <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
+              <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
+            </div>
+            <p id="aviatScopeTrace" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
             <div class="card-panel trace-query-panel">
             <div class="filter-strip">
               <div class="field compact">
@@ -2160,12 +2235,12 @@
                 <input id="traceSku" type="text" />
               </div>
               <div class="field compact">
-                <label for="traceCustomer">Customer</label>
+                <label for="traceCustomer">Código proyecto</label>
                 <input id="traceCustomer" type="text" placeholder="Código" />
               </div>
               <div class="field compact">
-                <label for="traceCliente">Cliente</label>
-                <input id="traceCliente" type="text" placeholder="Nombre" />
+                <label for="traceCliente">Proyecto</label>
+                <input id="traceCliente" type="text" placeholder="Nombre proyecto" />
               </div>
               <div class="field compact">
                 <label for="traceFrom">Desde</label>
@@ -2385,9 +2460,14 @@
           </div>
           <div id="moduleInventory" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Inventario actual</h3>
-              <p class="module-lead">Existencias por cliente, ubicación y status. Use filtros para localizar saldos operativos.</p>
+              <h3 id="inventoryModuleTitle">Inventario de AVIAT</h3>
+              <p class="module-lead">Existencias por proyecto, ubicación y status. Use filtros para localizar saldos operativos.</p>
             </div>
+            <div class="aviat-context-bar">
+              <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
+              <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
+            </div>
+            <p id="aviatScopeInventory" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
             <div class="summary-cards card-panel" id="inventorySummaryCards">
               <div class="summary-card ok">
                 <span class="value" id="sumStockTotal">—</span>
@@ -2399,7 +2479,7 @@
               </div>
               <div class="summary-card">
                 <span class="value" id="sumCustomers">—</span>
-                <span class="label">Clientes</span>
+                <span class="label">Proyectos</span>
               </div>
               <div class="summary-card">
                 <span class="value" id="sumLocations">—</span>
@@ -2432,12 +2512,16 @@
               <div class="operational-filters-bar" style="border:0;border-radius:0;padding:0 0 12px;background:transparent">
                 <div class="filter-strip" id="inventoryFilterStrip">
                   <div class="field compact">
-                    <label for="invFilterCliente">Cliente</label>
-                    <input id="invFilterCliente" type="text" placeholder="Nombre" autocomplete="off" />
+                    <label for="invFilterCliente">Proyecto</label>
+                    <input id="invFilterCliente" type="text" placeholder="Nombre proyecto" autocomplete="off" />
                   </div>
                   <div class="field compact">
-                    <label for="invFilterCustomer">Customer</label>
+                    <label for="invFilterCustomer">Código proyecto</label>
                     <input id="invFilterCustomer" type="text" placeholder="Código" autocomplete="off" />
+                  </div>
+                  <div class="field compact">
+                    <label for="invFilterLote">Lote</label>
+                    <input id="invFilterLote" type="text" placeholder="Lote" autocomplete="off" />
                   </div>
                   <div class="field compact">
                     <label for="invFilterSku">SKU</label>
@@ -2510,9 +2594,14 @@
           </div>
           <div id="moduleCatalog" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Catálogo de productos</h3>
-              <p class="module-lead">Productos maestros por cliente. Importe catálogo o filtre por SKU y nombre.</p>
+              <h3 id="catalogModuleTitle">Catálogo de AVIAT</h3>
+              <p class="module-lead">Productos maestros por proyecto de AVIAT. Importe catálogo o filtre por SKU y nombre.</p>
             </div>
+            <div class="aviat-context-bar">
+              <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
+              <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
+            </div>
+            <p id="aviatScopeCatalog" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
             <div class="page-toolbar">
               <button type="button" id="openCatalogImportBtn" class="btn-primary">Importar catálogo</button>
               <button type="button" id="exportProductsBtn" class="btn-secondary">Exportar productos CSV</button>
@@ -2529,12 +2618,16 @@
               <div class="operational-filters-bar" style="border:0;border-radius:0;padding:0 0 12px;background:transparent">
                 <div class="filter-strip" id="catalogFilterStrip">
                   <div class="field compact">
-                    <label for="catFilterCliente">Cliente</label>
-                    <input id="catFilterCliente" type="text" placeholder="Nombre" autocomplete="off" />
+                    <label for="catFilterCliente">Proyecto</label>
+                    <input id="catFilterCliente" type="text" placeholder="Nombre proyecto" autocomplete="off" />
                   </div>
                   <div class="field compact">
-                    <label for="catFilterCustomer">Customer</label>
+                    <label for="catFilterCustomer">Código proyecto</label>
                     <input id="catFilterCustomer" type="text" placeholder="Código" autocomplete="off" />
+                  </div>
+                  <div class="field compact">
+                    <label for="catFilterLote">Lote</label>
+                    <input id="catFilterLote" type="text" placeholder="N/D" autocomplete="off" />
                   </div>
                   <div class="field compact">
                     <label for="catFilterSku">SKU</label>
@@ -2635,22 +2728,27 @@
           </div>
           <div id="moduleInbound" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Entradas operativas</h3>
+              <h3>Entradas operativas — AVIAT</h3>
               <p class="module-lead">Registro de recepción de mercancía con impacto real en inventario y trazabilidad.</p>
             </div>
             <div class="card-panel ops-form-panel">
+              <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong></p>
               <h4 class="secondary-panel-title">Registrar entrada</h4>
               <div class="form-grid">
                 <div class="field">
-                  <label for="inboundCustomer">Customer</label>
-                  <select id="inboundCustomer"><option value="">— Seleccionar —</option></select>
+                  <label for="inboundCustomer">Proyecto</label>
+                  <select id="inboundCustomer" required><option value="">— Seleccionar proyecto —</option></select>
                 </div>
-                <div class="field">
+                <div class="field hidden">
                   <label for="inboundCliente">Cliente</label>
-                  <input id="inboundCliente" type="text" class="field-readonly" readonly placeholder="Se completa al elegir customer" />
+                  <input id="inboundCliente" type="text" class="field-readonly hidden" readonly tabindex="-1" aria-hidden="true" />
                 </div>
                 <div class="field">
-                  <label for="inboundSku">SKU</label>
+                  <label for="inboundLote">Lote</label>
+                  <input id="inboundLote" type="text" placeholder="Opcional" />
+                </div>
+                <div class="field">
+                  <label for="inboundSku">SKU / Código de barras</label>
                   <select id="inboundSku"><option value="">— Seleccionar —</option></select>
                 </div>
                 <div class="field">
@@ -2702,22 +2800,27 @@
           </div>
           <div id="moduleOutbound" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Salidas operativas</h3>
+              <h3>Salidas operativas — AVIAT</h3>
               <p class="module-lead">Despacho de mercancía con validación de stock y registro de movimiento.</p>
             </div>
             <div class="card-panel ops-form-panel">
+              <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong></p>
               <h4 class="secondary-panel-title">Registrar salida</h4>
               <div class="form-grid">
                 <div class="field">
-                  <label for="outboundCustomer">Customer</label>
-                  <select id="outboundCustomer"><option value="">— Seleccionar —</option></select>
+                  <label for="outboundCustomer">Proyecto</label>
+                  <select id="outboundCustomer" required><option value="">— Seleccionar proyecto —</option></select>
                 </div>
-                <div class="field">
+                <div class="field hidden">
                   <label for="outboundCliente">Cliente</label>
-                  <input id="outboundCliente" type="text" class="field-readonly" readonly />
+                  <input id="outboundCliente" type="text" class="field-readonly hidden" readonly tabindex="-1" aria-hidden="true" />
                 </div>
                 <div class="field">
-                  <label for="outboundSku">SKU</label>
+                  <label for="outboundLote">Lote</label>
+                  <input id="outboundLote" type="text" placeholder="Opcional" />
+                </div>
+                <div class="field">
+                  <label for="outboundSku">SKU / Código de barras</label>
                   <select id="outboundSku"><option value="">— Seleccionar —</option></select>
                 </div>
                 <div class="field">
@@ -2769,10 +2872,11 @@
           </div>
           <div id="moduleRequisitions" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Requisiciones</h3>
+              <h3>Requisiciones — AVIAT</h3>
               <p class="module-lead">Solicitudes de surtido vinculadas a tareas de picking.</p>
             </div>
             <div class="card-panel ops-form-panel">
+              <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong></p>
               <h4 class="secondary-panel-title">Nueva requisición</h4>
               <div class="form-grid">
                 <div class="field">
@@ -2780,19 +2884,23 @@
                   <input id="reqReference" type="text" placeholder="REQ-2026-001" required />
                 </div>
                 <div class="field">
-                  <label for="reqCustomer">Customer</label>
-                  <select id="reqCustomer"><option value="">— Seleccionar —</option></select>
+                  <label for="reqCustomer">Proyecto</label>
+                  <select id="reqCustomer" required><option value="">— Seleccionar proyecto —</option></select>
+                </div>
+                <div class="field hidden">
+                  <label for="reqCliente">Cliente</label>
+                  <input id="reqCliente" type="text" class="field-readonly hidden" readonly tabindex="-1" aria-hidden="true" />
                 </div>
                 <div class="field">
-                  <label for="reqCliente">Cliente</label>
-                  <input id="reqCliente" type="text" class="field-readonly" readonly />
+                  <label for="reqLote">Lote</label>
+                  <input id="reqLote" type="text" placeholder="Opcional" />
                 </div>
                 <div class="field">
                   <label for="reqPriority">Prioridad</label>
                   <input id="reqPriority" type="number" min="0" max="100" value="50" />
                 </div>
                 <div class="field">
-                  <label for="reqSku">SKU</label>
+                  <label for="reqSku">SKU / Código de barras</label>
                   <select id="reqSku"><option value="">— Seleccionar —</option></select>
                 </div>
                 <div class="field">
@@ -2911,6 +3019,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=29"></script>
+    <script src="/dashboard.js?v=37"></script>
   </body>
 </html>
