@@ -318,17 +318,19 @@ const GRID_WIDTHS_PREFIX = "logitec_grid_widths_";
 const GRID_SORT_PREFIX = "logitec_grid_sort_";
 const GRID_DENSITY_KEY = "logitec_grid_density";
 const GRID_SELECTION_PREFIX = "logitec_grid_sel_";
+const ACTIVE_CLIENT_KEY = "logitec_active_client";
+const ACTIVE_CLIENT_GENERAL = "GENERAL";
 
 const GRID_DEFAULT_WIDTHS = {
-  inventory: [200, 120, 150, 260, 110, 140, 110, 90],
-  catalog: [200, 120, 150, 260, 110, 150],
+  inventory: [200, 120, 100, 160, 260, 110, 140, 110, 90],
+  catalog: [200, 120, 160, 260, 110, 150],
   clients: [200, 120, 100, 120, 100],
-  stock_cc: [200, 120, 150, 260, 140, 110, 90],
-  movements: [140, 90, 120, 200, 160, 120, 80, 80, 120, 120, 140],
-  traceability: [140, 120, 90, 100, 120, 160, 120, 120, 70, 90, 140],
-  inbound: [140, 160, 140, 110, 120, 120, 90, 90],
-  outbound: [140, 160, 140, 110, 120, 120, 90, 90],
-  requisitions: [120, 160, 90, 200, 110, 100],
+  stock_cc: [200, 120, 100, 160, 260, 140, 110, 90],
+  movements: [130, 140, 120, 90, 90, 140, 200, 80, 80, 120, 120, 140],
+  traceability: [130, 140, 120, 90, 90, 120, 160, 120, 70, 90, 140],
+  inbound: [130, 140, 120, 100, 160, 200, 90, 90, 90, 90],
+  outbound: [130, 140, 120, 100, 160, 200, 90, 90, 90, 90],
+  requisitions: [110, 140, 110, 100, 80, 180, 100, 90],
   tasks: [130, 90, 100, 110, 140, 140, 80],
   incidents: [130, 100, 110, 140, 120, 200],
   picking: [140, 120, 90, 200],
@@ -336,6 +338,245 @@ const GRID_DEFAULT_WIDTHS = {
 };
 
 const gridSortState = {};
+
+function getActiveClient() {
+  return localStorage.getItem(ACTIVE_CLIENT_KEY) || ACTIVE_CLIENT_GENERAL;
+}
+
+function setActiveClient(code) {
+  const value = code && String(code).trim() ? String(code).trim().toUpperCase() : ACTIVE_CLIENT_GENERAL;
+  localStorage.setItem(ACTIVE_CLIENT_KEY, value);
+  updateActiveClientUi();
+  refreshClientScopedViews();
+}
+
+function isGeneralView() {
+  return getActiveClient() === ACTIVE_CLIENT_GENERAL;
+}
+
+function getActiveClientRecord() {
+  const active = getActiveClient();
+  if (active === ACTIVE_CLIENT_GENERAL) return null;
+  return (Array.isArray(clientsCache) ? clientsCache : []).find(
+    (c) => String(c.code || "").toUpperCase() === active
+  );
+}
+
+function getActiveClientDisplayLabel() {
+  if (isGeneralView()) return "Vista general";
+  const rec = getActiveClientRecord();
+  if (rec?.name) return rec.name;
+  return getActiveClient();
+}
+
+function rowClientCode(row) {
+  return (
+    row?.product?.customer?.code ||
+    row?.customer?.code ||
+    row?.code ||
+    parseRequisitionNotes(row?.notes)?.customerCode ||
+    ""
+  );
+}
+
+function rowClientName(row) {
+  return (
+    row?.product?.customer?.name ||
+    row?.customer?.name ||
+    row?.name ||
+    parseRequisitionNotes(row?.notes)?.customerName ||
+    ""
+  );
+}
+
+function rowMatchesActiveClient(row) {
+  if (isGeneralView()) return true;
+  const active = getActiveClient().toUpperCase();
+  const code = String(rowClientCode(row) || "").toUpperCase();
+  const name = String(rowClientName(row) || "").toUpperCase();
+  return code === active || name === active;
+}
+
+function filterRowsByActiveClient(rows) {
+  if (isGeneralView()) return Array.isArray(rows) ? rows : [];
+  return (Array.isArray(rows) ? rows : []).filter((row) => rowMatchesActiveClient(row));
+}
+
+function extractLoteFromText(text) {
+  if (!text) return "";
+  const match = String(text).match(/LOTE:([^|]+)/i);
+  return match ? match[1].trim() : "";
+}
+
+function extractLoteFromRow(row) {
+  const fromRef = extractLoteFromText(row?.reference);
+  if (fromRef) return fromRef;
+  const fromNotes = extractLoteFromText(row?.notes);
+  if (fromNotes) return fromNotes;
+  const parsed = parseRequisitionNotes(row?.notes);
+  if (parsed?.lote) return String(parsed.lote);
+  return "N/D";
+}
+
+function formatSkuBarcode(product) {
+  const p = product || {};
+  const sku = p.sku || "—";
+  const barcode = p.barcode;
+  if (barcode && barcode !== sku) return `${sku} / ${barcode}`;
+  return sku;
+}
+
+function buildOpsReference(lote, referenceRaw, kind) {
+  const base = referenceRaw || (kind === "in" ? "ENTRADA_OPERATIVA" : "SALIDA_OPERATIVA");
+  if (lote) return `LOTE:${lote} | ${base}`;
+  return base;
+}
+
+function updateActiveClientUi() {
+  const label = document.getElementById("activeClientLabel");
+  const scopeInv = document.getElementById("inventoryClientScope");
+  const scopeCat = document.getElementById("catalogClientScope");
+  const scopeCc = document.getElementById("controlClientScope");
+  const display = getActiveClientDisplayLabel();
+  if (label) {
+    label.textContent = display;
+    label.classList.toggle("is-general", isGeneralView());
+  }
+  const scopeText = isGeneralView()
+    ? "Vista administrativa general — mostrando todos los clientes"
+    : `Mostrando operación de: ${display}`;
+  if (scopeInv) scopeInv.textContent = isGeneralView() ? "Mostrando inventario: Vista general" : `Mostrando inventario de: ${display}`;
+  if (scopeCat) scopeCat.textContent = isGeneralView() ? "Mostrando catálogo: Vista general" : `Mostrando catálogo de: ${display}`;
+  if (scopeCc) scopeCc.textContent = scopeText;
+  document.querySelectorAll("[data-active-client-pill]").forEach((el) => {
+    el.textContent = display;
+    el.classList.toggle("is-general", isGeneralView());
+  });
+}
+
+function refreshClientScopedViews() {
+  applyActiveClientToOperationalSelects();
+  if (moduleControlCenter && !moduleControlCenter.classList.contains("hidden")) refreshControlCenter();
+  if (moduleInventory && !moduleInventory.classList.contains("hidden")) applyInventoryFilters();
+  if (moduleCatalog && !moduleCatalog.classList.contains("hidden")) applyCatalogFilters();
+  if (moduleClients && !moduleClients.classList.contains("hidden")) renderClientsModule();
+  if (moduleInbound && !moduleInbound.classList.contains("hidden")) {
+    populateOperationalSelects();
+    void loadInboundList();
+  }
+  if (moduleOutbound && !moduleOutbound.classList.contains("hidden")) {
+    populateOperationalSelects();
+    void loadOutboundList();
+  }
+  if (moduleRequisitions && !moduleRequisitions.classList.contains("hidden")) {
+    populateOperationalSelects();
+    void loadRequisitionsList();
+  }
+  if (moduleTraceability && !moduleTraceability.classList.contains("hidden")) void loadTraceability();
+  if (scanEventsList) void loadScanEvents();
+}
+
+function applyActiveClientToOperationalSelects() {
+  const active = getActiveClient();
+  const isLocked = active !== ACTIVE_CLIENT_GENERAL;
+  ["inboundCustomer", "outboundCustomer", "reqCustomer"].forEach((id) => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    if (isLocked) sel.value = active;
+    sel.disabled = isLocked;
+  });
+  const rec = getActiveClientRecord();
+  if (rec) {
+    [
+      ["inboundCliente", rec.name],
+      ["outboundCliente", rec.name],
+      ["reqCliente", rec.name]
+    ].forEach(([id, val]) => {
+      const el = document.getElementById(id);
+      if (el) el.value = val || "";
+    });
+  }
+  const projectCode = isLocked ? active : document.getElementById("inboundCustomer")?.value || "";
+  fillSkuSelect("inboundSku", projectCode, "inboundProduct");
+  fillSkuSelect("outboundSku", document.getElementById("outboundCustomer")?.value || projectCode, "outboundProduct");
+  fillSkuSelect("reqSku", document.getElementById("reqCustomer")?.value || projectCode, null);
+}
+
+function renderActiveClientPickerList(container) {
+  if (!container) return;
+  const clients = (Array.isArray(clientsCache) ? clientsCache : []).slice().sort((a, b) => a.name.localeCompare(b.name, "es"));
+  const generalBtn = `<button type="button" class="client-pick-btn${isGeneralView() ? " active" : ""}" data-pick-client="${ACTIVE_CLIENT_GENERAL}">Vista general</button>`;
+  const clientBtns = clients
+    .map(
+      (c) =>
+        `<button type="button" class="client-pick-btn${getActiveClient() === String(c.code).toUpperCase() ? " active" : ""}" data-pick-client="${escCell(c.code)}" title="${escCell(c.code)}">${escCell(c.name)} <span class="client-pick-code">${escCell(c.code)}</span></button>`
+    )
+    .join("");
+  container.innerHTML = `${generalBtn}${clientBtns || '<p class="subtitle" style="margin:8px 0 0">No hay clientes registrados aún.</p>'}`;
+  container.querySelectorAll("[data-pick-client]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setActiveClient(btn.getAttribute("data-pick-client"));
+      closeModal("activeClientModal");
+    });
+  });
+}
+
+function openActiveClientModal() {
+  renderActiveClientPickerList(document.getElementById("activeClientPickerList"));
+  openModal("activeClientModal");
+}
+
+function wireActiveClientUi() {
+  document.getElementById("changeActiveClientBtn")?.addEventListener("click", openActiveClientModal);
+  document.getElementById("openActiveClientFromCcBtn")?.addEventListener("click", openActiveClientModal);
+  renderActiveClientPickerList(document.getElementById("ccClientPickerList"));
+  document.getElementById("ccClientPickerList")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-pick-client]");
+    if (!btn) return;
+    setActiveClient(btn.getAttribute("data-pick-client"));
+  });
+  document.getElementById("openNewClientModalBtn")?.addEventListener("click", () => openModal("newClientModal"));
+  document.getElementById("openNewClientFromCcBtn")?.addEventListener("click", () => openModal("newClientModal"));
+  document.getElementById("newClientForm")?.addEventListener("submit", submitNewClient);
+  updateActiveClientUi();
+}
+
+async function submitNewClient(event) {
+  event.preventDefault();
+  const errEl = document.getElementById("newClientError");
+  const btn = document.getElementById("newClientSubmitBtn");
+  if (errEl) errEl.textContent = "";
+  const name = document.getElementById("newClientName")?.value?.trim();
+  const code = document.getElementById("newClientCode")?.value?.trim();
+  if (!name) {
+    if (errEl) errEl.textContent = "El nombre del cliente es obligatorio.";
+    return;
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const response = await authenticatedFetch("/api/catalog/clients", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, code: code || undefined, active: true })
+    });
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (errEl) errEl.textContent = data.message || "No se pudo crear el cliente.";
+      return;
+    }
+    closeModal("newClientModal");
+    document.getElementById("newClientForm")?.reset();
+    await loadCatalogData();
+    renderActiveClientPickerList(document.getElementById("activeClientPickerList"));
+    renderActiveClientPickerList(document.getElementById("ccClientPickerList"));
+    if (data.code) setActiveClient(data.code);
+  } catch (_e) {
+    if (errEl) errEl.textContent = "Error de red.";
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
 
 function initGridDensity() {
   const mode = localStorage.getItem(GRID_DENSITY_KEY) || "comfortable";
@@ -600,8 +841,9 @@ function openInventoryDetail(row) {
   const p = row.product || {};
   openDetailDrawer("Detalle de inventario", [
     { label: "Cliente", value: p.customer?.name },
-    { label: "Customer", value: p.customer?.code },
-    { label: "SKU", value: p.sku },
+    { label: "Proyecto", value: p.customer?.code },
+    { label: "Lote", value: extractLoteFromRow(row) },
+    { label: "SKU / Código de barras", value: formatSkuBarcode(p) },
     { label: "Producto", value: p.name },
     { label: "Almacén", value: row.location?.warehouse },
     { label: "Ubicación", value: row.location?.code },
@@ -672,8 +914,8 @@ function openInventoryDetail(row) {
 function openCatalogDetail(product) {
   openDetailDrawer("Detalle de producto", [
     { label: "Cliente", value: product.customer?.name },
-    { label: "Customer", value: product.customer?.code },
-    { label: "SKU", value: product.sku },
+    { label: "Proyecto", value: product.customer?.code },
+    { label: "SKU / Código de barras", value: formatSkuBarcode(product) },
     { label: "Producto", value: product.name },
     { label: "Almacén", value: product.warehouse },
     { label: "Código de barras", value: product.barcode }
@@ -1186,10 +1428,11 @@ function sumStockQty(rows) {
 }
 
 function updateControlCenterKpis() {
-  const list = Array.isArray(stockRowsCache) ? stockRowsCache : [];
+  const list = filterRowsByActiveClient(Array.isArray(stockRowsCache) ? stockRowsCache : []);
+  const scopedProducts = filterRowsByActiveClient(productsCache);
   const productCount =
-    productsCache.length > 0
-      ? productsCache.length
+    scopedProducts.length > 0
+      ? scopedProducts.length
       : new Set(list.map((r) => r.product?.sku).filter(Boolean)).size;
   const customers = new Set(
     list.map((r) => r.product?.customer?.code || r.product?.customer?.name).filter(Boolean)
@@ -1204,8 +1447,8 @@ function updateControlCenterKpis() {
   setKpi("ccKpiCustomers", customers.size ? String(customers.size) : "0");
   setKpi("ccKpiLocations", locations.size ? String(locations.size) : "0");
   setKpi("ccKpiStock", list.length ? formatQty(stockTotal) : "0");
-  setKpi("ccKpiMovements", String(movementsCountCache));
-  setKpi("ccKpiConflicts", String(pendingConflictsCache));
+  setKpi("ccKpiMovements", String(filterRowsByActiveClient(movementsRowsCache).length || movementsCountCache));
+  setKpi("ccKpiConflicts", String(countStockConflicts(list)));
 }
 
 function stockRowCells(row, { includeWarehouse = true } = {}) {
@@ -1213,7 +1456,8 @@ function stockRowCells(row, { includeWarehouse = true } = {}) {
   const cells = [
     renderCellEllipsis(p.customer?.name || "—"),
     `<span class="cell-nowrap">${escCell(p.customer?.code || "—")}</span>`,
-    `<strong class="cell-nowrap">${escCell(p.sku || "—")}</strong>`,
+    renderCellEllipsis(extractLoteFromRow(row)),
+    `<strong class="cell-nowrap">${escCell(formatSkuBarcode(p))}</strong>`,
     renderCellEllipsis(p.name || "—")
   ];
   if (includeWarehouse) cells.push(renderCellEllipsis(row.location?.warehouse || "—"));
@@ -1229,7 +1473,7 @@ function catalogRowCells(product) {
   return [
     renderCellEllipsis(product.customer?.name || "—"),
     `<span class="cell-nowrap">${escCell(product.customer?.code || "—")}</span>`,
-    `<strong class="cell-nowrap">${escCell(product.sku || "—")}</strong>`,
+    `<strong class="cell-nowrap">${escCell(formatSkuBarcode(product))}</strong>`,
     renderCellEllipsis(product.name || "—"),
     `<span class="cell-nowrap">${renderCellEllipsis(product.warehouse || "—")}</span>`,
     `<span class="cell-nowrap">${escCell(product.barcode || "—")}</span>`
@@ -1238,8 +1482,9 @@ function catalogRowCells(product) {
 
 const STOCK_COLUMNS_FULL = [
   { label: "Cliente", sortKey: (r) => r.product?.customer?.name || "", sortType: "text" },
-  { label: "Customer", sortKey: (r) => r.product?.customer?.code || "", sortType: "text" },
-  { label: "SKU", sortKey: (r) => r.product?.sku || "", sortType: "text" },
+  { label: "Proyecto", sortKey: (r) => r.product?.customer?.code || "", sortType: "text" },
+  { label: "Lote", sortKey: (r) => extractLoteFromRow(r), sortType: "text" },
+  { label: "SKU / Código de barras", sortKey: (r) => r.product?.sku || "", sortType: "text" },
   { label: "Producto", sortKey: (r) => r.product?.name || "", sortType: "text" },
   { label: "Almacén", sortKey: (r) => r.location?.warehouse || "", sortType: "text" },
   { label: "Ubicación", sortKey: (r) => r.location?.code || "", sortType: "text" },
@@ -1249,8 +1494,9 @@ const STOCK_COLUMNS_FULL = [
 
 const STOCK_COLUMNS_CC = [
   { label: "Cliente", sortKey: (r) => r.product?.customer?.name || "" },
-  { label: "Customer", sortKey: (r) => r.product?.customer?.code || "" },
-  { label: "SKU", sortKey: (r) => r.product?.sku || "" },
+  { label: "Proyecto", sortKey: (r) => r.product?.customer?.code || "" },
+  { label: "Lote", sortKey: (r) => extractLoteFromRow(r) },
+  { label: "SKU / Código de barras", sortKey: (r) => r.product?.sku || "" },
   { label: "Producto", sortKey: (r) => r.product?.name || "" },
   { label: "Ubicación", sortKey: (r) => r.location?.code || "" },
   { label: "Status", sortKey: (r) => r.status || "" },
@@ -1259,8 +1505,8 @@ const STOCK_COLUMNS_CC = [
 
 const CATALOG_COLUMNS = [
   { label: "Cliente", sortKey: (p) => p.customer?.name || "" },
-  { label: "Customer", sortKey: (p) => p.customer?.code || "" },
-  { label: "SKU", sortKey: (p) => p.sku || "" },
+  { label: "Proyecto", sortKey: (p) => p.customer?.code || "" },
+  { label: "SKU / Código de barras", sortKey: (p) => p.sku || "" },
   { label: "Producto", sortKey: (p) => p.name || "" },
   { label: "Almacén", sortKey: (p) => p.warehouse || "" },
   { label: "Código de barras", sortKey: (p) => p.barcode || "" }
@@ -1268,7 +1514,7 @@ const CATALOG_COLUMNS = [
 
 const CLIENTS_COLUMNS = [
   { label: "Cliente", sortKey: (r) => r.name || "" },
-  { label: "Customer", sortKey: (r) => r.code || "" },
+  { label: "Proyecto", sortKey: (r) => r.code || "" },
   { label: "Productos", align: "right", sortKey: (r) => r.products || 0, sortType: "number" },
   { label: "Saldos asociados", align: "right", sortKey: (r) => r.stock || 0, sortType: "number" },
   { label: "Estado", sortKey: (r) => (r.products > 0 ? "Activo" : "Sin catálogo") }
@@ -1276,12 +1522,13 @@ const CLIENTS_COLUMNS = [
 
 const TRACE_COLUMNS = [
   { label: "Fecha", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatDateShort(r.createdAt), title: (r) => formatDateShort(r.createdAt) },
-  { label: "Usuario", sortKey: (r) => r.user?.fullName || "", render: (r) => renderCellWithClamp(r.user?.fullName || "—", "cell-truncate", 20), title: (r) => r.user?.fullName || "" },
-  { label: "Tipo", sortKey: (r) => r.type || "", render: (r) => statusBadge(r.type) },
-  { label: "Subtipo", sortKey: (r) => r.subtype || "", render: (r) => renderCellWithClamp(r.subtype, "cell-truncate", 18), title: (r) => r.subtype || "" },
-  { label: "SKU", sortKey: (r) => r.product?.sku || "", render: (r) => escCell(r.product?.sku || "—"), title: (r) => r.product?.sku || "" },
   { label: "Cliente", sortKey: (r) => r.customer?.name || "", render: (r) => renderCellWithClamp(r.customer?.name || "—", "cell-truncate", 18), title: (r) => r.customer?.name || "" },
-  { label: "Customer", sortKey: (r) => r.customer?.code || "", render: (r) => escCell(r.customer?.code || "—"), title: (r) => r.customer?.code || "" },
+  { label: "Proyecto", sortKey: (r) => r.customer?.code || "", render: (r) => escCell(r.customer?.code || "—"), title: (r) => r.customer?.code || "" },
+  { label: "Lote", sortKey: (r) => extractLoteFromRow(r), render: (r) => renderCellWithClamp(extractLoteFromRow(r), "cell-truncate", 16), title: (r) => extractLoteFromRow(r) },
+  { label: "Tipo", sortKey: (r) => r.type || "", render: (r) => statusBadge(r.type) },
+  { label: "SKU / Código", sortKey: (r) => r.product?.sku || "", render: (r) => escCell(formatSkuBarcode(r.product)), title: (r) => r.product?.sku || "" },
+  { label: "Producto", sortKey: (r) => r.product?.name || "", render: (r) => renderCellWithClamp(r.product?.name || "—", "cell-truncate", 22), title: (r) => r.product?.name || "" },
+  { label: "Usuario", sortKey: (r) => r.user?.fullName || "", render: (r) => renderCellWithClamp(r.user?.fullName || "—", "cell-truncate", 18), title: (r) => r.user?.fullName || "" },
   { label: "Ubicación", sortKey: (r) => r.location || r.warehouse || "", render: (r) => renderCellWithClamp(r.location || r.warehouse, "cell-truncate", 22), title: (r) => r.location || r.warehouse || "" },
   { label: "Cant.", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number", render: (r) => formatQty(r.qty) },
   { label: "Resultado", sortKey: (r) => r.result || "", render: (r) => statusBadge(r.result) },
@@ -1300,11 +1547,12 @@ const TASK_COLUMNS = [
 
 const MOVEMENT_COLUMNS = [
   { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
-  { label: "Tipo", sortKey: (m) => m.movementType || "", render: (m) => statusBadge(m.movementType) },
-  { label: "SKU", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(m.product?.sku || "—"), title: (m) => m.product?.sku || "" },
-  { label: "Producto", sortKey: (m) => m.product?.name || "", render: (m) => renderCellWithClamp(m.product?.name, "cell-truncate", 28), title: (m) => m.product?.name || "" },
   { label: "Cliente", sortKey: (m) => m.product?.customer?.name || "", render: (m) => renderCellWithClamp(m.product?.customer?.name, "cell-truncate", 20), title: (m) => m.product?.customer?.name || "" },
-  { label: "Customer", sortKey: (m) => m.product?.customer?.code || "", render: (m) => escCell(m.product?.customer?.code || "—"), title: (m) => m.product?.customer?.code || "" },
+  { label: "Proyecto", sortKey: (m) => m.product?.customer?.code || "", render: (m) => escCell(m.product?.customer?.code || "—"), title: (m) => m.product?.customer?.code || "" },
+  { label: "Lote", sortKey: (m) => extractLoteFromRow(m), render: (m) => renderCellWithClamp(extractLoteFromRow(m), "cell-truncate", 16), title: (m) => extractLoteFromRow(m) },
+  { label: "Tipo", sortKey: (m) => m.movementType || "", render: (m) => statusBadge(m.movementType) },
+  { label: "SKU / Código", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(formatSkuBarcode(m.product)), title: (m) => m.product?.sku || "" },
+  { label: "Producto", sortKey: (m) => m.product?.name || "", render: (m) => renderCellWithClamp(m.product?.name, "cell-truncate", 28), title: (m) => m.product?.name || "" },
   { label: "Antes", align: "right", sortKey: (m) => Number(m.quantityBefore) || 0, sortType: "number", render: (m) => formatQty(m.quantityBefore) },
   { label: "Después", align: "right", sortKey: (m) => Number(m.quantityAfter) || 0, sortType: "number", render: (m) => formatQty(m.quantityAfter) },
   { label: "Ubicación", sortKey: (m) => m.toLocation?.code || m.fromLocation?.code || "", render: (m) => renderCellWithClamp(m.toLocation?.code || m.fromLocation?.code || m.warehouse, "cell-truncate", 20), title: (m) => m.toLocation?.code || m.fromLocation?.code || "" },
@@ -1315,9 +1563,10 @@ const MOVEMENT_COLUMNS = [
 const OPS_MOVEMENT_COLUMNS = [
   { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
   { label: "Cliente", sortKey: (m) => m.product?.customer?.name || "", render: (m) => renderCellWithClamp(m.product?.customer?.name || "—", "cell-truncate", 22), title: (m) => m.product?.customer?.name || "" },
-  { label: "Customer", sortKey: (m) => m.product?.customer?.code || "", render: (m) => escCell(m.product?.customer?.code || "—"), title: (m) => m.product?.customer?.code || "" },
+  { label: "Proyecto", sortKey: (m) => m.product?.customer?.code || "", render: (m) => escCell(m.product?.customer?.code || "—"), title: (m) => m.product?.customer?.code || "" },
+  { label: "Lote", sortKey: (m) => extractLoteFromRow(m), render: (m) => renderCellWithClamp(extractLoteFromRow(m), "cell-truncate", 16), title: (m) => extractLoteFromRow(m) },
   { label: "Referencia", sortKey: (m) => m.reference || "", render: (m) => renderCellWithClamp(m.reference, "cell-truncate", 18), title: (m) => m.reference || "" },
-  { label: "SKU", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(m.product?.sku || "—"), title: (m) => m.product?.sku || "" },
+  { label: "SKU / Código", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(formatSkuBarcode(m.product)), title: (m) => m.product?.sku || "" },
   { label: "Producto", sortKey: (m) => m.product?.name || "", render: (m) => renderCellWithClamp(m.product?.name, "cell-truncate", 24), title: (m) => m.product?.name || "" },
   { label: "Cantidad", align: "right", sortKey: (m) => Number(m.qty) || 0, sortType: "number", render: (m) => formatQty(m.qty) }
 ];
@@ -1325,6 +1574,8 @@ const OPS_MOVEMENT_COLUMNS = [
 const REQ_COLUMNS = [
   { label: "Folio", sortKey: (t) => t.reference || "", render: (t) => renderCellWithClamp(t.reference, "cell-truncate", 18), title: (t) => t.reference || "" },
   { label: "Cliente", sortKey: (t) => formatReqCliente(t), render: (t) => renderCellWithClamp(formatReqCliente(t), "cell-truncate", 22), title: (t) => formatReqCliente(t) },
+  { label: "Proyecto", sortKey: (t) => formatReqProyecto(t), render: (t) => renderCellWithClamp(formatReqProyecto(t), "cell-truncate", 16), title: (t) => formatReqProyecto(t) },
+  { label: "Lote", sortKey: (t) => formatReqLote(t), render: (t) => renderCellWithClamp(formatReqLote(t), "cell-truncate", 16), title: (t) => formatReqLote(t) },
   { label: "Prioridad", align: "right", sortKey: (t) => t.priority ?? 0, sortType: "number", render: (t) => String(t.priority ?? 0) },
   { label: "Productos", sortKey: (t) => formatReqProducts(t), render: (t) => renderCellWithClamp(formatReqProducts(t), "cell-truncate", 28), title: (t) => formatReqProducts(t) },
   { label: "Estado", sortKey: (t) => t.status || "", render: (t) => statusBadge(t.status) },
@@ -1402,7 +1653,7 @@ function wireModals() {
   document.querySelectorAll("[data-close-modal]").forEach((btn) => {
     btn.addEventListener("click", () => closeModal(btn.getAttribute("data-close-modal")));
   });
-  ["catalogImportModal", "inventoryImportModal"].forEach((id) => {
+  ["catalogImportModal", "inventoryImportModal", "activeClientModal", "newClientModal"].forEach((id) => {
     const overlay = document.getElementById(id);
     if (!overlay || overlay.dataset.modalWired === "1") return;
     overlay.dataset.modalWired = "1";
@@ -1475,7 +1726,8 @@ function buildClientStatsMap() {
 function renderClientsModule() {
   if (!clientsModuleList) return;
   const stats = buildClientStatsMap();
-  const rows = Array.from(stats.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
+  let rows = Array.from(stats.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
+  rows = filterRowsByActiveClient(rows);
   const countEl = document.getElementById("clientsTableCount");
   if (countEl) countEl.textContent = `Mostrando ${rows.length} cliente${rows.length === 1 ? "" : "s"}`;
   renderDataGrid(clientsModuleList, {
@@ -1527,7 +1779,9 @@ function renderControlCenterTable(rows) {
 
 function applyControlCenterFilters() {
   updateControlCenterKpis();
-  renderControlCenterTable(filterStockRowsWithFilters(stockRowsCache, getControlCenterFilterValues()));
+  renderControlCenterTable(
+    filterStockRowsWithFilters(filterRowsByActiveClient(stockRowsCache), getControlCenterFilterValues())
+  );
 }
 
 function refreshControlCenter() {
@@ -1574,12 +1828,12 @@ function wireQuickActions() {
 }
 
 function filterStockRows(rows) {
-  return filterStockRowsWithFilters(rows, getInventoryFilterValues());
+  return filterStockRowsWithFilters(filterRowsByActiveClient(rows), getInventoryFilterValues());
 }
 
 function renderStockTable(rows) {
   if (!inventoryList) return;
-  const total = stockRowsCache.length;
+  const total = filterRowsByActiveClient(stockRowsCache).length;
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("inventoryTableCount", shown, total, "saldos");
   renderDataGrid(inventoryList, {
@@ -1595,14 +1849,14 @@ function renderStockTable(rows) {
 }
 
 function applyInventoryFilters() {
-  updateInventorySummary(stockRowsCache);
+  updateInventorySummary(filterRowsByActiveClient(stockRowsCache));
   renderStockTable(filterStockRows(stockRowsCache));
   applyControlCenterFilters();
 }
 
 function filterProductRows(rows) {
   const f = getCatalogFilterValues();
-  return (Array.isArray(rows) ? rows : []).filter((product) => {
+  return filterRowsByActiveClient(rows).filter((product) => {
     const cliente = product.customer?.name || "";
     const customer = product.customer?.code || "";
     return (
@@ -1616,7 +1870,7 @@ function filterProductRows(rows) {
 
 function renderProductsTable(rows) {
   if (!productsList) return;
-  const total = productsCache.length;
+  const total = filterRowsByActiveClient(productsCache).length;
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("catalogTableCount", shown, total, "productos");
   renderDataGrid(productsList, {
@@ -2490,10 +2744,11 @@ function buildTraceabilityParams() {
   const uid = document.getElementById("traceUserId")?.value?.trim();
   const typ = document.getElementById("traceType")?.value?.trim();
   const sku = document.getElementById("traceSku")?.value?.trim();
-  const customer = document.getElementById("traceCustomer")?.value?.trim();
+  let customer = document.getElementById("traceCustomer")?.value?.trim();
   const cliente = document.getElementById("traceCliente")?.value?.trim();
   const from = document.getElementById("traceFrom")?.value?.trim();
   const to = document.getElementById("traceTo")?.value?.trim();
+  if (!customer && !isGeneralView()) customer = getActiveClient();
   if (wh) params.set("warehouse", wh);
   if (uid) params.set("userId", uid);
   if (typ) params.set("type", typ);
@@ -2508,8 +2763,9 @@ function buildTraceabilityParams() {
 
 const STOCK_EXPORT_COLUMNS = [
   { label: "cliente", value: (r) => r.product?.customer?.name || "" },
-  { label: "customer", value: (r) => r.product?.customer?.code || "" },
-  { label: "sku", value: (r) => r.product?.sku || "" },
+  { label: "proyecto", value: (r) => r.product?.customer?.code || "" },
+  { label: "lote", value: (r) => extractLoteFromRow(r) },
+  { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r.product) },
   { label: "producto", value: (r) => r.product?.name || "" },
   { label: "almacen", value: (r) => r.location?.warehouse || "" },
   { label: "ubicacion", value: (r) => r.location?.code || "" },
@@ -2519,11 +2775,26 @@ const STOCK_EXPORT_COLUMNS = [
 
 const CATALOG_EXPORT_COLUMNS = [
   { label: "cliente", value: (r) => r.customer?.name || "" },
-  { label: "customer", value: (r) => r.customer?.code || "" },
-  { label: "sku", value: (r) => r.sku || "" },
+  { label: "proyecto", value: (r) => r.customer?.code || "" },
+  { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r) },
   { label: "producto", value: (r) => r.name || "" },
   { label: "almacen", value: (r) => r.warehouse || "" },
   { label: "codigo_barras", value: (r) => r.barcode || "" }
+];
+
+const MOVEMENT_EXPORT_COLUMNS = [
+  { label: "fecha", value: (r) => formatExportDate(r.createdAt) },
+  { label: "cliente", value: (r) => r.product?.customer?.name || "" },
+  { label: "proyecto", value: (r) => r.product?.customer?.code || "" },
+  { label: "lote", value: (r) => extractLoteFromRow(r) },
+  { label: "tipo", value: (r) => r.movementType || r.type || "" },
+  { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r.product) },
+  { label: "producto", value: (r) => r.product?.name || "" },
+  { label: "antes", value: (r) => formatQty(r.quantityBefore) },
+  { label: "despues", value: (r) => formatQty(r.quantityAfter) },
+  { label: "ubicacion", value: (r) => r.toLocation?.code || r.fromLocation?.code || r.warehouse || "" },
+  { label: "usuario", value: (r) => r.user?.fullName || r.user?.email || "" },
+  { label: "referencia", value: (r) => r.reference || "" }
 ];
 
 async function exportStockCsv() {
@@ -2532,12 +2803,12 @@ async function exportStockCsv() {
     window.alert("No se pudo exportar existencias.");
     return;
   }
-  const rows = await response.json();
+  const rows = filterRowsByActiveClient(await response.json());
   if (!Array.isArray(rows) || rows.length === 0) {
-    window.alert("No hay existencias para exportar.");
+    window.alert(isGeneralView() ? "No hay existencias para exportar." : "No hay existencias del cliente activo para exportar.");
     return;
   }
-  exportToCsv("logitec_inventario", rows, STOCK_EXPORT_COLUMNS);
+  exportToCsv(isGeneralView() ? "logitec_inventario" : `logitec_inventario_${getActiveClient()}`, rows, STOCK_EXPORT_COLUMNS);
 }
 
 async function exportStockCsvFiltered() {
@@ -2564,26 +2835,12 @@ async function exportMovementsCsv() {
     window.alert("No se pudo exportar movimientos.");
     return;
   }
-  const rows = await response.json();
+  const rows = filterRowsByActiveClient(await response.json());
   if (!Array.isArray(rows) || rows.length === 0) {
-    window.alert("No hay movimientos para exportar.");
+    window.alert(isGeneralView() ? "No hay movimientos para exportar." : "No hay movimientos del cliente activo para exportar.");
     return;
   }
-  exportToCsv("logitec_movimientos", rows, [
-    { label: "fecha", value: (r) => formatExportDate(r.createdAt) },
-    { label: "usuario", value: (r) => r.user?.fullName || r.user?.email || "" },
-    { label: "tipo", value: (r) => r.movementType || r.type || "" },
-    { label: "cliente", value: (r) => r.product?.customer?.name || r.product?.customer?.code || "" },
-    { label: "sku", value: (r) => r.product?.sku || "" },
-    { label: "producto", value: (r) => r.product?.name || "" },
-    { label: "antes", value: (r) => formatQty(r.quantityBefore) },
-    { label: "despues", value: (r) => formatQty(r.quantityAfter) },
-    { label: "almacen", value: (r) => r.warehouse || "" },
-    { label: "ubicacion", value: (r) => r.toLocation?.code || r.fromLocation?.code || "" },
-    { label: "status", value: () => "" },
-    { label: "referencia", value: (r) => r.reference || "" },
-    { label: "notas", value: (r) => r.notes || "" }
-  ]);
+  exportToCsv(isGeneralView() ? "logitec_movimientos" : `logitec_movimientos_${getActiveClient()}`, rows, MOVEMENT_EXPORT_COLUMNS);
 }
 
 async function exportTraceabilityCsv() {
@@ -2593,21 +2850,23 @@ async function exportTraceabilityCsv() {
     window.alert("No se pudo exportar trazabilidad.");
     return;
   }
-  const rows = await response.json();
+  const rows = filterRowsByActiveClient(await response.json());
   if (!Array.isArray(rows) || rows.length === 0) {
-    window.alert("No hay registros de trazabilidad para exportar.");
+    window.alert(isGeneralView() ? "No hay registros de trazabilidad para exportar." : "No hay trazabilidad del cliente activo para exportar.");
     return;
   }
-  exportToCsv("logitec_trazabilidad", rows, [
-    { label: "Fecha", value: (r) => formatExportDate(r.createdAt) },
-    { label: "Evento", value: (r) => r.subtype || r.type || "" },
-    { label: "Tipo", value: (r) => r.type || "" },
-    { label: "SKU", value: (r) => r.product?.sku || "" },
-    { label: "Producto", value: (r) => r.product?.name || "" },
-    { label: "Cantidad", value: (r) => formatQty(r.qty) },
-    { label: "Ubicación", value: (r) => r.location || r.warehouse || "" },
-    { label: "Resultado", value: (r) => r.result || "" },
-    { label: "Referencia", value: (r) => r.reference || "" }
+  exportToCsv(isGeneralView() ? "logitec_trazabilidad" : `logitec_trazabilidad_${getActiveClient()}`, rows, [
+    { label: "fecha", value: (r) => formatExportDate(r.createdAt) },
+    { label: "cliente", value: (r) => r.customer?.name || "" },
+    { label: "proyecto", value: (r) => r.customer?.code || "" },
+    { label: "lote", value: (r) => extractLoteFromRow(r) },
+    { label: "tipo", value: (r) => r.type || "" },
+    { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r.product) },
+    { label: "producto", value: (r) => r.product?.name || "" },
+    { label: "cantidad", value: (r) => formatQty(r.qty) },
+    { label: "ubicacion", value: (r) => r.location || r.warehouse || "" },
+    { label: "resultado", value: (r) => r.result || "" },
+    { label: "referencia", value: (r) => r.reference || "" }
   ]);
 }
 
@@ -2617,12 +2876,12 @@ async function exportProductsCsv() {
     window.alert("No se pudo exportar productos.");
     return;
   }
-  const rows = await response.json();
+  const rows = filterRowsByActiveClient(await response.json());
   if (!Array.isArray(rows) || rows.length === 0) {
-    window.alert("No hay productos para exportar.");
+    window.alert(isGeneralView() ? "No hay productos para exportar." : "No hay productos del cliente activo para exportar.");
     return;
   }
-  exportToCsv("logitec_catalogo", rows, CATALOG_EXPORT_COLUMNS);
+  exportToCsv(isGeneralView() ? "logitec_catalogo" : `logitec_catalogo_${getActiveClient()}`, rows, CATALOG_EXPORT_COLUMNS);
 }
 
 async function loadCurrentUser() {
@@ -2675,7 +2934,13 @@ async function loadScanEvents() {
   const response = await authenticatedFetch("/api/picking/scans");
   if (!response || !response.ok) return;
   const scans = await response.json();
-  const rows = Array.isArray(scans) ? scans : [];
+  let rows = Array.isArray(scans) ? scans : [];
+  if (!isGeneralView()) {
+    rows = rows.filter((scan) => {
+      const code = scan.product?.customer?.code || "";
+      return code && code.toUpperCase() === getActiveClient();
+    });
+  }
   const showOperator =
     currentRole === "ADMIN" || currentRole === "SUPERVISOR" || currentRole === "OPERATOR";
   const gridId = showOperator ? "picking_op" : "picking";
@@ -2742,8 +3007,8 @@ async function loadTraceability() {
       traceList.innerHTML = "";
       return;
     }
-    const rows = await response.json();
-    if (traceMessage) traceMessage.textContent = `${Array.isArray(rows) ? rows.length : 0} registros.`;
+    const rows = filterRowsByActiveClient(await response.json());
+    if (traceMessage) traceMessage.textContent = `${Array.isArray(rows) ? rows.length : 0} registros${isGeneralView() ? "" : ` (${getActiveClientDisplayLabel()})`}.`;
     if (!Array.isArray(rows) || rows.length === 0) {
       traceList.innerHTML = "";
       renderExcelTable(traceList, {
@@ -3055,7 +3320,7 @@ async function loadInventoryMovements() {
   renderExcelTable(inventoryMovementsList, {
     gridId: "movements",
     columns: MOVEMENT_COLUMNS,
-    rows,
+    rows: filterRowsByActiveClient(rows),
     emptyMessage: "Sin registros operativos aún"
   });
   if (rows.length >= 200) {
@@ -3070,13 +3335,16 @@ async function loadInventoryMovements() {
 
 function getCustomersForSelect() {
   const map = new Map();
-  for (const p of productsCache) {
+  const productSource = filterRowsByActiveClient(productsCache);
+  for (const p of productSource) {
     const code = p.customer?.code;
     if (!code) continue;
     map.set(code, { code, name: p.customer?.name || code });
   }
   for (const c of clientsCache) {
-    if (c.code) map.set(c.code, { code: c.code, name: c.name || c.code });
+    if (c.code && (isGeneralView() || String(c.code).toUpperCase() === getActiveClient())) {
+      map.set(c.code, { code: c.code, name: c.name || c.code });
+    }
   }
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
 }
@@ -3087,8 +3355,8 @@ function fillCustomerSelect(selectId, clienteInputId) {
   const prev = sel.value;
   const customers = getCustomersForSelect();
   sel.innerHTML =
-    '<option value="">— Seleccionar customer —</option>' +
-    customers.map((c) => `<option value="${escCell(c.code)}">${escCell(c.name)} (${escCell(c.code)})</option>`).join("");
+    '<option value="">— Seleccionar proyecto —</option>' +
+    customers.map((c) => `<option value="${escCell(c.code)}">${escCell(c.name)} · ${escCell(c.code)}</option>`).join("");
   if (prev) sel.value = prev;
   if (clienteInputId) {
     const inp = document.getElementById(clienteInputId);
@@ -3119,9 +3387,7 @@ function populateOperationalSelects() {
   fillCustomerSelect("inboundCustomer", "inboundCliente");
   fillCustomerSelect("outboundCustomer", "outboundCliente");
   fillCustomerSelect("reqCustomer", "reqCliente");
-  fillSkuSelect("inboundSku", document.getElementById("inboundCustomer")?.value || "", "inboundProduct");
-  fillSkuSelect("outboundSku", document.getElementById("outboundCustomer")?.value || "", "outboundProduct");
-  fillSkuSelect("reqSku", document.getElementById("reqCustomer")?.value || "", null);
+  applyActiveClientToOperationalSelects();
 }
 
 function setOpsMessage(elId, text, isOk) {
@@ -3149,6 +3415,7 @@ async function submitOperationalMovement(kind) {
   const location = document.getElementById(`${prefix}Location`)?.value?.trim();
   const status = document.getElementById(`${prefix}Status`)?.value || "AVAILABLE";
   const referenceRaw = document.getElementById(`${prefix}Reference`)?.value?.trim();
+  const lote = document.getElementById(`${prefix}Lote`)?.value?.trim();
   const notes = document.getElementById(`${prefix}Notes`)?.value?.trim();
 
   if (!sku) {
@@ -3169,13 +3436,20 @@ async function submitOperationalMovement(kind) {
     setOpsMessage(msgId, "SKU inexistente en catálogo.", false);
     return;
   }
+  if (!isGeneralView() && customerCode && customerCode.toUpperCase() !== getActiveClient()) {
+    setOpsMessage(msgId, "No puede registrar operaciones de otro cliente mientras hay un cliente activo.", false);
+    return;
+  }
+  if (!isGeneralView() && product.customer?.code && product.customer.code.toUpperCase() !== getActiveClient()) {
+    setOpsMessage(msgId, "El SKU no pertenece al cliente activo.", false);
+    return;
+  }
   if (customerCode && product.customer?.code !== customerCode) {
-    setOpsMessage(msgId, "El SKU no pertenece al customer seleccionado.", false);
+    setOpsMessage(msgId, "El SKU no pertenece al proyecto seleccionado.", false);
     return;
   }
 
-  const reference =
-    referenceRaw || (kind === "in" ? "ENTRADA_OPERATIVA" : "SALIDA_OPERATIVA");
+  const reference = buildOpsReference(lote, referenceRaw, kind);
 
   if (btn) btn.disabled = true;
   try {
@@ -3237,8 +3511,8 @@ async function loadInboundList() {
       movementsCountCache = movementsRowsCache.length;
     }
   }
-  const inbound = movementsRowsCache.filter(
-    (m) => m.movementType === "IN" || m.type === "INBOUND"
+  const inbound = filterRowsByActiveClient(
+    movementsRowsCache.filter((m) => m.movementType === "IN" || m.type === "INBOUND")
   );
   const meta = document.getElementById("inboundTableMeta");
   if (meta) meta.textContent = `${inbound.length} entrada(s) registrada(s)`;
@@ -3254,8 +3528,8 @@ async function loadOutboundList() {
       movementsCountCache = movementsRowsCache.length;
     }
   }
-  const outbound = movementsRowsCache.filter(
-    (m) => m.movementType === "OUT" && m.type !== "PICK"
+  const outbound = filterRowsByActiveClient(
+    movementsRowsCache.filter((m) => m.movementType === "OUT" && m.type !== "PICK")
   );
   const meta = document.getElementById("outboundTableMeta");
   if (meta) meta.textContent = `${outbound.length} salida(s) registrada(s)`;
@@ -3280,6 +3554,17 @@ function formatReqProducts(task) {
   return task.notes ? String(task.notes).slice(0, 48) : "—";
 }
 
+function formatReqProyecto(task) {
+  const parsed = parseRequisitionNotes(task.notes);
+  return parsed?.customerCode || "—";
+}
+
+function formatReqLote(task) {
+  const parsed = parseRequisitionNotes(task.notes);
+  if (parsed?.lote) return String(parsed.lote);
+  return extractLoteFromText(task.reference) || "N/D";
+}
+
 function formatReqCliente(task) {
   const parsed = parseRequisitionNotes(task.notes);
   if (parsed?.customerName) return parsed.customerName;
@@ -3296,7 +3581,7 @@ async function loadRequisitionsList() {
       container.innerHTML = '<div class="data-grid-empty" style="padding:16px">No se pudieron cargar requisiciones.</div>';
       return;
     }
-    const rows = (await response.json()).filter((t) => t.type === "PICK");
+    const rows = filterRowsByActiveClient((await response.json()).filter((t) => t.type === "PICK"));
     const meta = document.getElementById("reqTableMeta");
     if (meta) meta.textContent = `${rows.length} requisición(es)`;
     if (!rows.length) {
@@ -3328,10 +3613,15 @@ async function submitRequisition() {
   const sku = document.getElementById("reqSku")?.value?.trim();
   const qty = Number(document.getElementById("reqQty")?.value);
   const warehouse = document.getElementById("reqWarehouse")?.value?.trim() || "TULTITLAN24";
+  const lote = document.getElementById("reqLote")?.value?.trim();
   const extraNotes = document.getElementById("reqNotes")?.value?.trim();
 
   if (!reference) {
     setOpsMessage("reqMessage", "Indique folio o referencia.", false);
+    return;
+  }
+  if (!isGeneralView() && customerCode && customerCode.toUpperCase() !== getActiveClient()) {
+    setOpsMessage("reqMessage", "No puede crear requisiciones de otro cliente.", false);
     return;
   }
   if (sku && !findProductBySku(sku)) {
@@ -3346,6 +3636,7 @@ async function submitRequisition() {
   const notesPayload = {
     customerCode: customerCode || null,
     customerName: customerName || null,
+    lote: lote || null,
     sku: sku || null,
     qty: Number.isFinite(qty) ? qty : null,
     detail: extraNotes || null
@@ -3841,18 +4132,19 @@ async function createCustomer(event) {
   createCustomerBtn.disabled = true;
 
   const payload = {
-    code: customerCode.value.trim(),
-    name: customerName.value.trim()
+    name: customerName.value.trim(),
+    code: customerCode.value.trim() || undefined,
+    active: true
   };
 
-  if (!payload.code || !payload.name) {
-    createCustomerError.textContent = "Codigo y nombre son obligatorios.";
+  if (!payload.name) {
+    createCustomerError.textContent = "El nombre del cliente es obligatorio.";
     createCustomerBtn.disabled = false;
     return;
   }
 
   try {
-    const response = await authenticatedFetch("/api/catalog/customers", {
+    const response = await authenticatedFetch("/api/catalog/clients", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -3865,6 +4157,8 @@ async function createCustomer(event) {
     }
     createCustomerForm.reset();
     await loadCatalogData();
+    renderActiveClientPickerList(document.getElementById("activeClientPickerList"));
+    renderActiveClientPickerList(document.getElementById("ccClientPickerList"));
   } catch (_error) {
     createCustomerError.textContent = "Error de red creando cliente.";
   } finally {
@@ -4097,6 +4391,13 @@ async function scanCode(event) {
     }
 
     const product = payload.product;
+    if (!isGeneralView() && product?.customer?.code && product.customer.code.toUpperCase() !== getActiveClient()) {
+      scanHint.textContent = "Este producto pertenece a otro cliente. Cambie el cliente activo para escanearlo.";
+      setScanResult("Resultado: ERROR — producto de otro cliente.", "error");
+      resetPickingFlow();
+      await loadScanEvents();
+      return;
+    }
     setPickingFlowState("stock");
     setPickingFlowState("trace");
     setPickingFlowState("success");
@@ -4149,6 +4450,12 @@ async function validateSession() {
     currentUserRoleText.textContent = currentRole;
     await loadUsersModule(currentRole);
     await loadCatalogData();
+    wireActiveClientUi();
+    applyActiveClientToOperationalSelects();
+    updateActiveClientUi();
+    if (!localStorage.getItem(ACTIVE_CLIENT_KEY)) {
+      openActiveClientModal();
+    }
     if (currentRole === "ADMIN" || currentRole === "OPERATOR" || currentRole === "SUPERVISOR") {
       await loadStockStrip();
       await loadInventoryMovements();

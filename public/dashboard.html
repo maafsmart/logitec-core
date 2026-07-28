@@ -1900,6 +1900,45 @@
         gap: 8px;
       }
       .grid-detail-actions button { width: 100%; }
+      .active-client-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 12px;
+        background: var(--panel-solid);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        font-size: 0.82rem;
+      }
+      .active-client-pill { color: var(--accent-dark); }
+      .active-client-pill.is-general { color: var(--info); }
+      .client-work-panel { margin-bottom: 16px; }
+      .client-picker-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .client-pick-btn {
+        border: 1px solid var(--line);
+        background: var(--panel-solid);
+        color: var(--text);
+        border-radius: 999px;
+        padding: 8px 14px;
+        font-size: 0.82rem;
+        cursor: pointer;
+      }
+      .client-pick-btn.active {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        color: var(--accent-dark);
+        font-weight: 700;
+      }
+      .client-pick-code {
+        opacity: 0.75;
+        font-size: 0.75rem;
+        margin-left: 4px;
+      }
       .data-grid-row.body .data-grid-cell {
         border-right: 1px solid rgba(15, 76, 129, 0.06);
       }
@@ -1949,6 +1988,10 @@
           <p>Control operativo de almacén</p>
         </div>
         <div class="app-topbar-meta">
+          <div class="active-client-bar">
+            <span>Cliente activo: <strong id="activeClientLabel" class="active-client-pill">Vista general</strong></span>
+            <button type="button" id="changeActiveClientBtn" class="btn-secondary btn-compact">Cambiar cliente</button>
+          </div>
           <div class="app-user-block">
             <strong id="sessionDisplayName">Cargando sesión...</strong>
             <span><span id="sessionEmailInline">—</span><span id="sessionRoleInline"></span></span>
@@ -1980,6 +2023,17 @@
               <h2 class="cc-title">LOGITEC CORE WMS</h2>
               <p class="cc-tagline">Control operativo de almacén, inventario y trazabilidad</p>
             </header>
+            <section class="client-work-panel card-panel" aria-label="Selección de cliente de trabajo">
+              <div class="client-work-header">
+                <h4 class="secondary-panel-title" style="margin:0">Selecciona cliente de trabajo</h4>
+                <p id="controlClientScope" class="filter-hint" style="margin:4px 0 0">Vista administrativa general — mostrando todos los clientes</p>
+              </div>
+              <div id="ccClientPickerList" class="client-picker-grid"></div>
+              <div class="page-toolbar" style="margin-top:10px">
+                <button type="button" id="openActiveClientFromCcBtn" class="btn-secondary btn-compact">Abrir selector completo</button>
+                <button type="button" id="openNewClientFromCcBtn" class="btn-primary btn-compact">Agregar nuevo cliente</button>
+              </div>
+            </section>
             <div class="kpi-grid" aria-label="Indicadores operativos">
               <div class="kpi-card accent">
                 <span class="kpi-value" id="ccKpiProducts">—</span>
@@ -2066,8 +2120,8 @@
                     <input id="ccFilterCliente" type="text" placeholder="Nombre" autocomplete="off" />
                   </div>
                   <div class="field compact">
-                    <label for="ccFilterCustomer">Customer</label>
-                    <input id="ccFilterCustomer" type="text" placeholder="Código" autocomplete="off" />
+                    <label for="ccFilterCustomer">Proyecto</label>
+                    <input id="ccFilterCustomer" type="text" placeholder="Código proyecto" autocomplete="off" />
                   </div>
                   <div class="field compact">
                     <label for="ccFilterSku">SKU</label>
@@ -2160,8 +2214,8 @@
                 <input id="traceSku" type="text" />
               </div>
               <div class="field compact">
-                <label for="traceCustomer">Customer</label>
-                <input id="traceCustomer" type="text" placeholder="Código" />
+                <label for="traceCustomer">Proyecto</label>
+                <input id="traceCustomer" type="text" placeholder="Código proyecto" />
               </div>
               <div class="field compact">
                 <label for="traceCliente">Cliente</label>
@@ -2436,8 +2490,8 @@
                     <input id="invFilterCliente" type="text" placeholder="Nombre" autocomplete="off" />
                   </div>
                   <div class="field compact">
-                    <label for="invFilterCustomer">Customer</label>
-                    <input id="invFilterCustomer" type="text" placeholder="Código" autocomplete="off" />
+                    <label for="invFilterCustomer">Proyecto</label>
+                    <input id="invFilterCustomer" type="text" placeholder="Código proyecto" autocomplete="off" />
                   </div>
                   <div class="field compact">
                     <label for="invFilterSku">SKU</label>
@@ -2458,6 +2512,7 @@
                   <button type="button" id="inventoryClearFiltersBtn" class="btn-secondary btn-compact">Limpiar filtros</button>
                 </div>
               </div>
+              <p id="inventoryClientScope" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando inventario: Vista general</p>
               <p id="inventoryTableCount" class="operational-table-meta">Mostrando 0 de 0 saldos</p>
               <div id="inventoryList">Cargando...</div>
             </div>
@@ -2533,8 +2588,8 @@
                     <input id="catFilterCliente" type="text" placeholder="Nombre" autocomplete="off" />
                   </div>
                   <div class="field compact">
-                    <label for="catFilterCustomer">Customer</label>
-                    <input id="catFilterCustomer" type="text" placeholder="Código" autocomplete="off" />
+                    <label for="catFilterCustomer">Proyecto</label>
+                    <input id="catFilterCustomer" type="text" placeholder="Código proyecto" autocomplete="off" />
                   </div>
                   <div class="field compact">
                     <label for="catFilterSku">SKU</label>
@@ -2547,6 +2602,7 @@
                   <button type="button" id="catalogClearFiltersBtn" class="btn-secondary btn-compact">Limpiar filtros</button>
                 </div>
               </div>
+              <p id="catalogClientScope" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando catálogo: Vista general</p>
               <p id="catalogTableCount" class="operational-table-meta">Mostrando 0 de 0 productos</p>
               <div id="productsList"></div>
             </div>
@@ -2555,11 +2611,11 @@
               <h4 style="margin: 18px 0 8px">Crear cliente</h4>
               <div class="form-grid">
                 <div class="field">
-                  <label for="customerCode">Código</label>
-                  <input id="customerCode" type="text" placeholder="Ej. CUST01" required />
+                  <label for="customerCode">Código / proyecto</label>
+                  <input id="customerCode" type="text" placeholder="Ej. PROY01 (opcional si se genera)" />
                 </div>
                 <div class="field">
-                  <label for="customerName">Nombre</label>
+                  <label for="customerName">Nombre del cliente</label>
                   <input id="customerName" type="text" required />
                 </div>
               </div>
@@ -2570,8 +2626,8 @@
               <h4 style="margin: 18px 0 8px">Crear producto manual</h4>
               <div class="form-grid">
                 <div class="field">
-                  <label for="productCustomerCode">Cliente (código)</label>
-                  <input id="productCustomerCode" type="text" placeholder="Ej. CUST01" />
+                  <label for="productCustomerCode">Proyecto (código)</label>
+                  <input id="productCustomerCode" type="text" placeholder="Ej. PROY01" />
                 </div>
                 <div class="field">
                   <label for="productSku">SKU</label>
@@ -2616,20 +2672,21 @@
           <div id="moduleReports" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Reportes</h3>
-              <p class="module-lead">Exportaciones operativas del sistema. Use filtros en Inventario o Catálogo antes de exportar resultados filtrados.</p>
+              <p class="module-lead">Exportaciones operativas del sistema. Con un cliente activo, exporta solo ese cliente; en Vista general exporta todo.</p>
             </div>
             <div class="card-panel">
-              <h4 class="secondary-panel-title">Inventario</h4>
+              <p class="filter-hint" style="margin-top:0">Cliente activo para reportes: <strong data-active-client-pill>Vista general</strong></p>
+              <h4 class="secondary-panel-title">Inventario del cliente activo</h4>
               <div class="page-toolbar">
                 <button type="button" id="reportsExportStock" class="btn-secondary">Inventario completo CSV</button>
                 <button type="button" id="reportsExportStockFiltered" class="btn-secondary">Inventario filtrado CSV</button>
-                <button type="button" id="reportsExportMovements" class="btn-secondary">Movimientos CSV</button>
+                <button type="button" id="reportsExportMovements" class="btn-secondary">Movimientos del cliente activo CSV</button>
               </div>
-              <h4 class="secondary-panel-title">Catálogo y trazabilidad</h4>
+              <h4 class="secondary-panel-title">Catálogo y trazabilidad del cliente activo</h4>
               <div class="page-toolbar">
-                <button type="button" id="reportsExportProducts" class="btn-secondary">Catálogo CSV</button>
+                <button type="button" id="reportsExportProducts" class="btn-secondary">Catálogo completo CSV</button>
                 <button type="button" id="reportsExportProductsFiltered" class="btn-secondary">Catálogo filtrado CSV</button>
-                <button type="button" id="reportsExportTrace" class="btn-secondary">Trazabilidad CSV</button>
+                <button type="button" id="reportsExportTrace" class="btn-secondary">Trazabilidad del cliente activo CSV</button>
               </div>
             </div>
           </div>
@@ -2642,12 +2699,12 @@
               <h4 class="secondary-panel-title">Registrar entrada</h4>
               <div class="form-grid">
                 <div class="field">
-                  <label for="inboundCustomer">Customer</label>
+                  <label for="inboundCustomer">Proyecto</label>
                   <select id="inboundCustomer"><option value="">— Seleccionar —</option></select>
                 </div>
                 <div class="field">
                   <label for="inboundCliente">Cliente</label>
-                  <input id="inboundCliente" type="text" class="field-readonly" readonly placeholder="Se completa al elegir customer" />
+                  <input id="inboundCliente" type="text" class="field-readonly" readonly placeholder="Se completa al elegir proyecto" />
                 </div>
                 <div class="field">
                   <label for="inboundSku">SKU</label>
@@ -2675,6 +2732,10 @@
                     <option value="AVAILABLE">AVAILABLE</option>
                     <option value="OPERATIONS">OPERATIONS</option>
                   </select>
+                </div>
+                <div class="field">
+                  <label for="inboundLote">Lote (Sales Order)</label>
+                  <input id="inboundLote" type="text" placeholder="Ej. SO-2026-001" />
                 </div>
                 <div class="field">
                   <label for="inboundReference">Referencia de entrada</label>
@@ -2709,12 +2770,12 @@
               <h4 class="secondary-panel-title">Registrar salida</h4>
               <div class="form-grid">
                 <div class="field">
-                  <label for="outboundCustomer">Customer</label>
+                  <label for="outboundCustomer">Proyecto</label>
                   <select id="outboundCustomer"><option value="">— Seleccionar —</option></select>
                 </div>
                 <div class="field">
                   <label for="outboundCliente">Cliente</label>
-                  <input id="outboundCliente" type="text" class="field-readonly" readonly />
+                  <input id="outboundCliente" type="text" class="field-readonly" readonly placeholder="Se completa al elegir proyecto" />
                 </div>
                 <div class="field">
                   <label for="outboundSku">SKU</label>
@@ -2742,6 +2803,10 @@
                     <option value="AVAILABLE">AVAILABLE</option>
                     <option value="OPERATIONS">OPERATIONS</option>
                   </select>
+                </div>
+                <div class="field">
+                  <label for="outboundLote">Lote (Sales Order)</label>
+                  <input id="outboundLote" type="text" placeholder="Ej. SO-2026-001" />
                 </div>
                 <div class="field">
                   <label for="outboundReference">Referencia de salida</label>
@@ -2780,12 +2845,16 @@
                   <input id="reqReference" type="text" placeholder="REQ-2026-001" required />
                 </div>
                 <div class="field">
-                  <label for="reqCustomer">Customer</label>
+                  <label for="reqCustomer">Proyecto</label>
                   <select id="reqCustomer"><option value="">— Seleccionar —</option></select>
                 </div>
                 <div class="field">
                   <label for="reqCliente">Cliente</label>
                   <input id="reqCliente" type="text" class="field-readonly" readonly />
+                </div>
+                <div class="field">
+                  <label for="reqLote">Lote (Sales Order)</label>
+                  <input id="reqLote" type="text" placeholder="Ej. SO-2026-001" />
                 </div>
                 <div class="field">
                   <label for="reqPriority">Prioridad</label>
@@ -2837,6 +2906,44 @@
     <span id="currentUserRole" class="hidden"></span>
     <span id="currentUrl" class="hidden"></span>
     <section id="inventorySection" class="hidden" aria-hidden="true"></section>
+
+    <div id="activeClientModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-labelledby="activeClientModalTitle">
+        <div class="modal-header">
+          <h3 id="activeClientModalTitle">Selecciona cliente de trabajo</h3>
+          <button type="button" class="modal-close" data-close-modal="activeClientModal" aria-label="Cerrar">×</button>
+        </div>
+        <p class="filter-hint">Elige Vista general para operación administrativa o un cliente para filtrar todo el sistema.</p>
+        <div id="activeClientPickerList" class="client-picker-grid"></div>
+        <div class="page-toolbar" style="margin-top:12px">
+          <button type="button" id="openNewClientModalBtn" class="btn-primary btn-compact">Agregar nuevo cliente</button>
+          <button type="button" class="btn-secondary btn-compact" data-close-modal="activeClientModal">Cerrar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="newClientModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-labelledby="newClientModalTitle">
+        <div class="modal-header">
+          <h3 id="newClientModalTitle">Agregar nuevo cliente</h3>
+          <button type="button" class="modal-close" data-close-modal="newClientModal" aria-label="Cerrar">×</button>
+        </div>
+        <form id="newClientForm">
+          <div class="form-grid">
+            <div class="field full">
+              <label for="newClientName">Nombre del cliente</label>
+              <input id="newClientName" type="text" required placeholder="Razón social / nombre visible" />
+            </div>
+            <div class="field">
+              <label for="newClientCode">Código / proyecto inicial</label>
+              <input id="newClientCode" type="text" placeholder="Opcional — se genera desde el nombre" />
+            </div>
+          </div>
+          <p id="newClientError" class="inline-error"></p>
+          <button type="submit" id="newClientSubmitBtn" class="btn-primary">Crear cliente</button>
+        </form>
+      </div>
+    </div>
 
     <div id="gridDetailDrawer" class="grid-detail-drawer" aria-hidden="true">
       <div class="grid-detail-backdrop" data-close-drawer></div>
@@ -2911,6 +3018,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=29"></script>
+    <script src="/dashboard.js?v=30"></script>
   </body>
 </html>
