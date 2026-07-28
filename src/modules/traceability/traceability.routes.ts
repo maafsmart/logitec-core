@@ -11,6 +11,8 @@ const querySchema = z.object({
   userId: z.string().optional(),
   type: z.string().optional(),
   sku: z.string().optional(),
+  customer: z.string().optional(),
+  cliente: z.string().optional(),
   from: z.string().optional(),
   to: z.string().optional(),
   limit: z.coerce.number().min(1).max(500).optional().default(150)
@@ -34,6 +36,11 @@ traceabilityRouter.get("/activity", async (req, res) => {
   }
   if (q.sku?.trim()) {
     where.product = { sku: { equals: q.sku.trim(), mode: "insensitive" } };
+  }
+  if (q.customer?.trim()) {
+    where.customer = { code: { equals: q.customer.trim(), mode: "insensitive" } };
+  } else if (q.cliente?.trim()) {
+    where.customer = { name: { contains: q.cliente.trim(), mode: "insensitive" } };
   }
   if (q.from?.trim() || q.to?.trim()) {
     where.createdAt = {};

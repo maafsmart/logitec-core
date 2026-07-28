@@ -9,6 +9,7 @@ import { HttpError } from "../../shared/http-error.js";
 const inventoryRouter = Router();
 
 const movementTypes = ["IN", "OUT", "ADJUST_SET"] as const;
+const stockStatuses = ["AVAILABLE", "OPERATIONS", "HOLD", "BLOCKED", "QUARANTINE"] as const;
 const movementTypeMap = {
   IN: "INBOUND",
   OUT: "OUTBOUND",
@@ -19,6 +20,8 @@ const createMovementSchema = z
   .object({
     sku: z.string().min(1).max(80),
     warehouse: z.string().min(1).max(80).optional(),
+    location: z.string().min(1).max(120).optional(),
+    status: z.enum(stockStatuses).optional().default("AVAILABLE"),
     type: z.enum(movementTypes),
     quantity: z.coerce.number(),
     reference: z.string().max(120).optional(),
@@ -61,6 +64,29 @@ function dec(n: string | number): Prisma.Decimal {
 
 function stockCompositeKey(productId: string, locationId: string, status: string): string {
   return `${productId}|${locationId}|${status}`;
+}
+
+async function resolveOrCreateLocation(
+  tx: Prisma.TransactionClient,
+  warehouse: string,
+  locationCode?: string
+) {
+  const wh = warehouse.trim().toUpperCase();
+  const code = (locationCode || `${wh}-GEN-STAGE-01`).trim().toUpperCase();
+  let location = await tx.location.findUnique({ where: { code } });
+  if (!location) {
+    location = await tx.location.create({
+      data: {
+        warehouse: wh,
+        zone: "GEN",
+        rack: "STAGE",
+        level: "01",
+        position: "01",
+        code
+      }
+    });
+  }
+  return location;
 }
 
 inventoryRouter.use(requireAuth);
@@ -139,9 +165,10 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
   res.json(rows);
 });
 
-inventoryRouter.post("/movements", requireRole(["ADMIN"]), async (req, res) => {
+inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
   const body = createMovementSchema.parse(req.body);
   const warehouse = (body.warehouse || DEFAULT_WH).trim();
+  const stockStatus = body.status || "AVAILABLE";
   const qtyIn = dec(body.quantity);
 
   const result = await prisma.$transaction(async (tx) => {
@@ -152,25 +179,10 @@ inventoryRouter.post("/movements", requireRole(["ADMIN"]), async (req, res) => {
       throw new HttpError(404, `Producto no encontrado o inactivo: ${body.sku}`);
     }
 
-    const defaultLocationCode = `${warehouse}-GEN-STAGE-01`;
-    let location = await tx.location.findUnique({
-      where: { code: defaultLocationCode }
-    });
-    if (!location) {
-      location = await tx.location.create({
-        data: {
-          warehouse,
-          zone: "GEN",
-          rack: "STAGE",
-          level: "01",
-          position: "01",
-          code: defaultLocationCode
-        }
-      });
-    }
+    const location = await resolveOrCreateLocation(tx, warehouse, body.location);
 
     let stock = await tx.inventory.findFirst({
-      where: { productId: product.id, locationId: location.id, status: "AVAILABLE" }
+      where: { productId: product.id, locationId: location.id, status: stockStatus }
     });
 
     if (!stock) {
@@ -180,7 +192,7 @@ inventoryRouter.post("/movements", requireRole(["ADMIN"]), async (req, res) => {
           locationId: location.id,
           qty: dec(0),
           reservedQty: dec(0),
-          status: "AVAILABLE"
+          status: stockStatus
         }
       });
     }
@@ -193,7 +205,7 @@ inventoryRouter.post("/movements", requireRole(["ADMIN"]), async (req, res) => {
     } else if (body.type === "OUT") {
       after = before.minus(qtyIn);
       if (after.lessThan(0)) {
-        throw new HttpError(400, "Stock insuficiente para esta salida.");
+        throw new HttpError(400, `Stock insuficiente. Disponible: ${before.toString()}.`);
       }
     } else {
       after = qtyIn;
@@ -211,7 +223,7 @@ inventoryRouter.post("/movements", requireRole(["ADMIN"]), async (req, res) => {
         warehouse,
         qty: qtyIn,
         fromLocationId: body.type === "OUT" ? location.id : null,
-        toLocationId: body.type === "IN" ? location.id : null,
+        toLocationId: body.type === "IN" || body.type === "ADJUST_SET" ? location.id : null,
         movementType: body.type,
         quantityBefore: before,
         quantityAfter: after,
@@ -225,7 +237,7 @@ inventoryRouter.post("/movements", requireRole(["ADMIN"]), async (req, res) => {
       }
     });
 
-    return { movement, defaultLocationCode, product };
+    return { movement, locationCode: location.code, product };
   });
 
   const logType =
@@ -245,7 +257,7 @@ inventoryRouter.post("/movements", requireRole(["ADMIN"]), async (req, res) => {
     productId: result.product.id,
     customerId: result.product.customerId ?? null,
     warehouse,
-    location: result.defaultLocationCode,
+    location: result.locationCode,
     qty: qtyIn,
     result: "OK",
     metadata: {

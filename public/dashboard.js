@@ -120,6 +120,7 @@ let catalogApplyCompleted = false;
 let stockRowsCache = [];
 let productsCache = [];
 let movementsCountCache = 0;
+let movementsRowsCache = [];
 let pendingConflictsCache = 0;
 
 let clientsCache = [];
@@ -232,6 +233,18 @@ function activateModule(moduleName) {
   if (showClients) renderClientsModule();
   if (showInventory) applyInventoryFilters();
   if (showCatalog) applyCatalogFilters();
+  if (showInbound) {
+    populateOperationalSelects();
+    void loadInboundList();
+  }
+  if (showOutbound) {
+    populateOperationalSelects();
+    void loadOutboundList();
+  }
+  if (showRequisitions) {
+    populateOperationalSelects();
+    void loadRequisitionsList();
+  }
   if (showTraceability) void loadTraceability();
   if (showTasks) void loadTasks();
   if (showIncidents) void loadIncidents();
@@ -756,12 +769,16 @@ function wireModals() {
     });
   }
   const rStock = document.getElementById("reportsExportStock");
+  const rStockF = document.getElementById("reportsExportStockFiltered");
   const rMov = document.getElementById("reportsExportMovements");
   const rProd = document.getElementById("reportsExportProducts");
+  const rProdF = document.getElementById("reportsExportProductsFiltered");
   const rTrace = document.getElementById("reportsExportTrace");
   if (rStock) rStock.addEventListener("click", () => void exportStockCsv());
+  if (rStockF) rStockF.addEventListener("click", () => void exportStockCsvFiltered());
   if (rMov) rMov.addEventListener("click", () => void exportMovementsCsv());
   if (rProd) rProd.addEventListener("click", () => void exportProductsCsv());
+  if (rProdF) rProdF.addEventListener("click", () => void exportProductsCsvFiltered());
   if (rTrace) rTrace.addEventListener("click", () => void exportTraceabilityCsv());
 }
 
@@ -1806,17 +1823,41 @@ function buildTraceabilityParams() {
   const uid = document.getElementById("traceUserId")?.value?.trim();
   const typ = document.getElementById("traceType")?.value?.trim();
   const sku = document.getElementById("traceSku")?.value?.trim();
+  const customer = document.getElementById("traceCustomer")?.value?.trim();
+  const cliente = document.getElementById("traceCliente")?.value?.trim();
   const from = document.getElementById("traceFrom")?.value?.trim();
   const to = document.getElementById("traceTo")?.value?.trim();
   if (wh) params.set("warehouse", wh);
   if (uid) params.set("userId", uid);
   if (typ) params.set("type", typ);
   if (sku) params.set("sku", sku);
+  if (customer) params.set("customer", customer);
+  if (cliente) params.set("cliente", cliente);
   if (from) params.set("from", from);
   if (to) params.set("to", to);
   params.set("limit", "500");
   return params;
 }
+
+const STOCK_EXPORT_COLUMNS = [
+  { label: "cliente", value: (r) => r.product?.customer?.name || "" },
+  { label: "customer", value: (r) => r.product?.customer?.code || "" },
+  { label: "sku", value: (r) => r.product?.sku || "" },
+  { label: "producto", value: (r) => r.product?.name || "" },
+  { label: "almacen", value: (r) => r.location?.warehouse || "" },
+  { label: "ubicacion", value: (r) => r.location?.code || "" },
+  { label: "status", value: (r) => r.status || "" },
+  { label: "cantidad", value: (r) => formatQty(r.qty) }
+];
+
+const CATALOG_EXPORT_COLUMNS = [
+  { label: "cliente", value: (r) => r.customer?.name || "" },
+  { label: "customer", value: (r) => r.customer?.code || "" },
+  { label: "sku", value: (r) => r.sku || "" },
+  { label: "producto", value: (r) => r.name || "" },
+  { label: "almacen", value: (r) => r.warehouse || "" },
+  { label: "codigo_barras", value: (r) => r.barcode || "" }
+];
 
 async function exportStockCsv() {
   const response = await authenticatedFetch("/api/inventory/stock");
@@ -1829,16 +1870,25 @@ async function exportStockCsv() {
     window.alert("No hay existencias para exportar.");
     return;
   }
-  exportToCsv("logitec_inventario", rows, [
-    { label: "cliente", value: (r) => r.product?.customer?.name || "" },
-    { label: "codigo_cliente", value: (r) => r.product?.customer?.code || "" },
-    { label: "sku", value: (r) => r.product?.sku || "" },
-    { label: "producto", value: (r) => r.product?.name || "" },
-    { label: "almacen", value: (r) => r.location?.warehouse || "" },
-    { label: "ubicacion", value: (r) => r.location?.code || "" },
-    { label: "status", value: (r) => r.status || "" },
-    { label: "cantidad", value: (r) => formatQty(r.qty) }
-  ]);
+  exportToCsv("logitec_inventario", rows, STOCK_EXPORT_COLUMNS);
+}
+
+async function exportStockCsvFiltered() {
+  const rows = filterStockRows(stockRowsCache);
+  if (!rows.length) {
+    window.alert("No hay registros con los filtros actuales.");
+    return;
+  }
+  exportToCsv("logitec_inventario_filtrado", rows, STOCK_EXPORT_COLUMNS);
+}
+
+async function exportProductsCsvFiltered() {
+  const rows = filterProductRows(productsCache);
+  if (!rows.length) {
+    window.alert("No hay productos con los filtros actuales.");
+    return;
+  }
+  exportToCsv("logitec_catalogo_filtrado", rows, CATALOG_EXPORT_COLUMNS);
 }
 
 async function exportMovementsCsv() {
@@ -1905,15 +1955,7 @@ async function exportProductsCsv() {
     window.alert("No hay productos para exportar.");
     return;
   }
-  exportToCsv("logitec_catalogo", rows, [
-    { label: "Cliente", value: (r) => r.customer?.code || r.customer?.name || "" },
-    { label: "SKU", value: (r) => r.sku || "" },
-    { label: "Producto", value: (r) => r.name || "" },
-    { label: "Código de barras", value: (r) => r.barcode || "" },
-    { label: "Almacén", value: (r) => r.warehouse || "" },
-    { label: "Unidad", value: (r) => r.unit || "" },
-    { label: "Activo", value: (r) => (r.active === false ? "No" : "Sí") }
-  ]);
+  exportToCsv("logitec_catalogo", rows, CATALOG_EXPORT_COLUMNS);
 }
 
 async function loadCurrentUser() {
@@ -2317,6 +2359,7 @@ async function loadInventoryMovements() {
   }
   const rows = await response.json();
   movementsCountCache = Array.isArray(rows) ? rows.length : 0;
+  movementsRowsCache = Array.isArray(rows) ? rows : [];
   updateInventorySummary(stockRowsCache);
   if (!Array.isArray(rows) || rows.length === 0) {
     inventoryMovementsList.innerHTML =
@@ -2335,7 +2378,394 @@ async function loadInventoryMovements() {
       return `<tr><td class="cell-nowrap">${formatDateShort(m.createdAt)}</td><td>${statusBadge(m.movementType)}</td><td class="cell-nowrap">${escCell(sku)}</td><td>${renderCellWithClamp(productName, "cell-truncate", 28)}</td><td class="cell-nowrap">${formatQty(m.quantityBefore)}</td><td class="cell-nowrap">${formatQty(m.quantityAfter)}</td><td>${renderCellWithClamp(loc, "cell-truncate", 20)}</td><td>${renderCellWithClamp(u, "cell-truncate", 20)}</td><td>${renderCellWithClamp(ref, "cell-truncate", 20)}</td></tr>`;
     })
     .join("");
-  inventoryMovementsList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>${rows.length >= 200 ? '<p class="subtitle" style="margin:8px 0 0">Mostrando los últimos 200 movimientos. Usa Exportar movimientos CSV para ver más.</p>' : ""}`;
+  inventoryMovementsList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>${rows.length >= 200 ? '<p class="filter-hint" style="margin:8px 0 0">Mostrando los últimos 200 movimientos. Usa Exportar movimientos CSV para ver más.</p>' : ""}`;
+  if (moduleInbound && !moduleInbound.classList.contains("hidden")) void loadInboundList();
+  if (moduleOutbound && !moduleOutbound.classList.contains("hidden")) void loadOutboundList();
+}
+
+function getCustomersForSelect() {
+  const map = new Map();
+  for (const p of productsCache) {
+    const code = p.customer?.code;
+    if (!code) continue;
+    map.set(code, { code, name: p.customer?.name || code });
+  }
+  for (const c of clientsCache) {
+    if (c.code) map.set(c.code, { code: c.code, name: c.name || c.code });
+  }
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
+}
+
+function fillCustomerSelect(selectId, clienteInputId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const prev = sel.value;
+  const customers = getCustomersForSelect();
+  sel.innerHTML =
+    '<option value="">— Seleccionar customer —</option>' +
+    customers.map((c) => `<option value="${escCell(c.code)}">${escCell(c.name)} (${escCell(c.code)})</option>`).join("");
+  if (prev) sel.value = prev;
+  if (clienteInputId) {
+    const inp = document.getElementById(clienteInputId);
+    if (inp) {
+      const match = customers.find((c) => c.code === sel.value);
+      inp.value = match ? match.name : "";
+    }
+  }
+}
+
+function fillSkuSelect(selectId, customerCode, productInputId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const prev = sel.value;
+  const list = productsCache.filter((p) => !customerCode || p.customer?.code === customerCode);
+  sel.innerHTML =
+    '<option value="">— Seleccionar SKU —</option>' +
+    list.map((p) => `<option value="${escCell(p.sku)}">${escCell(p.sku)} — ${escCell(p.name || "")}</option>`).join("");
+  if (prev && list.some((p) => p.sku === prev)) sel.value = prev;
+  if (productInputId) {
+    const inp = document.getElementById(productInputId);
+    const prod = list.find((p) => p.sku === sel.value);
+    if (inp) inp.value = prod?.name || "";
+  }
+}
+
+function populateOperationalSelects() {
+  fillCustomerSelect("inboundCustomer", "inboundCliente");
+  fillCustomerSelect("outboundCustomer", "outboundCliente");
+  fillCustomerSelect("reqCustomer", "reqCliente");
+  fillSkuSelect("inboundSku", document.getElementById("inboundCustomer")?.value || "", "inboundProduct");
+  fillSkuSelect("outboundSku", document.getElementById("outboundCustomer")?.value || "", "outboundProduct");
+  fillSkuSelect("reqSku", document.getElementById("reqCustomer")?.value || "", null);
+}
+
+function setOpsMessage(elId, text, isOk) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove("ok", "error");
+  if (text) el.classList.add(isOk ? "ok" : "error");
+}
+
+function findProductBySku(sku) {
+  return productsCache.find((p) => p.sku === sku);
+}
+
+async function submitOperationalMovement(kind) {
+  const prefix = kind === "in" ? "inbound" : "outbound";
+  const btn = document.getElementById(`${prefix}SubmitBtn`);
+  const msgId = `${prefix}Message`;
+  setOpsMessage(msgId, "", true);
+
+  const customerCode = document.getElementById(`${prefix}Customer`)?.value?.trim();
+  const sku = document.getElementById(`${prefix}Sku`)?.value?.trim();
+  const qty = Number(document.getElementById(`${prefix}Qty`)?.value);
+  const warehouse = document.getElementById(`${prefix}Warehouse`)?.value?.trim() || "TULTITLAN24";
+  const location = document.getElementById(`${prefix}Location`)?.value?.trim();
+  const status = document.getElementById(`${prefix}Status`)?.value || "AVAILABLE";
+  const referenceRaw = document.getElementById(`${prefix}Reference`)?.value?.trim();
+  const notes = document.getElementById(`${prefix}Notes`)?.value?.trim();
+
+  if (!sku) {
+    setOpsMessage(msgId, "Seleccione un SKU del catálogo.", false);
+    return;
+  }
+  if (!location) {
+    setOpsMessage(msgId, "Indique la ubicación.", false);
+    return;
+  }
+  if (!Number.isFinite(qty) || qty <= 0) {
+    setOpsMessage(msgId, "La cantidad debe ser mayor que 0.", false);
+    return;
+  }
+
+  const product = findProductBySku(sku);
+  if (!product) {
+    setOpsMessage(msgId, "SKU inexistente en catálogo.", false);
+    return;
+  }
+  if (customerCode && product.customer?.code !== customerCode) {
+    setOpsMessage(msgId, "El SKU no pertenece al customer seleccionado.", false);
+    return;
+  }
+
+  const reference =
+    referenceRaw || (kind === "in" ? "ENTRADA_OPERATIVA" : "SALIDA_OPERATIVA");
+
+  if (btn) btn.disabled = true;
+  try {
+    const response = await authenticatedFetch("/api/inventory/movements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sku,
+        type: kind === "in" ? "IN" : "OUT",
+        quantity: qty,
+        warehouse,
+        location,
+        status,
+        reference,
+        notes: notes || undefined
+      })
+    });
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setOpsMessage(msgId, data.message || "No se pudo registrar la operación.", false);
+      return;
+    }
+    setOpsMessage(msgId, kind === "in" ? "Entrada registrada correctamente." : "Salida registrada correctamente.", true);
+    document.getElementById(`${prefix}Qty`).value = "";
+    document.getElementById(`${prefix}Notes`).value = "";
+    await loadStockStrip();
+    await loadInventoryMovements();
+    if (kind === "in") await loadInboundList();
+    else await loadOutboundList();
+  } catch (_e) {
+    setOpsMessage(msgId, "Error de red.", false);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function renderMovementOpsTable(containerId, rows, emptyMsg) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  if (!rows.length) {
+    container.innerHTML = `<div class="data-grid-empty" style="padding:16px">${escCell(emptyMsg)}</div>`;
+    return;
+  }
+  const thead =
+    "<tr><th>Fecha</th><th>Cliente</th><th>Customer</th><th>Referencia</th><th>SKU</th><th>Producto</th><th>Cantidad</th><th>Estado</th></tr>";
+  const body = rows
+    .slice(0, 50)
+    .map((m) => {
+      const cliente = m.product?.customer?.name || "—";
+      const customer = m.product?.customer?.code || "—";
+      const sku = m.product?.sku || "—";
+      const prod = m.product?.name || "—";
+      return `<tr><td class="cell-nowrap">${formatDateShort(m.createdAt)}</td><td>${renderCellWithClamp(cliente, "cell-truncate", 22)}</td><td class="cell-nowrap">${escCell(customer)}</td><td>${renderCellWithClamp(m.reference, "cell-truncate", 18)}</td><td class="cell-nowrap">${escCell(sku)}</td><td>${renderCellWithClamp(prod, "cell-truncate", 24)}</td><td class="cell-nowrap">${formatQty(m.qty)}</td><td>${statusBadge("COMPLETED")}</td></tr>`;
+    })
+    .join("");
+  container.innerHTML = `<div class="table-wrap"><table class="scan-table compact-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+}
+
+async function loadInboundList() {
+  if (!movementsRowsCache.length) {
+    const response = await authenticatedFetch("/api/inventory/movements?limit=500");
+    if (response?.ok) {
+      const rows = await response.json();
+      movementsRowsCache = Array.isArray(rows) ? rows : [];
+      movementsCountCache = movementsRowsCache.length;
+    }
+  }
+  const inbound = movementsRowsCache.filter(
+    (m) => m.movementType === "IN" || m.type === "INBOUND"
+  );
+  const meta = document.getElementById("inboundTableMeta");
+  if (meta) meta.textContent = `${inbound.length} entrada(s) registrada(s)`;
+  renderMovementOpsTable("inboundList", inbound, "Sin entradas registradas.");
+}
+
+async function loadOutboundList() {
+  if (!movementsRowsCache.length) {
+    const response = await authenticatedFetch("/api/inventory/movements?limit=500");
+    if (response?.ok) {
+      const rows = await response.json();
+      movementsRowsCache = Array.isArray(rows) ? rows : [];
+      movementsCountCache = movementsRowsCache.length;
+    }
+  }
+  const outbound = movementsRowsCache.filter(
+    (m) => m.movementType === "OUT" && m.type !== "PICK"
+  );
+  const meta = document.getElementById("outboundTableMeta");
+  if (meta) meta.textContent = `${outbound.length} salida(s) registrada(s)`;
+  renderMovementOpsTable("outboundList", outbound, "Sin salidas registradas.");
+}
+
+function parseRequisitionNotes(notes) {
+  if (!notes) return null;
+  try {
+    return JSON.parse(notes);
+  } catch (_e) {
+    return null;
+  }
+}
+
+function formatReqProducts(task) {
+  const parsed = parseRequisitionNotes(task.notes);
+  if (parsed?.sku) {
+    const qty = parsed.qty != null ? formatQty(parsed.qty) : "—";
+    return `${parsed.sku} × ${qty}`;
+  }
+  return task.notes ? String(task.notes).slice(0, 48) : "—";
+}
+
+function formatReqCliente(task) {
+  const parsed = parseRequisitionNotes(task.notes);
+  if (parsed?.customerName) return parsed.customerName;
+  if (parsed?.customerCode) return parsed.customerCode;
+  return "—";
+}
+
+async function loadRequisitionsList() {
+  const container = document.getElementById("requisitionsList");
+  if (!container) return;
+  try {
+    const response = await authenticatedFetch("/api/tasks");
+    if (!response?.ok) {
+      container.innerHTML = '<div class="data-grid-empty" style="padding:16px">No se pudieron cargar requisiciones.</div>';
+      return;
+    }
+    const rows = (await response.json()).filter((t) => t.type === "PICK");
+    const meta = document.getElementById("reqTableMeta");
+    if (meta) meta.textContent = `${rows.length} requisición(es)`;
+    if (!rows.length) {
+      container.innerHTML = '<div class="data-grid-empty" style="padding:16px">Sin requisiciones registradas.</div>';
+      return;
+    }
+    const thead =
+      "<tr><th>Folio</th><th>Cliente</th><th>Prioridad</th><th>Productos</th><th>Estado</th><th>Picking</th></tr>";
+    const body = rows
+      .map((t) => {
+        const picking =
+          t.status === "COMPLETED"
+            ? statusBadge("COMPLETED")
+            : t.status === "IN_PROGRESS"
+              ? statusBadge("IN_PROGRESS")
+              : statusBadge("PENDING");
+        return `<tr><td class="cell-nowrap">${renderCellWithClamp(t.reference, "cell-truncate", 18)}</td><td>${renderCellWithClamp(formatReqCliente(t), "cell-truncate", 22)}</td><td class="cell-nowrap">${t.priority ?? 0}</td><td>${renderCellWithClamp(formatReqProducts(t), "cell-truncate", 28)}</td><td>${statusBadge(t.status)}</td><td>${picking}</td></tr>`;
+      })
+      .join("");
+    container.innerHTML = `<div class="table-wrap"><table class="scan-table compact-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+  } catch (_e) {
+    container.innerHTML = '<div class="data-grid-empty" style="padding:16px">Error de red.</div>';
+  }
+}
+
+async function submitRequisition() {
+  const btn = document.getElementById("reqSubmitBtn");
+  setOpsMessage("reqMessage", "", true);
+  const reference = document.getElementById("reqReference")?.value?.trim();
+  const customerCode = document.getElementById("reqCustomer")?.value?.trim();
+  const customerName = document.getElementById("reqCliente")?.value?.trim();
+  const sku = document.getElementById("reqSku")?.value?.trim();
+  const qty = Number(document.getElementById("reqQty")?.value);
+  const warehouse = document.getElementById("reqWarehouse")?.value?.trim() || "TULTITLAN24";
+  const extraNotes = document.getElementById("reqNotes")?.value?.trim();
+
+  if (!reference) {
+    setOpsMessage("reqMessage", "Indique folio o referencia.", false);
+    return;
+  }
+  if (sku && !findProductBySku(sku)) {
+    setOpsMessage("reqMessage", "SKU inexistente en catálogo.", false);
+    return;
+  }
+  if (sku && (!Number.isFinite(qty) || qty <= 0)) {
+    setOpsMessage("reqMessage", "Cantidad solicitada debe ser mayor que 0.", false);
+    return;
+  }
+
+  const notesPayload = {
+    customerCode: customerCode || null,
+    customerName: customerName || null,
+    sku: sku || null,
+    qty: Number.isFinite(qty) ? qty : null,
+    detail: extraNotes || null
+  };
+
+  if (btn) btn.disabled = true;
+  try {
+    const response = await authenticatedFetch("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "PICK",
+        status: "PENDING",
+        warehouse,
+        priority: Number(document.getElementById("reqPriority")?.value || 0),
+        reference,
+        notes: JSON.stringify(notesPayload)
+      })
+    });
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setOpsMessage("reqMessage", data.message || "No se pudo crear la requisición.", false);
+      return;
+    }
+    setOpsMessage("reqMessage", "Requisición registrada correctamente.", true);
+    document.getElementById("reqReference").value = "";
+    document.getElementById("reqQty").value = "";
+    document.getElementById("reqNotes").value = "";
+    await loadRequisitionsList();
+    await loadTasks();
+  } catch (_e) {
+    setOpsMessage("reqMessage", "Error de red.", false);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function wireOperationalForms() {
+  [
+    ["inboundCustomer", "inboundSku", "inboundProduct", "inboundCliente"],
+    ["outboundCustomer", "outboundSku", "outboundProduct", "outboundCliente"],
+    ["reqCustomer", "reqSku", null, "reqCliente"]
+  ].forEach(([custId, skuId, prodId, clienteId]) => {
+    const cust = document.getElementById(custId);
+    if (cust && cust.dataset.opsWired !== "1") {
+      cust.dataset.opsWired = "1";
+      cust.addEventListener("change", () => {
+        fillSkuSelect(skuId, cust.value, prodId);
+        if (clienteId) {
+          const customers = getCustomersForSelect();
+          const match = customers.find((c) => c.code === cust.value);
+          const inp = document.getElementById(clienteId);
+          if (inp) inp.value = match?.name || "";
+        }
+      });
+    }
+    const sku = document.getElementById(skuId);
+    if (sku && sku.dataset.opsWired !== "1") {
+      sku.dataset.opsWired = "1";
+      sku.addEventListener("change", () => {
+        if (prodId) {
+          const prod = findProductBySku(sku.value);
+          const inp = document.getElementById(prodId);
+          if (inp) inp.value = prod?.name || "";
+        }
+      });
+    }
+  });
+
+  const inBtn = document.getElementById("inboundSubmitBtn");
+  if (inBtn && inBtn.dataset.opsWired !== "1") {
+    inBtn.dataset.opsWired = "1";
+    inBtn.addEventListener("click", () => void submitOperationalMovement("in"));
+  }
+  const outBtn = document.getElementById("outboundSubmitBtn");
+  if (outBtn && outBtn.dataset.opsWired !== "1") {
+    outBtn.dataset.opsWired = "1";
+    outBtn.addEventListener("click", () => void submitOperationalMovement("out"));
+  }
+  const reqBtn = document.getElementById("reqSubmitBtn");
+  if (reqBtn && reqBtn.dataset.opsWired !== "1") {
+    reqBtn.dataset.opsWired = "1";
+    reqBtn.addEventListener("click", () => void submitRequisition());
+  }
+  const exportStockFilteredBtn = document.getElementById("exportStockFilteredBtn");
+  if (exportStockFilteredBtn && exportStockFilteredBtn.dataset.opsWired !== "1") {
+    exportStockFilteredBtn.dataset.opsWired = "1";
+    exportStockFilteredBtn.addEventListener("click", () => void exportStockCsvFiltered());
+  }
+  const exportProductsFilteredBtn = document.getElementById("exportProductsFilteredBtn");
+  if (exportProductsFilteredBtn && exportProductsFilteredBtn.dataset.opsWired !== "1") {
+    exportProductsFilteredBtn.dataset.opsWired = "1";
+    exportProductsFilteredBtn.addEventListener("click", () => void exportProductsCsvFiltered());
+  }
 }
 
 async function submitMovement(event) {
@@ -2348,7 +2778,9 @@ async function submitMovement(event) {
     type: moveType.value,
     quantity: Number(moveQty.value),
     reference: moveRef.value.trim() || undefined,
-    notes: moveNotes.value.trim() || undefined
+    notes: moveNotes.value.trim() || undefined,
+    location: document.getElementById("moveLocation")?.value?.trim() || undefined,
+    status: document.getElementById("moveStatus")?.value || "AVAILABLE"
   };
   try {
     const response = await authenticatedFetch("/api/inventory/movements", {
@@ -2459,6 +2891,7 @@ async function loadCatalogData() {
   if (!Array.isArray(clientsCache)) clientsCache = [];
   if (clientsList) clientsList.innerHTML = "";
   renderClientsModule();
+  populateOperationalSelects();
 }
 
 async function deleteCustomerById(customerId) {
@@ -2494,8 +2927,15 @@ function applyRoleNavigation(role) {
   if (openCatBtn) openCatBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
   if (openInvBtn) openInvBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
   if (taskCreateWrap) {
-    taskCreateWrap.classList.toggle("hidden", role !== "ADMIN" && role !== "SUPERVISOR");
+    taskCreateWrap.classList.toggle("hidden", role !== "ADMIN" && role !== "SUPERVISOR" && role !== "OPERATOR");
   }
+  const reqPanel = document.getElementById("reqSubmitBtn");
+  if (reqPanel) reqPanel.style.display = role === "CLIENT" ? "none" : "inline-block";
+  const inBtn = document.getElementById("inboundSubmitBtn");
+  const outBtn = document.getElementById("outboundSubmitBtn");
+  const canOperate = role === "ADMIN" || role === "SUPERVISOR" || role === "OPERATOR";
+  if (inBtn) inBtn.style.display = canOperate ? "inline-block" : "none";
+  if (outBtn) outBtn.style.display = canOperate ? "inline-block" : "none";
   const canExportInventory = role === "ADMIN" || role === "OPERATOR" || role === "SUPERVISOR";
   const canExportTrace = canExportInventory;
   const canExportProducts = role === "ADMIN" || role === "CLIENT";
@@ -2504,13 +2944,21 @@ function applyRoleNavigation(role) {
   if (exportTraceBtn) exportTraceBtn.style.display = canExportTrace ? "inline-block" : "none";
   if (exportProductsBtn) exportProductsBtn.style.display = canExportProducts ? "inline-block" : "none";
   const rStock = document.getElementById("reportsExportStock");
+  const rStockF = document.getElementById("reportsExportStockFiltered");
   const rMov = document.getElementById("reportsExportMovements");
   const rProd = document.getElementById("reportsExportProducts");
+  const rProdF = document.getElementById("reportsExportProductsFiltered");
   const rTrace = document.getElementById("reportsExportTrace");
   if (rStock) rStock.style.display = canExportInventory ? "inline-block" : "none";
+  if (rStockF) rStockF.style.display = canExportInventory ? "inline-block" : "none";
   if (rMov) rMov.style.display = canExportInventory ? "inline-block" : "none";
   if (rProd) rProd.style.display = canExportProducts ? "inline-block" : "none";
+  if (rProdF) rProdF.style.display = canExportProducts ? "inline-block" : "none";
   if (rTrace) rTrace.style.display = canExportTrace ? "inline-block" : "none";
+  const exportStockFilteredBtn = document.getElementById("exportStockFilteredBtn");
+  const exportProductsFilteredBtn = document.getElementById("exportProductsFilteredBtn");
+  if (exportStockFilteredBtn) exportStockFilteredBtn.style.display = canExportInventory ? "inline-block" : "none";
+  if (exportProductsFilteredBtn) exportProductsFilteredBtn.style.display = canExportProducts ? "inline-block" : "none";
   if (demoAdminZone) demoAdminZone.classList.toggle("hidden", role !== "ADMIN");
   if (role !== "ADMIN") closeDemoResetPanel();
 }
@@ -3132,6 +3580,7 @@ if (incidentList) {
 }
 wireInventoryFilterInputs();
 wireCatalogFilterInputs();
+wireOperationalForms();
 wireControlCenterFilters();
 wireQuickActions();
 wireModals();

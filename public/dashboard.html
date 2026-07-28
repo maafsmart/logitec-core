@@ -1685,6 +1685,24 @@
         padding: 0;
         overflow: hidden;
       }
+      .ops-form-panel {
+        margin-bottom: 16px;
+      }
+      .ops-form-panel .form-grid {
+        margin-bottom: 12px;
+      }
+      .ops-message {
+        min-height: 1.2em;
+        margin: 8px 0 0;
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
+      .ops-message.ok { color: var(--ok); }
+      .ops-message.error { color: var(--error); }
+      .field-readonly {
+        background: #eef5fc;
+        color: var(--muted);
+      }
       .secondary-panel-title {
         margin: 0 0 12px;
         font-size: 0.95rem;
@@ -1941,6 +1959,14 @@
                 <input id="traceSku" type="text" />
               </div>
               <div class="field compact">
+                <label for="traceCustomer">Customer</label>
+                <input id="traceCustomer" type="text" placeholder="Código" />
+              </div>
+              <div class="field compact">
+                <label for="traceCliente">Cliente</label>
+                <input id="traceCliente" type="text" placeholder="Nombre" />
+              </div>
+              <div class="field compact">
                 <label for="traceFrom">Desde</label>
                 <input id="traceFrom" type="date" />
               </div>
@@ -1958,12 +1984,12 @@
             </div>
           </div>
           <div id="moduleTasks" class="module-pane hidden">
-            <h3>Tareas</h3>
-            <p class="subtitle" style="margin-bottom: 10px">
-              Cola operativa (preparación para workflows). Creación: ADMIN / supervisor.
-            </p>
-            <div id="taskCreateWrap" class="hidden">
-              <h4 style="margin: 12px 0 8px">Nueva tarea</h4>
+            <div class="module-screen-header module-header-band">
+              <h3>Tareas operativas</h3>
+              <p class="module-lead">Cola de trabajo del almacén. Creación disponible para roles operativos autorizados.</p>
+            </div>
+            <div id="taskCreateWrap" class="hidden card-panel ops-form-panel">
+              <h4 class="secondary-panel-title">Nueva tarea</h4>
               <div class="form-grid">
                 <div class="field">
                   <label for="taskType">Tipo</label>
@@ -1989,15 +2015,20 @@
                 </div>
               </div>
               <p id="taskCreateError" class="inline-error"></p>
-              <button type="button" id="taskCreateBtn">Crear tarea</button>
+              <button type="button" id="taskCreateBtn" class="btn-primary btn-compact">Crear tarea</button>
             </div>
-            <p id="taskMessage" class="subtitle" style="min-height: 1.2em"></p>
-            <div id="taskList" style="overflow: auto; max-width: 100%"></div>
+            <div class="card-panel" style="padding:0">
+            <p id="taskMessage" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0;border-bottom:0;min-height:1.2em"></p>
+            <div id="taskList" style="overflow: auto; max-width: 100%; padding: 0 12px 12px"></div>
+            </div>
           </div>
           <div id="moduleIncidents" class="module-pane hidden">
-            <h3>Incidencias</h3>
-            <p class="subtitle" style="margin-bottom: 10px">Registro de excepciones operativas.</p>
-            <h4 style="margin: 12px 0 8px">Registrar</h4>
+            <div class="module-screen-header module-header-band">
+              <h3>Incidencias operativas</h3>
+              <p class="module-lead">Registro de excepciones en piso: daños, discrepancias, ubicaciones incorrectas.</p>
+            </div>
+            <div class="card-panel ops-form-panel">
+              <h4 class="secondary-panel-title">Registrar incidencia</h4>
             <div class="form-grid">
               <div class="field">
                 <label for="incidentType">Tipo</label>
@@ -2027,10 +2058,13 @@
               </div>
             </div>
             <p id="incidentCreateError" class="inline-error"></p>
-            <button type="button" id="incidentCreateBtn">Enviar incidencia</button>
-            <h4 style="margin: 18px 0 8px">Listado</h4>
-            <p id="incidentMessage" class="subtitle" style="min-height: 1.2em"></p>
-            <div id="incidentList" style="overflow: auto; max-width: 100%"></div>
+            <button type="button" id="incidentCreateBtn" class="btn-primary">Enviar incidencia</button>
+            </div>
+            <div class="card-panel" style="padding:0">
+            <h4 class="secondary-panel-title" style="padding:16px 16px 0;margin:0">Listado de incidencias</h4>
+            <p id="incidentMessage" class="operational-table-meta" style="margin:0;border-bottom:0;min-height:1.2em"></p>
+            <div id="incidentList" style="overflow: auto; max-width: 100%; padding: 0 12px 12px"></div>
+            </div>
           </div>
           <div id="moduleAccount" class="module-pane hidden">
             <h3>Mi cuenta</h3>
@@ -2128,6 +2162,7 @@
             <div class="page-toolbar">
               <button type="button" id="openInventoryImportBtn" class="btn-primary">Importar inventario</button>
               <button type="button" id="exportStockBtn" class="btn-secondary">Exportar existencias CSV</button>
+              <button type="button" id="exportStockFilteredBtn" class="btn-secondary">Exportar reporte filtrado</button>
               <button type="button" id="exportMovementsBtn" class="btn-secondary">Exportar movimientos CSV</button>
               <button type="button" id="toggleMovementsBtn" class="btn-secondary">Ver movimientos</button>
             </div>
@@ -2238,6 +2273,7 @@
             <div class="page-toolbar">
               <button type="button" id="openCatalogImportBtn" class="btn-primary">Importar catálogo</button>
               <button type="button" id="exportProductsBtn" class="btn-secondary">Exportar productos CSV</button>
+              <button type="button" id="exportProductsFilteredBtn" class="btn-secondary">Exportar catálogo filtrado</button>
             </div>
             <div class="operational-panel card-panel">
               <div class="operational-filters-bar" style="border:0;border-radius:0;padding:0 0 12px;background:transparent">
@@ -2321,52 +2357,193 @@
             </div>
           </div>
           <div id="moduleReports" class="module-pane hidden">
-            <div class="module-screen-header">
+            <div class="module-screen-header module-header-band">
               <h3>Reportes</h3>
-              <p class="module-lead">Exportaciones operativas disponibles según tu rol.</p>
+              <p class="module-lead">Exportaciones operativas del sistema. Use filtros en Inventario o Catálogo antes de exportar resultados filtrados.</p>
             </div>
             <div class="card-panel">
+              <h4 class="secondary-panel-title">Inventario</h4>
               <div class="page-toolbar">
-                <button type="button" id="reportsExportStock" class="btn-secondary">Existencias CSV</button>
+                <button type="button" id="reportsExportStock" class="btn-secondary">Inventario completo CSV</button>
+                <button type="button" id="reportsExportStockFiltered" class="btn-secondary">Inventario filtrado CSV</button>
                 <button type="button" id="reportsExportMovements" class="btn-secondary">Movimientos CSV</button>
-                <button type="button" id="reportsExportProducts" class="btn-secondary">Productos CSV</button>
+              </div>
+              <h4 class="secondary-panel-title">Catálogo y trazabilidad</h4>
+              <div class="page-toolbar">
+                <button type="button" id="reportsExportProducts" class="btn-secondary">Catálogo CSV</button>
+                <button type="button" id="reportsExportProductsFiltered" class="btn-secondary">Catálogo filtrado CSV</button>
                 <button type="button" id="reportsExportTrace" class="btn-secondary">Trazabilidad CSV</button>
               </div>
-              <p class="filter-hint" style="margin:0">Los reportes usan los datos actuales del sistema. Para trazabilidad filtrada, usa el módulo Trazabilidad.</p>
             </div>
           </div>
           <div id="moduleInbound" class="module-pane hidden">
-            <div class="module-screen-header"><h3>Entradas</h3></div>
-            <div class="ops-pending-banner">Pendiente de habilitación operativa. El registro formal de recepciones se activará en una siguiente fase.</div>
-            <div class="card-panel" style="padding:0">
-              <div class="data-grid data-grid-size-compact">
-                <div class="data-grid-header-x"><div class="data-grid-row head data-grid-cols-inbound"><div class="data-grid-cell">Folio</div><div class="data-grid-cell">Cliente</div><div class="data-grid-cell">Referencia</div><div class="data-grid-cell">Fecha</div><div class="data-grid-cell">Productos</div><div class="data-grid-cell">Estado</div></div></div>
-                <div class="data-grid-body-scroll"><div class="data-grid-empty">Sin entradas registradas</div></div>
-              </div>
+            <div class="module-screen-header module-header-band">
+              <h3>Entradas operativas</h3>
+              <p class="module-lead">Registro de recepción de mercancía con impacto real en inventario y trazabilidad.</p>
             </div>
-            <div class="page-toolbar"><button type="button" class="btn-secondary" disabled>Requiere habilitar flujo operativo</button></div>
+            <div class="card-panel ops-form-panel">
+              <h4 class="secondary-panel-title">Registrar entrada</h4>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="inboundCustomer">Customer</label>
+                  <select id="inboundCustomer"><option value="">— Seleccionar —</option></select>
+                </div>
+                <div class="field">
+                  <label for="inboundCliente">Cliente</label>
+                  <input id="inboundCliente" type="text" class="field-readonly" readonly placeholder="Se completa al elegir customer" />
+                </div>
+                <div class="field">
+                  <label for="inboundSku">SKU</label>
+                  <select id="inboundSku"><option value="">— Seleccionar —</option></select>
+                </div>
+                <div class="field">
+                  <label for="inboundProduct">Producto</label>
+                  <input id="inboundProduct" type="text" class="field-readonly" readonly />
+                </div>
+                <div class="field">
+                  <label for="inboundQty">Cantidad</label>
+                  <input id="inboundQty" type="number" step="0.0001" min="0.0001" required />
+                </div>
+                <div class="field">
+                  <label for="inboundWarehouse">Almacén</label>
+                  <input id="inboundWarehouse" type="text" value="TULTITLAN24" />
+                </div>
+                <div class="field">
+                  <label for="inboundLocation">Ubicación destino</label>
+                  <input id="inboundLocation" type="text" placeholder="Ej. TULTITLAN24-GEN-STAGE-01" required />
+                </div>
+                <div class="field">
+                  <label for="inboundStatus">Status</label>
+                  <select id="inboundStatus">
+                    <option value="AVAILABLE">AVAILABLE</option>
+                    <option value="OPERATIONS">OPERATIONS</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="inboundReference">Referencia de entrada</label>
+                  <input id="inboundReference" type="text" placeholder="OC, factura, folio" />
+                </div>
+                <div class="field full">
+                  <label for="inboundNotes">Notas</label>
+                  <input id="inboundNotes" type="text" />
+                </div>
+              </div>
+              <p id="inboundMessage" class="ops-message"></p>
+              <button type="button" id="inboundSubmitBtn" class="btn-primary">Registrar entrada</button>
+            </div>
+            <div class="card-panel" style="padding:0">
+              <p id="inboundTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Entradas recientes</p>
+              <div id="inboundList"></div>
+            </div>
           </div>
           <div id="moduleOutbound" class="module-pane hidden">
-            <div class="module-screen-header"><h3>Salidas</h3></div>
-            <div class="ops-pending-banner">Pendiente de habilitación operativa. Las salidas formales se vincularán al flujo de picking y trazabilidad.</div>
-            <div class="card-panel" style="padding:0">
-              <div class="data-grid data-grid-size-compact">
-                <div class="data-grid-header-x"><div class="data-grid-row head data-grid-cols-outbound"><div class="data-grid-cell">Folio</div><div class="data-grid-cell">Cliente</div><div class="data-grid-cell">Referencia</div><div class="data-grid-cell">Fecha</div><div class="data-grid-cell">Productos</div><div class="data-grid-cell">Estado</div></div></div>
-                <div class="data-grid-body-scroll"><div class="data-grid-empty">Sin salidas registradas</div></div>
-              </div>
+            <div class="module-screen-header module-header-band">
+              <h3>Salidas operativas</h3>
+              <p class="module-lead">Despacho de mercancía con validación de stock y registro de movimiento.</p>
             </div>
-            <div class="page-toolbar"><button type="button" class="btn-secondary" disabled>Requiere habilitar flujo operativo</button></div>
+            <div class="card-panel ops-form-panel">
+              <h4 class="secondary-panel-title">Registrar salida</h4>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="outboundCustomer">Customer</label>
+                  <select id="outboundCustomer"><option value="">— Seleccionar —</option></select>
+                </div>
+                <div class="field">
+                  <label for="outboundCliente">Cliente</label>
+                  <input id="outboundCliente" type="text" class="field-readonly" readonly />
+                </div>
+                <div class="field">
+                  <label for="outboundSku">SKU</label>
+                  <select id="outboundSku"><option value="">— Seleccionar —</option></select>
+                </div>
+                <div class="field">
+                  <label for="outboundProduct">Producto</label>
+                  <input id="outboundProduct" type="text" class="field-readonly" readonly />
+                </div>
+                <div class="field">
+                  <label for="outboundQty">Cantidad</label>
+                  <input id="outboundQty" type="number" step="0.0001" min="0.0001" required />
+                </div>
+                <div class="field">
+                  <label for="outboundWarehouse">Almacén</label>
+                  <input id="outboundWarehouse" type="text" value="TULTITLAN24" />
+                </div>
+                <div class="field">
+                  <label for="outboundLocation">Ubicación origen</label>
+                  <input id="outboundLocation" type="text" placeholder="Ej. TULTITLAN24-GEN-STAGE-01" required />
+                </div>
+                <div class="field">
+                  <label for="outboundStatus">Status</label>
+                  <select id="outboundStatus">
+                    <option value="AVAILABLE">AVAILABLE</option>
+                    <option value="OPERATIONS">OPERATIONS</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="outboundReference">Referencia de salida</label>
+                  <input id="outboundReference" type="text" placeholder="Pedido, folio" />
+                </div>
+                <div class="field full">
+                  <label for="outboundNotes">Notas</label>
+                  <input id="outboundNotes" type="text" />
+                </div>
+              </div>
+              <p id="outboundMessage" class="ops-message"></p>
+              <button type="button" id="outboundSubmitBtn" class="btn-primary">Registrar salida</button>
+            </div>
+            <div class="card-panel" style="padding:0">
+              <p id="outboundTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Salidas recientes</p>
+              <div id="outboundList"></div>
+            </div>
           </div>
           <div id="moduleRequisitions" class="module-pane hidden">
-            <div class="module-screen-header"><h3>Requisiciones</h3></div>
-            <div class="ops-pending-banner">Pendiente de habilitación operativa. Las requisiciones alimentarán el surtido y picking.</div>
-            <div class="card-panel" style="padding:0">
-              <div class="data-grid data-grid-size-compact">
-                <div class="data-grid-header-x"><div class="data-grid-row head data-grid-cols-req"><div class="data-grid-cell">Folio</div><div class="data-grid-cell">Cliente</div><div class="data-grid-cell">Prioridad</div><div class="data-grid-cell">Productos</div><div class="data-grid-cell">Estado</div><div class="data-grid-cell">Picking</div></div></div>
-                <div class="data-grid-body-scroll"><div class="data-grid-empty">Sin requisiciones registradas</div></div>
-              </div>
+            <div class="module-screen-header module-header-band">
+              <h3>Requisiciones</h3>
+              <p class="module-lead">Solicitudes de surtido vinculadas a tareas de picking.</p>
             </div>
-            <div class="page-toolbar"><button type="button" class="btn-secondary" disabled>Requiere habilitar flujo operativo</button></div>
+            <div class="card-panel ops-form-panel">
+              <h4 class="secondary-panel-title">Nueva requisición</h4>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="reqReference">Folio / referencia</label>
+                  <input id="reqReference" type="text" placeholder="REQ-2026-001" required />
+                </div>
+                <div class="field">
+                  <label for="reqCustomer">Customer</label>
+                  <select id="reqCustomer"><option value="">— Seleccionar —</option></select>
+                </div>
+                <div class="field">
+                  <label for="reqCliente">Cliente</label>
+                  <input id="reqCliente" type="text" class="field-readonly" readonly />
+                </div>
+                <div class="field">
+                  <label for="reqPriority">Prioridad</label>
+                  <input id="reqPriority" type="number" min="0" max="100" value="50" />
+                </div>
+                <div class="field">
+                  <label for="reqSku">SKU</label>
+                  <select id="reqSku"><option value="">— Seleccionar —</option></select>
+                </div>
+                <div class="field">
+                  <label for="reqQty">Cantidad solicitada</label>
+                  <input id="reqQty" type="number" step="0.0001" min="0.0001" />
+                </div>
+                <div class="field">
+                  <label for="reqWarehouse">Almacén</label>
+                  <input id="reqWarehouse" type="text" value="TULTITLAN24" />
+                </div>
+                <div class="field full">
+                  <label for="reqNotes">Notas</label>
+                  <input id="reqNotes" type="text" />
+                </div>
+              </div>
+              <p id="reqMessage" class="ops-message"></p>
+              <button type="button" id="reqSubmitBtn" class="btn-primary">Crear requisición</button>
+            </div>
+            <div class="card-panel" style="padding:0">
+              <p id="reqTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Requisiciones registradas</p>
+              <div id="requisitionsList"></div>
+            </div>
           </div>
           <div id="modulePlaceholder" class="module-pane hidden">
             <h3>Módulo en construcción</h3>
@@ -2444,6 +2621,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=27"></script>
+    <script src="/dashboard.js?v=28"></script>
   </body>
 </html>

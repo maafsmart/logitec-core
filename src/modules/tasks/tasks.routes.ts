@@ -42,7 +42,7 @@ tasksRouter.get("/", async (req, res) => {
   res.json(tasks);
 });
 
-tasksRouter.post("/", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
+tasksRouter.post("/", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
   const data = createTaskSchema.parse(req.body);
   const task = await prisma.task.create({
     data: {
