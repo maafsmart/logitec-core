@@ -124,6 +124,14 @@ let movementsRowsCache = [];
 let pendingConflictsCache = 0;
 
 let clientsCache = [];
+let workspaceCatalogReady = false;
+let workspaceStockReady = false;
+let lastActiveModuleName = "control";
+
+function normalizeUserRole(role) {
+  const value = String(role || "CLIENT").trim().toUpperCase();
+  return roleModules[value] ? value : "CLIENT";
+}
 
 const roleModules = {
   ADMIN: ["control", "clients", "catalog", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "reports", "users", "account"],
@@ -185,7 +193,13 @@ if (!token) {
 function activateModule(moduleName) {
   if (!currentRole) return;
   const allowed = roleModules[currentRole] || [];
-  if (!allowed.includes(moduleName)) return;
+  if (!allowed.includes(moduleName)) {
+    showControlCenterFailsafe(
+      "No se pudo cargar el módulo seleccionado. Volviendo a Centro de Control de AVIAT."
+    );
+    ensureWorkspaceModuleVisible("control");
+    return;
+  }
 
   moduleButtons.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.module === moduleName);
@@ -194,7 +208,15 @@ function activateModule(moduleName) {
   hideAllModules();
 
   const activeEl = MODULE_REGISTRY[moduleName];
-  if (activeEl) activeEl.classList.remove("hidden");
+  if (!activeEl) {
+    showControlCenterFailsafe(
+      "No se pudo cargar el módulo seleccionado. Volviendo a Centro de Control de AVIAT."
+    );
+    ensureWorkspaceModuleVisible("control");
+    return;
+  }
+  activeEl.classList.remove("hidden");
+  lastActiveModuleName = moduleName;
 
   const showUsers = moduleName === "users";
   const showControl = moduleName === "control";
@@ -229,7 +251,7 @@ function activateModule(moduleName) {
 
   if (modulePlaceholder) modulePlaceholder.classList.toggle("hidden", hasKnownModule);
 
-  if (showControl) refreshControlCenter();
+  if (showControl) renderControlCenter();
   if (showClients) renderClientsModule();
   if (showInventory) applyInventoryFilters();
   if (showCatalog) applyCatalogFilters();
@@ -254,6 +276,7 @@ function activateModule(moduleName) {
     resetPickingFlow();
     setTimeout(() => scanInput?.focus(), 0);
   }
+  verifyActiveModuleVisible();
 }
 
 async function authenticatedFetch(path, options = {}) {
@@ -800,6 +823,11 @@ function renderAviatProjectChips(container) {
   const projects = getProjectsForPrimaryClient(PRIMARY_CLIENT_AVIAT);
   const activeProject = getActiveProject();
   const scopeText = getScopeSummaryText();
+  const projectsPending = !workspaceCatalogReady && projects.length === 0;
+  if (projectsPending) {
+    container.innerHTML = `<p class="cc-primary-banner">Cliente principal: <strong>${escCell(PRIMARY_CLIENT_AVIAT_NAME)}</strong></p><p class="filter-hint" style="margin:0 0 10px">Cargando proyectos de AVIAT…</p><div class="project-chips-label">Proyectos de AVIAT</div><div class="project-chips-row"><span class="filter-hint">Cargando proyectos de AVIAT…</span></div>`;
+    return;
+  }
   const allChip = `<button type="button" class="project-chip${activeProject === ACTIVE_PROJECT_ALL ? " active" : ""}" data-pick-project="${ACTIVE_PROJECT_ALL}">Todos los proyectos</button>`;
   const projectChips = projects
     .map(
@@ -2213,6 +2241,65 @@ function renderControlCenterTable(rows) {
   });
 }
 
+function renderControlCenterLoadingTable(message) {
+  if (!ccInventoryList) return;
+  ccInventoryList.innerHTML = `<div class="data-grid-empty" style="padding:16px;border:1px solid var(--line);border-radius:0 0 12px 12px;background:var(--panel-solid)">${escCell(message || "Cargando información de AVIAT…")}</div>`;
+  const meta = document.getElementById("ccTableCount");
+  if (meta) meta.textContent = message || "Cargando información de AVIAT…";
+}
+
+function showControlCenterFailsafe(message) {
+  const banner = document.getElementById("ccFailsafeBanner");
+  if (!banner) return;
+  if (message) {
+    banner.textContent = message;
+    banner.classList.remove("hidden");
+  } else {
+    banner.textContent = "";
+    banner.classList.add("hidden");
+  }
+}
+
+function renderControlCenter() {
+  if (!moduleControlCenter) return;
+  moduleControlCenter.classList.remove("hidden");
+  updateActiveClientUi();
+  renderOperationalPrimaryClients(document.getElementById("ccClientPickerList"), { includeCreate: false });
+  renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
+  updateControlCenterKpis();
+  if (workspaceStockReady) {
+    showControlCenterFailsafe("");
+    applyControlCenterFilters();
+  } else {
+    renderControlCenterLoadingTable(
+      workspaceCatalogReady ? "Cargando información de AVIAT…" : "Cargando catálogo y proyectos de AVIAT…"
+    );
+  }
+}
+
+function verifyActiveModuleVisible() {
+  const anyVisible = Object.values(MODULE_REGISTRY).some((el) => el && !el.classList.contains("hidden"));
+  if (!anyVisible) ensureWorkspaceModuleVisible("control");
+}
+
+function ensureWorkspaceModuleVisible(preferredModule) {
+  const moduleName = preferredModule || lastActiveModuleName || "control";
+  if (currentRole && (roleModules[currentRole] || []).includes(moduleName)) {
+    activateModule(moduleName);
+    return;
+  }
+  hideAllModules();
+  if (moduleControlCenter) {
+    moduleControlCenter.classList.remove("hidden");
+    lastActiveModuleName = "control";
+    moduleButtons.forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.module === "control");
+    });
+    renderControlCenter();
+  }
+  if (modulePlaceholder) modulePlaceholder.classList.add("hidden");
+}
+
 function applyControlCenterFilters() {
   updateControlCenterKpis();
   renderControlCenterTable(
@@ -2221,8 +2308,7 @@ function applyControlCenterFilters() {
 }
 
 function refreshControlCenter() {
-  updateControlCenterKpis();
-  applyControlCenterFilters();
+  renderControlCenter();
 }
 
 function clearControlCenterFilters() {
@@ -3688,6 +3774,16 @@ async function createIncidentClick() {
 
 async function loadStockStrip() {
   if (!inventoryList && !ccInventoryList) return;
+  workspaceStockReady = false;
+  if (moduleControlCenter && !moduleControlCenter.classList.contains("hidden")) {
+    renderControlCenterLoadingTable("Cargando información de AVIAT…");
+  }
+  const finishStockLoad = () => {
+    workspaceStockReady = true;
+    if (moduleControlCenter && !moduleControlCenter.classList.contains("hidden")) {
+      applyControlCenterFilters();
+    }
+  };
   if (currentRole !== "ADMIN" && currentRole !== "OPERATOR" && currentRole !== "SUPERVISOR") {
     stockRowsCache = [];
     updateInventorySummary([]);
@@ -3703,7 +3799,7 @@ async function loadStockStrip() {
         emptyMessage: "Las existencias solo aplican a roles operativos."
       });
     }
-    applyControlCenterFilters();
+    finishStockLoad();
     return;
   }
   const response = await authenticatedFetch("/api/inventory/stock");
@@ -3722,7 +3818,7 @@ async function loadStockStrip() {
         emptyMessage: "No se pudo cargar existencias."
       });
     }
-    applyControlCenterFilters();
+    finishStockLoad();
     return;
   }
   const rows = await response.json();
@@ -3741,11 +3837,12 @@ async function loadStockStrip() {
         emptyMessage: "Sin registros de existencias. Use Importar inventario para cargar saldos."
       });
     }
-    applyControlCenterFilters();
+    finishStockLoad();
     return;
   }
   applyInventoryFilters();
   renderClientsModule();
+  finishStockLoad();
 }
 
 async function loadInventoryMovements() {
@@ -4316,13 +4413,18 @@ async function runImport() {
 }
 
 async function loadCatalogData() {
+  workspaceCatalogReady = false;
   await loadProductsRows();
   const clientsResponse = await authenticatedFetch("/api/catalog/clients");
   clientsCache = clientsResponse?.ok ? await clientsResponse.json() : [];
   if (!Array.isArray(clientsCache)) clientsCache = [];
+  workspaceCatalogReady = true;
   if (clientsList) clientsList.innerHTML = "";
   renderClientsModule();
   populateOperationalSelects();
+  if (moduleControlCenter && !moduleControlCenter.classList.contains("hidden")) {
+    renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
+  }
 }
 
 async function deleteCustomerById(customerId) {
@@ -4898,10 +5000,14 @@ async function deleteUserById(userId) {
 }
 
 async function validateSession() {
+  let landing = "control";
   try {
     const user = await loadCurrentUser();
-    if (!user) return;
-    currentRole = user.role || "CLIENT";
+    if (!user) {
+      ensureWorkspaceModuleVisible("control");
+      return;
+    }
+    currentRole = normalizeUserRole(user.role);
     currentUserId = user.id || null;
     applyRoleNavigation(currentRole);
 
@@ -4914,26 +5020,33 @@ async function validateSession() {
     currentUserEmail.textContent = user.email || "No disponible";
     currentUserRoleText.textContent = currentRole;
     await loadUsersModule(currentRole);
-    await loadCatalogData();
+
     wireActiveClientUi();
     applyActiveClientToOperationalSelects();
     updateActiveClientUi();
+
+    landing = defaultLandingModule[currentRole] || roleModules[currentRole]?.[0] || "account";
+    activateModule(landing);
+
+    await loadCatalogData();
+    if (landing === "control") renderControlCenter();
+
     if (currentRole === "ADMIN" || currentRole === "OPERATOR" || currentRole === "SUPERVISOR") {
       await loadStockStrip();
       await loadInventoryMovements();
       await loadScanEvents();
+      if (landing === "control") renderControlCenter();
     } else if (scanEventsList) {
       scanEventsList.innerHTML =
         '<p class="subtitle" style="margin:0">El historial de picking no aplica a tu rol.</p>';
     }
     if (scanHint) scanHint.textContent = "";
-    const landing = defaultLandingModule[currentRole] || roleModules[currentRole]?.[0] || "account";
-    activateModule(landing);
   } catch (_error) {
     if (statusBox) statusBox.innerHTML = '<span class="error">Error de red validando sesion.</span>';
     if (currentUserEmail) currentUserEmail.textContent = "No disponible";
     if (currentUserRoleText) currentUserRoleText.textContent = "No disponible";
     if (currentUserFullName) currentUserFullName.textContent = "—";
+    ensureWorkspaceModuleVisible("control");
   }
 }
 
@@ -5022,6 +5135,20 @@ if (incidentList) {
     if (id) void resolveIncident(id);
   });
 }
+function bootstrapControlCenterShell() {
+  applyWorkspaceDefaultsV34();
+  migrateLegacyActiveClientState();
+  updateActiveClientUi();
+  if (moduleControlCenter) {
+    moduleControlCenter.classList.remove("hidden");
+    renderControlCenter();
+  }
+  moduleButtons.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.module === "control");
+  });
+  if (modulePlaceholder) modulePlaceholder.classList.add("hidden");
+}
+
 wireInventoryFilterInputs();
 wireCatalogFilterInputs();
 wireOperationalForms();
@@ -5034,4 +5161,5 @@ updateAppDateTime();
 setInterval(updateAppDateTime, 60000);
 if (importResult) wireOperationalMessageClicks(importResult);
 if (catalogImportResult) wireOperationalMessageClicks(catalogImportResult);
+bootstrapControlCenterShell();
 validateSession();
