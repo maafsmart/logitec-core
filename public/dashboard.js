@@ -326,6 +326,7 @@ const PRIMARY_CLIENT_AVIAT = "AVIAT";
 const PRIMARY_CLIENT_AVIAT_NAME = "AVIAT";
 const EXTRA_PRIMARY_CLIENTS_KEY = "logitec_primary_clients";
 const AVIAT_TEMP_PROJECTS_KEY = "logitec_aviat_temp_projects";
+const WORKSPACE_VERSION_KEY = "logitec_workspace_version_v34";
 
 const GRID_DEFAULT_WIDTHS = {
   inventory_general: [200, 120, 100, 160, 260, 110, 140, 110, 90],
@@ -354,7 +355,7 @@ const GRID_DEFAULT_WIDTHS = {
 const gridSortState = {};
 
 function getActiveClient() {
-  return localStorage.getItem(ACTIVE_CLIENT_KEY) || ACTIVE_CLIENT_GENERAL;
+  return localStorage.getItem(ACTIVE_CLIENT_KEY) || PRIMARY_CLIENT_AVIAT;
 }
 
 function getActiveProject() {
@@ -370,11 +371,8 @@ function getExtraPrimaryClients() {
   }
 }
 
-function getPrimaryClients() {
-  const list = [
-    { code: ACTIVE_CLIENT_GENERAL, name: "Vista general" },
-    { code: PRIMARY_CLIENT_AVIAT, name: PRIMARY_CLIENT_AVIAT_NAME }
-  ];
+function getOperationalPrimaryClients() {
+  const list = [{ code: PRIMARY_CLIENT_AVIAT, name: PRIMARY_CLIENT_AVIAT_NAME }];
   for (const item of getExtraPrimaryClients()) {
     const code = String(item?.code || "").trim().toUpperCase();
     if (!code || code === ACTIVE_CLIENT_GENERAL || code === PRIMARY_CLIENT_AVIAT) continue;
@@ -383,9 +381,32 @@ function getPrimaryClients() {
   return list;
 }
 
+function getPrimaryClients() {
+  return getOperationalPrimaryClients();
+}
+
 function isKnownPrimaryClientCode(code) {
   const upper = String(code || "").trim().toUpperCase();
-  return getPrimaryClients().some((c) => c.code === upper);
+  if (upper === ACTIVE_CLIENT_GENERAL || upper === PRIMARY_CLIENT_AVIAT) return true;
+  return getExtraPrimaryClients().some((c) => String(c.code || "").toUpperCase() === upper);
+}
+
+function applyWorkspaceDefaultsV34() {
+  if (localStorage.getItem(WORKSPACE_VERSION_KEY) === "true") return;
+  localStorage.setItem(ACTIVE_CLIENT_KEY, PRIMARY_CLIENT_AVIAT);
+  localStorage.setItem(ACTIVE_PROJECT_KEY, ACTIVE_PROJECT_ALL);
+  localStorage.setItem(WORKSPACE_VERSION_KEY, "true");
+}
+
+function migrateLegacyActiveClientState() {
+  applyWorkspaceDefaultsV34();
+  if (localStorage.getItem(WORKSPACE_VERSION_KEY) !== "true") return;
+  const stored = String(localStorage.getItem(ACTIVE_CLIENT_KEY) || "").trim().toUpperCase();
+  if (stored === ACTIVE_CLIENT_GENERAL) return;
+  if (stored === PRIMARY_CLIENT_AVIAT) return;
+  if (isKnownPrimaryClientCode(stored)) return;
+  localStorage.setItem(ACTIVE_CLIENT_KEY, PRIMARY_CLIENT_AVIAT);
+  localStorage.setItem(ACTIVE_PROJECT_KEY, ACTIVE_PROJECT_ALL);
 }
 
 function getAviatTempProjects() {
@@ -420,20 +441,14 @@ function getProjectsForPrimaryClient(clientCode) {
 }
 
 function getPrimaryClientLabel(code) {
-  const match = getPrimaryClients().find((c) => c.code === String(code || "").toUpperCase());
+  const upper = String(code || "").trim().toUpperCase();
+  if (upper === ACTIVE_CLIENT_GENERAL) return "Vista general administrativa";
+  const match = getPrimaryClients().find((c) => c.code === upper);
   return match?.name || code || "";
 }
 
-function migrateLegacyActiveClientState() {
-  const stored = String(localStorage.getItem(ACTIVE_CLIENT_KEY) || "").trim().toUpperCase();
-  if (!stored || stored === ACTIVE_CLIENT_GENERAL || stored === PRIMARY_CLIENT_AVIAT) return;
-  if (isKnownPrimaryClientCode(stored)) return;
-  localStorage.setItem(ACTIVE_CLIENT_KEY, PRIMARY_CLIENT_AVIAT);
-  localStorage.setItem(ACTIVE_PROJECT_KEY, stored);
-}
-
 function setActiveClient(code) {
-  const value = code && String(code).trim() ? String(code).trim().toUpperCase() : ACTIVE_CLIENT_GENERAL;
+  const value = code && String(code).trim() ? String(code).trim().toUpperCase() : PRIMARY_CLIENT_AVIAT;
   localStorage.setItem(ACTIVE_CLIENT_KEY, value);
   if (value === ACTIVE_CLIENT_GENERAL) {
     localStorage.setItem(ACTIVE_PROJECT_KEY, ACTIVE_PROJECT_ALL);
@@ -522,7 +537,7 @@ function getActiveClientRecord() {
 }
 
 function getActiveClientDisplayLabel() {
-  if (isGeneralView()) return "Vista general";
+  if (isGeneralView()) return "Vista general administrativa";
   return getPrimaryClientLabel(getActiveClient());
 }
 
@@ -598,7 +613,9 @@ function filterRowsByActiveClient(rows) {
 }
 
 function getScopeSummaryText() {
-  if (isGeneralView()) return "Mostrando información general de todos los clientes/proyectos.";
+  if (isGeneralView()) {
+    return "Vista general administrativa — muestra todos los clientes principales y proyectos.";
+  }
   if (isAviatView() && getActiveProject() === ACTIVE_PROJECT_ALL) {
     return "Mostrando todos los proyectos de AVIAT";
   }
@@ -668,7 +685,19 @@ function updateActiveClientUi() {
   if (scopeCat) scopeCat.textContent = scopeText;
   if (scopeCc) scopeCc.textContent = scopeText;
   if (ccTitle) {
-    ccTitle.textContent = isGeneralView() ? "Centro de Control" : `Centro de Control — ${clientDisplay}`;
+    ccTitle.textContent = isGeneralView() ? "Centro de Control — Administración" : `Centro de Control — ${clientDisplay}`;
+  }
+  const invTitle = document.getElementById("inventoryModuleTitle");
+  const catTitle = document.getElementById("catalogModuleTitle");
+  if (invTitle) {
+    invTitle.textContent = isGeneralView() ? "Inventario administrativo" : `Inventario de ${clientDisplay}`;
+  }
+  if (catTitle) {
+    catTitle.textContent = isGeneralView() ? "Catálogo administrativo" : `Catálogo de ${clientDisplay}`;
+  }
+  const ccPrimaryLabel = document.getElementById("ccPrimaryClientLabel");
+  if (ccPrimaryLabel) {
+    ccPrimaryLabel.textContent = isGeneralView() ? "—" : clientDisplay;
   }
   document.querySelectorAll("[data-active-client-pill]").forEach((el) => {
     el.textContent = clientDisplay;
@@ -677,6 +706,7 @@ function updateActiveClientUi() {
   document.querySelectorAll("[data-active-project-pill]").forEach((el) => {
     el.textContent = isGeneralView() ? "" : projectDisplay;
   });
+  renderOperationalPrimaryClients(document.getElementById("ccClientPickerList"), { includeCreate: false });
   renderAviatProjectChips(document.getElementById("aviatProjectChips"));
   renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
   updateViewModeUi();
@@ -693,6 +723,12 @@ function updateViewModeUi() {
   });
   document.querySelectorAll(".view-primary-client-only").forEach((el) => {
     el.classList.toggle("hidden", general);
+  });
+  document.querySelectorAll(".view-operational-only").forEach((el) => {
+    el.classList.toggle("hidden", general);
+  });
+  document.querySelectorAll(".view-admin-only").forEach((el) => {
+    el.classList.toggle("hidden", !general);
   });
 }
 
@@ -763,6 +799,7 @@ function renderAviatProjectChips(container) {
   container.classList.remove("hidden");
   const projects = getProjectsForPrimaryClient(PRIMARY_CLIENT_AVIAT);
   const activeProject = getActiveProject();
+  const scopeText = getScopeSummaryText();
   const allChip = `<button type="button" class="project-chip${activeProject === ACTIVE_PROJECT_ALL ? " active" : ""}" data-pick-project="${ACTIVE_PROJECT_ALL}">Todos los proyectos</button>`;
   const projectChips = projects
     .map(
@@ -770,7 +807,7 @@ function renderAviatProjectChips(container) {
         `<button type="button" class="project-chip${activeProject === String(p.code).toUpperCase() ? " active" : ""}" data-pick-project="${escCell(p.code)}" title="${escCell(p.code)}">${escCell(p.name)}</button>`
     )
     .join("");
-  container.innerHTML = `<div class="project-chips-label">Proyectos de AVIAT</div><div class="project-chips-row">${allChip}${projectChips || '<span class="filter-hint">Sin proyectos detectados aún.</span>'}</div>`;
+  container.innerHTML = `<p class="cc-primary-banner">Cliente principal: <strong>${escCell(PRIMARY_CLIENT_AVIAT_NAME)}</strong></p><p class="filter-hint" style="margin:0 0 10px">${escCell(scopeText)}</p><div class="project-chips-label">Proyectos de AVIAT</div><div class="project-chips-row">${allChip}${projectChips || '<span class="filter-hint">Sin proyectos detectados aún.</span>'}</div>`;
   container.querySelectorAll("[data-pick-project]").forEach((btn) => {
     btn.addEventListener("click", () => {
       setActiveProject(btn.getAttribute("data-pick-project"));
@@ -778,24 +815,30 @@ function renderAviatProjectChips(container) {
   });
 }
 
-function renderActiveClientPickerList(container) {
+function renderOperationalPrimaryClients(container, { includeCreate = true } = {}) {
   if (!container) return;
-  const primaries = getPrimaryClients();
+  const primaries = getOperationalPrimaryClients();
   const clientBtns = primaries
     .map(
       (c) =>
-        `<button type="button" class="client-pick-btn${getActiveClient() === c.code ? " active" : ""}" data-pick-client="${escCell(c.code)}" title="${escCell(c.code)}">${escCell(c.name)}${c.code !== ACTIVE_CLIENT_GENERAL ? ` <span class="client-pick-code">${escCell(c.code)}</span>` : ""}</button>`
+        `<button type="button" class="client-pick-btn client-pick-primary${getActiveClient() === c.code ? " active" : ""}" data-pick-client="${escCell(c.code)}" title="${escCell(c.code)}">${escCell(c.name)}</button>`
     )
     .join("");
-  container.innerHTML =
-    clientBtns ||
-    `<button type="button" class="client-pick-btn${isGeneralView() ? " active" : ""}" data-pick-client="${ACTIVE_CLIENT_GENERAL}">Vista general</button>`;
+  const createBtn = includeCreate
+    ? `<button type="button" class="client-pick-btn client-pick-create" data-open-new-primary>+ Crear nuevo cliente principal</button>`
+    : "";
+  container.innerHTML = `${clientBtns}${createBtn}`;
   container.querySelectorAll("[data-pick-client]").forEach((btn) => {
     btn.addEventListener("click", () => {
       setActiveClient(btn.getAttribute("data-pick-client"));
       closeModal("activeClientModal");
     });
   });
+  container.querySelector("[data-open-new-primary]")?.addEventListener("click", () => openModal("newClientModal"));
+}
+
+function renderActiveClientPickerList(container) {
+  renderOperationalPrimaryClients(container, { includeCreate: true });
 }
 
 function openActiveClientModal() {
@@ -805,19 +848,33 @@ function openActiveClientModal() {
 
 function wireActiveClientUi() {
   document.getElementById("changeActiveClientBtn")?.addEventListener("click", openActiveClientModal);
-  document.getElementById("openActiveClientFromCcBtn")?.addEventListener("click", openActiveClientModal);
-  renderActiveClientPickerList(document.getElementById("ccClientPickerList"));
+  renderOperationalPrimaryClients(document.getElementById("ccClientPickerList"), { includeCreate: true });
   document.getElementById("ccClientPickerList")?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-pick-client]");
-    if (!btn) return;
-    setActiveClient(btn.getAttribute("data-pick-client"));
+    if (btn) {
+      setActiveClient(btn.getAttribute("data-pick-client"));
+      return;
+    }
+    if (e.target.closest("[data-open-new-primary]")) openModal("newClientModal");
   });
-  document.getElementById("openNewClientModalBtn")?.addEventListener("click", () => openModal("newClientModal"));
+  document.getElementById("enterAdminGeneralBtn")?.addEventListener("click", () => {
+    setActiveClient(ACTIVE_CLIENT_GENERAL);
+    closeModal("activeClientModal");
+  });
+  document.getElementById("enterAdminGeneralFromCcBtn")?.addEventListener("click", () => {
+    setActiveClient(ACTIVE_CLIENT_GENERAL);
+  });
+  document.getElementById("exitAdminGeneralBtn")?.addEventListener("click", () => {
+    setActiveClient(PRIMARY_CLIENT_AVIAT);
+    setActiveProject(ACTIVE_PROJECT_ALL);
+  });
   document.getElementById("openNewClientFromCcBtn")?.addEventListener("click", () => openModal("newClientModal"));
-  document.getElementById("openNewAviatProjectBtn")?.addEventListener("click", () => openModal("newAviatProjectModal"));
   document.getElementById("openNewAviatProjectFromCcBtn")?.addEventListener("click", () => openModal("newAviatProjectModal"));
+  document.getElementById("openNewClientModalBtn")?.addEventListener("click", () => openModal("newClientModal"));
+  document.getElementById("openNewAviatProjectBtn")?.addEventListener("click", () => openModal("newAviatProjectModal"));
   document.getElementById("newClientForm")?.addEventListener("submit", submitNewClient);
   document.getElementById("newAviatProjectForm")?.addEventListener("submit", submitNewAviatProject);
+  applyWorkspaceDefaultsV34();
   migrateLegacyActiveClientState();
   updateActiveClientUi();
 }
@@ -849,8 +906,8 @@ async function submitNewClient(event) {
     localStorage.setItem(EXTRA_PRIMARY_CLIENTS_KEY, JSON.stringify(extras));
     closeModal("newClientModal");
     document.getElementById("newClientForm")?.reset();
-    renderActiveClientPickerList(document.getElementById("activeClientPickerList"));
-    renderActiveClientPickerList(document.getElementById("ccClientPickerList"));
+    renderOperationalPrimaryClients(document.getElementById("activeClientPickerList"), { includeCreate: true });
+    renderOperationalPrimaryClients(document.getElementById("ccClientPickerList"), { includeCreate: true });
     setActiveClient(code);
   } catch (_e) {
     if (errEl) errEl.textContent = "No se pudo guardar el cliente principal.";
@@ -4565,8 +4622,8 @@ async function createCustomer(event) {
     }
     createCustomerForm.reset();
     await loadCatalogData();
-    renderActiveClientPickerList(document.getElementById("activeClientPickerList"));
-    renderActiveClientPickerList(document.getElementById("ccClientPickerList"));
+    renderOperationalPrimaryClients(document.getElementById("activeClientPickerList"), { includeCreate: true });
+    renderOperationalPrimaryClients(document.getElementById("ccClientPickerList"), { includeCreate: true });
   } catch (_error) {
     createCustomerError.textContent = "Error de red creando cliente.";
   } finally {
@@ -4861,9 +4918,6 @@ async function validateSession() {
     wireActiveClientUi();
     applyActiveClientToOperationalSelects();
     updateActiveClientUi();
-    if (!localStorage.getItem(ACTIVE_CLIENT_KEY)) {
-      openActiveClientModal();
-    }
     if (currentRole === "ADMIN" || currentRole === "OPERATOR" || currentRole === "SUPERVISOR") {
       await loadStockStrip();
       await loadInventoryMovements();

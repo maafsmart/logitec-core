@@ -1934,6 +1934,33 @@
         color: var(--accent-dark);
         font-weight: 700;
       }
+      .client-pick-btn.client-pick-primary {
+        min-width: 120px;
+        font-size: 0.95rem;
+        font-weight: 700;
+      }
+      .client-pick-btn.client-pick-create {
+        border-style: dashed;
+        background: transparent;
+      }
+      .admin-general-link {
+        margin-top: 10px;
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+      .admin-general-link button {
+        border: 0;
+        background: none;
+        color: var(--info);
+        cursor: pointer;
+        text-decoration: underline;
+        padding: 0;
+        font-size: inherit;
+      }
+      .cc-primary-banner {
+        margin: 0 0 6px;
+        font-size: 0.92rem;
+      }
       .client-pick-code {
         opacity: 0.75;
         font-size: 0.75rem;
@@ -2034,9 +2061,9 @@
         </div>
         <div class="app-topbar-meta">
           <div class="active-client-bar">
-            <span>Cliente activo: <strong id="activeClientLabel" class="active-client-pill">Vista general</strong></span>
-            <span class="active-project-bar hidden">Proyecto: <strong id="activeProjectLabel" class="active-project-pill"></strong></span>
-            <button type="button" id="changeActiveClientBtn" class="btn-secondary btn-compact">Cambiar cliente/proyecto</button>
+            <span>Cliente activo: <strong id="activeClientLabel" class="active-client-pill">AVIAT</strong></span>
+            <span class="active-project-bar">Proyecto: <strong id="activeProjectLabel" class="active-project-pill">Todos los proyectos</strong></span>
+            <button type="button" id="changeActiveClientBtn" class="btn-secondary btn-compact">Cambiar cliente / proyecto</button>
           </div>
           <div class="app-user-block">
             <strong id="sessionDisplayName">Cargando sesión...</strong>
@@ -2069,18 +2096,25 @@
               <h2 class="cc-title" id="ccModuleTitle">Centro de Control</h2>
               <p class="cc-tagline">Control operativo de almacén, inventario y trazabilidad</p>
             </header>
-            <section class="client-work-panel card-panel" aria-label="Selección de cliente principal">
+            <section class="client-work-panel card-panel" aria-label="Clientes principales">
               <div class="client-work-header">
-                <h4 class="secondary-panel-title" style="margin:0">Cliente principal de trabajo</h4>
-                <p id="controlClientScope" class="filter-hint" style="margin:4px 0 0">Mostrando información general de todos los clientes/proyectos.</p>
+                <h4 class="secondary-panel-title" style="margin:0">Clientes principales</h4>
+                <p id="controlClientScope" class="filter-hint" style="margin:4px 0 0">Mostrando todos los proyectos de AVIAT</p>
               </div>
               <div id="ccClientPickerList" class="client-picker-grid"></div>
-              <div id="ccAviatProjectChips" class="aviat-projects-panel hidden"></div>
+              <div id="ccAviatProjectChips" class="aviat-projects-panel"></div>
               <div class="page-toolbar" style="margin-top:10px">
-                <button type="button" id="openActiveClientFromCcBtn" class="btn-secondary btn-compact">Abrir selector completo</button>
-                <button type="button" id="openNewClientFromCcBtn" class="btn-primary btn-compact">Agregar nuevo cliente principal</button>
-                <button type="button" id="openNewAviatProjectFromCcBtn" class="btn-secondary btn-compact view-aviat-only hidden">Agregar proyecto a AVIAT</button>
+                <button type="button" id="openNewClientFromCcBtn" class="btn-primary btn-compact">+ Crear nuevo cliente principal</button>
+                <button type="button" id="openNewAviatProjectFromCcBtn" class="btn-secondary btn-compact">+ Agregar proyecto a AVIAT</button>
               </div>
+              <p class="admin-general-link view-operational-only">
+                <button type="button" id="enterAdminGeneralFromCcBtn">Vista general administrativa</button>
+                — muestra todos los clientes principales y proyectos.
+              </p>
+              <p class="admin-general-link view-admin-only hidden">
+                Estás en vista administrativa.
+                <button type="button" id="exitAdminGeneralBtn">Volver a AVIAT</button>
+              </p>
             </section>
             <div class="kpi-grid" aria-label="Indicadores operativos">
               <div class="kpi-card accent">
@@ -2487,8 +2521,8 @@
           </div>
           <div id="moduleInventory" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Inventario actual</h3>
-              <p class="module-lead">Existencias por cliente, ubicación y status. Use filtros para localizar saldos operativos.</p>
+              <h3 id="inventoryModuleTitle">Inventario de AVIAT</h3>
+              <p class="module-lead">Existencias por proyecto, lote, ubicación y status.</p>
             </div>
             <div class="summary-cards card-panel" id="inventorySummaryCards">
               <div class="summary-card ok">
@@ -2501,7 +2535,7 @@
               </div>
               <div class="summary-card">
                 <span class="value" id="sumCustomers">—</span>
-                <span class="label">Clientes</span>
+                <span class="label">Proyectos</span>
               </div>
               <div class="summary-card">
                 <span class="value" id="sumLocations">—</span>
@@ -2564,7 +2598,7 @@
                   <button type="button" id="inventoryClearFiltersBtn" class="btn-secondary btn-compact">Limpiar filtros</button>
                 </div>
               </div>
-              <p id="inventoryClientScope" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando información general de todos los clientes/proyectos.</p>
+              <p id="inventoryClientScope" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
               <p id="inventoryTableCount" class="operational-table-meta">Mostrando 0 de 0 saldos</p>
               <div id="inventoryList">Cargando...</div>
             </div>
@@ -2617,8 +2651,8 @@
           </div>
           <div id="moduleCatalog" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Catálogo de productos</h3>
-              <p class="module-lead">Productos maestros por cliente. Importe catálogo o filtre por SKU y nombre.</p>
+              <h3 id="catalogModuleTitle">Catálogo de AVIAT</h3>
+              <p class="module-lead">Productos maestros por proyecto. Importe catálogo o filtre por SKU y nombre.</p>
             </div>
             <div class="page-toolbar">
               <button type="button" id="openCatalogImportBtn" class="btn-primary">Importar catálogo</button>
@@ -2654,7 +2688,7 @@
                   <button type="button" id="catalogClearFiltersBtn" class="btn-secondary btn-compact">Limpiar filtros</button>
                 </div>
               </div>
-              <p id="catalogClientScope" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando información general de todos los clientes/proyectos.</p>
+              <p id="catalogClientScope" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
               <p id="catalogTableCount" class="operational-table-meta">Mostrando 0 de 0 productos</p>
               <div id="productsList"></div>
             </div>
@@ -2727,7 +2761,7 @@
               <p class="module-lead">Exportaciones operativas del sistema. Con un cliente activo, exporta solo ese cliente; en Vista general exporta todo.</p>
             </div>
             <div class="card-panel">
-              <p class="filter-hint" style="margin-top:0">Cliente activo para reportes: <strong data-active-client-pill>Vista general</strong></p>
+              <p class="filter-hint" style="margin-top:0">Cliente activo para reportes: <strong data-active-client-pill>AVIAT</strong></p>
               <h4 class="secondary-panel-title">Inventario del cliente activo</h4>
               <div class="page-toolbar">
                 <button type="button" id="reportsExportStock" class="btn-secondary">Inventario completo CSV</button>
@@ -2965,17 +2999,21 @@
     <div id="activeClientModal" class="modal-overlay" aria-hidden="true">
       <div class="modal-panel" role="dialog" aria-labelledby="activeClientModalTitle">
         <div class="modal-header">
-          <h3 id="activeClientModalTitle">Selecciona cliente principal</h3>
+          <h3 id="activeClientModalTitle">Cambiar cliente / proyecto</h3>
           <button type="button" class="modal-close" data-close-modal="activeClientModal" aria-label="Cerrar">×</button>
         </div>
-        <p class="filter-hint">Elige Vista general para operación administrativa o AVIAT para trabajar sus proyectos.</p>
+        <p class="filter-hint">Selecciona un cliente principal operativo. Los proyectos de AVIAT se eligen abajo.</p>
         <div id="activeClientPickerList" class="client-picker-grid"></div>
-        <div id="aviatProjectChips" class="aviat-projects-panel hidden"></div>
+        <div id="aviatProjectChips" class="aviat-projects-panel"></div>
         <div class="page-toolbar" style="margin-top:12px">
-          <button type="button" id="openNewClientModalBtn" class="btn-primary btn-compact">Agregar nuevo cliente principal</button>
-          <button type="button" id="openNewAviatProjectBtn" class="btn-secondary btn-compact">Agregar proyecto a AVIAT</button>
+          <button type="button" id="openNewClientModalBtn" class="btn-primary btn-compact">+ Crear nuevo cliente principal</button>
+          <button type="button" id="openNewAviatProjectBtn" class="btn-secondary btn-compact">+ Agregar proyecto a AVIAT</button>
           <button type="button" class="btn-secondary btn-compact" data-close-modal="activeClientModal">Cerrar</button>
         </div>
+        <p class="admin-general-link">
+          <button type="button" id="enterAdminGeneralBtn">Vista general administrativa</button>
+          — muestra todos los clientes principales y proyectos.
+        </p>
       </div>
     </div>
 
@@ -3098,6 +3136,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=32"></script>
+    <script src="/dashboard.js?v=34"></script>
   </body>
 </html>
