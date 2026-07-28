@@ -15,6 +15,8 @@ const createUserForm = document.getElementById("createUserForm");
 const createUserBtn = document.getElementById("createUserBtn");
 const createUserError = document.getElementById("createUserError");
 const moduleUsers = document.getElementById("moduleUsers");
+const moduleControlCenter = document.getElementById("moduleControlCenter");
+const ccInventoryList = document.getElementById("ccInventoryList");
 const modulePicking = document.getElementById("modulePicking");
 const moduleInventory = document.getElementById("moduleInventory");
 const moduleCatalog = document.getElementById("moduleCatalog");
@@ -117,16 +119,16 @@ let movementsCountCache = 0;
 let pendingConflictsCache = 0;
 
 const roleModules = {
-  ADMIN: ["inventory", "catalog", "inbound", "outbound", "requisitions", "picking", "traceability", "tasks", "incidents", "users", "account"],
-  SUPERVISOR: ["inventory", "inbound", "outbound", "requisitions", "picking", "traceability", "tasks", "incidents", "account"],
-  OPERATOR: ["inventory", "inbound", "outbound", "requisitions", "picking", "traceability", "tasks", "incidents", "account"],
+  ADMIN: ["control", "inventory", "catalog", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "users", "account"],
+  SUPERVISOR: ["control", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "account"],
+  OPERATOR: ["control", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "account"],
   CLIENT: ["catalog", "account"]
 };
 
 const defaultLandingModule = {
-  ADMIN: "inventory",
-  SUPERVISOR: "inventory",
-  OPERATOR: "inventory",
+  ADMIN: "control",
+  SUPERVISOR: "control",
+  OPERATOR: "control",
   CLIENT: "catalog"
 };
 
@@ -151,6 +153,7 @@ function activateModule(moduleName) {
   });
 
   const showUsers = moduleName === "users";
+  const showControl = moduleName === "control";
   const showPicking = moduleName === "picking";
   const showInventory = moduleName === "inventory";
   const showCatalog = moduleName === "catalog";
@@ -162,6 +165,7 @@ function activateModule(moduleName) {
   const showOutbound = moduleName === "outbound";
   const showRequisitions = moduleName === "requisitions";
   moduleUsers.classList.toggle("hidden", !showUsers);
+  if (moduleControlCenter) moduleControlCenter.classList.toggle("hidden", !showControl);
   modulePicking.classList.toggle("hidden", !showPicking);
   moduleInventory.classList.toggle("hidden", !showInventory);
   moduleCatalog.classList.toggle("hidden", !showCatalog);
@@ -175,6 +179,7 @@ function activateModule(moduleName) {
   modulePlaceholder.classList.toggle(
     "hidden",
     showUsers ||
+      showControl ||
       showPicking ||
       showInventory ||
       showCatalog ||
@@ -187,6 +192,7 @@ function activateModule(moduleName) {
       showRequisitions
   );
 
+  if (showControl) refreshControlCenter();
   if (showTraceability) void loadTraceability();
   if (showTasks) void loadTasks();
   if (showIncidents) void loadIncidents();
@@ -253,7 +259,25 @@ function renderCellWithClamp(value, className = "", maxLen = 32) {
 
 function statusBadge(value) {
   const raw = value == null || value === "" ? "—" : String(value);
-  const tone = raw.includes("COMPLETED") || raw.includes("RESOLVED") || raw === "OK" ? "success" : raw.includes("IN_PROGRESS") ? "warn" : raw.includes("ERROR") ? "error" : "info";
+  const upper = raw.toUpperCase();
+  const inventoryTones = {
+    AVAILABLE: "available",
+    OPERATIONS: "operations",
+    HOLD: "hold",
+    BLOCKED: "blocked",
+    QUARANTINE: "quarantine"
+  };
+  if (inventoryTones[upper]) {
+    return `<span class="badge ${inventoryTones[upper]}">${escCell(upper)}</span>`;
+  }
+  const tone =
+    raw.includes("COMPLETED") || raw.includes("RESOLVED") || raw === "OK"
+      ? "success"
+      : raw.includes("IN_PROGRESS")
+        ? "warn"
+        : raw.includes("ERROR")
+          ? "error"
+          : "info";
   return `<span class="badge ${tone}">${escCell(raw)}</span>`;
 }
 
@@ -450,23 +474,141 @@ function updateInventorySummary(rows) {
   if (elLocations) elLocations.textContent = String(locations.size);
   if (elMovements) elMovements.textContent = String(movementsCountCache);
   if (elConflicts) elConflicts.textContent = String(pendingConflictsCache);
+  updateControlCenterKpis();
 }
 
-function filterStockRows(rows) {
-  const f = getInventoryFilterValues();
+function getControlCenterFilterValues() {
+  return {
+    cliente: document.getElementById("ccFilterCliente")?.value?.trim() || "",
+    customer: document.getElementById("ccFilterCustomer")?.value?.trim() || "",
+    sku: document.getElementById("ccFilterSku")?.value?.trim() || "",
+    producto: document.getElementById("ccFilterProducto")?.value?.trim() || "",
+    ubicacion: document.getElementById("ccFilterUbicacion")?.value?.trim() || "",
+    status: document.getElementById("ccFilterStatus")?.value?.trim() || ""
+  };
+}
+
+function filterStockRowsWithFilters(rows, filters) {
   return (Array.isArray(rows) ? rows : []).filter((row) => {
     const p = row.product || {};
     const cliente = p.customer?.name || "";
     const customer = p.customer?.code || "";
     return (
-      matchesFilter(cliente, f.cliente) &&
-      matchesFilter(customer, f.customer) &&
-      matchesFilter(p.sku, f.sku) &&
-      matchesFilter(p.name, f.producto) &&
-      matchesFilter(row.location?.code, f.ubicacion) &&
-      matchesFilter(row.status, f.status)
+      matchesFilter(cliente, filters.cliente) &&
+      matchesFilter(customer, filters.customer) &&
+      matchesFilter(p.sku, filters.sku) &&
+      matchesFilter(p.name, filters.producto) &&
+      matchesFilter(row.location?.code, filters.ubicacion) &&
+      matchesFilter(row.status, filters.status)
     );
   });
+}
+
+function sumStockQty(rows) {
+  return (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
+    const n = typeof row.qty === "string" ? Number(row.qty.replace(",", ".")) : Number(row.qty);
+    return acc + (Number.isNaN(n) ? 0 : n);
+  }, 0);
+}
+
+function updateControlCenterKpis() {
+  const list = Array.isArray(stockRowsCache) ? stockRowsCache : [];
+  const productCount =
+    productsCache.length > 0
+      ? productsCache.length
+      : new Set(list.map((r) => r.product?.sku).filter(Boolean)).size;
+  const customers = new Set(
+    list.map((r) => r.product?.customer?.code || r.product?.customer?.name).filter(Boolean)
+  );
+  const locations = new Set(list.map((r) => r.location?.code).filter(Boolean));
+  const stockTotal = sumStockQty(list);
+  const setKpi = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  };
+  setKpi("ccKpiProducts", productCount > 0 ? String(productCount) : list.length ? String(new Set(list.map((r) => r.product?.sku).filter(Boolean)).size) : "0");
+  setKpi("ccKpiCustomers", customers.size ? String(customers.size) : "0");
+  setKpi("ccKpiLocations", locations.size ? String(locations.size) : "0");
+  setKpi("ccKpiStock", list.length ? formatQty(stockTotal) : "0");
+  setKpi("ccKpiMovements", String(movementsCountCache));
+  setKpi("ccKpiConflicts", String(pendingConflictsCache));
+}
+
+function renderControlCenterTable(rows) {
+  if (!ccInventoryList) return;
+  const countEl = document.getElementById("ccTableCount");
+  if (!Array.isArray(rows) || rows.length === 0) {
+    if (countEl) countEl.textContent = "0 registros";
+    ccInventoryList.innerHTML =
+      '<p class="filter-hint" style="padding: 20px 0">Sin existencias con los filtros actuales. Carga inventario desde el módulo Inventario.</p>';
+    return;
+  }
+  if (countEl) countEl.textContent = `${rows.length} registro${rows.length === 1 ? "" : "s"}`;
+  const thead =
+    "<tr><th>Cliente</th><th>Customer</th><th>SKU</th><th>Producto</th><th>Ubicación</th><th>Status</th><th>Cantidad</th></tr>";
+  const body = rows
+    .map((row) => {
+      const p = row.product || {};
+      const cliente = p.customer?.name || "—";
+      const customer = p.customer?.code || "—";
+      const loc = row.location?.code || "—";
+      const status = row.status || "—";
+      return `<tr><td>${renderCellWithClamp(cliente, "cell-truncate", 22)}</td><td class="cell-nowrap">${escCell(customer)}</td><td class="cell-nowrap"><strong>${escCell(p.sku || "—")}</strong></td><td>${renderCellWithClamp(p.name || "—", "cell-truncate", 28)}</td><td>${renderCellWithClamp(loc, "cell-truncate", 16)}</td><td class="cell-nowrap">${statusBadge(status)}</td><td class="cell-nowrap">${formatQty(row.qty)}</td></tr>`;
+    })
+    .join("");
+  ccInventoryList.innerHTML = `<div class="table-wrap"><table class="scan-table compact-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+}
+
+function applyControlCenterFilters() {
+  updateControlCenterKpis();
+  renderControlCenterTable(filterStockRowsWithFilters(stockRowsCache, getControlCenterFilterValues()));
+}
+
+function refreshControlCenter() {
+  updateControlCenterKpis();
+  applyControlCenterFilters();
+}
+
+function clearControlCenterFilters() {
+  ["ccFilterCliente", "ccFilterCustomer", "ccFilterSku", "ccFilterProducto", "ccFilterUbicacion", "ccFilterStatus"].forEach(
+    (id) => {
+      const el = document.getElementById(id);
+      if (el) el.value = "";
+    }
+  );
+  applyControlCenterFilters();
+}
+
+function wireControlCenterFilters() {
+  ["ccFilterCliente", "ccFilterCustomer", "ccFilterSku", "ccFilterProducto", "ccFilterUbicacion", "ccFilterStatus"].forEach(
+    (id) => {
+      const el = document.getElementById(id);
+      if (el && el.dataset.filterWired !== "1") {
+        el.dataset.filterWired = "1";
+        el.addEventListener("input", applyControlCenterFilters);
+      }
+    }
+  );
+  const clearBtn = document.getElementById("ccClearFiltersBtn");
+  if (clearBtn && clearBtn.dataset.filterWired !== "1") {
+    clearBtn.dataset.filterWired = "1";
+    clearBtn.addEventListener("click", clearControlCenterFilters);
+  }
+}
+
+function wireQuickActions() {
+  document.querySelectorAll("[data-goto-module]").forEach((btn) => {
+    if (btn.dataset.qaWired === "1") return;
+    btn.dataset.qaWired = "1";
+    btn.addEventListener("click", () => {
+      const mod = btn.getAttribute("data-goto-module");
+      if (mod) activateModule(mod);
+    });
+  });
+}
+
+function filterStockRows(rows) {
+  return filterStockRowsWithFilters(rows, getInventoryFilterValues());
 }
 
 function renderStockTable(rows) {
@@ -495,6 +637,7 @@ function renderStockTable(rows) {
 function applyInventoryFilters() {
   updateInventorySummary(stockRowsCache);
   renderStockTable(filterStockRows(stockRowsCache));
+  applyControlCenterFilters();
 }
 
 function filterProductRows(rows) {
@@ -1584,6 +1727,7 @@ async function loadProductsRows() {
   const products = await productsResponse.json();
   productsCache = Array.isArray(products) ? products : [];
   applyCatalogFilters();
+  updateControlCenterKpis();
 }
 
 function formatQty(q) {
@@ -1825,26 +1969,31 @@ async function createIncidentClick() {
 }
 
 async function loadStockStrip() {
-  if (!inventoryList) return;
+  if (!inventoryList && !ccInventoryList) return;
   if (currentRole !== "ADMIN" && currentRole !== "OPERATOR" && currentRole !== "SUPERVISOR") {
     stockRowsCache = [];
     updateInventorySummary([]);
-    inventoryList.innerHTML = '<span style="color:#9caacc">Las existencias solo aplican a roles operativos.</span>';
+    if (inventoryList) inventoryList.innerHTML = '<span style="color:#9caacc">Las existencias solo aplican a roles operativos.</span>';
+    applyControlCenterFilters();
     return;
   }
   const response = await authenticatedFetch("/api/inventory/stock");
   if (!response?.ok) {
     stockRowsCache = [];
     updateInventorySummary([]);
-    inventoryList.textContent = "No se pudo cargar existencias.";
+    if (inventoryList) inventoryList.textContent = "No se pudo cargar existencias.";
+    applyControlCenterFilters();
     return;
   }
   const rows = await response.json();
   stockRowsCache = Array.isArray(rows) ? rows : [];
   if (stockRowsCache.length === 0) {
     updateInventorySummary([]);
-    inventoryList.innerHTML =
-      '<span style="color:#9caacc">Sin registros de existencias. Usa Carga avanzada para importar saldos o registrar movimientos.</span>';
+    if (inventoryList) {
+      inventoryList.innerHTML =
+        '<span style="color:#9caacc">Sin registros de existencias. Usa Carga avanzada para importar saldos o registrar movimientos.</span>';
+    }
+    applyControlCenterFilters();
     return;
   }
   applyInventoryFilters();
@@ -2671,6 +2820,8 @@ if (incidentList) {
 }
 wireInventoryFilterInputs();
 wireCatalogFilterInputs();
+wireControlCenterFilters();
+wireQuickActions();
 if (importResult) wireOperationalMessageClicks(importResult);
 if (catalogImportResult) wireOperationalMessageClicks(catalogImportResult);
 validateSession();
