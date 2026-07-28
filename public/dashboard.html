@@ -1709,6 +1709,200 @@
         color: var(--accent-dark);
         font-weight: 700;
       }
+      /* ── Excel Grid v29 ── */
+      .grid-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .grid-density-toggle {
+        display: inline-flex;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .grid-density-toggle button {
+        border: 0;
+        border-radius: 0;
+        margin: 0;
+        background: var(--panel-solid);
+        color: var(--muted);
+        padding: 6px 12px;
+        font-size: 0.78rem;
+      }
+      .grid-density-toggle button.active {
+        background: var(--accent-soft);
+        color: var(--accent-dark);
+        font-weight: 700;
+      }
+      html[data-grid-density="compact"] .data-grid-row.body .data-grid-cell,
+      html[data-grid-density="compact"] .excel-table tbody td {
+        padding: 4px 10px;
+        font-size: 0.78rem;
+        line-height: 1.25;
+      }
+      html[data-grid-density="comfortable"] .data-grid-row.body .data-grid-cell,
+      html[data-grid-density="comfortable"] .excel-table tbody td {
+        padding: 11px 12px;
+        font-size: 0.88rem;
+        line-height: 1.45;
+      }
+      .data-grid-row.head .data-grid-cell.head-cell {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding-right: 14px;
+        border-right: 1px solid rgba(15, 76, 129, 0.12);
+        cursor: pointer;
+        user-select: none;
+      }
+      .data-grid-row.head .data-grid-cell.head-cell:hover {
+        background: #c5daf0;
+      }
+      .head-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      .sort-indicator {
+        flex-shrink: 0;
+        width: 14px;
+        font-size: 0.7rem;
+        color: var(--accent);
+        font-weight: 800;
+      }
+      .col-resizer {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 6px;
+        height: 100%;
+        cursor: col-resize;
+        z-index: 2;
+      }
+      .col-resizer:hover { background: rgba(15, 76, 129, 0.25); }
+      .data-grid-row.body.row-selected,
+      .excel-table tbody tr.row-selected {
+        background: #dbeafe !important;
+        box-shadow: inset 3px 0 0 var(--accent);
+      }
+      .data-grid-row.body {
+        cursor: pointer;
+      }
+      .excel-table tbody tr[data-selectable="1"] {
+        cursor: pointer;
+      }
+      .excel-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        table-layout: fixed;
+        font-size: 0.84rem;
+      }
+      .excel-table th {
+        position: relative;
+        text-align: left;
+        padding: 10px 14px 10px 10px;
+        background: #d4e6f7;
+        color: var(--accent-dark);
+        font-weight: 700;
+        font-size: 0.76rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        border-bottom: 2px solid var(--line);
+        border-right: 1px solid rgba(15, 76, 129, 0.12);
+        white-space: nowrap;
+        overflow: hidden;
+        cursor: pointer;
+        user-select: none;
+      }
+      .excel-table th .sort-indicator { margin-left: 4px; }
+      .excel-table th .col-resizer {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 6px;
+        height: 100%;
+        cursor: col-resize;
+      }
+      .excel-table td {
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: middle;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .excel-table tbody tr:nth-child(even) { background: #f5f9ff; }
+      .excel-table tbody tr:hover { background: var(--accent-soft); }
+      .excel-table td.numeric { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+      .grid-detail-drawer {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 250;
+      }
+      .grid-detail-drawer.open { display: block; }
+      .grid-detail-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(10, 53, 88, 0.35);
+      }
+      .grid-detail-panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: min(380px, 94vw);
+        height: 100%;
+        background: var(--panel-solid);
+        border-left: 1px solid var(--line);
+        box-shadow: -8px 0 32px rgba(0, 0, 0, 0.12);
+        display: flex;
+        flex-direction: column;
+        padding: 20px 18px;
+        overflow: auto;
+      }
+      .grid-detail-panel header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 16px;
+      }
+      .grid-detail-panel header h3 {
+        margin: 0;
+        color: var(--accent-dark);
+        font-size: 1.1rem;
+      }
+      .detail-field {
+        margin-bottom: 12px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--line);
+      }
+      .detail-field label {
+        display: block;
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        margin-bottom: 3px;
+      }
+      .detail-field span {
+        display: block;
+        font-size: 0.92rem;
+        color: var(--text);
+        word-break: break-word;
+      }
+      .grid-detail-actions {
+        margin-top: auto;
+        padding-top: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .grid-detail-actions button { width: 100%; }
+      .data-grid-row.body .data-grid-cell {
+        border-right: 1px solid rgba(15, 76, 129, 0.06);
+      }
       @media (max-width: 880px) {
         body {
           padding: 14px;
@@ -1900,6 +2094,13 @@
                 <h4 class="cc-section-title" style="margin: 0; text-transform: none; font-size: 1rem; letter-spacing: 0.02em; color: var(--text)">Inventario operativo</h4>
               </div>
               <p id="ccTableCount" class="operational-table-meta" style="border-radius: 12px 12px 0 0; border: 1px solid var(--line); border-bottom: 0">Mostrando 0 de 0 saldos</p>
+              <div class="grid-toolbar" style="padding:0 12px 8px;border:1px solid var(--line);border-top:0;background:var(--panel-solid)" data-grid-toolbar="stock_cc">
+                <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                  <button type="button" data-density="compact">Modo compacto</button>
+                  <button type="button" data-density="comfortable" class="active">Modo cómodo</button>
+                </div>
+                <button type="button" class="btn-secondary btn-compact" data-reset-grid="stock_cc">Restablecer columnas</button>
+              </div>
               <div id="ccInventoryList">Cargando existencias…</div>
             </section>
           </div>
@@ -1980,6 +2181,13 @@
             </div>
             <div class="card-panel trace-results-panel">
             <p id="traceMessage" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0;border-bottom:0;min-height:1.2em"></p>
+            <div class="grid-toolbar" style="padding:0 12px" data-grid-toolbar="traceability">
+              <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                <button type="button" data-density="compact">Modo compacto</button>
+                <button type="button" data-density="comfortable" class="active">Modo cómodo</button>
+              </div>
+              <button type="button" class="btn-secondary btn-compact" data-reset-grid="traceability">Restablecer columnas</button>
+            </div>
             <div id="traceList" style="overflow: auto; max-width: 100%"></div>
             </div>
           </div>
@@ -2019,6 +2227,13 @@
             </div>
             <div class="card-panel" style="padding:0">
             <p id="taskMessage" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0;border-bottom:0;min-height:1.2em"></p>
+            <div class="grid-toolbar" style="padding:0 12px" data-grid-toolbar="tasks">
+              <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                <button type="button" data-density="compact">Modo compacto</button>
+                <button type="button" data-density="comfortable" class="active">Modo cómodo</button>
+              </div>
+              <button type="button" class="btn-secondary btn-compact" data-reset-grid="tasks">Restablecer columnas</button>
+            </div>
             <div id="taskList" style="overflow: auto; max-width: 100%; padding: 0 12px 12px"></div>
             </div>
           </div>
@@ -2063,6 +2278,13 @@
             <div class="card-panel" style="padding:0">
             <h4 class="secondary-panel-title" style="padding:16px 16px 0;margin:0">Listado de incidencias</h4>
             <p id="incidentMessage" class="operational-table-meta" style="margin:0;border-bottom:0;min-height:1.2em"></p>
+            <div class="grid-toolbar" style="padding:0 12px" data-grid-toolbar="incidents">
+              <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                <button type="button" data-density="compact">Modo compacto</button>
+                <button type="button" data-density="comfortable" class="active">Modo cómodo</button>
+              </div>
+              <button type="button" class="btn-secondary btn-compact" data-reset-grid="incidents">Restablecer columnas</button>
+            </div>
             <div id="incidentList" style="overflow: auto; max-width: 100%; padding: 0 12px 12px"></div>
             </div>
           </div>
@@ -2151,6 +2373,13 @@
               <p class="filter-hint" style="margin: 0 0 10px">
                 Fecha, operador, código, resultado y detalle del producto.
               </p>
+              <div class="grid-toolbar" data-grid-toolbar="picking">
+                <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                  <button type="button" data-density="compact">Modo compacto</button>
+                  <button type="button" data-density="comfortable" class="active">Modo cómodo</button>
+                </div>
+                <button type="button" class="btn-secondary btn-compact" data-reset-grid="picking">Restablecer columnas</button>
+              </div>
               <div id="scanEventsList"></div>
             </section>
           </div>
@@ -2158,13 +2387,6 @@
             <div class="module-screen-header module-header-band">
               <h3>Inventario actual</h3>
               <p class="module-lead">Existencias por cliente, ubicación y status. Use filtros para localizar saldos operativos.</p>
-            </div>
-            <div class="page-toolbar">
-              <button type="button" id="openInventoryImportBtn" class="btn-primary">Importar inventario</button>
-              <button type="button" id="exportStockBtn" class="btn-secondary">Exportar existencias CSV</button>
-              <button type="button" id="exportStockFilteredBtn" class="btn-secondary">Exportar reporte filtrado</button>
-              <button type="button" id="exportMovementsBtn" class="btn-secondary">Exportar movimientos CSV</button>
-              <button type="button" id="toggleMovementsBtn" class="btn-secondary">Ver movimientos</button>
             </div>
             <div class="summary-cards card-panel" id="inventorySummaryCards">
               <div class="summary-card ok">
@@ -2191,6 +2413,20 @@
                 <span class="value" id="sumConflicts">—</span>
                 <span class="label">Conflictos</span>
               </div>
+            </div>
+            <div class="page-toolbar">
+              <button type="button" id="openInventoryImportBtn" class="btn-primary">Importar inventario</button>
+              <button type="button" id="exportStockBtn" class="btn-secondary">Exportar existencias CSV</button>
+              <button type="button" id="exportStockFilteredBtn" class="btn-secondary">Exportar resultado filtrado</button>
+              <button type="button" id="exportMovementsBtn" class="btn-secondary">Exportar movimientos CSV</button>
+              <button type="button" id="toggleMovementsBtn" class="btn-secondary">Ver movimientos</button>
+            </div>
+            <div class="grid-toolbar" data-grid-toolbar="inventory">
+              <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                <button type="button" data-density="compact">Modo compacto</button>
+                <button type="button" data-density="comfortable" class="active">Modo cómodo</button>
+              </div>
+              <button type="button" class="btn-secondary btn-compact" data-reset-grid="inventory">Restablecer columnas</button>
             </div>
             <div class="operational-panel card-panel">
               <div class="operational-filters-bar" style="border:0;border-radius:0;padding:0 0 12px;background:transparent">
@@ -2227,6 +2463,13 @@
             </div>
             <div id="movementsPanel" class="movements-panel card-panel secondary-panel">
               <h4 class="secondary-panel-title">Movimientos de inventario</h4>
+              <div class="grid-toolbar" data-grid-toolbar="movements">
+                <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                  <button type="button" data-density="compact">Modo compacto</button>
+                  <button type="button" data-density="comfortable" class="active">Modo cómodo</button>
+                </div>
+                <button type="button" class="btn-secondary btn-compact" data-reset-grid="movements">Restablecer columnas</button>
+              </div>
               <div id="inventoryMovementsList">Cargando...</div>
             </div>
             <form id="movementForm" class="hidden">
@@ -2273,7 +2516,14 @@
             <div class="page-toolbar">
               <button type="button" id="openCatalogImportBtn" class="btn-primary">Importar catálogo</button>
               <button type="button" id="exportProductsBtn" class="btn-secondary">Exportar productos CSV</button>
-              <button type="button" id="exportProductsFilteredBtn" class="btn-secondary">Exportar catálogo filtrado</button>
+              <button type="button" id="exportProductsFilteredBtn" class="btn-secondary">Exportar resultado filtrado</button>
+            </div>
+            <div class="grid-toolbar" data-grid-toolbar="catalog">
+              <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                <button type="button" data-density="compact">Modo compacto</button>
+                <button type="button" data-density="comfortable" class="active">Modo cómodo</button>
+              </div>
+              <button type="button" class="btn-secondary btn-compact" data-reset-grid="catalog">Restablecer columnas</button>
             </div>
             <div class="operational-panel card-panel">
               <div class="operational-filters-bar" style="border:0;border-radius:0;padding:0 0 12px;background:transparent">
@@ -2350,6 +2600,13 @@
               <p class="module-lead">Resumen de clientes a partir de catálogo e inventario cargado.</p>
             </div>
             <p id="clientsTableCount" class="operational-table-meta card-panel" style="margin-bottom:0;border-radius:12px 12px 0 0">Mostrando 0 clientes</p>
+            <div class="grid-toolbar card-panel" style="margin:0;border-radius:0;border-top:0;padding:8px 16px" data-grid-toolbar="clients">
+              <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                <button type="button" data-density="compact">Modo compacto</button>
+                <button type="button" data-density="comfortable" class="active">Modo cómodo</button>
+              </div>
+              <button type="button" class="btn-secondary btn-compact" data-reset-grid="clients">Restablecer columnas</button>
+            </div>
             <div id="clientsModuleList" class="card-panel" style="border-top:0;border-radius:0 0 12px 12px;padding:0"></div>
             <div id="clientsAdminZone" class="clients-admin-zone hidden">
               <h4>Administración de clientes</h4>
@@ -2433,6 +2690,13 @@
             </div>
             <div class="card-panel" style="padding:0">
               <p id="inboundTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Entradas recientes</p>
+              <div class="grid-toolbar" style="padding:0 12px" data-grid-toolbar="inbound">
+                <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                  <button type="button" data-density="compact">Modo compacto</button>
+                  <button type="button" data-density="comfortable" class="active">Modo cómodo</button>
+                </div>
+                <button type="button" class="btn-secondary btn-compact" data-reset-grid="inbound">Restablecer columnas</button>
+              </div>
               <div id="inboundList"></div>
             </div>
           </div>
@@ -2493,6 +2757,13 @@
             </div>
             <div class="card-panel" style="padding:0">
               <p id="outboundTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Salidas recientes</p>
+              <div class="grid-toolbar" style="padding:0 12px" data-grid-toolbar="outbound">
+                <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                  <button type="button" data-density="compact">Modo compacto</button>
+                  <button type="button" data-density="comfortable" class="active">Modo cómodo</button>
+                </div>
+                <button type="button" class="btn-secondary btn-compact" data-reset-grid="outbound">Restablecer columnas</button>
+              </div>
               <div id="outboundList"></div>
             </div>
           </div>
@@ -2542,6 +2813,13 @@
             </div>
             <div class="card-panel" style="padding:0">
               <p id="reqTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Requisiciones registradas</p>
+              <div class="grid-toolbar" style="padding:0 12px" data-grid-toolbar="requisitions">
+                <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                  <button type="button" data-density="compact">Modo compacto</button>
+                  <button type="button" data-density="comfortable" class="active">Modo cómodo</button>
+                </div>
+                <button type="button" class="btn-secondary btn-compact" data-reset-grid="requisitions">Restablecer columnas</button>
+              </div>
               <div id="requisitionsList"></div>
             </div>
           </div>
@@ -2559,6 +2837,18 @@
     <span id="currentUserRole" class="hidden"></span>
     <span id="currentUrl" class="hidden"></span>
     <section id="inventorySection" class="hidden" aria-hidden="true"></section>
+
+    <div id="gridDetailDrawer" class="grid-detail-drawer" aria-hidden="true">
+      <div class="grid-detail-backdrop" data-close-drawer></div>
+      <aside class="grid-detail-panel" role="dialog" aria-labelledby="gridDetailTitle">
+        <header>
+          <h3 id="gridDetailTitle">Detalle</h3>
+          <button type="button" class="modal-close" data-close-drawer aria-label="Cerrar">×</button>
+        </header>
+        <div id="gridDetailBody"></div>
+        <div id="gridDetailActions" class="grid-detail-actions"></div>
+      </aside>
+    </div>
 
     <div id="catalogImportModal" class="modal-overlay" aria-hidden="true">
       <div class="modal-panel" role="dialog" aria-labelledby="catalogImportTitle">
@@ -2621,6 +2911,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=28"></script>
+    <script src="/dashboard.js?v=29"></script>
   </body>
 </html>

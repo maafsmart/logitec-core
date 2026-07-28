@@ -235,10 +235,12 @@ function activateModule(moduleName) {
   if (showCatalog) applyCatalogFilters();
   if (showInbound) {
     populateOperationalSelects();
+    applyOperationalPrefillToForm("inbound");
     void loadInboundList();
   }
   if (showOutbound) {
     populateOperationalSelects();
+    applyOperationalPrefillToForm("outbound");
     void loadOutboundList();
   }
   if (showRequisitions) {
@@ -312,6 +314,115 @@ function updateTableCountMeta(elementId, shown, total, unit) {
   el.textContent = `Mostrando ${shown} de ${total} ${unit}`;
 }
 
+const GRID_WIDTHS_PREFIX = "logitec_grid_widths_";
+const GRID_SORT_PREFIX = "logitec_grid_sort_";
+const GRID_DENSITY_KEY = "logitec_grid_density";
+const GRID_SELECTION_PREFIX = "logitec_grid_sel_";
+
+const GRID_DEFAULT_WIDTHS = {
+  inventory: [200, 120, 150, 260, 110, 140, 110, 90],
+  catalog: [200, 120, 150, 260, 110, 150],
+  clients: [200, 120, 100, 120, 100],
+  stock_cc: [200, 120, 150, 260, 140, 110, 90],
+  movements: [140, 90, 120, 200, 160, 120, 80, 80, 120, 120, 140],
+  traceability: [140, 120, 90, 100, 120, 160, 120, 120, 70, 90, 140],
+  inbound: [140, 160, 140, 110, 120, 120, 90, 90],
+  outbound: [140, 160, 140, 110, 120, 120, 90, 90],
+  requisitions: [120, 160, 90, 200, 110, 100],
+  tasks: [130, 90, 100, 110, 140, 140, 80],
+  incidents: [130, 100, 110, 140, 120, 200],
+  picking: [140, 120, 90, 200],
+  picking_op: [140, 120, 120, 90, 200]
+};
+
+const gridSortState = {};
+
+function initGridDensity() {
+  const mode = localStorage.getItem(GRID_DENSITY_KEY) || "comfortable";
+  document.documentElement.dataset.gridDensity = mode;
+  document.querySelectorAll(".grid-density-toggle").forEach((group) => {
+    group.querySelectorAll("button[data-density]").forEach((btn) => {
+      btn.classList.toggle("active", btn.getAttribute("data-density") === mode);
+    });
+  });
+}
+
+function setGridDensity(mode) {
+  localStorage.setItem(GRID_DENSITY_KEY, mode);
+  document.documentElement.dataset.gridDensity = mode;
+  document.querySelectorAll(".grid-density-toggle button[data-density]").forEach((btn) => {
+    btn.classList.toggle("active", btn.getAttribute("data-density") === mode);
+  });
+}
+
+function loadGridColumnWidths(gridId, colCount) {
+  try {
+    const raw = localStorage.getItem(GRID_WIDTHS_PREFIX + gridId);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(parsed) && parsed.length === colCount) return parsed;
+  } catch (_e) {
+    /* ignore */
+  }
+  const defaults = GRID_DEFAULT_WIDTHS[gridId];
+  if (Array.isArray(defaults) && defaults.length === colCount) return [...defaults];
+  return Array.from({ length: colCount }, () => 120);
+}
+
+function saveGridColumnWidths(gridId, widths) {
+  localStorage.setItem(GRID_WIDTHS_PREFIX + gridId, JSON.stringify(widths));
+}
+
+function resetGridSettings(gridId) {
+  localStorage.removeItem(GRID_WIDTHS_PREFIX + gridId);
+  localStorage.removeItem(GRID_SORT_PREFIX + gridId);
+  delete gridSortState[gridId];
+}
+
+function loadGridSort(gridId) {
+  if (gridSortState[gridId]) return gridSortState[gridId];
+  try {
+    const raw = localStorage.getItem(GRID_SORT_PREFIX + gridId);
+    if (raw) gridSortState[gridId] = JSON.parse(raw);
+  } catch (_e) {
+    /* ignore */
+  }
+  return gridSortState[gridId] || null;
+}
+
+function saveGridSort(gridId, sort) {
+  gridSortState[gridId] = sort;
+  if (sort) localStorage.setItem(GRID_SORT_PREFIX + gridId, JSON.stringify(sort));
+  else localStorage.removeItem(GRID_SORT_PREFIX + gridId);
+}
+
+function compareSortValues(a, b, sortType) {
+  if (sortType === "number") {
+    return (Number(a) || 0) - (Number(b) || 0);
+  }
+  if (sortType === "date") {
+    return (a ? new Date(a).getTime() : 0) - (b ? new Date(b).getTime() : 0);
+  }
+  return String(a ?? "").localeCompare(String(b ?? ""), "es", { sensitivity: "base" });
+}
+
+function sortRowDataList(rows, columns, gridId) {
+  const sort = loadGridSort(gridId);
+  if (!sort || sort.col == null || !columns[sort.col]?.sortKey) return rows;
+  const col = columns[sort.col];
+  const mult = sort.dir === "desc" ? -1 : 1;
+  return [...rows].sort((a, b) => mult * compareSortValues(col.sortKey(a), col.sortKey(b), col.sortType || "text"));
+}
+
+function gridTemplateColumns(widths) {
+  return widths.map((w) => `${Math.max(60, w)}px`).join(" ");
+}
+
+function sortIndicatorHtml(colIdx, gridId) {
+  const sort = loadGridSort(gridId);
+  if (!sort || sort.col !== colIdx) return "";
+  return sort.dir === "desc" ? "↓" : "↑";
+}
+
 function wireDataGridScrollSync(gridRoot) {
   if (!gridRoot || gridRoot.dataset.scrollSync === "1") return;
   const body = gridRoot.querySelector(".data-grid-body-scroll");
@@ -323,19 +434,314 @@ function wireDataGridScrollSync(gridRoot) {
   });
 }
 
-function renderDataGrid(container, { columns, rowCellsList, colsClass, sizeClass, emptyMessage }) {
+function wireColumnResizers(gridRoot, gridId, colCount, onResize) {
+  if (!gridRoot) return;
+  gridRoot.querySelectorAll(".col-resizer").forEach((handle) => {
+    if (handle.dataset.resizeWired === "1") return;
+    handle.dataset.resizeWired = "1";
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const col = Number(handle.getAttribute("data-col"));
+      const widths = loadGridColumnWidths(gridId, colCount);
+      const startX = e.clientX;
+      const startW = widths[col];
+      const onMove = (ev) => {
+        widths[col] = Math.max(60, startW + (ev.clientX - startX));
+        onResize(widths);
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        saveGridColumnWidths(gridId, widths);
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  });
+}
+
+function applyGridTemplate(gridRoot, widths) {
+  const tpl = gridTemplateColumns(widths);
+  gridRoot.querySelectorAll(".data-grid-row").forEach((row) => {
+    row.style.gridTemplateColumns = tpl;
+    row.style.minWidth = `${widths.reduce((a, b) => a + b, 0)}px`;
+  });
+}
+
+function wireGridSortHeaders(gridRoot, gridId, columns, onSortChange) {
+  gridRoot.querySelectorAll(".head-cell[data-col]").forEach((cell) => {
+    if (cell.dataset.sortWired === "1") return;
+    cell.dataset.sortWired = "1";
+    cell.addEventListener("click", (e) => {
+      if (e.target.classList.contains("col-resizer")) return;
+      const col = Number(cell.getAttribute("data-col"));
+      if (!columns[col]?.sortKey) return;
+      const cur = loadGridSort(gridId);
+      let dir = "asc";
+      if (cur && cur.col === col) dir = cur.dir === "asc" ? "desc" : "asc";
+      saveGridSort(gridId, { col, dir });
+      onSortChange();
+    });
+  });
+}
+
+function wireGridRowSelection(gridRoot, gridId, rowDataList, onSelect) {
+  gridRoot.querySelectorAll(".data-grid-row.body[data-row-idx]").forEach((row) => {
+    if (row.dataset.selectWired === "1") return;
+    row.dataset.selectWired = "1";
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      gridRoot.querySelectorAll(".data-grid-row.body.row-selected").forEach((r) => r.classList.remove("row-selected"));
+      row.classList.add("row-selected");
+      const idx = Number(row.getAttribute("data-row-idx"));
+      const data = rowDataList[idx];
+      if (data && onSelect) onSelect(data, idx);
+    });
+  });
+}
+
+function reloadGridById(gridId) {
+  if (gridId === "inventory") applyInventoryFilters();
+  else if (gridId === "catalog") applyCatalogFilters();
+  else if (gridId === "clients") renderClientsModule();
+  else if (gridId === "stock_cc") refreshControlCenter();
+  else if (gridId === "movements") void loadInventoryMovements();
+  else if (gridId === "traceability") void loadTraceability();
+  else if (gridId === "inbound") void loadInboundList();
+  else if (gridId === "outbound") void loadOutboundList();
+  else if (gridId === "requisitions") void loadRequisitionsList();
+  else if (gridId === "tasks") void loadTasks();
+  else if (gridId === "incidents") void loadIncidents();
+  else if (gridId === "picking" || gridId === "picking_op") void loadScanEvents();
+}
+
+function openDetailDrawer(title, fields, actions) {
+  const drawer = document.getElementById("gridDetailDrawer");
+  const titleEl = document.getElementById("gridDetailTitle");
+  const bodyEl = document.getElementById("gridDetailBody");
+  const actionsEl = document.getElementById("gridDetailActions");
+  if (!drawer || !titleEl || !bodyEl || !actionsEl) return;
+  titleEl.textContent = title;
+  bodyEl.innerHTML = fields
+    .map(
+      (f) =>
+        `<div class="detail-field"><label>${escCell(f.label)}</label><span>${escCell(f.value ?? "—")}</span></div>`
+    )
+    .join("");
+  actionsEl.innerHTML = actions
+    .map((a) => `<button type="button" class="${a.className || "btn-secondary"}" data-detail-action="${escCell(a.id)}">${escCell(a.label)}</button>`)
+    .join("");
+  actionsEl.querySelectorAll("[data-detail-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const act = actions.find((a) => a.id === btn.getAttribute("data-detail-action"));
+      if (act?.onClick) act.onClick();
+    });
+  });
+  drawer.classList.add("open");
+  drawer.setAttribute("aria-hidden", "false");
+}
+
+function closeDetailDrawer() {
+  const drawer = document.getElementById("gridDetailDrawer");
+  if (!drawer) return;
+  drawer.classList.remove("open");
+  drawer.setAttribute("aria-hidden", "true");
+}
+
+function setOperationalPrefill(data) {
+  try {
+    sessionStorage.setItem("logitec_ops_prefill", JSON.stringify(data));
+  } catch (_e) {
+    /* ignore */
+  }
+}
+
+function readOperationalPrefill() {
+  try {
+    const raw = sessionStorage.getItem("logitec_ops_prefill");
+    return raw ? JSON.parse(raw) : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function applyOperationalPrefillToForm(prefix) {
+  const data = readOperationalPrefill();
+  if (!data) return;
+  const map = {
+    customer: `${prefix}Customer`,
+    cliente: `${prefix}Cliente`,
+    sku: `${prefix}Sku`,
+    product: `${prefix}Product`,
+    warehouse: `${prefix}Warehouse`,
+    location: `${prefix}Location`,
+    status: `${prefix}Status`
+  };
+  Object.entries(map).forEach(([key, id]) => {
+    const el = document.getElementById(id);
+    if (el && data[key] != null) {
+      if (el.tagName === "SELECT") el.value = data[key];
+      else el.value = data[key];
+    }
+  });
+  populateOperationalSelects();
+  if (data.sku) {
+    const skuEl = document.getElementById(`${prefix}Sku`);
+    if (skuEl) skuEl.value = data.sku;
+    const prodEl = document.getElementById(`${prefix}Product`);
+    const prod = findProductBySku(data.sku);
+    if (prodEl && prod) prodEl.value = prod.name || "";
+  }
+  sessionStorage.removeItem("logitec_ops_prefill");
+}
+
+function openInventoryDetail(row) {
+  const p = row.product || {};
+  openDetailDrawer("Detalle de inventario", [
+    { label: "Cliente", value: p.customer?.name },
+    { label: "Customer", value: p.customer?.code },
+    { label: "SKU", value: p.sku },
+    { label: "Producto", value: p.name },
+    { label: "Almacén", value: row.location?.warehouse },
+    { label: "Ubicación", value: row.location?.code },
+    { label: "Status", value: row.status },
+    { label: "Cantidad", value: formatQty(row.qty) }
+  ], [
+    {
+      id: "inbound",
+      label: "Registrar entrada",
+      className: "btn-primary",
+      onClick: () => {
+        setOperationalPrefill({
+          customer: p.customer?.code,
+          cliente: p.customer?.name,
+          sku: p.sku,
+          warehouse: row.location?.warehouse || "TULTITLAN24",
+          location: row.location?.code,
+          status: row.status || "AVAILABLE"
+        });
+        closeDetailDrawer();
+        activateModule("inbound");
+      }
+    },
+    {
+      id: "outbound",
+      label: "Registrar salida",
+      className: "btn-secondary",
+      onClick: () => {
+        setOperationalPrefill({
+          customer: p.customer?.code,
+          cliente: p.customer?.name,
+          sku: p.sku,
+          warehouse: row.location?.warehouse || "TULTITLAN24",
+          location: row.location?.code,
+          status: row.status || "AVAILABLE"
+        });
+        closeDetailDrawer();
+        activateModule("outbound");
+      }
+    },
+    {
+      id: "trace",
+      label: "Ver trazabilidad",
+      className: "btn-secondary",
+      onClick: () => {
+        const traceSku = document.getElementById("traceSku");
+        if (traceSku) traceSku.value = p.sku || "";
+        closeDetailDrawer();
+        activateModule("traceability");
+      }
+    },
+    {
+      id: "incident",
+      label: "Reportar incidencia",
+      className: "btn-secondary",
+      onClick: () => {
+        const wh = document.getElementById("incidentWarehouse");
+        const loc = document.getElementById("incidentLocation");
+        if (wh) wh.value = row.location?.warehouse || "";
+        if (loc) loc.value = row.location?.code || "";
+        closeDetailDrawer();
+        activateModule("incidents");
+      }
+    }
+  ]);
+}
+
+function openCatalogDetail(product) {
+  openDetailDrawer("Detalle de producto", [
+    { label: "Cliente", value: product.customer?.name },
+    { label: "Customer", value: product.customer?.code },
+    { label: "SKU", value: product.sku },
+    { label: "Producto", value: product.name },
+    { label: "Almacén", value: product.warehouse },
+    { label: "Código de barras", value: product.barcode }
+  ], [
+    {
+      id: "inventory",
+      label: "Ver inventario",
+      className: "btn-primary",
+      onClick: () => {
+        const fSku = document.getElementById("invFilterSku");
+        if (fSku) fSku.value = product.sku || "";
+        closeDetailDrawer();
+        activateModule("inventory");
+        applyInventoryFilters();
+      }
+    },
+    {
+      id: "trace",
+      label: "Ver trazabilidad",
+      className: "btn-secondary",
+      onClick: () => {
+        const traceSku = document.getElementById("traceSku");
+        if (traceSku) traceSku.value = product.sku || "";
+        closeDetailDrawer();
+        activateModule("traceability");
+      }
+    }
+  ]);
+}
+
+function renderDataGrid(container, opts) {
   if (!container) return;
-  if (!Array.isArray(rowCellsList) || rowCellsList.length === 0) {
+  const {
+    gridId,
+    columns,
+    rowDataList = [],
+    rowCellsFn,
+    rowCellsList,
+    colsClass = "",
+    sizeClass = "data-grid-size-inventory",
+    emptyMessage = "Sin registros.",
+    selectable = true,
+    onRowSelect,
+    detailType
+  } = opts;
+
+  const sorted = sortRowDataList(rowDataList, columns, gridId);
+  const cellsList = rowCellsFn
+    ? sorted.map((row) => rowCellsFn(row))
+    : rowCellsList || [];
+
+  if (!cellsList.length) {
     container.innerHTML = `<div class="data-grid ${sizeClass}"><div class="data-grid-empty">${escCell(emptyMessage)}</div></div>`;
     return;
   }
+
+  const widths = loadGridColumnWidths(gridId, columns.length);
+  const tpl = gridTemplateColumns(widths);
+
   const headerHtml = columns
-    .map((col) => {
+    .map((col, ci) => {
       const extra = col.align === "right" ? " numeric-cell" : "";
-      return `<div class="data-grid-cell${extra}">${escCell(col.label)}</div>`;
+      const sortable = col.sortKey ? " sortable" : "";
+      return `<div class="data-grid-cell head-cell${extra}${sortable}" data-col="${ci}" title="Ordenar"><span class="head-label">${escCell(col.label)}</span><span class="sort-indicator">${sortIndicatorHtml(ci, gridId)}</span><span class="col-resizer" data-col="${ci}"></span></div>`;
     })
     .join("");
-  const bodyHtml = rowCellsList
+
+  const bodyHtml = cellsList
     .map((cells, idx) => {
       const rowCells = cells
         .map((cellHtml, ci) => {
@@ -343,17 +749,159 @@ function renderDataGrid(container, { columns, rowCellsList, colsClass, sizeClass
           return `<div class="data-grid-cell${extra}">${cellHtml}</div>`;
         })
         .join("");
-      return `<div class="data-grid-row body ${colsClass}${idx % 2 === 1 ? " row-alt" : ""}">${rowCells}</div>`;
+      return `<div class="data-grid-row body ${colsClass}${idx % 2 === 1 ? " row-alt" : ""}" data-row-idx="${idx}" style="grid-template-columns:${tpl};min-width:${widths.reduce((a, b) => a + b, 0)}px">${rowCells}</div>`;
     })
     .join("");
+
   container.innerHTML = `
-    <div class="data-grid ${sizeClass}">
+    <div class="data-grid ${sizeClass}" data-grid-id="${escCell(gridId)}">
       <div class="data-grid-header-x">
-        <div class="data-grid-row head ${colsClass}">${headerHtml}</div>
+        <div class="data-grid-row head ${colsClass}" style="grid-template-columns:${tpl};min-width:${widths.reduce((a, b) => a + b, 0)}px">${headerHtml}</div>
       </div>
       <div class="data-grid-body-scroll">${bodyHtml}</div>
     </div>`;
-  wireDataGridScrollSync(container.firstElementChild);
+
+  const gridRoot = container.firstElementChild;
+  wireDataGridScrollSync(gridRoot);
+  wireColumnResizers(gridRoot, gridId, columns.length, (w) => applyGridTemplate(gridRoot, w));
+  wireGridSortHeaders(gridRoot, gridId, columns, () => {
+    renderDataGrid(container, opts);
+  });
+  if (selectable) {
+    const selectHandler =
+      onRowSelect ||
+      (detailType === "inventory"
+        ? openInventoryDetail
+        : detailType === "catalog"
+          ? openCatalogDetail
+          : null);
+    wireGridRowSelection(gridRoot, gridId, sorted, selectHandler);
+  }
+}
+
+function renderExcelTable(container, opts) {
+  if (!container) return;
+  const {
+    gridId,
+    columns,
+    rows = [],
+    emptyMessage = "Sin registros operativos aún",
+    selectable = true,
+    onRowSelect,
+    allowActions = false
+  } = opts;
+
+  if (!rows.length) {
+    container.innerHTML = `<div class="data-grid-empty" style="padding:24px;border:1px solid var(--line);border-radius:12px;background:var(--panel-solid)">${escCell(emptyMessage)}</div>`;
+    return;
+  }
+
+  const sorted = sortRowDataList(rows, columns, gridId);
+  const widths = loadGridColumnWidths(gridId, columns.length);
+  const colgroup = widths.map((w) => `<col style="width:${Math.max(60, w)}px">`).join("");
+
+  const thead = `<tr>${columns
+    .map(
+      (col, ci) =>
+        `<th data-col="${ci}" title="Ordenar">${escCell(col.label)}<span class="sort-indicator">${sortIndicatorHtml(ci, gridId)}</span><span class="col-resizer" data-col="${ci}"></span></th>`
+    )
+    .join("")}${allowActions ? "<th style=\"width:90px\">Acción</th>" : ""}</tr>`;
+
+  const tbody = sorted
+    .map((row, idx) => {
+      const cells = columns
+        .map((col) => {
+          const raw = col.render ? col.render(row) : "—";
+          const align = col.align === "right" ? ' class="numeric"' : "";
+          const title = col.title ? col.title(row) : typeof raw === "string" ? raw.replace(/<[^>]+>/g, "") : "";
+          return `<td${align} title="${escCell(title)}">${raw}</td>`;
+        })
+        .join("");
+      const actionCell = allowActions && row._actionHtml ? `<td>${row._actionHtml}</td>` : allowActions ? "<td>—</td>" : "";
+      return `<tr data-row-idx="${idx}" data-selectable="${selectable ? "1" : "0"}">${cells}${actionCell}</tr>`;
+    })
+    .join("");
+
+  container.innerHTML = `<div class="table-wrap excel-table-wrap" data-grid-id="${escCell(gridId)}"><table class="excel-table scan-table"><colgroup>${colgroup}</colgroup><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+
+  const wrap = container.firstElementChild;
+  const table = wrap.querySelector("table");
+
+  wrap.querySelectorAll(".col-resizer").forEach((handle) => {
+    if (handle.dataset.resizeWired === "1") return;
+    handle.dataset.resizeWired = "1";
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const col = Number(handle.getAttribute("data-col"));
+      const w = loadGridColumnWidths(gridId, columns.length);
+      const startX = e.clientX;
+      const startW = w[col];
+      const cols = table.querySelectorAll("colgroup col");
+      const onMove = (ev) => {
+        w[col] = Math.max(60, startW + (ev.clientX - startX));
+        if (cols[col]) cols[col].style.width = `${w[col]}px`;
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        saveGridColumnWidths(gridId, w);
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  });
+
+  wrap.querySelectorAll("th[data-col]").forEach((th) => {
+    if (th.dataset.sortWired === "1") return;
+    th.dataset.sortWired = "1";
+    th.addEventListener("click", (e) => {
+      if (e.target.classList.contains("col-resizer")) return;
+      const col = Number(th.getAttribute("data-col"));
+      if (!columns[col]?.sortKey) return;
+      const cur = loadGridSort(gridId);
+      let dir = "asc";
+      if (cur && cur.col === col) dir = cur.dir === "asc" ? "desc" : "asc";
+      saveGridSort(gridId, { col, dir });
+      renderExcelTable(container, opts);
+    });
+  });
+
+  if (selectable) {
+    wrap.querySelectorAll("tbody tr[data-row-idx]").forEach((tr) => {
+      tr.addEventListener("click", (e) => {
+        if (e.target.closest("button")) return;
+        wrap.querySelectorAll("tbody tr.row-selected").forEach((r) => r.classList.remove("row-selected"));
+        tr.classList.add("row-selected");
+        const idx = Number(tr.getAttribute("data-row-idx"));
+        if (onRowSelect) onRowSelect(sorted[idx], idx);
+      });
+    });
+  }
+}
+
+function wireGridToolbars() {
+  document.querySelectorAll("[data-reset-grid]").forEach((btn) => {
+    if (btn.dataset.toolbarWired === "1") return;
+    btn.dataset.toolbarWired = "1";
+    btn.addEventListener("click", () => {
+      const gridId = btn.getAttribute("data-reset-grid");
+      if (!gridId) return;
+      resetGridSettings(gridId);
+      if (gridId === "picking") resetGridSettings("picking_op");
+      reloadGridById(gridId);
+    });
+  });
+  document.querySelectorAll(".grid-density-toggle button[data-density]").forEach((btn) => {
+    if (btn.dataset.densityWired === "1") return;
+    btn.dataset.densityWired = "1";
+    btn.addEventListener("click", () => setGridDensity(btn.getAttribute("data-density") || "comfortable"));
+  });
+  document.querySelectorAll("[data-close-drawer]").forEach((el) => {
+    if (el.dataset.drawerWired === "1") return;
+    el.dataset.drawerWired = "1";
+    el.addEventListener("click", closeDetailDrawer);
+  });
 }
 
 function inventoryStatusBadge(value) {
@@ -689,42 +1237,150 @@ function catalogRowCells(product) {
 }
 
 const STOCK_COLUMNS_FULL = [
-  { label: "Cliente" },
-  { label: "Customer" },
-  { label: "SKU" },
-  { label: "Producto" },
-  { label: "Almacén" },
-  { label: "Ubicación" },
-  { label: "Status" },
-  { label: "Cantidad", align: "right" }
+  { label: "Cliente", sortKey: (r) => r.product?.customer?.name || "", sortType: "text" },
+  { label: "Customer", sortKey: (r) => r.product?.customer?.code || "", sortType: "text" },
+  { label: "SKU", sortKey: (r) => r.product?.sku || "", sortType: "text" },
+  { label: "Producto", sortKey: (r) => r.product?.name || "", sortType: "text" },
+  { label: "Almacén", sortKey: (r) => r.location?.warehouse || "", sortType: "text" },
+  { label: "Ubicación", sortKey: (r) => r.location?.code || "", sortType: "text" },
+  { label: "Status", sortKey: (r) => r.status || "", sortType: "text" },
+  { label: "Cantidad", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number" }
 ];
 
 const STOCK_COLUMNS_CC = [
-  { label: "Cliente" },
-  { label: "Customer" },
-  { label: "SKU" },
-  { label: "Producto" },
-  { label: "Ubicación" },
-  { label: "Status" },
-  { label: "Cantidad", align: "right" }
+  { label: "Cliente", sortKey: (r) => r.product?.customer?.name || "" },
+  { label: "Customer", sortKey: (r) => r.product?.customer?.code || "" },
+  { label: "SKU", sortKey: (r) => r.product?.sku || "" },
+  { label: "Producto", sortKey: (r) => r.product?.name || "" },
+  { label: "Ubicación", sortKey: (r) => r.location?.code || "" },
+  { label: "Status", sortKey: (r) => r.status || "" },
+  { label: "Cantidad", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number" }
 ];
 
 const CATALOG_COLUMNS = [
-  { label: "Cliente" },
-  { label: "Customer" },
-  { label: "SKU" },
-  { label: "Producto" },
-  { label: "Almacén" },
-  { label: "Código de barras" }
+  { label: "Cliente", sortKey: (p) => p.customer?.name || "" },
+  { label: "Customer", sortKey: (p) => p.customer?.code || "" },
+  { label: "SKU", sortKey: (p) => p.sku || "" },
+  { label: "Producto", sortKey: (p) => p.name || "" },
+  { label: "Almacén", sortKey: (p) => p.warehouse || "" },
+  { label: "Código de barras", sortKey: (p) => p.barcode || "" }
 ];
 
 const CLIENTS_COLUMNS = [
-  { label: "Cliente" },
-  { label: "Customer" },
-  { label: "Productos", align: "right" },
-  { label: "Saldos asociados", align: "right" },
-  { label: "Estado" }
+  { label: "Cliente", sortKey: (r) => r.name || "" },
+  { label: "Customer", sortKey: (r) => r.code || "" },
+  { label: "Productos", align: "right", sortKey: (r) => r.products || 0, sortType: "number" },
+  { label: "Saldos asociados", align: "right", sortKey: (r) => r.stock || 0, sortType: "number" },
+  { label: "Estado", sortKey: (r) => (r.products > 0 ? "Activo" : "Sin catálogo") }
 ];
+
+const TRACE_COLUMNS = [
+  { label: "Fecha", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatDateShort(r.createdAt), title: (r) => formatDateShort(r.createdAt) },
+  { label: "Usuario", sortKey: (r) => r.user?.fullName || "", render: (r) => renderCellWithClamp(r.user?.fullName || "—", "cell-truncate", 20), title: (r) => r.user?.fullName || "" },
+  { label: "Tipo", sortKey: (r) => r.type || "", render: (r) => statusBadge(r.type) },
+  { label: "Subtipo", sortKey: (r) => r.subtype || "", render: (r) => renderCellWithClamp(r.subtype, "cell-truncate", 18), title: (r) => r.subtype || "" },
+  { label: "SKU", sortKey: (r) => r.product?.sku || "", render: (r) => escCell(r.product?.sku || "—"), title: (r) => r.product?.sku || "" },
+  { label: "Cliente", sortKey: (r) => r.customer?.name || "", render: (r) => renderCellWithClamp(r.customer?.name || "—", "cell-truncate", 18), title: (r) => r.customer?.name || "" },
+  { label: "Customer", sortKey: (r) => r.customer?.code || "", render: (r) => escCell(r.customer?.code || "—"), title: (r) => r.customer?.code || "" },
+  { label: "Ubicación", sortKey: (r) => r.location || r.warehouse || "", render: (r) => renderCellWithClamp(r.location || r.warehouse, "cell-truncate", 22), title: (r) => r.location || r.warehouse || "" },
+  { label: "Cant.", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number", render: (r) => formatQty(r.qty) },
+  { label: "Resultado", sortKey: (r) => r.result || "", render: (r) => statusBadge(r.result) },
+  { label: "Referencia", sortKey: (r) => r.reference || "", render: (r) => renderCellWithClamp(r.reference, "cell-truncate", 24), title: (r) => r.reference || "" }
+];
+
+const TASK_COLUMNS = [
+  { label: "Creado", sortKey: (t) => t.createdAt, sortType: "date", render: (t) => formatDateShort(t.createdAt) },
+  { label: "Tipo", sortKey: (t) => t.type || "", render: (t) => statusBadge(t.type) },
+  { label: "Estado", sortKey: (t) => t.status || "", render: (t) => statusBadge(t.status) },
+  { label: "Almacén", sortKey: (t) => t.warehouse || "", render: (t) => renderCellWithClamp(t.warehouse, "cell-truncate", 18), title: (t) => t.warehouse || "" },
+  { label: "Asignado", sortKey: (t) => t._assignName || "", render: (t) => renderCellWithClamp(t._assignName || "—", "cell-truncate", 20), title: (t) => t._assignName || "" },
+  { label: "Ref.", sortKey: (t) => t.reference || "", render: (t) => renderCellWithClamp(t.reference, "cell-truncate", 22), title: (t) => t.reference || "" },
+  { label: "Prioridad", align: "right", sortKey: (t) => t.priority ?? 0, sortType: "number", render: (t) => String(t.priority ?? 0) }
+];
+
+const MOVEMENT_COLUMNS = [
+  { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
+  { label: "Tipo", sortKey: (m) => m.movementType || "", render: (m) => statusBadge(m.movementType) },
+  { label: "SKU", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(m.product?.sku || "—"), title: (m) => m.product?.sku || "" },
+  { label: "Producto", sortKey: (m) => m.product?.name || "", render: (m) => renderCellWithClamp(m.product?.name, "cell-truncate", 28), title: (m) => m.product?.name || "" },
+  { label: "Cliente", sortKey: (m) => m.product?.customer?.name || "", render: (m) => renderCellWithClamp(m.product?.customer?.name, "cell-truncate", 20), title: (m) => m.product?.customer?.name || "" },
+  { label: "Customer", sortKey: (m) => m.product?.customer?.code || "", render: (m) => escCell(m.product?.customer?.code || "—"), title: (m) => m.product?.customer?.code || "" },
+  { label: "Antes", align: "right", sortKey: (m) => Number(m.quantityBefore) || 0, sortType: "number", render: (m) => formatQty(m.quantityBefore) },
+  { label: "Después", align: "right", sortKey: (m) => Number(m.quantityAfter) || 0, sortType: "number", render: (m) => formatQty(m.quantityAfter) },
+  { label: "Ubicación", sortKey: (m) => m.toLocation?.code || m.fromLocation?.code || "", render: (m) => renderCellWithClamp(m.toLocation?.code || m.fromLocation?.code || m.warehouse, "cell-truncate", 20), title: (m) => m.toLocation?.code || m.fromLocation?.code || "" },
+  { label: "Usuario", sortKey: (m) => m.user?.fullName || "", render: (m) => renderCellWithClamp(m.user?.fullName, "cell-truncate", 20), title: (m) => m.user?.fullName || "" },
+  { label: "Referencia", sortKey: (m) => m.reference || "", render: (m) => renderCellWithClamp(m.reference, "cell-truncate", 20), title: (m) => m.reference || "" }
+];
+
+const OPS_MOVEMENT_COLUMNS = [
+  { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
+  { label: "Cliente", sortKey: (m) => m.product?.customer?.name || "", render: (m) => renderCellWithClamp(m.product?.customer?.name || "—", "cell-truncate", 22), title: (m) => m.product?.customer?.name || "" },
+  { label: "Customer", sortKey: (m) => m.product?.customer?.code || "", render: (m) => escCell(m.product?.customer?.code || "—"), title: (m) => m.product?.customer?.code || "" },
+  { label: "Referencia", sortKey: (m) => m.reference || "", render: (m) => renderCellWithClamp(m.reference, "cell-truncate", 18), title: (m) => m.reference || "" },
+  { label: "SKU", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(m.product?.sku || "—"), title: (m) => m.product?.sku || "" },
+  { label: "Producto", sortKey: (m) => m.product?.name || "", render: (m) => renderCellWithClamp(m.product?.name, "cell-truncate", 24), title: (m) => m.product?.name || "" },
+  { label: "Cantidad", align: "right", sortKey: (m) => Number(m.qty) || 0, sortType: "number", render: (m) => formatQty(m.qty) }
+];
+
+const REQ_COLUMNS = [
+  { label: "Folio", sortKey: (t) => t.reference || "", render: (t) => renderCellWithClamp(t.reference, "cell-truncate", 18), title: (t) => t.reference || "" },
+  { label: "Cliente", sortKey: (t) => formatReqCliente(t), render: (t) => renderCellWithClamp(formatReqCliente(t), "cell-truncate", 22), title: (t) => formatReqCliente(t) },
+  { label: "Prioridad", align: "right", sortKey: (t) => t.priority ?? 0, sortType: "number", render: (t) => String(t.priority ?? 0) },
+  { label: "Productos", sortKey: (t) => formatReqProducts(t), render: (t) => renderCellWithClamp(formatReqProducts(t), "cell-truncate", 28), title: (t) => formatReqProducts(t) },
+  { label: "Estado", sortKey: (t) => t.status || "", render: (t) => statusBadge(t.status) },
+  { label: "Picking", sortKey: (t) => t.status || "", render: (t) => (t.status === "COMPLETED" ? statusBadge("COMPLETED") : t.status === "IN_PROGRESS" ? statusBadge("IN_PROGRESS") : statusBadge("PENDING")) }
+];
+
+const INCIDENT_COLUMNS = [
+  { label: "Fecha", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatDateShort(r.createdAt) },
+  { label: "Tipo", sortKey: (r) => r.type || "", render: (r) => statusBadge(r.type) },
+  { label: "Estado", sortKey: (r) => r.status || "", render: (r) => statusBadge(r.status) },
+  { label: "Reportó", sortKey: (r) => r.reportedBy?.fullName || "", render: (r) => renderCellWithClamp(r.reportedBy?.fullName, "cell-truncate", 20), title: (r) => r.reportedBy?.fullName || "" },
+  { label: "Producto", sortKey: (r) => r.product?.sku || "", render: (r) => escCell(r.product?.sku || "—"), title: (r) => r.product?.sku || "" },
+  { label: "Notas", sortKey: (r) => r.notes || "", render: (r) => renderCellWithClamp(r.notes, "cell-notes", 120), title: (r) => r.notes || "" }
+];
+
+function getPickingColumns(showOperator) {
+  const cols = [
+    { label: "Fecha / hora", sortKey: (s) => s.createdAt, sortType: "date", render: (s) => formatDateShort(s.createdAt) }
+  ];
+  if (showOperator) {
+    cols.push({
+      label: "Operador",
+      sortKey: (s) => renderScanOperator(s),
+      render: (s) => renderCellWithClamp(renderScanOperator(s), "cell-truncate", 22),
+      title: (s) => renderScanOperator(s)
+    });
+  }
+  cols.push(
+    {
+      label: "Código",
+      sortKey: (s) => s.scannedCode || "",
+      render: (s) => `<strong>${escCell(s.scannedCode)}</strong>`,
+      title: (s) => s.scannedCode || ""
+    },
+    { label: "Resultado", sortKey: (s) => s.result || "", render: (s) => statusBadge(s.result) },
+    {
+      label: "Detalle",
+      sortKey: (s) => {
+        const name = s.product?.name || "";
+        const skuPart = s.product?.sku ? ` · SKU ${s.product.sku}` : "";
+        return `${name}${skuPart}`;
+      },
+      render: (s) => {
+        const name = s.product?.name || "—";
+        const skuPart = s.product?.sku ? ` · SKU ${s.product.sku}` : "";
+        return renderCellWithClamp(`${name}${skuPart}`, "cell-truncate", 48);
+      },
+      title: (s) => {
+        const name = s.product?.name || "";
+        const skuPart = s.product?.sku ? ` · SKU ${s.product.sku}` : "";
+        return `${name}${skuPart}`;
+      }
+    }
+  );
+  return cols;
+}
 
 function openModal(id) {
   const el = document.getElementById(id);
@@ -823,14 +1479,16 @@ function renderClientsModule() {
   const countEl = document.getElementById("clientsTableCount");
   if (countEl) countEl.textContent = `Mostrando ${rows.length} cliente${rows.length === 1 ? "" : "s"}`;
   renderDataGrid(clientsModuleList, {
+    gridId: "clients",
     columns: CLIENTS_COLUMNS,
-    rowCellsList: rows.map((r) => [
+    rowDataList: rows,
+    rowCellsFn: (r) => [
       renderCellEllipsis(r.name),
       `<span class="cell-nowrap">${escCell(r.code)}</span>`,
       String(r.products),
       formatQty(r.stock),
       `<span class="status-chip">${r.products > 0 ? "Activo" : "Sin catálogo"}</span>`
-    ]),
+    ],
     colsClass: "data-grid-cols-clients",
     sizeClass: "data-grid-size-catalog",
     emptyMessage: "No hay clientes detectados. Carga catálogo o inventario para ver clientes."
@@ -856,11 +1514,14 @@ function renderControlCenterTable(rows) {
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("ccTableCount", shown, total, "saldos");
   renderDataGrid(ccInventoryList, {
+    gridId: "stock_cc",
     columns: STOCK_COLUMNS_CC,
-    rowCellsList: Array.isArray(rows) ? rows.map((row) => stockRowCells(row, { includeWarehouse: false })) : [],
+    rowDataList: Array.isArray(rows) ? rows : [],
+    rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: false }),
     colsClass: "data-grid-cols-stock-cc",
     sizeClass: "data-grid-size-compact",
-    emptyMessage: "Sin existencias con los filtros actuales. Carga inventario desde el módulo Inventario."
+    emptyMessage: "Sin existencias con los filtros actuales. Carga inventario desde el módulo Inventario.",
+    detailType: "inventory"
   });
 }
 
@@ -922,11 +1583,14 @@ function renderStockTable(rows) {
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("inventoryTableCount", shown, total, "saldos");
   renderDataGrid(inventoryList, {
+    gridId: "inventory",
     columns: STOCK_COLUMNS_FULL,
-    rowCellsList: Array.isArray(rows) ? rows.map((row) => stockRowCells(row, { includeWarehouse: true })) : [],
+    rowDataList: Array.isArray(rows) ? rows : [],
+    rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true }),
     colsClass: "data-grid-cols-stock",
     sizeClass: "data-grid-size-inventory",
-    emptyMessage: "Sin registros con los filtros actuales. Ajusta filtros o carga inventario."
+    emptyMessage: "Sin registros con los filtros actuales. Ajusta filtros o carga inventario.",
+    detailType: "inventory"
   });
 }
 
@@ -956,11 +1620,14 @@ function renderProductsTable(rows) {
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("catalogTableCount", shown, total, "productos");
   renderDataGrid(productsList, {
+    gridId: "catalog",
     columns: CATALOG_COLUMNS,
-    rowCellsList: Array.isArray(rows) ? rows.map(catalogRowCells) : [],
+    rowDataList: Array.isArray(rows) ? rows : [],
+    rowCellsFn: catalogRowCells,
     colsClass: "data-grid-cols-catalog",
     sizeClass: "data-grid-size-catalog",
-    emptyMessage: "Sin productos con los filtros actuales."
+    emptyMessage: "Sin productos con los filtros actuales.",
+    detailType: "catalog"
   });
 }
 
@@ -2009,30 +2676,28 @@ async function loadScanEvents() {
   if (!response || !response.ok) return;
   const scans = await response.json();
   const rows = Array.isArray(scans) ? scans : [];
-  if (rows.length === 0) {
-    scanEventsList.innerHTML = '<p class="subtitle" style="margin:0">Sin escaneos registrados aún.</p>';
-    return;
-  }
   const showOperator =
     currentRole === "ADMIN" || currentRole === "SUPERVISOR" || currentRole === "OPERATOR";
-  const thead = showOperator
-    ? "<tr><th>Fecha / hora</th><th>Operador</th><th>Código</th><th>Resultado</th><th>Detalle</th></tr>"
-    : "<tr><th>Fecha / hora</th><th>Código</th><th>Resultado</th><th>Detalle</th></tr>";
-  const body = rows
-    .map((scan) => {
-      const name = scan.product?.name || "—";
-      const skuPart = scan.product?.sku ? ` · SKU ${scan.product.sku}` : "";
-      const detail = `${name}${skuPart}`;
-      const operatorCell = showOperator
-        ? `<td>${renderCellWithClamp(renderScanOperator(scan), "cell-truncate", 22)}</td>`
-        : "";
-      const cols = showOperator
-        ? `<td class="cell-nowrap">${formatDateShort(scan.createdAt)}</td>${operatorCell}<td class="cell-nowrap col-code"><strong>${escCell(scan.scannedCode)}</strong></td><td class="cell-nowrap">${statusBadge(scan.result)}</td><td class="col-detail">${renderCellWithClamp(detail, "cell-truncate", 48)}</td>`
-        : `<td class="cell-nowrap">${formatDateShort(scan.createdAt)}</td><td class="cell-nowrap col-code"><strong>${escCell(scan.scannedCode)}</strong></td><td class="cell-nowrap">${statusBadge(scan.result)}</td><td class="col-detail">${renderCellWithClamp(detail, "cell-truncate", 48)}</td>`;
-      return `<tr>${cols}</tr>`;
-    })
-    .join("");
-  scanEventsList.innerHTML = `<div class="table-wrap"><table class="scan-table picking-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+  const gridId = showOperator ? "picking_op" : "picking";
+  const columns = getPickingColumns(showOperator);
+  if (!scanEventsList) return;
+  if (rows.length === 0) {
+    renderExcelTable(scanEventsList, {
+      gridId,
+      columns,
+      rows: [],
+      emptyMessage: "Sin escaneos registrados aún.",
+      selectable: false
+    });
+    return;
+  }
+  renderExcelTable(scanEventsList, {
+    gridId,
+    columns,
+    rows,
+    emptyMessage: "Sin escaneos registrados aún.",
+    selectable: true
+  });
 }
 
 async function loadProductsRows() {
@@ -2080,19 +2745,21 @@ async function loadTraceability() {
     const rows = await response.json();
     if (traceMessage) traceMessage.textContent = `${Array.isArray(rows) ? rows.length : 0} registros.`;
     if (!Array.isArray(rows) || rows.length === 0) {
-      traceList.innerHTML = '<p class="subtitle" style="margin:0">Sin actividad con los filtros actuales.</p>';
+      traceList.innerHTML = "";
+      renderExcelTable(traceList, {
+        gridId: "traceability",
+        columns: TRACE_COLUMNS,
+        rows: [],
+        emptyMessage: "Sin registros operativos aún"
+      });
       return;
     }
-    const thead =
-      "<tr><th>Fecha</th><th>Usuario</th><th>Tipo</th><th>Subtipo</th><th>Producto</th><th>Ubicación</th><th>Cant.</th><th>Resultado</th><th>Referencia</th></tr>";
-    const body = rows
-      .map((r) => {
-        const who = r.user ? `${r.user.fullName}` : "—";
-        const skuCell = r.product?.sku ? `${r.product.sku}` : "—";
-        return `<tr><td class="cell-nowrap">${formatDateShort(r.createdAt)}</td><td>${renderCellWithClamp(who, "cell-truncate", 20)}</td><td>${statusBadge(r.type)}</td><td>${renderCellWithClamp(r.subtype, "cell-truncate", 18)}</td><td class="cell-nowrap">${escCell(skuCell)}</td><td>${renderCellWithClamp(r.location || r.warehouse, "cell-truncate", 28)}</td><td class="cell-nowrap">${formatQty(r.qty)}</td><td>${statusBadge(r.result)}</td><td>${renderCellWithClamp(r.reference, "cell-truncate", 24)}</td></tr>`;
-      })
-      .join("");
-    traceList.innerHTML = `<div class="table-wrap"><table class="scan-table trace-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+    renderExcelTable(traceList, {
+      gridId: "traceability",
+      columns: TRACE_COLUMNS,
+      rows,
+      emptyMessage: "Sin registros operativos aún"
+    });
   } catch (_e) {
     if (traceMessage) traceMessage.textContent = "Error de red.";
   }
@@ -2112,25 +2779,32 @@ async function loadTasks() {
     const rows = await response.json();
     if (taskMessage) taskMessage.textContent = `${Array.isArray(rows) ? rows.length : 0} tareas.`;
     if (!Array.isArray(rows) || rows.length === 0) {
-      taskList.innerHTML = '<p class="subtitle" style="margin:0">No hay tareas registradas.</p>';
+      taskList.innerHTML = "";
+      renderExcelTable(taskList, { gridId: "tasks", columns: TASK_COLUMNS, rows: [], emptyMessage: "Sin registros operativos aún", selectable: false, allowActions: true });
       return;
     }
-    const thead =
-      "<tr><th>Creado</th><th>Tipo</th><th>Estado</th><th>Almacén</th><th>Asignado a</th><th>Ref.</th><th>Prioridad</th><th>Acción</th></tr>";
-    const body = rows
-      .map((t) => {
-        const assign = t.assignedTo ? escCell(t.assignedTo.fullName) : "—";
-        const canUpdate =
-          currentRole === "ADMIN" ||
-          currentRole === "SUPERVISOR" ||
-          (currentRole === "OPERATOR" && t.assignedToId === currentUserId);
-        const action = canUpdate
-          ? `<button type="button" class="task-advance btn-table" data-task-id="${escCell(t.id)}">Avanzar</button>`
-          : "—";
-        return `<tr><td class="cell-nowrap">${formatDateShort(t.createdAt)}</td><td>${statusBadge(t.type)}</td><td>${statusBadge(t.status)}</td><td>${renderCellWithClamp(t.warehouse, "cell-truncate", 18)}</td><td>${renderCellWithClamp(assign, "cell-truncate", 24)}</td><td>${renderCellWithClamp(t.reference, "cell-truncate", 24)}</td><td class="cell-nowrap">${t.priority ?? 0}</td><td class="cell-nowrap">${action}</td></tr>`;
-      })
-      .join("");
-    taskList.innerHTML = `<div class="table-wrap"><table class="scan-table task-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+    const taskRows = rows.map((t) => {
+      const assign = t.assignedTo ? t.assignedTo.fullName : "—";
+      const canUpdate =
+        currentRole === "ADMIN" ||
+        currentRole === "SUPERVISOR" ||
+        (currentRole === "OPERATOR" && t.assignedToId === currentUserId);
+      return {
+        ...t,
+        _assignName: assign,
+        _actionHtml: canUpdate
+          ? `<button type="button" class="task-advance btn-table btn-compact" data-task-id="${escCell(t.id)}">Avanzar</button>`
+          : "—"
+      };
+    });
+    renderExcelTable(taskList, {
+      gridId: "tasks",
+      columns: TASK_COLUMNS,
+      rows: taskRows,
+      emptyMessage: "Sin registros operativos aún",
+      selectable: false,
+      allowActions: true
+    });
   } catch (_e) {
     if (taskMessage) taskMessage.textContent = "Error de red.";
   }
@@ -2205,23 +2879,25 @@ async function loadIncidents() {
     const rows = await response.json();
     if (incidentMessage) incidentMessage.textContent = `${Array.isArray(rows) ? rows.length : 0} incidencias.`;
     if (!Array.isArray(rows) || rows.length === 0) {
-      incidentList.innerHTML = '<p class="subtitle" style="margin:0">Sin incidencias.</p>';
+      incidentList.innerHTML = "";
+      renderExcelTable(incidentList, { gridId: "incidents", columns: INCIDENT_COLUMNS, rows: [], emptyMessage: "Sin registros operativos aún", selectable: false, allowActions: true });
       return;
     }
     const canResolve = currentRole === "ADMIN" || currentRole === "SUPERVISOR";
-    const thead =
-      "<tr><th>Fecha</th><th>Tipo</th><th>Estado</th><th>Reportó</th><th>Producto</th><th>Notas</th><th>Acción</th></tr>";
-    const body = rows
-      .map((i) => {
-        const rep = i.reportedBy ? escCell(i.reportedBy.fullName) : "—";
-        const sku = i.product?.sku ? escCell(i.product.sku) : "—";
-        const action = canResolve
-          ? `<button type="button" class="incident-resolve btn-table btn-danger" data-incident-id="${escCell(i.id)}">Cerrar</button>`
-          : "—";
-        return `<tr><td class="cell-nowrap">${formatDateShort(i.createdAt)}</td><td>${statusBadge(i.type)}</td><td>${statusBadge(i.status)}</td><td>${renderCellWithClamp(rep, "cell-truncate", 22)}</td><td class="cell-nowrap">${sku}</td><td>${renderCellWithClamp(i.notes, "cell-notes", 120)}</td><td class="cell-nowrap">${action}</td></tr>`;
-      })
-      .join("");
-    incidentList.innerHTML = `<div class="table-wrap"><table class="scan-table incident-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+    const incidentRows = rows.map((i) => ({
+      ...i,
+      _actionHtml: canResolve
+        ? `<button type="button" class="incident-resolve btn-table btn-danger btn-compact" data-incident-id="${escCell(i.id)}">Cerrar</button>`
+        : "—"
+    }));
+    renderExcelTable(incidentList, {
+      gridId: "incidents",
+      columns: INCIDENT_COLUMNS,
+      rows: incidentRows,
+      emptyMessage: "Sin registros operativos aún",
+      selectable: false,
+      allowActions: true
+    });
   } catch (_e) {
     if (incidentMessage) incidentMessage.textContent = "Error de red.";
   }
@@ -2294,8 +2970,10 @@ async function loadStockStrip() {
     updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
     if (inventoryList) {
       renderDataGrid(inventoryList, {
+        gridId: "inventory",
         columns: STOCK_COLUMNS_FULL,
-        rowCellsList: [],
+        rowDataList: [],
+        rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true }),
         colsClass: "data-grid-cols-stock",
         sizeClass: "data-grid-size-inventory",
         emptyMessage: "Las existencias solo aplican a roles operativos."
@@ -2311,8 +2989,10 @@ async function loadStockStrip() {
     updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
     if (inventoryList) {
       renderDataGrid(inventoryList, {
+        gridId: "inventory",
         columns: STOCK_COLUMNS_FULL,
-        rowCellsList: [],
+        rowDataList: [],
+        rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true }),
         colsClass: "data-grid-cols-stock",
         sizeClass: "data-grid-size-inventory",
         emptyMessage: "No se pudo cargar existencias."
@@ -2328,8 +3008,10 @@ async function loadStockStrip() {
     updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
     if (inventoryList) {
       renderDataGrid(inventoryList, {
+        gridId: "inventory",
         columns: STOCK_COLUMNS_FULL,
-        rowCellsList: [],
+        rowDataList: [],
+        rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true }),
         colsClass: "data-grid-cols-stock",
         sizeClass: "data-grid-size-inventory",
         emptyMessage: "Sin registros de existencias. Use Importar inventario para cargar saldos."
@@ -2362,23 +3044,26 @@ async function loadInventoryMovements() {
   movementsRowsCache = Array.isArray(rows) ? rows : [];
   updateInventorySummary(stockRowsCache);
   if (!Array.isArray(rows) || rows.length === 0) {
-    inventoryMovementsList.innerHTML =
-      '<p class="subtitle" style="margin:0">Aún no hay movimientos registrados.</p>';
+    renderExcelTable(inventoryMovementsList, {
+      gridId: "movements",
+      columns: MOVEMENT_COLUMNS,
+      rows: [],
+      emptyMessage: "Sin registros operativos aún"
+    });
     return;
   }
-  const thead =
-    "<tr><th>Fecha</th><th>Tipo</th><th>SKU</th><th>Producto</th><th>Antes</th><th>Después</th><th>Ubicación</th><th>Usuario</th><th>Referencia</th></tr>";
-  const body = rows
-    .map((m) => {
-      const sku = m.product?.sku || "—";
-      const productName = m.product?.name || "—";
-      const u = m.user?.fullName || "—";
-      const ref = m.reference || "—";
-      const loc = m.location?.code || m.warehouse || "—";
-      return `<tr><td class="cell-nowrap">${formatDateShort(m.createdAt)}</td><td>${statusBadge(m.movementType)}</td><td class="cell-nowrap">${escCell(sku)}</td><td>${renderCellWithClamp(productName, "cell-truncate", 28)}</td><td class="cell-nowrap">${formatQty(m.quantityBefore)}</td><td class="cell-nowrap">${formatQty(m.quantityAfter)}</td><td>${renderCellWithClamp(loc, "cell-truncate", 20)}</td><td>${renderCellWithClamp(u, "cell-truncate", 20)}</td><td>${renderCellWithClamp(ref, "cell-truncate", 20)}</td></tr>`;
-    })
-    .join("");
-  inventoryMovementsList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>${rows.length >= 200 ? '<p class="filter-hint" style="margin:8px 0 0">Mostrando los últimos 200 movimientos. Usa Exportar movimientos CSV para ver más.</p>' : ""}`;
+  renderExcelTable(inventoryMovementsList, {
+    gridId: "movements",
+    columns: MOVEMENT_COLUMNS,
+    rows,
+    emptyMessage: "Sin registros operativos aún"
+  });
+  if (rows.length >= 200) {
+    inventoryMovementsList.insertAdjacentHTML(
+      "beforeend",
+      '<p class="filter-hint" style="margin:8px 0 0">Mostrando los últimos 200 movimientos. Usa Exportar movimientos CSV para ver más.</p>'
+    );
+  }
   if (moduleInbound && !moduleInbound.classList.contains("hidden")) void loadInboundList();
   if (moduleOutbound && !moduleOutbound.classList.contains("hidden")) void loadOutboundList();
 }
@@ -2528,26 +3213,19 @@ async function submitOperationalMovement(kind) {
   }
 }
 
-function renderMovementOpsTable(containerId, rows, emptyMsg) {
+function renderMovementOpsTable(containerId, rows, gridId, emptyMsg) {
   const container = document.getElementById(containerId);
   if (!container) return;
-  if (!rows.length) {
-    container.innerHTML = `<div class="data-grid-empty" style="padding:16px">${escCell(emptyMsg)}</div>`;
-    return;
-  }
-  const thead =
-    "<tr><th>Fecha</th><th>Cliente</th><th>Customer</th><th>Referencia</th><th>SKU</th><th>Producto</th><th>Cantidad</th><th>Estado</th></tr>";
-  const body = rows
-    .slice(0, 50)
-    .map((m) => {
-      const cliente = m.product?.customer?.name || "—";
-      const customer = m.product?.customer?.code || "—";
-      const sku = m.product?.sku || "—";
-      const prod = m.product?.name || "—";
-      return `<tr><td class="cell-nowrap">${formatDateShort(m.createdAt)}</td><td>${renderCellWithClamp(cliente, "cell-truncate", 22)}</td><td class="cell-nowrap">${escCell(customer)}</td><td>${renderCellWithClamp(m.reference, "cell-truncate", 18)}</td><td class="cell-nowrap">${escCell(sku)}</td><td>${renderCellWithClamp(prod, "cell-truncate", 24)}</td><td class="cell-nowrap">${formatQty(m.qty)}</td><td>${statusBadge("COMPLETED")}</td></tr>`;
-    })
-    .join("");
-  container.innerHTML = `<div class="table-wrap"><table class="scan-table compact-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+  const cols = [
+    ...OPS_MOVEMENT_COLUMNS,
+    { label: "Estado", sortKey: () => "OK", render: () => statusBadge("COMPLETED") }
+  ];
+  renderExcelTable(container, {
+    gridId,
+    columns: cols,
+    rows: rows.slice(0, 100),
+    emptyMessage: emptyMsg || "Sin registros operativos aún"
+  });
 }
 
 async function loadInboundList() {
@@ -2564,7 +3242,7 @@ async function loadInboundList() {
   );
   const meta = document.getElementById("inboundTableMeta");
   if (meta) meta.textContent = `${inbound.length} entrada(s) registrada(s)`;
-  renderMovementOpsTable("inboundList", inbound, "Sin entradas registradas.");
+  renderMovementOpsTable("inboundList", inbound, "inbound", "Sin registros operativos aún");
 }
 
 async function loadOutboundList() {
@@ -2581,7 +3259,7 @@ async function loadOutboundList() {
   );
   const meta = document.getElementById("outboundTableMeta");
   if (meta) meta.textContent = `${outbound.length} salida(s) registrada(s)`;
-  renderMovementOpsTable("outboundList", outbound, "Sin salidas registradas.");
+  renderMovementOpsTable("outboundList", outbound, "outbound", "Sin registros operativos aún");
 }
 
 function parseRequisitionNotes(notes) {
@@ -2622,23 +3300,20 @@ async function loadRequisitionsList() {
     const meta = document.getElementById("reqTableMeta");
     if (meta) meta.textContent = `${rows.length} requisición(es)`;
     if (!rows.length) {
-      container.innerHTML = '<div class="data-grid-empty" style="padding:16px">Sin requisiciones registradas.</div>';
+      renderExcelTable(container, {
+        gridId: "requisitions",
+        columns: REQ_COLUMNS,
+        rows: [],
+        emptyMessage: "Sin registros operativos aún"
+      });
       return;
     }
-    const thead =
-      "<tr><th>Folio</th><th>Cliente</th><th>Prioridad</th><th>Productos</th><th>Estado</th><th>Picking</th></tr>";
-    const body = rows
-      .map((t) => {
-        const picking =
-          t.status === "COMPLETED"
-            ? statusBadge("COMPLETED")
-            : t.status === "IN_PROGRESS"
-              ? statusBadge("IN_PROGRESS")
-              : statusBadge("PENDING");
-        return `<tr><td class="cell-nowrap">${renderCellWithClamp(t.reference, "cell-truncate", 18)}</td><td>${renderCellWithClamp(formatReqCliente(t), "cell-truncate", 22)}</td><td class="cell-nowrap">${t.priority ?? 0}</td><td>${renderCellWithClamp(formatReqProducts(t), "cell-truncate", 28)}</td><td>${statusBadge(t.status)}</td><td>${picking}</td></tr>`;
-      })
-      .join("");
-    container.innerHTML = `<div class="table-wrap"><table class="scan-table compact-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+    renderExcelTable(container, {
+      gridId: "requisitions",
+      columns: REQ_COLUMNS,
+      rows,
+      emptyMessage: "Sin registros operativos aún"
+    });
   } catch (_e) {
     container.innerHTML = '<div class="data-grid-empty" style="padding:16px">Error de red.</div>';
   }
@@ -3584,6 +4259,8 @@ wireOperationalForms();
 wireControlCenterFilters();
 wireQuickActions();
 wireModals();
+initGridDensity();
+wireGridToolbars();
 updateAppDateTime();
 setInterval(updateAppDateTime, 60000);
 if (importResult) wireOperationalMessageClicks(importResult);
