@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Logitec Control Panel</title>
+    <title>LOGITEC CORE WMS</title>
     <style>
       :root {
         --bg: #0b1222;
@@ -634,6 +634,171 @@
         color: #9fd0ff;
         font-weight: 600;
       }
+      .summary-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px;
+        margin: 12px 0 16px;
+      }
+      .summary-card {
+        padding: 14px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, #132043 0%, #0f1830 100%);
+        text-align: center;
+      }
+      .summary-card .value {
+        display: block;
+        font-size: 1.45rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        color: var(--text);
+        line-height: 1.2;
+      }
+      .summary-card .label {
+        display: block;
+        margin-top: 6px;
+        font-size: 0.8rem;
+        color: var(--muted);
+        line-height: 1.3;
+      }
+      .summary-card.warn .value {
+        color: #ffd79c;
+      }
+      .advanced-load {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 0 16px 4px;
+        margin: 16px 0;
+        background: #0c1528;
+      }
+      .advanced-load > summary {
+        cursor: pointer;
+        list-style: none;
+        font-weight: 700;
+        font-size: 0.95rem;
+        padding: 14px 0;
+        color: #bfd0ff;
+      }
+      .advanced-load > summary::-webkit-details-marker {
+        display: none;
+      }
+      .advanced-load > summary::before {
+        content: "▸ ";
+        color: var(--accent);
+      }
+      .advanced-load[open] > summary::before {
+        content: "▾ ";
+      }
+      .advanced-load .import-card {
+        border: 0;
+        padding: 0 0 14px;
+        margin: 0;
+        background: transparent;
+      }
+      .op-message {
+        margin: 8px 0 0;
+        padding: 12px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #0c1730;
+      }
+      .op-message.error {
+        border-color: rgba(255, 155, 167, 0.45);
+        background: rgba(255, 155, 167, 0.08);
+      }
+      .op-message-short {
+        margin: 0 0 10px;
+        font-weight: 600;
+        font-size: 0.92rem;
+        line-height: 1.4;
+        color: var(--text);
+      }
+      .op-message.error .op-message-short {
+        color: var(--error);
+      }
+      .op-message-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+      .op-message-actions button {
+        padding: 6px 12px;
+        font-size: 0.82rem;
+        border-radius: 8px;
+        border: 1px solid #4f74bd;
+        background: rgba(77, 141, 255, 0.12);
+        color: #bfd0ff;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .op-message-details {
+        display: none;
+        margin-top: 10px;
+        max-height: 220px;
+        overflow: auto;
+        padding: 10px;
+        border-radius: 8px;
+        background: #0a1224;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        font-size: 0.8rem;
+        color: var(--muted);
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.45;
+      }
+      .op-message-details.open {
+        display: block;
+      }
+      .placeholder-ops {
+        padding: 8px 0;
+      }
+      .placeholder-ops h3 {
+        margin: 0 0 8px;
+      }
+      .ops-flow {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin: 18px 0;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: linear-gradient(180deg, #0f1a33 0%, #0c1528 100%);
+      }
+      .ops-flow-step {
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(19, 32, 67, 0.55);
+        font-weight: 600;
+        font-size: 0.9rem;
+      }
+      .ops-flow-arrow {
+        color: var(--muted);
+        font-size: 1.1rem;
+      }
+      .section-title-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        margin: 18px 0 8px;
+      }
+      .section-title-row h4 {
+        margin: 0;
+      }
+      .filter-hint {
+        margin: 0 0 8px;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      .inventory-strip.hidden-strip {
+        display: none;
+      }
       @media (max-width: 880px) {
         body {
           padding: 14px;
@@ -681,8 +846,8 @@
           <span id="sessionRoleInline"></span>
         </p>
       </div>
-      <h1 style="margin-bottom: 6px">Logitec Control Panel</h1>
-      <p class="subtitle">Panel operativo de almacén</p>
+      <h1 style="margin-bottom: 6px">LOGITEC CORE WMS</h1>
+      <p class="subtitle">Panel operativo de almacén — demo cliente</p>
       <p class="hint demo-hide">Área protegida con JWT.</p>
       <div id="statusBox" class="status demo-hide">Validando sesion...</div>
       <ul id="usersSummary" class="demo-hide"></ul>
@@ -694,20 +859,22 @@
       </div>
       <section class="demo-flow-panel" id="demoFlowPanel">
         <p class="demo-flow-title">Flujo operativo LOGITEC</p>
-        <p class="demo-flow-sub">Catálogo → Inventario → Picking → Trazabilidad → Reportes para Excel</p>
+        <p class="demo-flow-sub">Requisición → Picking → Salida → Trazabilidad</p>
         <ol class="demo-flow-steps">
-          <li>Cargar catálogo desde Excel/CSV</li>
-          <li>Cargar inventario inicial</li>
-          <li>Operar picking con handheld</li>
-          <li>Revisar trazabilidad para auditoría</li>
-          <li>Exportar reportes compatibles con Excel</li>
+          <li>Crear requisición de material (próximamente)</li>
+          <li>Ejecutar picking con handheld o lector</li>
+          <li>Confirmar salida de mercancía (próximamente)</li>
+          <li>Auditar movimientos en Trazabilidad y exportar reportes</li>
         </ol>
       </section>
       <div class="dashboard-stack">
       <div class="layout">
         <aside class="sidebar">
-          <button class="module-btn" data-module="catalog" id="btnCatalog">Catálogo</button>
           <button class="module-btn" data-module="inventory" id="btnInventory">Inventario</button>
+          <button class="module-btn" data-module="catalog" id="btnCatalog">Catálogo</button>
+          <button class="module-btn" data-module="requisitions" id="btnRequisitions">Requisiciones</button>
+          <button class="module-btn" data-module="inbound" id="btnInbound">Entradas</button>
+          <button class="module-btn" data-module="outbound" id="btnOutbound">Salidas</button>
           <button class="module-btn" data-module="picking" id="btnPicking">Picking</button>
           <button class="module-btn" data-module="traceability" id="btnTraceability">Trazabilidad</button>
           <button class="module-btn" data-module="tasks" id="btnTasks">Mis tareas</button>
@@ -948,14 +1115,71 @@
             </section>
           </div>
           <div id="moduleInventory" class="hidden">
-            <h3>Inventario y movimientos</h3>
+            <h3>Inventario</h3>
             <p class="subtitle" style="margin-bottom: 10px">
-              Control de existencias por SKU y almacén. Carga inicial y movimientos operativos.
+              Vista operativa de existencias por cliente, SKU y ubicación.
             </p>
+            <section aria-label="Resumen de inventario">
+              <h4 style="margin: 0 0 4px">Resumen de inventario</h4>
+              <div class="summary-cards" id="inventorySummaryCards">
+                <div class="summary-card">
+                  <span class="value" id="sumProducts">—</span>
+                  <span class="label">Productos cargados</span>
+                </div>
+                <div class="summary-card">
+                  <span class="value" id="sumCustomers">—</span>
+                  <span class="label">Clientes detectados</span>
+                </div>
+                <div class="summary-card">
+                  <span class="value" id="sumLocations">—</span>
+                  <span class="label">Ubicaciones</span>
+                </div>
+                <div class="summary-card">
+                  <span class="value" id="sumMovements">—</span>
+                  <span class="label">Movimientos</span>
+                </div>
+                <div class="summary-card warn">
+                  <span class="value" id="sumConflicts">—</span>
+                  <span class="label">Conflictos pendientes</span>
+                </div>
+              </div>
+            </section>
             <div class="export-strip">
               <button type="button" id="exportStockBtn" class="btn-export">Exportar existencias CSV</button>
               <button type="button" id="exportMovementsBtn" class="btn-export">Exportar movimientos CSV</button>
             </div>
+            <div class="section-title-row">
+              <h4>Existencias</h4>
+              <button type="button" id="inventoryClearFiltersBtn" class="btn-export" style="background: linear-gradient(90deg, #3a4a6e, #4a5f8a)">Limpiar filtros</button>
+            </div>
+            <p class="filter-hint">Filtra la tabla sin recargar. Los filtros se aplican en esta pantalla.</p>
+            <div class="filter-strip" id="inventoryFilterStrip">
+              <div class="field compact">
+                <label for="invFilterCliente">Cliente</label>
+                <input id="invFilterCliente" type="text" placeholder="Nombre" autocomplete="off" />
+              </div>
+              <div class="field compact">
+                <label for="invFilterCustomer">Customer</label>
+                <input id="invFilterCustomer" type="text" placeholder="Código" autocomplete="off" />
+              </div>
+              <div class="field compact">
+                <label for="invFilterSku">SKU</label>
+                <input id="invFilterSku" type="text" placeholder="SKU" autocomplete="off" />
+              </div>
+              <div class="field compact">
+                <label for="invFilterProducto">Producto</label>
+                <input id="invFilterProducto" type="text" placeholder="Nombre" autocomplete="off" />
+              </div>
+              <div class="field compact">
+                <label for="invFilterUbicacion">Ubicación</label>
+                <input id="invFilterUbicacion" type="text" placeholder="Código" autocomplete="off" />
+              </div>
+              <div class="field compact">
+                <label for="invFilterStatus">Status</label>
+                <input id="invFilterStatus" type="text" placeholder="AVAILABLE…" autocomplete="off" />
+              </div>
+            </div>
+            <div id="inventoryList">Cargando...</div>
             <form id="movementForm" class="hidden">
               <h4 style="margin: 16px 0 8px">Registrar movimiento</h4>
               <div class="form-grid">
@@ -991,85 +1215,80 @@
               <p id="movementError" class="inline-error"></p>
               <button id="movementBtn" type="submit">Registrar movimiento</button>
             </form>
-            <div id="importSection" class="import-card hidden">
-              <h4>Importar inventario inicial desde Excel/CSV</h4>
-              <p class="import-help">
-                Puedes cargar archivo <strong>.xlsx</strong> o <strong>.csv</strong>. Para evitar errores, usa las columnas de la plantilla:
-                <strong>sku</strong>, <strong>warehouse</strong>, <strong>location</strong>, <strong>quantity</strong>, <strong>reference</strong>.
-                También puedes cargar el Excel real de Logitec. El sistema detecta <strong>Material Number</strong>, <strong>Material Description</strong>, <strong>PO QT</strong> y <strong>Ubicacion</strong>.
-                También puedes pegar CSV manualmente. <strong>Importante:</strong> el SKU debe existir primero en Catálogo.
-              </p>
-              <a class="btn-template" href="/plantilla_inventario.csv" download="plantilla_inventario.csv">Descargar plantilla inventario</a>
-              <div class="field full" style="margin-top: 12px">
-                <label for="inventoryImportFile">Seleccionar archivo Excel/CSV de inventario</label>
-                <input
-                  id="inventoryImportFile"
-                  class="file-input"
-                  type="file"
-                  accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                />
-              </div>
-              <p id="inventoryImportFileStatus" class="file-status"></p>
-              <div class="field full" style="margin-top: 12px">
-                <label for="importCsv">Revisar o pegar datos CSV</label>
-                <textarea id="importCsv" rows="6" placeholder="sku,warehouse,location,quantity&#10;SKU-0001,TULTITLAN24,TULTITLAN24-GEN-STAGE-01,10"></textarea>
-              </div>
-              <div id="reconcileInventoryWrap" class="field full" style="margin-top: 12px">
-                <label class="checkbox-label" for="reconcileFullInventory">
-                  <input id="reconcileFullInventory" type="checkbox" />
-                  Reconciliar como inventario físico completo
-                </label>
-                <p class="import-help" style="margin-top: 6px">
-                  Usa esta opción solo si el archivo representa el inventario real actual. Las ubicaciones/saldos anteriores que ya no aparezcan en el archivo se ajustarán a cero.
-                </p>
-              </div>
-              <p id="importResult" class="subtitle" style="min-height: 1.2em"></p>
-              <div class="import-actions">
-                <button type="button" id="importBtn">Cargar inventario</button>
-              </div>
-            </div>
             <h4 style="margin: 18px 0 8px">Últimos movimientos</h4>
             <div id="inventoryMovementsList">Cargando...</div>
+            <details class="advanced-load" id="inventoryAdvancedLoad">
+              <summary>Carga avanzada desde Excel/CSV</summary>
+              <div id="importSection" class="import-card hidden">
+                <p class="import-help">
+                  Puedes cargar archivo <strong>.xlsx</strong> o <strong>.csv</strong>. Para evitar errores, usa las columnas de la plantilla:
+                  <strong>sku</strong>, <strong>warehouse</strong>, <strong>location</strong>, <strong>quantity</strong>, <strong>reference</strong>.
+                  También puedes cargar el Excel real de Logitec. El sistema detecta <strong>Material Number</strong>, <strong>Material Description</strong>, <strong>PO QT</strong> y <strong>Ubicacion</strong>.
+                  También puedes pegar CSV manualmente. <strong>Importante:</strong> el SKU debe existir primero en Catálogo.
+                </p>
+                <a class="btn-template" href="/plantilla_inventario.csv" download="plantilla_inventario.csv">Descargar plantilla inventario</a>
+                <div class="field full" style="margin-top: 12px">
+                  <label for="inventoryImportFile">Seleccionar archivo Excel/CSV de inventario</label>
+                  <input
+                    id="inventoryImportFile"
+                    class="file-input"
+                    type="file"
+                    accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  />
+                </div>
+                <div id="inventoryImportFileStatus" class="file-status"></div>
+                <div class="field full" style="margin-top: 12px">
+                  <label for="importCsv">Revisar o pegar datos CSV</label>
+                  <textarea id="importCsv" rows="6" placeholder="sku,warehouse,location,quantity&#10;SKU-0001,TULTITLAN24,TULTITLAN24-GEN-STAGE-01,10"></textarea>
+                </div>
+                <div id="reconcileInventoryWrap" class="field full" style="margin-top: 12px">
+                  <label class="checkbox-label" for="reconcileFullInventory">
+                    <input id="reconcileFullInventory" type="checkbox" />
+                    Reconciliar como inventario físico completo
+                  </label>
+                  <p class="import-help" style="margin-top: 6px">
+                    Usa esta opción solo si el archivo representa el inventario real actual. Las ubicaciones/saldos anteriores que ya no aparezcan en el archivo se ajustarán a cero.
+                  </p>
+                </div>
+                <div id="importResult" class="subtitle" style="min-height: 1.2em"></div>
+                <div class="import-actions">
+                  <button type="button" id="importBtn">Cargar inventario</button>
+                </div>
+              </div>
+            </details>
           </div>
           <div id="moduleCatalog" class="hidden">
             <h3>Catálogo de productos</h3>
             <p class="subtitle" style="margin-bottom: 10px">
               Maestro de SKUs por cliente. Base para inventario, picking y reportes.
             </p>
-            <div id="catalogImportSection" class="import-card hidden">
-              <h4>Importar catálogo desde Excel/CSV</h4>
-              <p class="import-help">
-                Puedes cargar archivo <strong>.xlsx</strong> o <strong>.csv</strong>. Para evitar errores, usa las columnas de la plantilla:
-                <strong>customer</strong>, <strong>sku</strong>, <strong>name</strong>, <strong>barcode</strong>, <strong>warehouse</strong>.
-                También puedes cargar el Excel real de Logitec. El sistema detecta <strong>Material Number</strong>, <strong>Material Description</strong>, <strong>PO QT</strong> y <strong>Ubicacion</strong>.
-                También puedes pegar CSV manualmente.
-              </p>
-              <a class="btn-template" href="/plantilla_catalogo.csv" download="plantilla_catalogo.csv">Descargar plantilla catálogo</a>
-              <div class="field full" style="margin-top: 12px">
-                <label for="catalogImportFile">Seleccionar archivo Excel/CSV de catálogo</label>
-                <input
-                  id="catalogImportFile"
-                  class="file-input"
-                  type="file"
-                  accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                />
-              </div>
-              <p id="catalogImportFileStatus" class="file-status"></p>
-              <div class="field full" style="margin-top: 12px">
-                <label for="catalogImportCsv">Revisar o pegar datos CSV</label>
-                <textarea id="catalogImportCsv" rows="6" placeholder="customer,sku,name,barcode&#10;LOGITEC,SKU-0001,Producto Demo 1,750000000001"></textarea>
-              </div>
-              <p id="catalogImportResult" class="subtitle" style="min-height: 1.2em"></p>
-              <div class="import-actions">
-                <button type="button" id="catalogPreviewBtn">Vista previa</button>
-                <button type="button" id="catalogApplyBtn">Aplicar carga</button>
-              </div>
-            </div>
             <div class="export-strip">
               <button type="button" id="exportProductsBtn" class="btn-export">Exportar productos CSV</button>
             </div>
+            <div class="section-title-row">
+              <h4>Productos</h4>
+              <button type="button" id="catalogClearFiltersBtn" class="btn-export" style="background: linear-gradient(90deg, #3a4a6e, #4a5f8a)">Limpiar filtros</button>
+            </div>
+            <p class="filter-hint">Busca por cliente, SKU o nombre de producto.</p>
+            <div class="filter-strip" id="catalogFilterStrip">
+              <div class="field compact">
+                <label for="catFilterCliente">Cliente</label>
+                <input id="catFilterCliente" type="text" placeholder="Nombre o código" autocomplete="off" />
+              </div>
+              <div class="field compact">
+                <label for="catFilterSku">SKU</label>
+                <input id="catFilterSku" type="text" placeholder="SKU" autocomplete="off" />
+              </div>
+              <div class="field compact">
+                <label for="catFilterProducto">Producto</label>
+                <input id="catFilterProducto" type="text" placeholder="Nombre" autocomplete="off" />
+              </div>
+            </div>
+            <div id="productsList"></div>
+            <h4 style="margin-bottom: 8px; margin-top: 18px">Clientes</h4>
+            <div id="clientsList"></div>
             <form id="createCustomerForm" class="hidden">
-              <h4 style="margin-bottom: 8px">Crear cliente</h4>
+              <h4 style="margin: 18px 0 8px">Crear cliente</h4>
               <div class="form-grid">
                 <div class="field">
                   <label for="customerCode">Código</label>
@@ -1084,7 +1303,7 @@
               <button id="createCustomerBtn" type="submit">Crear cliente</button>
             </form>
             <form id="createProductForm" class="hidden">
-              <h4 style="margin-bottom: 8px">Crear producto manual</h4>
+              <h4 style="margin: 18px 0 8px">Crear producto manual</h4>
               <div class="form-grid">
                 <div class="field">
                   <label for="productCustomerCode">Cliente (código)</label>
@@ -1110,10 +1329,91 @@
               <p id="createProductError" class="inline-error"></p>
               <button id="createProductBtn" type="submit">Crear producto</button>
             </form>
-            <h4 style="margin-bottom: 8px">Productos</h4>
-            <div id="productsList"></div>
-            <h4 style="margin-bottom: 8px; margin-top: 18px">Clientes</h4>
-            <div id="clientsList"></div>
+            <details class="advanced-load" id="catalogAdvancedLoad">
+              <summary>Carga avanzada desde Excel/CSV</summary>
+              <div id="catalogImportSection" class="import-card hidden">
+                <p class="import-help">
+                  Puedes cargar archivo <strong>.xlsx</strong> o <strong>.csv</strong>. Para evitar errores, usa las columnas de la plantilla:
+                  <strong>customer</strong>, <strong>sku</strong>, <strong>name</strong>, <strong>barcode</strong>, <strong>warehouse</strong>.
+                  También puedes cargar el Excel real de Logitec. El sistema detecta <strong>Material Number</strong>, <strong>Material Description</strong>, <strong>PO QT</strong> y <strong>Ubicacion</strong>.
+                  También puedes pegar CSV manualmente.
+                </p>
+                <a class="btn-template" href="/plantilla_catalogo.csv" download="plantilla_catalogo.csv">Descargar plantilla catálogo</a>
+                <div class="field full" style="margin-top: 12px">
+                  <label for="catalogImportFile">Seleccionar archivo Excel/CSV de catálogo</label>
+                  <input
+                    id="catalogImportFile"
+                    class="file-input"
+                    type="file"
+                    accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  />
+                </div>
+                <div id="catalogImportFileStatus" class="file-status"></div>
+                <div class="field full" style="margin-top: 12px">
+                  <label for="catalogImportCsv">Revisar o pegar datos CSV</label>
+                  <textarea id="catalogImportCsv" rows="6" placeholder="customer,sku,name,barcode&#10;LOGITEC,SKU-0001,Producto Demo 1,750000000001"></textarea>
+                </div>
+                <div id="catalogImportResult" class="subtitle" style="min-height: 1.2em"></div>
+                <div class="import-actions">
+                  <button type="button" id="catalogPreviewBtn">Vista previa</button>
+                  <button type="button" id="catalogApplyBtn">Aplicar carga</button>
+                </div>
+              </div>
+            </details>
+          </div>
+          <div id="moduleInbound" class="hidden">
+            <div class="placeholder-ops">
+              <h3>Entradas</h3>
+              <p class="subtitle">En preparación operativa</p>
+              <p class="picking-intro">
+                Este módulo registrará recepciones de mercancía por cliente y ubicación. Por ahora puedes cargar saldos desde Inventario y operar picking.
+              </p>
+              <div class="ops-flow" aria-label="Flujo operativo">
+                <span class="ops-flow-step">Requisición</span>
+                <span class="ops-flow-arrow">→</span>
+                <span class="ops-flow-step">Picking</span>
+                <span class="ops-flow-arrow">→</span>
+                <span class="ops-flow-step">Salida</span>
+                <span class="ops-flow-arrow">→</span>
+                <span class="ops-flow-step">Trazabilidad</span>
+              </div>
+            </div>
+          </div>
+          <div id="moduleOutbound" class="hidden">
+            <div class="placeholder-ops">
+              <h3>Salidas</h3>
+              <p class="subtitle">En preparación operativa</p>
+              <p class="picking-intro">
+                Este módulo concentrará despachos y confirmación de salida. Mientras tanto, usa Picking para descontar stock y Trazabilidad para auditar.
+              </p>
+              <div class="ops-flow" aria-label="Flujo operativo">
+                <span class="ops-flow-step">Requisición</span>
+                <span class="ops-flow-arrow">→</span>
+                <span class="ops-flow-step">Picking</span>
+                <span class="ops-flow-arrow">→</span>
+                <span class="ops-flow-step">Salida</span>
+                <span class="ops-flow-arrow">→</span>
+                <span class="ops-flow-step">Trazabilidad</span>
+              </div>
+            </div>
+          </div>
+          <div id="moduleRequisitions" class="hidden">
+            <div class="placeholder-ops">
+              <h3>Requisiciones</h3>
+              <p class="subtitle">En preparación operativa</p>
+              <p class="picking-intro">
+                Aquí se crearán solicitudes de material que alimentarán el picking. El flujo completo será:
+              </p>
+              <div class="ops-flow" aria-label="Flujo operativo">
+                <span class="ops-flow-step">Requisición</span>
+                <span class="ops-flow-arrow">→</span>
+                <span class="ops-flow-step">Picking</span>
+                <span class="ops-flow-arrow">→</span>
+                <span class="ops-flow-step">Salida</span>
+                <span class="ops-flow-arrow">→</span>
+                <span class="ops-flow-step">Trazabilidad</span>
+              </div>
+            </div>
           </div>
           <div id="modulePlaceholder" class="hidden">
             <h3>Módulo en construcción</h3>
@@ -1121,12 +1421,11 @@
           </div>
         </section>
       </div>
-      <section id="inventorySection" class="inventory-strip">
+      <section id="inventorySection" class="inventory-strip hidden-strip" aria-hidden="true">
         <h3>Existencias (resumen)</h3>
         <p class="muted">
-          Saldo por SKU y almacén. El detalle y movimientos están en el módulo Inventario.
+          La tabla operativa está en el módulo Inventario.
         </p>
-        <div id="inventoryList">Cargando...</div>
       </section>
       </div>
       <div class="actions">
@@ -1135,6 +1434,6 @@
     </main>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=21"></script>
+    <script src="/dashboard.js?v=22"></script>
   </body>
 </html>

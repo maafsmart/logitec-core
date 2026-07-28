@@ -19,6 +19,9 @@ const modulePicking = document.getElementById("modulePicking");
 const moduleInventory = document.getElementById("moduleInventory");
 const moduleCatalog = document.getElementById("moduleCatalog");
 const moduleAccount = document.getElementById("moduleAccount");
+const moduleInbound = document.getElementById("moduleInbound");
+const moduleOutbound = document.getElementById("moduleOutbound");
+const moduleRequisitions = document.getElementById("moduleRequisitions");
 const modulePlaceholder = document.getElementById("modulePlaceholder");
 const moduleButtons = document.querySelectorAll(".module-btn");
 const newFullName = document.getElementById("newFullName");
@@ -108,16 +111,20 @@ const DEMO_RESET_CONFIRM_TEXT = "REINICIAR LOGITEC";
 let currentRole = null;
 let currentUserId = null;
 let catalogApplyCompleted = false;
+let stockRowsCache = [];
+let productsCache = [];
+let movementsCountCache = 0;
+let pendingConflictsCache = 0;
 
 const roleModules = {
-  ADMIN: ["catalog", "inventory", "picking", "traceability", "tasks", "incidents", "users", "account"],
-  SUPERVISOR: ["inventory", "picking", "traceability", "tasks", "incidents", "account"],
-  OPERATOR: ["inventory", "picking", "traceability", "tasks", "incidents", "account"],
+  ADMIN: ["inventory", "catalog", "inbound", "outbound", "requisitions", "picking", "traceability", "tasks", "incidents", "users", "account"],
+  SUPERVISOR: ["inventory", "inbound", "outbound", "requisitions", "picking", "traceability", "tasks", "incidents", "account"],
+  OPERATOR: ["inventory", "inbound", "outbound", "requisitions", "picking", "traceability", "tasks", "incidents", "account"],
   CLIENT: ["catalog", "account"]
 };
 
 const defaultLandingModule = {
-  ADMIN: "catalog",
+  ADMIN: "inventory",
   SUPERVISOR: "inventory",
   OPERATOR: "inventory",
   CLIENT: "catalog"
@@ -151,6 +158,9 @@ function activateModule(moduleName) {
   const showTraceability = moduleName === "traceability";
   const showTasks = moduleName === "tasks";
   const showIncidents = moduleName === "incidents";
+  const showInbound = moduleName === "inbound";
+  const showOutbound = moduleName === "outbound";
+  const showRequisitions = moduleName === "requisitions";
   moduleUsers.classList.toggle("hidden", !showUsers);
   modulePicking.classList.toggle("hidden", !showPicking);
   moduleInventory.classList.toggle("hidden", !showInventory);
@@ -159,6 +169,9 @@ function activateModule(moduleName) {
   if (moduleTraceability) moduleTraceability.classList.toggle("hidden", !showTraceability);
   if (moduleTasks) moduleTasks.classList.toggle("hidden", !showTasks);
   if (moduleIncidents) moduleIncidents.classList.toggle("hidden", !showIncidents);
+  if (moduleInbound) moduleInbound.classList.toggle("hidden", !showInbound);
+  if (moduleOutbound) moduleOutbound.classList.toggle("hidden", !showOutbound);
+  if (moduleRequisitions) moduleRequisitions.classList.toggle("hidden", !showRequisitions);
   modulePlaceholder.classList.toggle(
     "hidden",
     showUsers ||
@@ -168,7 +181,10 @@ function activateModule(moduleName) {
       showAccount ||
       showTraceability ||
       showTasks ||
-      showIncidents
+      showIncidents ||
+      showInbound ||
+      showOutbound ||
+      showRequisitions
   );
 
   if (showTraceability) void loadTraceability();
@@ -293,8 +309,22 @@ function getImportFileExtension(filename) {
 
 function setFileStatus(el, message, isError = false) {
   if (!el) return;
-  el.textContent = message;
   el.classList.toggle("error", isError);
+  const text = message == null ? "" : String(message);
+  if (!text) {
+    el.textContent = "";
+    return;
+  }
+  if (text.length > 140 || text.includes("Conflictos") || text.includes("Filas leídas")) {
+    const short = text.length > 120 ? `${text.slice(0, 110).trim()}…` : text.split(".")[0] + ".";
+    renderOperationalMessage(el, {
+      short: isError ? text.split(".")[0] + "." : short,
+      details: text,
+      isError
+    });
+    return;
+  }
+  el.textContent = text;
 }
 
 function setButtonLoading(button, isLoading, loadingLabel, idleLabel) {
@@ -311,8 +341,245 @@ function setButtonLoading(button, isLoading, loadingLabel, idleLabel) {
 
 function setImportProcessingMessage(element, message, active) {
   if (!element) return;
-  element.textContent = message;
   element.classList.toggle("import-processing", active);
+  if (active) {
+    element.textContent = message;
+    return;
+  }
+  element.textContent = message || "";
+}
+
+function renderOperationalMessage(container, { short, details, isError = false, downloadRows = null, downloadName = "logitec_reporte" }) {
+  if (!container) return;
+  const detailId = `op-detail-${Math.random().toString(36).slice(2, 9)}`;
+  const hasDetails = details && String(details).trim() && String(details).trim() !== String(short).trim();
+  const downloadBtn =
+    Array.isArray(downloadRows) && downloadRows.length
+      ? `<button type="button" data-op-download="${escCell(downloadName)}">Descargar reporte</button>`
+      : "";
+  container.classList.toggle("error", isError);
+  container.innerHTML = `
+    <div class="op-message${isError ? " error" : ""}">
+      <p class="op-message-short">${escCell(short)}</p>
+      <div class="op-message-actions">
+        ${hasDetails ? `<button type="button" data-op-toggle="${detailId}">Ver detalles técnicos</button>` : ""}
+        ${downloadBtn}
+      </div>
+      ${hasDetails ? `<pre class="op-message-details" id="${detailId}">${escCell(details)}</pre>` : ""}
+    </div>`;
+  if (Array.isArray(downloadRows) && downloadRows.length) {
+    container._opDownloadRows = downloadRows;
+  }
+  wireOperationalMessageClicks(container);
+}
+
+function wireOperationalMessageClicks(root) {
+  if (!root || root.dataset.opWired === "1") return;
+  root.dataset.opWired = "1";
+  root.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const toggleId = target.getAttribute("data-op-toggle");
+    if (toggleId) {
+      const pre = document.getElementById(toggleId);
+      if (pre) {
+        const open = pre.classList.toggle("open");
+        target.textContent = open ? "Ocultar detalles técnicos" : "Ver detalles técnicos";
+      }
+      return;
+    }
+    const downloadName = target.getAttribute("data-op-download");
+    if (downloadName && Array.isArray(root._opDownloadRows)) {
+      exportToCsv(downloadName, root._opDownloadRows, [
+        { label: "detalle", value: (r) => (typeof r === "string" ? r : r.detail || JSON.stringify(r)) }
+      ]);
+    }
+  });
+}
+
+function matchesFilter(value, query) {
+  if (!query) return true;
+  return String(value ?? "")
+    .toLowerCase()
+    .includes(String(query).toLowerCase());
+}
+
+function getInventoryFilterValues() {
+  return {
+    cliente: document.getElementById("invFilterCliente")?.value?.trim() || "",
+    customer: document.getElementById("invFilterCustomer")?.value?.trim() || "",
+    sku: document.getElementById("invFilterSku")?.value?.trim() || "",
+    producto: document.getElementById("invFilterProducto")?.value?.trim() || "",
+    ubicacion: document.getElementById("invFilterUbicacion")?.value?.trim() || "",
+    status: document.getElementById("invFilterStatus")?.value?.trim() || ""
+  };
+}
+
+function getCatalogFilterValues() {
+  return {
+    cliente: document.getElementById("catFilterCliente")?.value?.trim() || "",
+    sku: document.getElementById("catFilterSku")?.value?.trim() || "",
+    producto: document.getElementById("catFilterProducto")?.value?.trim() || ""
+  };
+}
+
+function countStockConflicts(rows) {
+  if (!Array.isArray(rows)) return 0;
+  return rows.filter((row) => {
+    const status = String(row.status || "").toUpperCase();
+    const ref = String(row.reference || row.notes || "");
+    return status.includes("HOLD") || status.includes("CONFLICT") || /conflicto|conflict/i.test(ref);
+  }).length;
+}
+
+function updateInventorySummary(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const products = new Set(list.map((r) => r.product?.sku).filter(Boolean));
+  const customers = new Set(
+    list.map((r) => r.product?.customer?.code || r.product?.customer?.name).filter(Boolean)
+  );
+  const locations = new Set(list.map((r) => r.location?.code).filter(Boolean));
+  pendingConflictsCache = countStockConflicts(list);
+  const elProducts = document.getElementById("sumProducts");
+  const elCustomers = document.getElementById("sumCustomers");
+  const elLocations = document.getElementById("sumLocations");
+  const elMovements = document.getElementById("sumMovements");
+  const elConflicts = document.getElementById("sumConflicts");
+  if (elProducts) elProducts.textContent = String(products.size);
+  if (elCustomers) elCustomers.textContent = String(customers.size);
+  if (elLocations) elLocations.textContent = String(locations.size);
+  if (elMovements) elMovements.textContent = String(movementsCountCache);
+  if (elConflicts) elConflicts.textContent = String(pendingConflictsCache);
+}
+
+function filterStockRows(rows) {
+  const f = getInventoryFilterValues();
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const p = row.product || {};
+    const cliente = p.customer?.name || "";
+    const customer = p.customer?.code || "";
+    return (
+      matchesFilter(cliente, f.cliente) &&
+      matchesFilter(customer, f.customer) &&
+      matchesFilter(p.sku, f.sku) &&
+      matchesFilter(p.name, f.producto) &&
+      matchesFilter(row.location?.code, f.ubicacion) &&
+      matchesFilter(row.status, f.status)
+    );
+  });
+}
+
+function renderStockTable(rows) {
+  if (!inventoryList) return;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    inventoryList.innerHTML =
+      '<span style="color:#9caacc">Sin registros de existencias con los filtros actuales. Ajusta filtros o carga inventario.</span>';
+    return;
+  }
+  const thead =
+    "<tr><th>Cliente</th><th>Customer</th><th>SKU</th><th>Producto</th><th>Almacén</th><th>Ubicación</th><th>Status</th><th>Cantidad</th></tr>";
+  const body = rows
+    .map((row) => {
+      const p = row.product || {};
+      const cliente = p.customer?.name || "—";
+      const customer = p.customer?.code || "—";
+      const wh = row.location?.warehouse || "—";
+      const loc = row.location?.code || "—";
+      const status = row.status || "—";
+      return `<tr><td>${renderCellWithClamp(cliente, "cell-truncate", 24)}</td><td class="cell-nowrap">${escCell(customer)}</td><td class="cell-nowrap"><strong>${escCell(p.sku || "—")}</strong></td><td>${renderCellWithClamp(p.name || "—", "cell-truncate", 32)}</td><td>${renderCellWithClamp(wh, "cell-truncate", 14)}</td><td>${renderCellWithClamp(loc, "cell-truncate", 18)}</td><td class="cell-nowrap">${statusBadge(status)}</td><td class="cell-nowrap">${formatQty(row.qty)}</td></tr>`;
+    })
+    .join("");
+  inventoryList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+}
+
+function applyInventoryFilters() {
+  updateInventorySummary(stockRowsCache);
+  renderStockTable(filterStockRows(stockRowsCache));
+}
+
+function filterProductRows(rows) {
+  const f = getCatalogFilterValues();
+  return (Array.isArray(rows) ? rows : []).filter((product) => {
+    const cliente = `${product.customer?.name || ""} ${product.customer?.code || ""}`;
+    return (
+      matchesFilter(cliente, f.cliente) &&
+      matchesFilter(product.sku, f.sku) &&
+      matchesFilter(product.name, f.producto)
+    );
+  });
+}
+
+function renderProductsTable(rows) {
+  if (!productsList) return;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    productsList.innerHTML =
+      '<span style="color:#9caacc">Sin productos con los filtros actuales.</span>';
+    return;
+  }
+  const thead =
+    "<tr><th>Cliente</th><th>Customer</th><th>SKU</th><th>Producto</th><th>Almacén</th><th>Barras</th></tr>";
+  const body = rows
+    .map((product) => {
+      const cliente = product.customer?.name || "—";
+      const customer = product.customer?.code || "—";
+      return `<tr><td>${renderCellWithClamp(cliente, "cell-truncate", 24)}</td><td class="cell-nowrap">${escCell(customer)}</td><td class="cell-nowrap"><strong>${escCell(product.sku || "—")}</strong></td><td>${renderCellWithClamp(product.name || "—", "cell-truncate", 36)}</td><td>${renderCellWithClamp(product.warehouse || "—", "cell-truncate", 16)}</td><td class="cell-nowrap">${escCell(product.barcode || "—")}</td></tr>`;
+    })
+    .join("");
+  productsList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+}
+
+function applyCatalogFilters() {
+  renderProductsTable(filterProductRows(productsCache));
+}
+
+function clearInventoryFilters() {
+  ["invFilterCliente", "invFilterCustomer", "invFilterSku", "invFilterProducto", "invFilterUbicacion", "invFilterStatus"].forEach(
+    (id) => {
+      const el = document.getElementById(id);
+      if (el) el.value = "";
+    }
+  );
+  applyInventoryFilters();
+}
+
+function clearCatalogFilters() {
+  ["catFilterCliente", "catFilterSku", "catFilterProducto"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  applyCatalogFilters();
+}
+
+function wireInventoryFilterInputs() {
+  ["invFilterCliente", "invFilterCustomer", "invFilterSku", "invFilterProducto", "invFilterUbicacion", "invFilterStatus"].forEach(
+    (id) => {
+      const el = document.getElementById(id);
+      if (el && el.dataset.filterWired !== "1") {
+        el.dataset.filterWired = "1";
+        el.addEventListener("input", applyInventoryFilters);
+      }
+    }
+  );
+  const clearBtn = document.getElementById("inventoryClearFiltersBtn");
+  if (clearBtn && clearBtn.dataset.filterWired !== "1") {
+    clearBtn.dataset.filterWired = "1";
+    clearBtn.addEventListener("click", clearInventoryFilters);
+  }
+}
+
+function wireCatalogFilterInputs() {
+  ["catFilterCliente", "catFilterSku", "catFilterProducto"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el && el.dataset.filterWired !== "1") {
+      el.dataset.filterWired = "1";
+      el.addEventListener("input", applyCatalogFilters);
+    }
+  });
+  const clearBtn = document.getElementById("catalogClearFiltersBtn");
+  if (clearBtn && clearBtn.dataset.filterWired !== "1") {
+    clearBtn.dataset.filterWired = "1";
+    clearBtn.addEventListener("click", clearCatalogFilters);
+  }
 }
 
 async function readXlsxWorkbook(file) {
@@ -1310,17 +1577,13 @@ async function loadScanEvents() {
 async function loadProductsRows() {
   const productsResponse = await authenticatedFetch("/api/catalog/products");
   if (!productsResponse?.ok) {
-    if (inventoryList) inventoryList.textContent = "No se pudo cargar el catálogo.";
+    productsCache = [];
+    if (productsList) productsList.textContent = "No se pudo cargar el catálogo.";
     return;
   }
   const products = await productsResponse.json();
-  const rows = (Array.isArray(products) ? products : [])
-    .map(
-      (product) =>
-        `<div class="user-row"><strong>${product.sku}</strong> — ${product.name} <span style="color:#9caacc">(${product.warehouse})</span></div>`
-    )
-    .join("");
-  productsList.innerHTML = rows;
+  productsCache = Array.isArray(products) ? products : [];
+  applyCatalogFilters();
 }
 
 function formatQty(q) {
@@ -1564,47 +1827,47 @@ async function createIncidentClick() {
 async function loadStockStrip() {
   if (!inventoryList) return;
   if (currentRole !== "ADMIN" && currentRole !== "OPERATOR" && currentRole !== "SUPERVISOR") {
+    stockRowsCache = [];
+    updateInventorySummary([]);
     inventoryList.innerHTML = '<span style="color:#9caacc">Las existencias solo aplican a roles operativos.</span>';
     return;
   }
   const response = await authenticatedFetch("/api/inventory/stock");
   if (!response?.ok) {
+    stockRowsCache = [];
+    updateInventorySummary([]);
     inventoryList.textContent = "No se pudo cargar existencias.";
     return;
   }
   const rows = await response.json();
-  if (!Array.isArray(rows) || rows.length === 0) {
+  stockRowsCache = Array.isArray(rows) ? rows : [];
+  if (stockRowsCache.length === 0) {
+    updateInventorySummary([]);
     inventoryList.innerHTML =
-      '<span style="color:#9caacc">Sin registros de existencias. Usa Inventario para cargar saldos o importar CSV.</span>';
+      '<span style="color:#9caacc">Sin registros de existencias. Usa Carga avanzada para importar saldos o registrar movimientos.</span>';
     return;
   }
-  const thead =
-    "<tr><th>Cliente</th><th>SKU</th><th>Producto</th><th>Almacén</th><th>Ubicación</th><th>Status</th><th>Cantidad</th></tr>";
-  const body = rows
-    .map((row) => {
-      const p = row.product || {};
-      const customer = p.customer?.name || p.customer?.code || "—";
-      const wh = row.location?.warehouse || "—";
-      const loc = row.location?.code || "—";
-      const status = row.status || "—";
-      return `<tr><td>${renderCellWithClamp(customer, "cell-truncate", 24)}</td><td class="cell-nowrap"><strong>${escCell(p.sku || "—")}</strong></td><td>${renderCellWithClamp(p.name || "—", "cell-truncate", 32)}</td><td>${renderCellWithClamp(wh, "cell-truncate", 14)}</td><td>${renderCellWithClamp(loc, "cell-truncate", 18)}</td><td class="cell-nowrap">${escCell(status)}</td><td class="cell-nowrap">${formatQty(row.qty)}</td></tr>`;
-    })
-    .join("");
-  inventoryList.innerHTML = `<div class="table-wrap"><table class="scan-table"><thead>${thead}</thead><tbody>${body}</tbody></table></div>`;
+  applyInventoryFilters();
 }
 
 async function loadInventoryMovements() {
   if (!inventoryMovementsList) return;
   if (currentRole !== "ADMIN" && currentRole !== "OPERATOR" && currentRole !== "SUPERVISOR") {
+    movementsCountCache = 0;
+    updateInventorySummary(stockRowsCache);
     inventoryMovementsList.innerHTML = "";
     return;
   }
   const response = await authenticatedFetch("/api/inventory/movements");
   if (!response?.ok) {
+    movementsCountCache = 0;
+    updateInventorySummary(stockRowsCache);
     inventoryMovementsList.textContent = "No se pudo cargar movimientos.";
     return;
   }
   const rows = await response.json();
+  movementsCountCache = Array.isArray(rows) ? rows.length : 0;
+  updateInventorySummary(stockRowsCache);
   if (!Array.isArray(rows) || rows.length === 0) {
     inventoryMovementsList.innerHTML =
       '<p class="subtitle" style="margin:0">Aún no hay movimientos registrados.</p>';
@@ -1661,7 +1924,7 @@ async function submitMovement(event) {
 async function runImport() {
   if (importResult) {
     importResult.textContent = "";
-    importResult.classList.remove("import-processing");
+    importResult.classList.remove("import-processing", "error");
   }
   const csv = importCsv.value.trim();
   if (!csv) {
@@ -1690,24 +1953,38 @@ async function runImport() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       if (importResult) {
-        importResult.textContent = data.message || "Error al cargar inventario. Revisa el CSV e intenta de nuevo.";
         importResult.classList.remove("import-processing");
+        renderOperationalMessage(importResult, {
+          short: data.message || "Error al cargar inventario. Revisa el CSV e intenta de nuevo.",
+          details: Array.isArray(data.errors)
+            ? data.errors.map((e) => `${e.sku}: ${e.message}`).join("\n")
+            : data.message || "",
+          isError: true
+        });
       }
       return;
     }
-    const errLines =
-      Array.isArray(data.errors) && data.errors.length
-        ? data.errors.map((e) => `${e.sku}: ${e.message}`).join("; ")
-        : "";
+    const errLines = Array.isArray(data.errors)
+      ? data.errors.map((e) => `${e.sku}: ${e.message}`)
+      : [];
+    const received = data.receivedRows ?? data.applied ?? 0;
+    const created = data.created ?? 0;
+    const updated = data.updated ?? 0;
+    const unchanged = data.unchanged ?? 0;
+    const zeroed = data.zeroed ?? 0;
+    const omitted = data.omitted ?? data.skipped ?? 0;
     if (importResult) {
-      const received = data.receivedRows ?? data.applied ?? 0;
-      const created = data.created ?? 0;
-      const updated = data.updated ?? 0;
-      const unchanged = data.unchanged ?? 0;
-      const zeroed = data.zeroed ?? 0;
-      const omitted = data.omitted ?? data.skipped ?? 0;
-      importResult.textContent = `Inventario procesado: ${received} recibidos, ${created} creados, ${updated} actualizados, ${unchanged} sin cambios, ${zeroed} ajustados a cero, ${omitted} omitidos.${errLines ? ` Detalle: ${errLines}` : ""}`;
       importResult.classList.remove("import-processing");
+      const short = `Inventario procesado: ${received} recibidos, ${created} creados, ${updated} actualizados, ${unchanged} sin cambios, ${zeroed} a cero, ${omitted} omitidos.${errLines.length ? ` ${errLines.length} detalle(s).` : ""}`;
+      renderOperationalMessage(importResult, {
+        short,
+        details: errLines.length
+          ? errLines.join("\n")
+          : `Recibidos: ${received}\nCreados: ${created}\nActualizados: ${updated}\nSin cambios: ${unchanged}\nAjustados a cero: ${zeroed}\nOmitidos: ${omitted}`,
+        downloadRows: errLines.length ? errLines.map((detail) => ({ detail })) : null,
+        downloadName: "logitec_inventario_detalle"
+      });
+      if (errLines.length) pendingConflictsCache = errLines.length;
     }
     importCsv.value = "";
     if (reconcileFullInventoryChk) reconcileFullInventoryChk.checked = false;
@@ -1715,8 +1992,8 @@ async function runImport() {
     await loadInventoryMovements();
   } catch (_e) {
     if (importResult) {
-      importResult.textContent = "Error de red al cargar inventario. Verifica conexión e intenta de nuevo.";
       importResult.classList.remove("import-processing");
+      importResult.textContent = "Error de red al cargar inventario. Verifica conexión e intenta de nuevo.";
     }
   } finally {
     setButtonLoading(importBtn, false, "Procesando inventario...", "Cargar inventario");
@@ -2063,18 +2340,21 @@ function formatCatalogPreviewMessage(data) {
   const unknownCustomers = Array.isArray(data.unknownCustomers) ? data.unknownCustomers : [];
   const suppliersDetected = Array.isArray(data.suppliersDetected) ? data.suppliersDetected : [];
   const suppliersPo = Array.isArray(data.supplierPoDetected) ? data.supplierPoDetected : [];
-  let message = `Vista previa (sin cambios en base de datos): crear ${data.created || 0}, actualizar ${data.updated || 0}, omitir ${data.skipped || 0}.`;
-  if (previewLine) message += ` Muestra: ${previewLine}.`;
-  if (unknownCustomers.length) {
-    message += ` Clientes faltantes (${unknownCustomers.length}): ${unknownCustomers.slice(0, 6).join(" | ")}.`;
-    if (unknownCustomers.length > 6) message += " …";
-    message += " Usa Aplicar carga para guardar en base de datos.";
-  } else {
-    message += " Si el resultado es correcto, usa Aplicar carga para guardar en base de datos.";
-  }
-  if (suppliersDetected.length) message += ` Proveedores detectados: ${suppliersDetected.slice(0, 4).join(", ")}.`;
-  if (suppliersPo.length) message += ` Supplier PO detectados: ${suppliersPo.slice(0, 4).join(", ")}.`;
-  return message;
+  const short = `Vista previa: crear ${data.created || 0}, actualizar ${data.updated || 0}, omitir ${data.skipped || 0}.${unknownCustomers.length ? ` ${unknownCustomers.length} cliente(s) faltante(s).` : " Lista para aplicar."}`;
+  const details = [
+    previewLine ? `Muestra: ${previewLine}.` : null,
+    unknownCustomers.length
+      ? `Clientes faltantes (${unknownCustomers.length}): ${unknownCustomers.join(" | ")}.`
+      : null,
+    suppliersDetected.length ? `Proveedores: ${suppliersDetected.join(", ")}.` : null,
+    suppliersPo.length ? `Supplier PO: ${suppliersPo.join(", ")}.` : null,
+    unknownCustomers.length
+      ? "Usa Aplicar carga para guardar en base de datos."
+      : "Si el resultado es correcto, usa Aplicar carga para guardar en base de datos."
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return { short, details };
 }
 
 async function fetchCatalogImport(csv, mode, autoCreateCustomers) {
@@ -2125,16 +2405,24 @@ async function runCatalogImport(mode) {
     if (isPreview) {
       const previewResult = await fetchCatalogImport(csv, "preview", false);
       if (!previewResult.ok) {
-        catalogImportResult.textContent = previewResult.message;
+        renderOperationalMessage(catalogImportResult, {
+          short: previewResult.message || "Error en vista previa del catálogo.",
+          details: previewResult.message || "",
+          isError: true
+        });
         return;
       }
-      catalogImportResult.textContent = formatCatalogPreviewMessage(previewResult.data);
+      renderOperationalMessage(catalogImportResult, formatCatalogPreviewMessage(previewResult.data));
       return;
     }
 
     const previewResult = await fetchCatalogImport(csv, "preview", false);
     if (!previewResult.ok) {
-      catalogImportResult.textContent = previewResult.message;
+      renderOperationalMessage(catalogImportResult, {
+        short: previewResult.message || "Error al validar catálogo antes de aplicar.",
+        details: previewResult.message || "",
+        isError: true
+      });
       return;
     }
 
@@ -2162,12 +2450,26 @@ async function runCatalogImport(mode) {
 
     const applyResult = await fetchCatalogImport(csv, "apply", autoCreateCustomers);
     if (!applyResult.ok) {
-      catalogImportResult.textContent = applyResult.message;
+      renderOperationalMessage(catalogImportResult, {
+        short: applyResult.message || "Error al aplicar catálogo.",
+        details: applyResult.message || "",
+        isError: true
+      });
       return;
     }
 
     const applied = applyResult.data;
-    catalogImportResult.textContent = `Catálogo aplicado correctamente. Crear: ${applied.created || 0}, actualizar: ${applied.updated || 0}, omitidos: ${applied.skipped || 0}.`;
+    const errLines = Array.isArray(applied.errors)
+      ? applied.errors.map((e) => `${e.sku || "—"}: ${e.message || e}`)
+      : [];
+    renderOperationalMessage(catalogImportResult, {
+      short: `Catálogo aplicado: ${applied.created || 0} creados, ${applied.updated || 0} actualizados, ${applied.skipped || 0} omitidos.${errLines.length ? ` ${errLines.length} detalle(s).` : ""}`,
+      details: errLines.length
+        ? errLines.join("\n")
+        : `Creados: ${applied.created || 0}\nActualizados: ${applied.updated || 0}\nOmitidos: ${applied.skipped || 0}`,
+      downloadRows: errLines.length ? errLines.map((detail) => ({ detail })) : null,
+      downloadName: "logitec_catalogo_detalle"
+    });
     catalogApplyCompleted = true;
     await loadCatalogData();
   } catch (_error) {
@@ -2367,4 +2669,8 @@ if (incidentList) {
     if (id) void resolveIncident(id);
   });
 }
+wireInventoryFilterInputs();
+wireCatalogFilterInputs();
+if (importResult) wireOperationalMessageClicks(importResult);
+if (catalogImportResult) wireOperationalMessageClicks(catalogImportResult);
 validateSession();
