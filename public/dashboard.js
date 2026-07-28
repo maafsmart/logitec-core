@@ -378,11 +378,15 @@ const GRID_DEFAULT_WIDTHS = {
 const gridSortState = {};
 
 function getActiveClient() {
-  return localStorage.getItem(ACTIVE_CLIENT_KEY) || PRIMARY_CLIENT_AVIAT;
+  const raw = localStorage.getItem(ACTIVE_CLIENT_KEY);
+  if (!raw) return PRIMARY_CLIENT_AVIAT;
+  return String(raw).trim().toUpperCase();
 }
 
 function getActiveProject() {
-  return localStorage.getItem(ACTIVE_PROJECT_KEY) || ACTIVE_PROJECT_ALL;
+  const raw = localStorage.getItem(ACTIVE_PROJECT_KEY);
+  if (!raw || String(raw).trim().toUpperCase() === ACTIVE_PROJECT_ALL) return ACTIVE_PROJECT_ALL;
+  return String(raw).trim().toUpperCase();
 }
 
 function getExtraPrimaryClients() {
@@ -445,21 +449,33 @@ function getProjectsForPrimaryClient(clientCode) {
   const client = String(clientCode || "").trim().toUpperCase();
   if (client === ACTIVE_CLIENT_GENERAL) return [];
   if (client !== PRIMARY_CLIENT_AVIAT) return [];
+  return collectAviatProjectsFromData();
+}
+
+function collectAviatProjectsFromData() {
   const map = new Map();
-  for (const c of clientsCache) {
-    if (!c?.code) continue;
-    map.set(String(c.code).toUpperCase(), { code: c.code, name: c.name || c.code });
+  const add = (code, name) => {
+    const normalizedCode = String(code || "").trim();
+    if (!normalizedCode || normalizedCode === "—") return;
+    const upper = normalizedCode.toUpperCase();
+    if (upper === PRIMARY_CLIENT_AVIAT || upper === ACTIVE_CLIENT_GENERAL) return;
+    const label = String(name || normalizedCode).trim() || normalizedCode;
+    const existing = map.get(upper);
+    if (!existing || label.length > String(existing.name || "").length) {
+      map.set(upper, { code: normalizedCode, name: label });
+    }
+  };
+  for (const c of clientsCache) add(c.code, c.name || c.code);
+  for (const p of productsCache) add(p.customer?.code, p.customer?.name);
+  for (const row of stockRowsCache) {
+    const project = getProjectFromRow(row);
+    add(project.code, project.name);
   }
-  for (const p of productsCache) {
-    const code = p.customer?.code;
-    if (!code) continue;
-    map.set(String(code).toUpperCase(), { code, name: p.customer?.name || code });
+  for (const m of movementsRowsCache) {
+    const project = getProjectFromRow(m);
+    add(project.code, project.name);
   }
-  for (const t of getAviatTempProjects()) {
-    const code = String(t?.code || "").trim();
-    if (!code) continue;
-    map.set(code.toUpperCase(), { code, name: t.name || code });
-  }
+  for (const t of getAviatTempProjects()) add(t.code, t.name || t.code);
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
 }
 
@@ -574,27 +590,52 @@ function getActiveProjectDisplayLabel() {
   return match?.name || project;
 }
 
-function getProjectCodeFromRow(row) {
-  return (
-    row?.product?.customer?.code ||
-    row?.customer?.code ||
-    row?.project?.code ||
-    row?.code ||
-    parseRequisitionNotes(row?.notes)?.customerCode ||
-    ""
-  );
+function normalizeProjectToken(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
 }
 
-function getProjectNameFromRow(row) {
-  return (
+function normalizeProjectCode(value) {
+  return normalizeProjectToken(value).replace(/\s+/g, "_");
+}
+
+function getProjectFromRow(row) {
+  const code =
+    row?.product?.customer?.code ||
+    row?.customer?.code ||
+    (typeof row?.customer === "string" ? row.customer : "") ||
+    row?.project?.code ||
+    (typeof row?.project === "string" ? row.project : "") ||
+    row?.codigo_proyecto ||
+    row?.code ||
+    parseRequisitionNotes(row?.notes)?.customerCode ||
+    "";
+  const name =
     row?.product?.customer?.name ||
     row?.customer?.name ||
     row?.project?.name ||
+    row?.customerName ||
+    row?.proyecto ||
     row?.name ||
     parseRequisitionNotes(row?.notes)?.customerName ||
-    getProjectCodeFromRow(row) ||
-    ""
-  );
+    code ||
+    "";
+  const normalizedCode = String(code || "").trim();
+  const normalizedName = String(name || normalizedCode || "").trim();
+  return {
+    code: normalizedCode,
+    name: normalizedName || normalizedCode
+  };
+}
+
+function getProjectCodeFromRow(row) {
+  return getProjectFromRow(row).code;
+}
+
+function getProjectNameFromRow(row) {
+  return getProjectFromRow(row).name;
 }
 
 function getPrimaryClientFromRow(row) {
@@ -613,26 +654,107 @@ function rowClientName(row) {
   return getProjectNameFromRow(row);
 }
 
+function rowHasOperationalData(row) {
+  if (!row || typeof row !== "object") return false;
+  const project = getProjectFromRow(row);
+  return !!(
+    row.product ||
+    row.customer ||
+    row.project ||
+    row.customerName ||
+    row.codigo_proyecto ||
+    row.proyecto ||
+    row.sku ||
+    project.code ||
+    project.name ||
+    row.code ||
+    row.name ||
+    row.qty != null ||
+    row.products != null ||
+    row.stock != null ||
+    row.type ||
+    row.reference ||
+    row.notes
+  );
+}
+
+function projectTokensFromRow(row) {
+  const tokens = new Set();
+  const add = (value) => {
+    if (value == null || value === "") return;
+    tokens.add(normalizeProjectToken(value));
+    tokens.add(normalizeProjectCode(value));
+  };
+  const project = getProjectFromRow(row);
+  add(project.code);
+  add(project.name);
+  add(row?.project);
+  add(row?.customer?.code);
+  add(row?.customer?.name);
+  if (typeof row?.customer === "string") add(row.customer);
+  add(row?.customerName);
+  add(row?.codigo_proyecto);
+  add(row?.proyecto);
+  add(row?.code);
+  add(row?.name);
+  return tokens;
+}
+
 function rowMatchesActiveClient(row) {
   if (isGeneralView()) return true;
-  return getPrimaryClientFromRow(row).toUpperCase() === getActiveClient().toUpperCase();
+  const activeClient = getActiveClient();
+  if (activeClient === PRIMARY_CLIENT_AVIAT) {
+    return rowHasOperationalData(row);
+  }
+  return getPrimaryClientFromRow(row).toUpperCase() === activeClient;
 }
 
 function rowMatchesActiveProject(row) {
   if (isGeneralView()) return true;
   const activeProject = getActiveProject();
   if (activeProject === ACTIVE_PROJECT_ALL) return true;
-  const code = String(getProjectCodeFromRow(row) || "").toUpperCase();
-  const name = String(getProjectNameFromRow(row) || "").toUpperCase();
-  const target = activeProject.toUpperCase();
-  return code === target || name === target;
+  const tokens = projectTokensFromRow(row);
+  const target = normalizeProjectToken(activeProject);
+  const targetCode = normalizeProjectCode(activeProject);
+  return tokens.has(target) || tokens.has(targetCode);
+}
+
+function shouldUseAviatScopeFallback(sourceRows, filteredRows) {
+  return (
+    isAviatView() &&
+    getActiveProject() === ACTIVE_PROJECT_ALL &&
+    Array.isArray(sourceRows) &&
+    sourceRows.length > 0 &&
+    Array.isArray(filteredRows) &&
+    filteredRows.length === 0
+  );
+}
+
+function setScopeFallbackNotice(visible, message) {
+  const text = message || "Mostrando todos los proyectos de AVIAT.";
+  ["controlClientScope", "inventoryClientScope", "catalogClientScope"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el || !isAviatView() || getActiveProject() !== ACTIVE_PROJECT_ALL) return;
+    if (visible) {
+      el.dataset.scopeFallback = "1";
+      el.textContent = text;
+    } else if (el.dataset.scopeFallback === "1") {
+      delete el.dataset.scopeFallback;
+      el.textContent = getScopeSummaryText();
+    }
+  });
 }
 
 function filterRowsByActiveClient(rows) {
-  if (isGeneralView()) return Array.isArray(rows) ? rows : [];
-  return (Array.isArray(rows) ? rows : []).filter(
-    (row) => rowMatchesActiveClient(row) && rowMatchesActiveProject(row)
-  );
+  const source = Array.isArray(rows) ? rows : [];
+  if (isGeneralView()) return source;
+  const filtered = source.filter((row) => rowMatchesActiveClient(row) && rowMatchesActiveProject(row));
+  if (shouldUseAviatScopeFallback(source, filtered)) {
+    setScopeFallbackNotice(true);
+    return source;
+  }
+  setScopeFallbackNotice(false);
+  return filtered;
 }
 
 function getScopeSummaryText() {
@@ -732,6 +854,7 @@ function updateActiveClientUi() {
   renderOperationalPrimaryClients(document.getElementById("ccClientPickerList"), { includeCreate: false });
   renderAviatProjectChips(document.getElementById("aviatProjectChips"));
   renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
+  setScopeFallbackNotice(false);
   updateViewModeUi();
 }
 
@@ -823,7 +946,8 @@ function renderAviatProjectChips(container) {
   const projects = getProjectsForPrimaryClient(PRIMARY_CLIENT_AVIAT);
   const activeProject = getActiveProject();
   const scopeText = getScopeSummaryText();
-  const projectsPending = !workspaceCatalogReady && projects.length === 0;
+  const dataReady = workspaceCatalogReady || workspaceStockReady;
+  const projectsPending = !dataReady && projects.length === 0;
   if (projectsPending) {
     container.innerHTML = `<p class="cc-primary-banner">Cliente principal: <strong>${escCell(PRIMARY_CLIENT_AVIAT_NAME)}</strong></p><p class="filter-hint" style="margin:0 0 10px">Cargando proyectos de AVIAT…</p><div class="project-chips-label">Proyectos de AVIAT</div><div class="project-chips-row"><span class="filter-hint">Cargando proyectos de AVIAT…</span></div>`;
     return;
@@ -835,7 +959,10 @@ function renderAviatProjectChips(container) {
         `<button type="button" class="project-chip${activeProject === String(p.code).toUpperCase() ? " active" : ""}" data-pick-project="${escCell(p.code)}" title="${escCell(p.code)}">${escCell(p.name)}</button>`
     )
     .join("");
-  container.innerHTML = `<p class="cc-primary-banner">Cliente principal: <strong>${escCell(PRIMARY_CLIENT_AVIAT_NAME)}</strong></p><p class="filter-hint" style="margin:0 0 10px">${escCell(scopeText)}</p><div class="project-chips-label">Proyectos de AVIAT</div><div class="project-chips-row">${allChip}${projectChips || '<span class="filter-hint">Sin proyectos detectados aún.</span>'}</div>`;
+  const emptyProjectsMsg = dataReady
+    ? "No se detectaron proyectos. Revisa carga de catálogo."
+    : "Cargando proyectos de AVIAT…";
+  container.innerHTML = `<p class="cc-primary-banner">Cliente principal: <strong>${escCell(PRIMARY_CLIENT_AVIAT_NAME)}</strong></p><p class="filter-hint" style="margin:0 0 10px">${escCell(scopeText)}</p><div class="project-chips-label">Proyectos de AVIAT</div><div class="project-chips-row">${allChip}${projectChips || `<span class="filter-hint">${emptyProjectsMsg}</span>`}</div>`;
   container.querySelectorAll("[data-pick-project]").forEach((btn) => {
     btn.addEventListener("click", () => {
       setActiveProject(btn.getAttribute("data-pick-project"));
@@ -1866,13 +1993,23 @@ function sumStockQty(rows) {
 }
 
 function updateControlCenterKpis() {
-  const list = filterRowsByActiveClient(Array.isArray(stockRowsCache) ? stockRowsCache : []);
+  const stockSource = Array.isArray(stockRowsCache) ? stockRowsCache : [];
+  const list = filterRowsByActiveClient(stockSource);
   const scopedProducts = filterRowsByActiveClient(productsCache);
   const productCount =
     scopedProducts.length > 0
       ? scopedProducts.length
       : new Set(list.map((r) => r.product?.sku).filter(Boolean)).size;
-  const projects = new Set(list.map((r) => getProjectCodeFromRow(r)).filter(Boolean));
+  const projects = new Set();
+  list.forEach((r) => {
+    const code = getProjectCodeFromRow(r);
+    if (code) projects.add(code);
+  });
+  if (isAviatView() && getActiveProject() === ACTIVE_PROJECT_ALL) {
+    collectAviatProjectsFromData().forEach((p) => {
+      if (p.code) projects.add(p.code);
+    });
+  }
   const locations = new Set(list.map((r) => r.location?.code).filter(Boolean));
   const stockTotal = sumStockQty(list);
   const setKpi = (id, val) => {
@@ -1882,9 +2019,9 @@ function updateControlCenterKpis() {
   setKpi("ccKpiProducts", productCount > 0 ? String(productCount) : list.length ? String(new Set(list.map((r) => r.product?.sku).filter(Boolean)).size) : "0");
   setKpi("ccKpiCustomers", projects.size ? String(projects.size) : "0");
   setKpi("ccKpiLocations", locations.size ? String(locations.size) : "0");
-  setKpi("ccKpiStock", list.length ? formatQty(stockTotal) : "0");
+  setKpi("ccKpiStock", list.length ? formatQty(stockTotal) : stockSource.length ? formatQty(sumStockQty(stockSource)) : "0");
   setKpi("ccKpiMovements", String(filterRowsByActiveClient(movementsRowsCache).length || movementsCountCache));
-  setKpi("ccKpiConflicts", String(countStockConflicts(list)));
+  setKpi("ccKpiConflicts", String(countStockConflicts(list.length ? list : stockSource)));
 }
 
 function stockRowCells(row, { includeWarehouse = true } = {}) {
@@ -3780,6 +3917,9 @@ async function loadStockStrip() {
   }
   const finishStockLoad = () => {
     workspaceStockReady = true;
+    renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
+    renderAviatProjectChips(document.getElementById("aviatProjectChips"));
+    renderClientsModule();
     if (moduleControlCenter && !moduleControlCenter.classList.contains("hidden")) {
       applyControlCenterFilters();
     }
@@ -4422,8 +4562,10 @@ async function loadCatalogData() {
   if (clientsList) clientsList.innerHTML = "";
   renderClientsModule();
   populateOperationalSelects();
+  renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
+  renderAviatProjectChips(document.getElementById("aviatProjectChips"));
   if (moduleControlCenter && !moduleControlCenter.classList.contains("hidden")) {
-    renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
+    renderControlCenter();
   }
 }
 
