@@ -138,6 +138,38 @@ const defaultLandingModule = {
   CLIENT: "catalog"
 };
 
+const MODULE_REGISTRY = {
+  control: moduleControlCenter,
+  clients: moduleClients,
+  catalog: moduleCatalog,
+  inventory: moduleInventory,
+  inbound: moduleInbound,
+  requisitions: moduleRequisitions,
+  picking: modulePicking,
+  outbound: moduleOutbound,
+  traceability: moduleTraceability,
+  incidents: moduleIncidents,
+  tasks: moduleTasks,
+  reports: moduleReports,
+  users: moduleUsers,
+  account: moduleAccount
+};
+
+function closeMovementsPanel() {
+  const panel = document.getElementById("movementsPanel");
+  const btn = document.getElementById("toggleMovementsBtn");
+  if (panel) panel.classList.remove("open");
+  if (btn) btn.textContent = "Ver movimientos";
+}
+
+function hideAllModules() {
+  Object.values(MODULE_REGISTRY).forEach((el) => {
+    if (el) el.classList.add("hidden");
+  });
+  if (modulePlaceholder) modulePlaceholder.classList.add("hidden");
+  closeMovementsPanel();
+}
+
 currentUrl && (currentUrl.textContent = window.location.href);
 
 function forceLogout() {
@@ -158,6 +190,11 @@ function activateModule(moduleName) {
     btn.classList.toggle("active", btn.dataset.module === moduleName);
   });
 
+  hideAllModules();
+
+  const activeEl = MODULE_REGISTRY[moduleName];
+  if (activeEl) activeEl.classList.remove("hidden");
+
   const showUsers = moduleName === "users";
   const showControl = moduleName === "control";
   const showClients = moduleName === "clients";
@@ -172,40 +209,29 @@ function activateModule(moduleName) {
   const showInbound = moduleName === "inbound";
   const showOutbound = moduleName === "outbound";
   const showRequisitions = moduleName === "requisitions";
-  moduleUsers.classList.toggle("hidden", !showUsers);
-  if (moduleControlCenter) moduleControlCenter.classList.toggle("hidden", !showControl);
-  if (moduleClients) moduleClients.classList.toggle("hidden", !showClients);
-  if (moduleReports) moduleReports.classList.toggle("hidden", !showReports);
-  modulePicking.classList.toggle("hidden", !showPicking);
-  moduleInventory.classList.toggle("hidden", !showInventory);
-  moduleCatalog.classList.toggle("hidden", !showCatalog);
-  moduleAccount.classList.toggle("hidden", !showAccount);
-  if (moduleTraceability) moduleTraceability.classList.toggle("hidden", !showTraceability);
-  if (moduleTasks) moduleTasks.classList.toggle("hidden", !showTasks);
-  if (moduleIncidents) moduleIncidents.classList.toggle("hidden", !showIncidents);
-  if (moduleInbound) moduleInbound.classList.toggle("hidden", !showInbound);
-  if (moduleOutbound) moduleOutbound.classList.toggle("hidden", !showOutbound);
-  if (moduleRequisitions) moduleRequisitions.classList.toggle("hidden", !showRequisitions);
-  modulePlaceholder.classList.toggle(
-    "hidden",
+
+  const hasKnownModule =
     showUsers ||
-      showControl ||
-      showClients ||
-      showReports ||
-      showPicking ||
-      showInventory ||
-      showCatalog ||
-      showAccount ||
-      showTraceability ||
-      showTasks ||
-      showIncidents ||
-      showInbound ||
-      showOutbound ||
-      showRequisitions
-  );
+    showControl ||
+    showClients ||
+    showReports ||
+    showPicking ||
+    showInventory ||
+    showCatalog ||
+    showAccount ||
+    showTraceability ||
+    showTasks ||
+    showIncidents ||
+    showInbound ||
+    showOutbound ||
+    showRequisitions;
+
+  if (modulePlaceholder) modulePlaceholder.classList.toggle("hidden", hasKnownModule);
 
   if (showControl) refreshControlCenter();
   if (showClients) renderClientsModule();
+  if (showInventory) applyInventoryFilters();
+  if (showCatalog) applyCatalogFilters();
   if (showTraceability) void loadTraceability();
   if (showTasks) void loadTasks();
   if (showIncidents) void loadIncidents();

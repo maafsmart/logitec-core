@@ -6,17 +6,18 @@
     <title>LOGITEC CORE WMS</title>
     <style>
       :root {
-        --bg: #f4f7fb;
-        --panel: #ffffff;
-        --line: #d8e2ef;
-        --text: #1f2937;
-        --muted: #6b7280;
-        --ok: #16a34a;
+        --bg: #e8f2fc;
+        --panel: #f5f9ff;
+        --panel-solid: #ffffff;
+        --line: #c5d9ef;
+        --text: #1e3a5f;
+        --muted: #5b7a9d;
+        --ok: #059669;
         --error: #dc2626;
         --accent: #0f4c81;
-        --accent-dark: #0b2f55;
-        --accent-soft: #e8f1fb;
-        --warn: #f59e0b;
+        --accent-dark: #0a3558;
+        --accent-soft: #dceaf8;
+        --warn: #d97706;
         --info: #0284c7;
         --purple: #7c3aed;
       }
@@ -283,7 +284,10 @@
         cursor: not-allowed;
       }
       .hidden {
-        display: none;
+        display: none !important;
+      }
+      .module-pane.hidden {
+        display: none !important;
       }
       .session-banner {
         margin-bottom: 18px;
@@ -1496,6 +1500,197 @@
       .demo-hide { display: none !important; }
       .clients-admin-zone { margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--line); }
       .clients-admin-zone h4 { font-size: 0.9rem; color: var(--muted); }
+      /* ── Tema v27: azul claro / verde logístico ── */
+      .content .module-pane:not(.hidden) {
+        display: block;
+      }
+      .content .module-pane.picking-panel:not(.hidden) {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .module-header-band {
+        padding: 16px 18px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--accent-dark) 0%, var(--accent) 100%);
+        border: 0;
+        margin-bottom: 16px;
+      }
+      .module-header-band h3 {
+        margin: 0 0 4px;
+        color: #fff;
+        font-size: 1.35rem;
+      }
+      .module-header-band .module-lead {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 0.92rem;
+        line-height: 1.45;
+      }
+      .table-wrap {
+        overflow: auto;
+        max-width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel-solid);
+      }
+      .scan-table th,
+      .scan-table td {
+        border-bottom: 1px solid var(--line);
+        color: var(--text);
+      }
+      .scan-table th {
+        background: #d4e6f7;
+        color: var(--accent-dark);
+        font-weight: 700;
+      }
+      .scan-table tbody tr:hover {
+        background: var(--accent-soft);
+      }
+      .scan-table tbody tr:nth-child(even) {
+        background: #f5f9ff;
+      }
+      .data-grid {
+        background: var(--panel-solid);
+        border-color: var(--line);
+      }
+      .data-grid-header-x {
+        background: #d4e6f7;
+        border-bottom: 2px solid var(--line);
+      }
+      .data-grid-row.head .data-grid-cell {
+        background: #d4e6f7;
+        color: var(--accent-dark);
+        font-weight: 700;
+      }
+      .data-grid-row.body .data-grid-cell {
+        padding: 7px 10px;
+        font-size: 0.86rem;
+      }
+      .data-grid-row.body {
+        background: var(--panel-solid);
+      }
+      .data-grid-row.body.row-alt {
+        background: #f5f9ff;
+      }
+      .operational-filters-bar {
+        background: var(--panel);
+        border-color: var(--line);
+      }
+      .operational-table-meta {
+        background: #eef5fc;
+        color: var(--muted);
+        border-color: var(--line);
+      }
+      .cc-search-bar {
+        background: var(--panel);
+        border: 1px solid var(--line);
+      }
+      .cc-section-title {
+        color: var(--accent-dark);
+      }
+      .kpi-card,
+      .summary-card {
+        background: linear-gradient(180deg, #fff 0%, var(--panel) 100%);
+        border-color: var(--line);
+      }
+      .kpi-card .kpi-value,
+      .summary-card .value {
+        color: var(--accent-dark);
+      }
+      .kpi-card.ok .kpi-value,
+      .summary-card.ok .value {
+        color: var(--ok);
+      }
+      .pipeline-step {
+        background: var(--panel-solid);
+        border-color: var(--line);
+      }
+      .pipeline-step .step-name {
+        color: var(--accent-dark);
+      }
+      .pipeline-step .step-num {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .btn-quick {
+        background: var(--panel-solid);
+        border: 1px solid var(--line);
+        color: var(--accent-dark);
+      }
+      .btn-quick:hover {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+      .sidebar {
+        background: var(--panel-solid);
+        border-right: 1px solid var(--line);
+      }
+      .module-btn.nav-primary {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent-dark);
+      }
+      .module-btn.active {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        color: var(--accent-dark);
+        font-weight: 700;
+      }
+      .picking-flow {
+        background: var(--panel);
+        border: 1px solid var(--line);
+      }
+      .picking-step {
+        background: var(--panel-solid);
+        border-color: var(--line);
+        color: var(--muted);
+      }
+      .picking-step strong {
+        color: var(--accent-dark);
+      }
+      .picking-step.active {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent-dark);
+      }
+      .picking-step.done {
+        border-color: var(--ok);
+        background: #ecfdf5;
+        color: #065f46;
+      }
+      .picking-scan-card {
+        background: var(--panel-solid);
+        border: 1px solid var(--line);
+      }
+      .scan-input-lg {
+        background: #fff;
+        border-color: var(--line);
+        color: var(--text);
+      }
+      .scan-input-lg:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(15, 76, 129, 0.15);
+      }
+      .picking-hint {
+        color: var(--muted);
+      }
+      .btn-scan {
+        background: linear-gradient(90deg, var(--ok), #10b981);
+      }
+      .trace-query-panel {
+        margin-bottom: 16px;
+      }
+      .trace-results-panel {
+        padding: 0;
+        overflow: hidden;
+      }
+      .secondary-panel-title {
+        margin: 0 0 12px;
+        font-size: 0.95rem;
+        color: var(--accent-dark);
+        font-weight: 700;
+      }
       @media (max-width: 880px) {
         body {
           padding: 14px;
@@ -1568,7 +1763,7 @@
           <button class="module-btn" data-module="account" id="btnAccount">⚙ Mi cuenta</button>
         </aside>
         <main class="content">
-          <div id="moduleControlCenter" class="hidden">
+          <div id="moduleControlCenter" class="module-pane hidden">
             <header class="cc-hero">
               <h2 class="cc-title">LOGITEC CORE WMS</h2>
               <p class="cc-tagline">Control operativo de almacén, inventario y trazabilidad</p>
@@ -1690,7 +1885,7 @@
               <div id="ccInventoryList">Cargando existencias…</div>
             </section>
           </div>
-          <div id="moduleUsers" class="hidden">
+          <div id="moduleUsers" class="module-pane hidden">
             <h3>Módulo Usuarios</h3>
             <p id="usersMessage" class="subtitle" style="margin-bottom: 10px">Cargando usuarios...</p>
             <form id="createUserForm" class="hidden">
@@ -1722,11 +1917,12 @@
             </form>
             <div id="usersList"></div>
           </div>
-          <div id="moduleTraceability" class="hidden">
-            <h3>Trazabilidad para auditoría</h3>
-            <p class="subtitle" style="margin-bottom: 10px">
-              Consulta unificada de movimientos, importaciones, picking y operaciones registradas.
-            </p>
+          <div id="moduleTraceability" class="module-pane hidden">
+            <div class="module-screen-header module-header-band">
+              <h3>Consulta de trazabilidad</h3>
+              <p class="module-lead">Auditoría de movimientos, importaciones, picking y operaciones registradas en el sistema.</p>
+            </div>
+            <div class="card-panel trace-query-panel">
             <div class="filter-strip">
               <div class="field compact">
                 <label for="traceWh">Almacén</label>
@@ -1752,13 +1948,16 @@
                 <label for="traceTo">Hasta</label>
                 <input id="traceTo" type="date" />
               </div>
-              <button type="button" id="traceLoadBtn">Consultar</button>
-              <button type="button" id="exportTraceBtn" class="btn-export">Exportar trazabilidad CSV</button>
+              <button type="button" id="traceLoadBtn" class="btn-primary btn-compact">Consultar</button>
+              <button type="button" id="exportTraceBtn" class="btn-secondary btn-compact">Exportar trazabilidad CSV</button>
             </div>
-            <p id="traceMessage" class="subtitle" style="min-height: 1.2em"></p>
+            </div>
+            <div class="card-panel trace-results-panel">
+            <p id="traceMessage" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0;border-bottom:0;min-height:1.2em"></p>
             <div id="traceList" style="overflow: auto; max-width: 100%"></div>
+            </div>
           </div>
-          <div id="moduleTasks" class="hidden">
+          <div id="moduleTasks" class="module-pane hidden">
             <h3>Tareas</h3>
             <p class="subtitle" style="margin-bottom: 10px">
               Cola operativa (preparación para workflows). Creación: ADMIN / supervisor.
@@ -1795,7 +1994,7 @@
             <p id="taskMessage" class="subtitle" style="min-height: 1.2em"></p>
             <div id="taskList" style="overflow: auto; max-width: 100%"></div>
           </div>
-          <div id="moduleIncidents" class="hidden">
+          <div id="moduleIncidents" class="module-pane hidden">
             <h3>Incidencias</h3>
             <p class="subtitle" style="margin-bottom: 10px">Registro de excepciones operativas.</p>
             <h4 style="margin: 12px 0 8px">Registrar</h4>
@@ -1833,7 +2032,7 @@
             <p id="incidentMessage" class="subtitle" style="min-height: 1.2em"></p>
             <div id="incidentList" style="overflow: auto; max-width: 100%"></div>
           </div>
-          <div id="moduleAccount" class="hidden">
+          <div id="moduleAccount" class="module-pane hidden">
             <h3>Mi cuenta</h3>
             <p class="subtitle" style="margin-bottom: 10px">Cambia tu contrasena de acceso.</p>
             <form id="changePasswordForm">
@@ -1869,11 +2068,11 @@
               </div>
             </div>
           </div>
-          <div id="modulePicking" class="hidden picking-panel">
-            <h3>Picking — simulación handheld</h3>
-            <p class="picking-intro">
-              Modo operativo para escaneo en piso. Escanea el código de barras desde handheld o lector físico.
-            </p>
+          <div id="modulePicking" class="module-pane hidden picking-panel">
+            <div class="module-screen-header module-header-band">
+              <h3>Picking en piso</h3>
+              <p class="module-lead">Flujo de escaneo para validar producto, descontar stock y registrar trazabilidad en tiempo real.</p>
+            </div>
             <div class="picking-flow" id="pickingFlow" aria-label="Flujo de picking">
               <div class="picking-step" data-step="read">
                 <strong>1. Código leído</strong>
@@ -1913,17 +2112,18 @@
               <button id="scanBtn" class="btn-scan" type="submit">Escanear</button>
             </form>
             <div id="scanResult" class="scan-result-box" role="status" aria-live="polite"></div>
-            <section class="picking-history">
-              <h4>Historial de escaneos</h4>
-              <p class="subtitle" style="margin: 0 0 10px">
-                Fecha/hora, operador, código, resultado y detalle del producto.
+            <section class="picking-history card-panel">
+              <h4 class="secondary-panel-title">Historial de escaneos</h4>
+              <p class="filter-hint" style="margin: 0 0 10px">
+                Fecha, operador, código, resultado y detalle del producto.
               </p>
               <div id="scanEventsList"></div>
             </section>
           </div>
-          <div id="moduleInventory" class="hidden">
-            <div class="module-screen-header">
+          <div id="moduleInventory" class="module-pane hidden">
+            <div class="module-screen-header module-header-band">
               <h3>Inventario actual</h3>
+              <p class="module-lead">Existencias por cliente, ubicación y status. Use filtros para localizar saldos operativos.</p>
             </div>
             <div class="page-toolbar">
               <button type="button" id="openInventoryImportBtn" class="btn-primary">Importar inventario</button>
@@ -1990,8 +2190,8 @@
               <p id="inventoryTableCount" class="operational-table-meta">Mostrando 0 de 0 saldos</p>
               <div id="inventoryList">Cargando...</div>
             </div>
-            <div id="movementsPanel" class="movements-panel card-panel">
-              <h4 style="margin:0 0 12px">Movimientos de inventario</h4>
+            <div id="movementsPanel" class="movements-panel card-panel secondary-panel">
+              <h4 class="secondary-panel-title">Movimientos de inventario</h4>
               <div id="inventoryMovementsList">Cargando...</div>
             </div>
             <form id="movementForm" class="hidden">
@@ -2030,9 +2230,10 @@
               <button id="movementBtn" type="submit">Registrar movimiento</button>
             </form>
           </div>
-          <div id="moduleCatalog" class="hidden">
-            <div class="module-screen-header">
+          <div id="moduleCatalog" class="module-pane hidden">
+            <div class="module-screen-header module-header-band">
               <h3>Catálogo de productos</h3>
+              <p class="module-lead">Productos maestros por cliente. Importe catálogo o filtre por SKU y nombre.</p>
             </div>
             <div class="page-toolbar">
               <button type="button" id="openCatalogImportBtn" class="btn-primary">Importar catálogo</button>
@@ -2107,7 +2308,7 @@
               <button id="createProductBtn" type="submit">Crear producto</button>
             </form>
           </div>
-          <div id="moduleClients" class="hidden">
+          <div id="moduleClients" class="module-pane hidden">
             <div class="module-screen-header">
               <h3>Clientes</h3>
               <p class="module-lead">Resumen de clientes a partir de catálogo e inventario cargado.</p>
@@ -2119,7 +2320,7 @@
               <div id="clientsAdminList"></div>
             </div>
           </div>
-          <div id="moduleReports" class="hidden">
+          <div id="moduleReports" class="module-pane hidden">
             <div class="module-screen-header">
               <h3>Reportes</h3>
               <p class="module-lead">Exportaciones operativas disponibles según tu rol.</p>
@@ -2134,7 +2335,7 @@
               <p class="filter-hint" style="margin:0">Los reportes usan los datos actuales del sistema. Para trazabilidad filtrada, usa el módulo Trazabilidad.</p>
             </div>
           </div>
-          <div id="moduleInbound" class="hidden">
+          <div id="moduleInbound" class="module-pane hidden">
             <div class="module-screen-header"><h3>Entradas</h3></div>
             <div class="ops-pending-banner">Pendiente de habilitación operativa. El registro formal de recepciones se activará en una siguiente fase.</div>
             <div class="card-panel" style="padding:0">
@@ -2145,7 +2346,7 @@
             </div>
             <div class="page-toolbar"><button type="button" class="btn-secondary" disabled>Requiere habilitar flujo operativo</button></div>
           </div>
-          <div id="moduleOutbound" class="hidden">
+          <div id="moduleOutbound" class="module-pane hidden">
             <div class="module-screen-header"><h3>Salidas</h3></div>
             <div class="ops-pending-banner">Pendiente de habilitación operativa. Las salidas formales se vincularán al flujo de picking y trazabilidad.</div>
             <div class="card-panel" style="padding:0">
@@ -2156,7 +2357,7 @@
             </div>
             <div class="page-toolbar"><button type="button" class="btn-secondary" disabled>Requiere habilitar flujo operativo</button></div>
           </div>
-          <div id="moduleRequisitions" class="hidden">
+          <div id="moduleRequisitions" class="module-pane hidden">
             <div class="module-screen-header"><h3>Requisiciones</h3></div>
             <div class="ops-pending-banner">Pendiente de habilitación operativa. Las requisiciones alimentarán el surtido y picking.</div>
             <div class="card-panel" style="padding:0">
@@ -2167,7 +2368,7 @@
             </div>
             <div class="page-toolbar"><button type="button" class="btn-secondary" disabled>Requiere habilitar flujo operativo</button></div>
           </div>
-          <div id="modulePlaceholder" class="hidden">
+          <div id="modulePlaceholder" class="module-pane hidden">
             <h3>Módulo en construcción</h3>
             <p class="subtitle">Este módulo se habilitará en una siguiente iteración.</p>
           </div>
@@ -2243,6 +2444,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=26"></script>
+    <script src="/dashboard.js?v=27"></script>
   </body>
 </html>
