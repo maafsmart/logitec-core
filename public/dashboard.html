@@ -87,7 +87,7 @@
       }
       .app-body {
         display: grid;
-        grid-template-columns: 240px minmax(0, 1fr);
+        grid-template-columns: 208px minmax(0, 1fr);
         gap: 0;
         flex: 1;
         min-height: 0;
@@ -144,47 +144,98 @@
       .sidebar {
         border-right: 1px solid var(--line);
         border-radius: 0;
-        padding: 16px 12px;
-        background: var(--panel);
+        padding: 12px 10px;
+        background: var(--panel-solid);
         position: sticky;
         top: 57px;
         align-self: start;
         height: calc(100vh - 57px);
         overflow-y: auto;
       }
-      .nav-group {
-        margin-bottom: 14px;
+      .nav-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
-      .nav-group:last-child {
-        margin-bottom: 0;
+      .nav-section-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--line);
       }
-      .nav-group-title {
-        margin: 0 0 6px 10px;
+      .nav-section-tab {
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--muted);
+        border-radius: 999px;
+        padding: 5px 9px;
         font-size: 0.68rem;
         font-weight: 700;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.04em;
         text-transform: uppercase;
+        cursor: pointer;
+        transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+      }
+      .nav-section-tab:hover {
+        background: #f0f5fb;
+        color: var(--accent);
+      }
+      .nav-section-tab.active {
+        background: var(--accent);
+        border-color: var(--accent-dark);
+        color: #fff;
+      }
+      .nav-section-panel {
+        display: none;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .nav-section-panel.active {
+        display: flex;
+      }
+      .nav-section-hint {
+        margin: 0 0 6px 4px;
+        font-size: 0.72rem;
         color: var(--muted);
-        opacity: 0.9;
+        line-height: 1.3;
       }
       .module-btn {
         width: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
         text-align: left;
-        margin-bottom: 3px;
+        margin-bottom: 0;
         border: 1px solid transparent;
-        border-radius: 8px;
+        border-radius: 10px;
         padding: 8px 10px;
         font-weight: 600;
         font-size: 0.84rem;
         color: var(--text);
         cursor: pointer;
         background: transparent;
-        transition: background 0.12s ease, color 0.12s ease;
+        transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+      }
+      .module-btn-label {
+        font-weight: 600;
+        font-size: 0.84rem;
+        line-height: 1.25;
+      }
+      .module-btn-desc {
+        font-weight: 500;
+        font-size: 0.7rem;
+        color: var(--muted);
+        line-height: 1.3;
       }
       .module-btn.active {
-        border-color: var(--accent-soft);
+        border-color: var(--accent);
         background: var(--accent-soft);
         color: var(--accent-dark);
+      }
+      .module-btn.active .module-btn-desc {
+        color: var(--accent);
       }
       .module-btn:hover:not(:disabled) {
         background: #f0f5fb;
@@ -192,7 +243,22 @@
       }
       .module-btn.nav-primary {
         font-weight: 700;
-        color: var(--accent);
+        color: var(--accent-dark);
+        background: linear-gradient(180deg, #eef5fc 0%, #e4effa 100%);
+        border-color: #c5d9ef;
+      }
+      .module-btn.nav-primary .module-btn-label {
+        font-weight: 700;
+      }
+      .module-hint {
+        margin: 8px 0 0;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: #f0f6fc;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.8rem;
+        line-height: 1.4;
       }
       .tasks-kpi-grid {
         display: grid;
@@ -216,9 +282,9 @@
         border: 1px solid var(--line);
         background: var(--panel-solid);
         color: var(--muted);
-        border-radius: 8px;
-        padding: 6px 12px;
-        font-size: 0.82rem;
+        border-radius: 999px;
+        padding: 6px 14px;
+        font-size: 0.8rem;
         font-weight: 600;
         cursor: pointer;
       }
@@ -1414,14 +1480,12 @@
         padding: 14px 10px;
       }
       .module-btn {
-        margin-bottom: 6px;
+        margin-bottom: 0;
         padding: 10px 12px;
         font-size: 0.88rem;
       }
       .module-btn.nav-primary {
         font-weight: 700;
-        border-color: rgba(108, 168, 255, 0.45);
-        background: linear-gradient(180deg, #1a3268 0%, #152a52 100%);
       }
       .panel {
         width: min(1480px, 98vw);
@@ -1713,9 +1777,9 @@
         border-right: 1px solid var(--line);
       }
       .module-btn.nav-primary {
-        background: var(--accent);
-        color: #fff;
-        border-color: var(--accent-dark);
+        background: linear-gradient(180deg, #eef5fc 0%, #e4effa 100%);
+        color: var(--accent-dark);
+        border-color: #c5d9ef;
       }
       .module-btn.active {
         background: var(--accent-soft);
@@ -2106,31 +2170,91 @@
       </header>
       <div class="app-body">
         <aside class="sidebar">
-          <div class="nav-group" data-nav-group="hoy">
-            <div class="nav-group-title">Hoy</div>
-            <button class="module-btn nav-primary" data-module="control" id="btnControl">◉ Centro de Control</button>
-            <button class="module-btn" data-module="tasks" id="btnTasks">☑ Mis tareas</button>
-            <button class="module-btn" data-module="picking" id="btnPicking">⎔ Picking</button>
-          </div>
-          <div class="nav-group" data-nav-group="operacion">
-            <div class="nav-group-title">Operación</div>
-            <button class="module-btn" data-module="inbound" id="btnInbound">↓ Entradas</button>
-            <button class="module-btn" data-module="requisitions" id="btnRequisitions">☰ Requisiciones</button>
-            <button class="module-btn" data-module="outbound" id="btnOutbound">↑ Salidas</button>
-            <button class="module-btn" data-module="incidents" id="btnIncidents">! Incidencias</button>
-          </div>
-          <div class="nav-group" data-nav-group="consulta">
-            <div class="nav-group-title">Consulta</div>
-            <button class="module-btn" data-module="inventory" id="btnInventory">▤ Inventario</button>
-            <button class="module-btn" data-module="catalog" id="btnCatalog">▦ Catálogo / Proyectos</button>
-            <button class="module-btn" data-module="clients" id="btnClients">◎ Proyectos AVIAT</button>
-            <button class="module-btn" data-module="traceability" id="btnTraceability">⌕ Trazabilidad</button>
-          </div>
-          <div class="nav-group" data-nav-group="sistema">
-            <div class="nav-group-title">Sistema</div>
-            <button class="module-btn" data-module="reports" id="btnReports">▣ Reportes</button>
-            <button class="module-btn" data-module="users" id="btnUsers">👤 Usuarios</button>
-            <button class="module-btn" data-module="account" id="btnAccount">⚙ Mi cuenta</button>
+          <div class="nav-shell">
+            <div class="nav-section-tabs" role="tablist" aria-label="Áreas del sistema">
+              <button type="button" class="nav-section-tab active" data-nav-section="hoy" role="tab" aria-selected="true">Hoy</button>
+              <button type="button" class="nav-section-tab" data-nav-section="operacion" role="tab" aria-selected="false">Operación</button>
+              <button type="button" class="nav-section-tab" data-nav-section="inventario" role="tab" aria-selected="false">Inventario</button>
+              <button type="button" class="nav-section-tab" data-nav-section="control" role="tab" aria-selected="false">Control</button>
+              <button type="button" class="nav-section-tab" data-nav-section="sistema" role="tab" aria-selected="false">Sistema</button>
+            </div>
+            <div class="nav-section-body">
+              <div class="nav-section-panel active" data-nav-section-panel="hoy" data-nav-group="hoy">
+                <p class="nav-section-hint">Trabajo del día: control, cola y surtido</p>
+                <button class="module-btn nav-primary" data-module="control" id="btnControl" type="button">
+                  <span class="module-btn-label">Centro de Control</span>
+                  <span class="module-btn-desc">Resumen operativo del almacén</span>
+                </button>
+                <button class="module-btn" data-module="tasks" id="btnTasks" type="button">
+                  <span class="module-btn-label">Mis tareas</span>
+                  <span class="module-btn-desc">Cola de trabajo asignada</span>
+                </button>
+                <button class="module-btn" data-module="picking" id="btnPicking" type="button">
+                  <span class="module-btn-label">Picking / Surtido</span>
+                  <span class="module-btn-desc">Escaneo y preparación en piso</span>
+                </button>
+                <button class="module-btn" data-module="incidents" id="btnIncidentsHoy" type="button">
+                  <span class="module-btn-label">Incidencias abiertas</span>
+                  <span class="module-btn-desc">Excepciones pendientes en piso</span>
+                </button>
+              </div>
+              <div class="nav-section-panel" data-nav-section-panel="operacion" data-nav-group="operacion">
+                <p class="nav-section-hint">Flujo de mercancía y órdenes</p>
+                <button class="module-btn" data-module="inbound" id="btnInbound" type="button">
+                  <span class="module-btn-label">Entradas</span>
+                  <span class="module-btn-desc">Recepción y alta de existencias</span>
+                </button>
+                <button class="module-btn" data-module="requisitions" id="btnRequisitions" type="button">
+                  <span class="module-btn-label">Requisiciones / Órdenes</span>
+                  <span class="module-btn-desc">Solicitudes de surtido</span>
+                </button>
+                <button class="module-btn" data-module="picking" id="btnPickingOps" type="button">
+                  <span class="module-btn-label">Picking / Surtido</span>
+                  <span class="module-btn-desc">Preparación con escaneo</span>
+                </button>
+                <button class="module-btn" data-module="outbound" id="btnOutbound" type="button">
+                  <span class="module-btn-label">Salidas / Despacho</span>
+                  <span class="module-btn-desc">Confirmar salida de mercancía</span>
+                </button>
+              </div>
+              <div class="nav-section-panel" data-nav-section-panel="inventario" data-nav-group="inventario">
+                <p class="nav-section-hint">Existencias, catálogo y proyectos AVIAT</p>
+                <button class="module-btn" data-module="inventory" id="btnInventory" type="button">
+                  <span class="module-btn-label">Inventario</span>
+                  <span class="module-btn-desc">Saldos por proyecto, lote y ubicación</span>
+                </button>
+                <button class="module-btn" data-module="catalog" id="btnCatalog" type="button">
+                  <span class="module-btn-label">Catálogo y proyectos</span>
+                  <span class="module-btn-desc">Productos y proyectos de AVIAT</span>
+                </button>
+              </div>
+              <div class="nav-section-panel" data-nav-section-panel="control" data-nav-group="control">
+                <p class="nav-section-hint">Auditoría, excepciones e indicadores</p>
+                <button class="module-btn" data-module="traceability" id="btnTraceability" type="button">
+                  <span class="module-btn-label">Trazabilidad / Auditoría</span>
+                  <span class="module-btn-desc">Historial de operaciones</span>
+                </button>
+                <button class="module-btn" data-module="incidents" id="btnIncidents" type="button">
+                  <span class="module-btn-label">Incidencias</span>
+                  <span class="module-btn-desc">Registro y seguimiento de excepciones</span>
+                </button>
+                <button class="module-btn" data-module="reports" id="btnReports" type="button">
+                  <span class="module-btn-label">Reportes y exportaciones</span>
+                  <span class="module-btn-desc">CSV e indicadores operativos</span>
+                </button>
+              </div>
+              <div class="nav-section-panel" data-nav-section-panel="sistema" data-nav-group="sistema">
+                <p class="nav-section-hint">Accesos de cuenta y administración</p>
+                <button class="module-btn" data-module="users" id="btnUsers" type="button">
+                  <span class="module-btn-label">Usuarios</span>
+                  <span class="module-btn-desc">Altas y roles del equipo</span>
+                </button>
+                <button class="module-btn" data-module="account" id="btnAccount" type="button">
+                  <span class="module-btn-label">Mi cuenta</span>
+                  <span class="module-btn-desc">Contraseña y perfil</span>
+                </button>
+              </div>
+            </div>
           </div>
         </aside>
         <main class="content">
@@ -2273,7 +2397,10 @@
             </section>
           </div>
           <div id="moduleUsers" class="module-pane hidden">
-            <h3>Módulo Usuarios</h3>
+            <div class="module-screen-header module-header-band">
+              <h3>Usuarios</h3>
+              <p class="module-lead">Administra accesos y roles del equipo operativo. Solo administración del sistema.</p>
+            </div>
             <p id="usersMessage" class="subtitle" style="margin-bottom: 10px">Cargando usuarios...</p>
             <form id="createUserForm" class="hidden">
               <div class="form-grid">
@@ -2306,8 +2433,8 @@
           </div>
           <div id="moduleTraceability" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Consulta de trazabilidad — AVIAT</h3>
-              <p class="module-lead">Auditoría de movimientos, importaciones, picking y operaciones registradas en el sistema.</p>
+              <h3>Trazabilidad / Auditoría</h3>
+              <p class="module-lead">Consulta el historial de movimientos, importaciones, picking y operaciones. Útil para supervisión y auditoría.</p>
             </div>
             <div class="aviat-context-bar">
               <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
@@ -2367,7 +2494,7 @@
           <div id="moduleTasks" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Tareas operativas</h3>
-              <p class="module-lead">Cola de trabajo para almacén, picking, inventario, incidencias y seguimiento diario.</p>
+              <p class="module-lead">Organiza el trabajo diario por responsable, prioridad y estatus. Usado por operadores, supervisores y administración.</p>
             </div>
             <div class="tasks-kpi-grid" aria-label="Indicadores de tareas">
               <div class="kpi-card">
@@ -2403,6 +2530,7 @@
             </div>
             <div id="taskCreateWrap" class="hidden card-panel ops-form-panel">
               <h4 class="secondary-panel-title">Crear tarea</h4>
+              <p class="module-hint">Para enviar un aviso a un usuario, crea una tarea tipo <strong>Aviso interno</strong>.</p>
               <div class="form-grid">
                 <div class="field full">
                   <label for="taskRef">Título / folio</label>
@@ -2414,15 +2542,7 @@
                 </div>
                 <div class="field">
                   <label for="taskType">Tipo de tarea</label>
-                  <select id="taskType">
-                    <option value="PICK">Picking</option>
-                    <option value="COUNT" data-label="Inventario">Inventario</option>
-                    <option value="COUNT_REV" data-label="Revisión">Revisión</option>
-                    <option value="ADJUSTMENT" data-label="Incidencia">Incidencia</option>
-                    <option value="MOVE">Movimiento</option>
-                    <option value="COUNT_VAL" data-label="Validación">Validación</option>
-                    <option value="GENERAL" data-label="General">General</option>
-                  </select>
+                  <select id="taskType"></select>
                 </div>
                 <div class="field">
                   <label for="taskPriority">Prioridad</label>
@@ -2478,9 +2598,9 @@
                   <select id="taskFilterType">
                     <option value="">Todos</option>
                     <option value="PICK">Picking</option>
-                    <option value="COUNT">Inventario / Conteo</option>
+                    <option value="COUNT">Inventario / Revisión</option>
                     <option value="MOVE">Movimiento</option>
-                    <option value="ADJUSTMENT">Incidencia / General</option>
+                    <option value="ADJUSTMENT">Incidencia / General / Aviso</option>
                     <option value="RECEIVE">Recepción</option>
                   </select>
                 </div>
@@ -2537,20 +2657,14 @@
           <div id="moduleIncidents" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Incidencias operativas</h3>
-              <p class="module-lead">Registro de excepciones en piso: daños, discrepancias, ubicaciones incorrectas.</p>
+              <p class="module-lead">Registra excepciones de piso (daños, faltantes, ubicaciones). Usado por operadores y revisado por supervisión.</p>
             </div>
             <div class="card-panel ops-form-panel">
               <h4 class="secondary-panel-title">Registrar incidencia</h4>
             <div class="form-grid">
               <div class="field">
                 <label for="incidentType">Tipo</label>
-                <select id="incidentType">
-                  <option value="DOUBLE_SCAN">DOUBLE_SCAN</option>
-                  <option value="DAMAGED">DAMAGED</option>
-                  <option value="STOCK_MISMATCH">STOCK_MISMATCH</option>
-                  <option value="WRONG_LOCATION">WRONG_LOCATION</option>
-                  <option value="MISSING_PRODUCT">MISSING_PRODUCT</option>
-                </select>
+                <select id="incidentType"></select>
               </div>
               <div class="field">
                 <label for="incidentWarehouse">Almacén</label>
@@ -2570,7 +2684,7 @@
               </div>
             </div>
             <p id="incidentCreateError" class="inline-error"></p>
-            <button type="button" id="incidentCreateBtn" class="btn-primary">Enviar incidencia</button>
+            <button type="button" id="incidentCreateBtn" class="btn-primary btn-compact">Enviar incidencia</button>
             </div>
             <div class="card-panel" style="padding:0">
             <h4 class="secondary-panel-title" style="padding:16px 16px 0;margin:0">Listado de incidencias</h4>
@@ -2586,21 +2700,23 @@
             </div>
           </div>
           <div id="moduleAccount" class="module-pane hidden">
-            <h3>Mi cuenta</h3>
-            <p class="subtitle" style="margin-bottom: 10px">Cambia tu contrasena de acceso.</p>
+            <div class="module-screen-header module-header-band">
+              <h3>Mi cuenta</h3>
+              <p class="module-lead">Gestiona tu contraseña y datos de acceso. Zona de configuración operativa del sistema (si aplica).</p>
+            </div>
             <form id="changePasswordForm">
               <div class="form-grid">
                 <div class="field full">
-                  <label for="currentPassword">Contrasena actual</label>
+                  <label for="currentPassword">Contraseña actual</label>
                   <input id="currentPassword" type="password" minlength="6" required />
                 </div>
                 <div class="field full">
-                  <label for="newAccountPassword">Nueva contrasena</label>
+                  <label for="newAccountPassword">Nueva contraseña</label>
                   <input id="newAccountPassword" type="password" minlength="6" required />
                 </div>
               </div>
               <p id="changePasswordError" class="inline-error"></p>
-              <button id="changePasswordBtn" type="submit">Actualizar contrasena</button>
+              <button id="changePasswordBtn" type="submit" class="btn-primary btn-compact">Actualizar contraseña</button>
             </form>
             <div id="demoAdminZone" class="demo-admin-zone hidden">
               <h4>Zona de administración del sistema</h4>
@@ -2623,8 +2739,8 @@
           </div>
           <div id="modulePicking" class="module-pane hidden picking-panel">
             <div class="module-screen-header module-header-band">
-              <h3>Picking en piso</h3>
-              <p class="module-lead">Flujo de escaneo para validar producto, descontar stock y registrar trazabilidad en tiempo real.</p>
+              <h3>Picking / Surtido</h3>
+              <p class="module-lead">Prepara surtidos con escaneo para salida o movimiento operativo. Principal herramienta del operador de piso.</p>
             </div>
             <div class="picking-flow" id="pickingFlow" aria-label="Flujo de picking">
               <div class="picking-step" data-step="read">
@@ -2683,7 +2799,7 @@
           <div id="moduleInventory" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3 id="inventoryModuleTitle">Inventario de AVIAT</h3>
-              <p class="module-lead">Existencias por proyecto, ubicación y status. Use filtros para localizar saldos operativos.</p>
+              <p class="module-lead">Consulta existencias por proyecto, lote y ubicación. Base del control diario de almacén.</p>
             </div>
             <div class="aviat-context-bar">
               <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
@@ -2816,8 +2932,8 @@
           </div>
           <div id="moduleCatalog" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3 id="catalogModuleTitle">Catálogo de AVIAT</h3>
-              <p class="module-lead">Productos maestros por proyecto de AVIAT. Importe catálogo o filtre por SKU y nombre.</p>
+              <h3 id="catalogModuleTitle">Catálogo y proyectos</h3>
+              <p class="module-lead">Productos maestros y proyectos de AVIAT. Consulta maestra e importaciones para catálogo.</p>
             </div>
             <div class="aviat-context-bar">
               <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
@@ -2930,8 +3046,8 @@
           </div>
           <div id="moduleReports" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Reportes</h3>
-              <p class="module-lead">Exportaciones operativas del sistema. Use filtros en Inventario o Catálogo antes de exportar resultados filtrados.</p>
+              <h3>Reportes y exportaciones</h3>
+              <p class="module-lead">Exporta inventario, catálogo, movimientos y trazabilidad a CSV para análisis externo. Usa filtros en Inventario o Catálogo antes de exportar resultados filtrados.</p>
             </div>
             <div class="card-panel">
               <h4 class="secondary-panel-title">Inventario</h4>
@@ -2950,8 +3066,8 @@
           </div>
           <div id="moduleInbound" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Entradas operativas — AVIAT</h3>
-              <p class="module-lead">Registro de recepción de mercancía con impacto real en inventario y trazabilidad.</p>
+              <h3>Entradas</h3>
+              <p class="module-lead">Registra mercancía recibida y aumenta existencias por proyecto, lote y ubicación. Usado en recepción de almacén.</p>
             </div>
             <div class="card-panel ops-form-panel">
               <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong></p>
@@ -3006,7 +3122,7 @@
                 </div>
               </div>
               <p id="inboundMessage" class="ops-message"></p>
-              <button type="button" id="inboundSubmitBtn" class="btn-primary">Registrar entrada</button>
+              <button type="button" id="inboundSubmitBtn" class="btn-primary btn-compact">Registrar entrada</button>
             </div>
             <div class="card-panel" style="padding:0">
               <p id="inboundTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Entradas recientes</p>
@@ -3022,8 +3138,8 @@
           </div>
           <div id="moduleOutbound" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Salidas operativas — AVIAT</h3>
-              <p class="module-lead">Despacho de mercancía con validación de stock y registro de movimiento.</p>
+              <h3>Salidas / Despacho</h3>
+              <p class="module-lead">Confirma despacho o salida directa de mercancía con validación de stock. Cierre del flujo operativo.</p>
             </div>
             <div class="card-panel ops-form-panel">
               <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong></p>
@@ -3078,7 +3194,7 @@
                 </div>
               </div>
               <p id="outboundMessage" class="ops-message"></p>
-              <button type="button" id="outboundSubmitBtn" class="btn-primary">Registrar salida</button>
+              <button type="button" id="outboundSubmitBtn" class="btn-primary btn-compact">Registrar salida</button>
             </div>
             <div class="card-panel" style="padding:0">
               <p id="outboundTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Salidas recientes</p>
@@ -3094,8 +3210,8 @@
           </div>
           <div id="moduleRequisitions" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Requisiciones — AVIAT</h3>
-              <p class="module-lead">Solicitudes de surtido vinculadas a tareas de picking.</p>
+              <h3>Requisiciones / Órdenes</h3>
+              <p class="module-lead">Solicitudes de surtido que generan trabajo de picking. Usado por operación y supervisión.</p>
             </div>
             <div class="card-panel ops-form-panel">
               <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong></p>
@@ -3139,7 +3255,7 @@
                 </div>
               </div>
               <p id="reqMessage" class="ops-message"></p>
-              <button type="button" id="reqSubmitBtn" class="btn-primary">Crear requisición</button>
+              <button type="button" id="reqSubmitBtn" class="btn-primary btn-compact">Crear requisición</button>
             </div>
             <div class="card-panel" style="padding:0">
               <p id="reqTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Requisiciones registradas</p>
@@ -3241,6 +3357,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=38"></script>
+    <script src="/dashboard.js?v=39"></script>
   </body>
 </html>

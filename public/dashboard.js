@@ -393,6 +393,57 @@ const roleModules = {
   CLIENT: ["catalog", "account"]
 };
 
+/** Secciones de menú v39. clients se mantiene en registry pero fuera del menú principal. */
+const NAV_SECTION_MODULES = {
+  hoy: ["control", "tasks", "picking", "incidents"],
+  operacion: ["inbound", "requisitions", "picking", "outbound"],
+  inventario: ["inventory", "catalog"],
+  control: ["traceability", "incidents", "reports"],
+  sistema: ["users", "account"]
+};
+
+/**
+ * Tipos de tarea visibles en UI.
+ * value = tipo backend (PICK|RECEIVE|MOVE|ADJUSTMENT|COUNT).
+ * label se guarda en notes.taskLabel.
+ * Preparado para v40 mover a configuración persistente.
+ */
+const TASK_TYPE_OPTIONS = [
+  { id: "PICK", label: "Picking", value: "PICK" },
+  { id: "INVENTORY", label: "Inventario", value: "COUNT" },
+  { id: "REVIEW", label: "Revisión", value: "COUNT" },
+  { id: "INCIDENT", label: "Incidencia", value: "ADJUSTMENT" },
+  { id: "MOVE", label: "Movimiento", value: "MOVE" },
+  { id: "VALIDATION", label: "Validación", value: "COUNT" },
+  { id: "GENERAL", label: "General", value: "ADJUSTMENT" },
+  { id: "INTERNAL_NOTICE", label: "Aviso interno", value: "ADJUSTMENT" }
+];
+
+/** @deprecated alias de compatibilidad; usar TASK_TYPE_OPTIONS */
+const TASK_TYPE_UI_MAP = Object.fromEntries(
+  TASK_TYPE_OPTIONS.map((opt) => [opt.id, { type: opt.value, label: opt.label }])
+);
+// Claves legacy del formulario v38
+TASK_TYPE_UI_MAP.COUNT = { type: "COUNT", label: "Inventario" };
+TASK_TYPE_UI_MAP.COUNT_REV = { type: "COUNT", label: "Revisión" };
+TASK_TYPE_UI_MAP.COUNT_VAL = { type: "COUNT", label: "Validación" };
+TASK_TYPE_UI_MAP.ADJUSTMENT = { type: "ADJUSTMENT", label: "Incidencia" };
+TASK_TYPE_UI_MAP.RECEIVE = { type: "RECEIVE", label: "Recepción" };
+
+/**
+ * Tipos de incidencia visibles en UI (español).
+ * value = enum backend válido.
+ */
+const INCIDENT_TYPE_OPTIONS = [
+  { id: "DOUBLE_SCAN", label: "Doble escaneo", value: "DOUBLE_SCAN" },
+  { id: "DAMAGED", label: "Producto dañado", value: "DAMAGED" },
+  { id: "STOCK_MISMATCH", label: "Diferencia de inventario", value: "STOCK_MISMATCH" },
+  { id: "WRONG_LOCATION", label: "Ubicación incorrecta", value: "WRONG_LOCATION" },
+  { id: "MISSING_PRODUCT", label: "Producto faltante", value: "MISSING_PRODUCT" },
+  { id: "WRONG_PRODUCT", label: "Producto equivocado", value: "STOCK_MISMATCH" },
+  { id: "OTHER", label: "Otro", value: "STOCK_MISMATCH" }
+];
+
 const defaultLandingModule = {
   ADMIN: "control",
   SUPERVISOR: "control",
@@ -453,6 +504,7 @@ function activateModule(moduleName) {
   });
 
   hideAllModules();
+  syncNavSectionForModule(moduleName);
 
   const activeEl = MODULE_REGISTRY[moduleName];
   if (activeEl) activeEl.classList.remove("hidden");
@@ -1699,7 +1751,107 @@ async function handleTaskAction(taskId, action) {
 }
 
 function resolveTaskTypeFromUi(uiValue) {
+  if (!uiValue) return { type: "ADJUSTMENT", label: "General" };
+  const fromOptions = TASK_TYPE_OPTIONS.find((o) => o.id === uiValue);
+  if (fromOptions) return { type: fromOptions.value, label: fromOptions.label };
   return TASK_TYPE_UI_MAP[uiValue] || { type: uiValue, label: uiValue };
+}
+
+function resolveIncidentTypeFromUi(uiValue) {
+  if (!uiValue) return { value: "STOCK_MISMATCH", label: "Otro" };
+  const fromOptions = INCIDENT_TYPE_OPTIONS.find((o) => o.id === uiValue);
+  if (fromOptions) return { value: fromOptions.value, label: fromOptions.label };
+  return { value: uiValue, label: incidentTypeLabel(uiValue) };
+}
+
+function incidentTypeLabel(type) {
+  if (!type) return "—";
+  const match = INCIDENT_TYPE_OPTIONS.find((o) => o.value === type || o.id === type);
+  return match?.label || String(type);
+}
+
+function incidentTypeBadge(type) {
+  return `<span class="badge info">${escCell(incidentTypeLabel(type))}</span>`;
+}
+
+function fillSelectOptions(selectEl, options, { valueKey = "id", labelKey = "label", emptyLabel } = {}) {
+  if (!selectEl) return;
+  const current = selectEl.value;
+  selectEl.innerHTML = "";
+  if (emptyLabel != null) {
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = emptyLabel;
+    selectEl.appendChild(empty);
+  }
+  options.forEach((opt) => {
+    const option = document.createElement("option");
+    option.value = opt[valueKey];
+    option.textContent = opt[labelKey];
+    selectEl.appendChild(option);
+  });
+  if (current && Array.from(selectEl.options).some((o) => o.value === current)) {
+    selectEl.value = current;
+  }
+}
+
+function populateOperationalTypeSelects() {
+  fillSelectOptions(document.getElementById("taskType"), TASK_TYPE_OPTIONS);
+  fillSelectOptions(document.getElementById("incidentType"), INCIDENT_TYPE_OPTIONS);
+}
+
+function setNavSection(sectionId) {
+  if (!sectionId) return;
+  document.querySelectorAll(".nav-section-tab").forEach((tab) => {
+    const active = tab.getAttribute("data-nav-section") === sectionId;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll(".nav-section-panel").forEach((panel) => {
+    const match = panel.getAttribute("data-nav-section-panel") === sectionId;
+    const roleHidden = panel.dataset.roleHidden === "1";
+    const show = match && !roleHidden;
+    panel.classList.toggle("active", show);
+    panel.style.display = show ? "flex" : "none";
+  });
+}
+
+function findNavSectionForModule(moduleName) {
+  // Prefer the currently active section if it contains the module
+  const activePanel = document.querySelector(".nav-section-panel.active");
+  if (
+    activePanel &&
+    Array.from(activePanel.querySelectorAll(".module-btn")).some(
+      (b) => b.dataset.module === moduleName && b.style.display !== "none"
+    )
+  ) {
+    return activePanel.getAttribute("data-nav-section-panel");
+  }
+  for (const [section, modules] of Object.entries(NAV_SECTION_MODULES)) {
+    if (modules.includes(moduleName)) return section;
+  }
+  return null;
+}
+
+function syncNavSectionForModule(moduleName) {
+  const section = findNavSectionForModule(moduleName);
+  if (section) setNavSection(section);
+}
+
+function wireNavSectionTabs() {
+  document.querySelectorAll(".nav-section-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const section = tab.getAttribute("data-nav-section");
+      if (!section) return;
+      setNavSection(section);
+      const panel = document.querySelector(`[data-nav-section-panel="${section}"]`);
+      if (!panel) return;
+      const firstVisible = Array.from(panel.querySelectorAll(".module-btn")).find(
+        (btn) => btn.style.display !== "none" && !btn.disabled
+      );
+      // Only switch section content; do not auto-open module unless none active in view
+    });
+  });
 }
 
 async function createTaskClick() {
@@ -2244,17 +2396,6 @@ const TASK_STATUS_LABELS = {
   CANCELLED: "Cancelada"
 };
 
-const TASK_TYPE_UI_MAP = {
-  PICK: { type: "PICK", label: "Picking" },
-  COUNT: { type: "COUNT", label: "Inventario" },
-  COUNT_REV: { type: "COUNT", label: "Revisión" },
-  COUNT_VAL: { type: "COUNT", label: "Validación" },
-  ADJUSTMENT: { type: "ADJUSTMENT", label: "Incidencia" },
-  MOVE: { type: "MOVE", label: "Movimiento" },
-  GENERAL: { type: "ADJUSTMENT", label: "General" },
-  RECEIVE: { type: "RECEIVE", label: "Recepción" }
-};
-
 const MOVEMENT_COLUMNS = [
   { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
   { label: "Proyecto", sortKey: (m) => getAviatProjectDisplayFromRow(m), render: (m) => renderCellWithClamp(getAviatProjectDisplayFromRow(m), "cell-truncate", 22), title: (m) => getAviatProjectDisplayFromRow(m) },
@@ -2290,7 +2431,7 @@ const REQ_COLUMNS = [
 
 const INCIDENT_COLUMNS = [
   { label: "Fecha", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatDateShort(r.createdAt) },
-  { label: "Tipo", sortKey: (r) => r.type || "", render: (r) => statusBadge(r.type) },
+  { label: "Tipo", sortKey: (r) => incidentTypeLabel(r.type), render: (r) => incidentTypeBadge(r.type) },
   { label: "Estado", sortKey: (r) => r.status || "", render: (r) => statusBadge(r.status) },
   { label: "Reportó", sortKey: (r) => r.reportedBy?.fullName || "", render: (r) => renderCellWithClamp(r.reportedBy?.fullName, "cell-truncate", 20), title: (r) => r.reportedBy?.fullName || "" },
   { label: "Producto", sortKey: (r) => r.product?.sku || "", render: (r) => escCell(r.product?.sku || "—"), title: (r) => r.product?.sku || "" },
@@ -3791,7 +3932,9 @@ async function resolveIncident(incidentId) {
 async function createIncidentClick() {
   if (!incidentCreateBtn || !incidentCreateError) return;
   incidentCreateError.textContent = "";
-  const type = document.getElementById("incidentType")?.value;
+  const typeUi = document.getElementById("incidentType")?.value;
+  const mapped = resolveIncidentTypeFromUi(typeUi);
+  const type = mapped.value;
   const warehouse = document.getElementById("incidentWarehouse")?.value?.trim();
   const location = document.getElementById("incidentLocation")?.value?.trim();
   const productId = document.getElementById("incidentProductId")?.value?.trim();
@@ -4474,15 +4617,46 @@ function applyRoleNavigation(role) {
   moduleButtons.forEach((btn) => {
     const enabled = allowed.includes(btn.dataset.module);
     btn.disabled = !enabled;
-    btn.style.display = enabled ? "block" : "none";
+    btn.style.display = enabled ? "flex" : "none";
   });
 
+  let firstVisibleSection = null;
+  document.querySelectorAll(".nav-section-panel").forEach((panel) => {
+    const anyVisible = Array.from(panel.querySelectorAll(".module-btn")).some(
+      (btn) => btn.style.display !== "none" && !btn.disabled
+    );
+    panel.dataset.roleHidden = anyVisible ? "0" : "1";
+    const sectionId = panel.getAttribute("data-nav-section-panel");
+    if (anyVisible && !firstVisibleSection) firstVisibleSection = sectionId;
+    const tab = document.querySelector(`.nav-section-tab[data-nav-section="${sectionId}"]`);
+    if (tab) tab.style.display = anyVisible ? "" : "none";
+    if (!anyVisible) {
+      panel.classList.remove("active");
+      panel.style.display = "none";
+    }
+  });
+
+  // Backward-compat for any remaining .nav-group wrappers
   document.querySelectorAll(".nav-group").forEach((group) => {
+    if (group.classList.contains("nav-section-panel")) return;
     const anyVisible = Array.from(group.querySelectorAll(".module-btn")).some(
       (btn) => btn.style.display !== "none" && !btn.disabled
     );
     group.style.display = anyVisible ? "" : "none";
   });
+
+  const activePanel = document.querySelector(".nav-section-panel.active");
+  const activeVisible =
+    activePanel &&
+    activePanel.dataset.roleHidden !== "1" &&
+    Array.from(activePanel.querySelectorAll(".module-btn")).some(
+      (btn) => btn.style.display !== "none" && !btn.disabled
+    );
+  if (activeVisible) {
+    setNavSection(activePanel.getAttribute("data-nav-section-panel"));
+  } else if (firstVisibleSection) {
+    setNavSection(firstVisibleSection);
+  }
 
   const tabAll = document.getElementById("taskTabAll");
   if (tabAll) {
@@ -5083,6 +5257,9 @@ async function validateSession() {
 moduleButtons.forEach((btn) => {
   btn.addEventListener("click", () => activateModule(btn.dataset.module));
 });
+
+wireNavSectionTabs();
+populateOperationalTypeSelects();
 
 usersList.addEventListener("click", (event) => {
   const target = event.target;
