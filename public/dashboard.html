@@ -232,7 +232,7 @@
         gap: 4px;
         text-align: left;
         margin-bottom: 0;
-        border: 1px solid var(--line);
+        border: 1px solid #d4e3f2;
         border-radius: 14px;
         padding: 14px 16px;
         font-weight: 600;
@@ -254,16 +254,21 @@
         color: var(--muted);
         line-height: 1.35;
       }
+      /* Tarjeta interna activa: azul sobrio, distinto de pestañas principales */
       .module-btn.active {
-        border-color: var(--accent);
-        background: var(--accent-soft);
+        border-color: #6fa3d4;
+        background: linear-gradient(180deg, #eef5fc 0%, #dceaf8 100%);
         color: var(--accent-dark);
-        box-shadow: 0 2px 8px rgba(15, 76, 129, 0.12);
+        box-shadow: inset 3px 0 0 var(--accent), 0 2px 8px rgba(15, 76, 129, 0.1);
+        font-weight: 700;
+      }
+      .module-btn.active .module-btn-label {
+        color: var(--accent-dark);
       }
       .module-btn.active .module-btn-desc {
-        color: var(--accent);
+        color: #3d6f9e;
       }
-      .module-btn:hover:not(:disabled) {
+      .module-btn:hover:not(:disabled):not(.active) {
         background: #f0f6fc;
         color: var(--accent);
         border-color: #b7cfe6;
@@ -1855,10 +1860,14 @@
         border-color: #c5d9ef;
       }
       .module-btn.active {
-        background: var(--accent-soft);
-        border-color: var(--accent);
+        background: linear-gradient(180deg, #eef5fc 0%, #dceaf8 100%);
+        border-color: #6fa3d4;
         color: var(--accent-dark);
         font-weight: 700;
+        box-shadow: inset 3px 0 0 var(--accent), 0 2px 8px rgba(15, 76, 129, 0.1);
+      }
+      #taskCreateError.success {
+        color: #1b6b3a;
       }
       .picking-flow {
         background: var(--panel);
@@ -2680,17 +2689,25 @@
             </div>
             <div id="taskCreateWrap" class="hidden card-panel ops-form-panel">
               <h4 class="secondary-panel-title" id="taskCreateTitle">Crear tarea</h4>
-              <p id="taskInternalNoticeHint" class="module-hint hidden">Este aviso aparecerá en la sección Avisos internos del responsable.</p>
+              <p id="taskInternalNoticeHint" class="module-hint hidden">Comunica un aviso a un usuario. No afecta inventario, picking ni reubicaciones.</p>
               <div class="form-grid">
+                <div class="field" id="taskAssigneeField">
+                  <label for="taskAssignee" id="taskAssigneeLabel">Responsable asignado</label>
+                  <select id="taskAssignee">
+                    <option value="">Sin asignar</option>
+                  </select>
+                  <p id="taskAssigneeHint" class="assignee-hint"></p>
+                  <button type="button" id="taskCreateUserBtn" class="btn-secondary btn-compact hidden" style="margin-top:8px">Crear usuario</button>
+                </div>
                 <div class="field full">
-                  <label for="taskRef">Título / folio</label>
+                  <label for="taskRef" id="taskRefLabel">Título / folio</label>
                   <input id="taskRef" type="text" placeholder="Ej. INV-COUNT-014 o REVISIÓN PASILLO B" maxlength="200" />
                 </div>
                 <div class="field full">
-                  <label for="taskDescription">Descripción</label>
+                  <label for="taskDescription" id="taskDescriptionLabel">Descripción</label>
                   <textarea id="taskDescription" rows="2" placeholder="Detalle operativo de la tarea"></textarea>
                 </div>
-                <div class="field">
+                <div class="field" data-ops-field>
                   <label for="taskType">Tipo de tarea</label>
                   <select id="taskType"></select>
                 </div>
@@ -2703,48 +2720,40 @@
                     <option value="100">Urgente</option>
                   </select>
                 </div>
-                <div class="field" id="taskAssigneeField">
-                  <label for="taskAssignee">Responsable asignado</label>
-                  <select id="taskAssignee">
-                    <option value="">Sin asignar</option>
-                  </select>
-                  <p id="taskAssigneeHint" class="assignee-hint"></p>
-                  <button type="button" id="taskCreateUserBtn" class="btn-secondary btn-compact hidden" style="margin-top:8px">Crear usuario</button>
-                </div>
                 <div class="field">
-                  <label for="taskDueDate">Fecha objetivo</label>
+                  <label for="taskDueDate" id="taskDueDateLabel">Fecha objetivo</label>
                   <input id="taskDueDate" type="date" />
                 </div>
-                <div class="field">
+                <div class="field" data-ops-field>
                   <label for="taskProject">Proyecto</label>
                   <div class="smart-select-wrap">
                     <select id="taskProjectSelect"><option value="">— Seleccionar proyecto —</option></select>
                     <input id="taskProject" type="text" class="smart-other-input hidden" placeholder="Nuevo o manual" />
                   </div>
                 </div>
-                <div class="field">
+                <div class="field" data-ops-field>
                   <label for="taskLote">Lote</label>
                   <input id="taskLote" type="text" placeholder="Opcional" />
                 </div>
-                <div class="field">
+                <div class="field" data-ops-field>
                   <label for="taskSku">SKU / Código de barras</label>
                   <input id="taskSku" type="text" placeholder="Opcional" />
                 </div>
-                <div class="field">
+                <div class="field" data-ops-field>
                   <label for="taskLocation">Ubicación</label>
                   <div class="smart-select-wrap">
                     <select id="taskLocationSelect"><option value="">— Seleccionar —</option></select>
                     <input id="taskLocation" type="text" class="smart-other-input hidden" placeholder="Otra ubicación" />
                   </div>
                 </div>
-                <div class="field">
+                <div class="field" data-ops-field>
                   <label for="taskWarehouse">Almacén</label>
                   <div class="smart-select-wrap">
                     <select id="taskWarehouseSelect"><option value="">— Seleccionar —</option></select>
                     <input id="taskWarehouse" type="text" class="smart-other-input hidden" placeholder="Otro almacén" value="" />
                   </div>
                 </div>
-                <div class="field full">
+                <div class="field full" data-ops-field>
                   <label for="taskFollowUp">Comentario inicial</label>
                   <input id="taskFollowUp" type="text" placeholder="Seguimiento o contexto" />
                 </div>
@@ -3692,6 +3701,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=42"></script>
+    <script src="/dashboard.js?v=43"></script>
   </body>
 </html>

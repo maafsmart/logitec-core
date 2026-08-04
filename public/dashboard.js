@@ -593,6 +593,28 @@ function resolveSectionForModule(moduleName, preferredSection) {
  * Navegación única v41: una pestaña, un módulo, sin contenido residual.
  * navigateTo(section, module) — si module es null, usa landing de la sección.
  */
+function isNavModuleCardActive(btn, mod) {
+  if (!btn || btn.dataset.module !== mod) return false;
+  if (mod !== "tasks") return true;
+  const view = btn.getAttribute("data-task-view");
+  const pref = btn.getAttribute("data-task-pref-type");
+  const isNoticesCard = view === "notices" || pref === "INTERNAL_NOTICE";
+  if (taskViewMode === "notices") return isNoticesCard;
+  // ops: solo la tarjeta de tareas operativas (no la de avisos)
+  return !isNoticesCard;
+}
+
+function syncNavModuleCardActiveState() {
+  const mod = currentModuleName;
+  moduleButtons.forEach((btn) => {
+    btn.classList.toggle("active", Boolean(mod) && isNavModuleCardActive(btn, mod));
+  });
+}
+
+/**
+ * Navegación única v41: una pestaña, un módulo, sin contenido residual.
+ * navigateTo(section, module) — si module es null, usa landing de la sección.
+ */
 function navigateTo(sectionId, moduleName) {
   if (!currentRole) return;
 
@@ -629,7 +651,7 @@ function navigateTo(sectionId, moduleName) {
   }
 
   moduleButtons.forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.module === mod);
+    btn.classList.toggle("active", isNavModuleCardActive(btn, mod));
   });
 
   hideAllModules();
@@ -1621,25 +1643,55 @@ function applyTaskViewModeUi() {
   const filterTypeField = document.getElementById("taskFilterTypeField");
   const filtersTitle = document.getElementById("taskFiltersTitle");
   const filtersHint = document.getElementById("taskFiltersHint");
+  const refLabel = document.getElementById("taskRefLabel");
+  const descLabel = document.getElementById("taskDescriptionLabel");
+  const assigneeLabel = document.getElementById("taskAssigneeLabel");
+  const dueLabel = document.getElementById("taskDueDateLabel");
+  const refInput = document.getElementById("taskRef");
+  const descInput = document.getElementById("taskDescription");
+  const filterText = document.getElementById("taskFilterText");
+  const kpiMineLabel = document.querySelector('#taskKpiMine')?.parentElement?.querySelector(".kpi-label");
+  const kpiDoneLabel = document.querySelector('#taskKpiCompleted')?.parentElement?.querySelector(".kpi-label");
 
   if (title) title.textContent = notices ? "Avisos internos" : "Mis tareas operativas";
   if (lead) {
     lead.textContent = notices
-      ? "Comunicación operativa asignada a usuarios."
+      ? "Comunicación operativa entre administrador, supervisor y operadores."
       : "Trabajo asignado para almacén, inventario, surtido, incidencias y movimientos.";
   }
-  if (createTitle) createTitle.textContent = notices ? "Enviar aviso interno" : "Crear tarea";
-  if (createBtn) createBtn.textContent = notices ? "Enviar aviso interno" : "Crear tarea";
+  if (createTitle) createTitle.textContent = notices ? "Enviar aviso" : "Crear tarea";
+  if (createBtn) createBtn.textContent = notices ? "Enviar aviso" : "Crear tarea";
   if (hint) hint.classList.toggle("hidden", !notices);
   if (filtersTitle) {
     filtersTitle.textContent = notices ? "Buscar y filtrar avisos" : "Buscar y filtrar tareas";
   }
   if (filtersHint) {
     filtersHint.textContent = notices
-      ? "Filtra por estatus, responsable, prioridad o texto del mensaje."
+      ? "Filtra por estado, destinatario, prioridad o texto del aviso."
       : "Filtra por tipo, estatus, responsable, prioridad, fecha objetivo o texto.";
   }
   if (filterTypeField) filterTypeField.style.display = notices ? "none" : "";
+
+  if (refLabel) refLabel.textContent = notices ? "Asunto" : "Título / folio";
+  if (descLabel) descLabel.textContent = notices ? "Mensaje" : "Descripción";
+  if (assigneeLabel) assigneeLabel.textContent = notices ? "Destinatario / responsable" : "Responsable asignado";
+  if (dueLabel) dueLabel.textContent = notices ? "Fecha objetivo (opcional)" : "Fecha objetivo";
+  if (refInput) {
+    refInput.placeholder = notices ? "Asunto del aviso" : "Ej. INV-COUNT-014 o REVISIÓN PASILLO B";
+  }
+  if (descInput) {
+    descInput.placeholder = notices ? "Escribe el mensaje para el destinatario" : "Detalle operativo de la tarea";
+    descInput.rows = notices ? 4 : 2;
+  }
+  if (filterText) {
+    filterText.placeholder = notices ? "Buscar por asunto o mensaje…" : "Buscar por título, SKU, lote…";
+  }
+  if (kpiMineLabel) kpiMineLabel.textContent = notices ? "Mis avisos" : "Mis tareas";
+  if (kpiDoneLabel) kpiDoneLabel.textContent = notices ? "Atendidos" : "Completadas";
+
+  document.querySelectorAll("#taskCreateWrap [data-ops-field]").forEach((el) => {
+    el.classList.toggle("hidden", notices);
+  });
 
   document.querySelectorAll("#taskTabs [data-ops-only]").forEach((el) => {
     el.classList.toggle("hidden", notices);
@@ -1659,20 +1711,21 @@ function applyTaskViewModeUi() {
       typeSel.value = "INTERNAL_NOTICE";
       typeSel.disabled = true;
     }
-    if (typeField) typeField.style.display = "none";
+    if (typeField) typeField.classList.add("hidden");
     taskActiveTab = taskActiveTab === "notices-sent" ? "notices-sent" : "notices";
   } else {
     if (typeSel) {
       typeSel.disabled = false;
       if (typeSel.value === "INTERNAL_NOTICE") typeSel.value = "GENERAL";
     }
-    if (typeField) typeField.style.display = "";
+    if (typeField) typeField.classList.remove("hidden");
     if (taskActiveTab === "notices" || taskActiveTab === "notices-sent") taskActiveTab = "mine";
   }
 
   document.querySelectorAll("#taskTabs .tasks-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.getAttribute("data-task-tab") === taskActiveTab);
   });
+  syncNavModuleCardActiveState();
 }
 
 function setTaskViewMode(mode) {
@@ -1713,31 +1766,57 @@ function applyTaskFilters(rows) {
 function buildTaskActionHtml(t) {
   const buttons = [];
   const id = escCell(t.id);
-  buttons.push(`<button type="button" class="btn-table btn-compact task-view" data-task-id="${id}" data-task-action="view">Detalle</button>`);
-
   const terminal = t.status === "COMPLETED" || t.status === "CANCELLED" || t.status === "REJECTED";
+
+  // Avisos internos: comunicación, no workflow operativo
+  if (taskViewMode === "notices" || isInternalNoticeTask(t)) {
+    buttons.push(
+      `<button type="button" class="btn-table btn-compact task-view" data-task-id="${id}" data-task-action="view">Abrir</button>`
+    );
+    if (!terminal && (canActOnTask(t) || t.assignedToId === currentUserId || canManageAllTasks())) {
+      buttons.push(
+        `<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="complete">Marcar atendido</button>`
+      );
+    }
+    return `<div class="task-actions-cell">${buttons.join("")}</div>`;
+  }
+
+  buttons.push(
+    `<button type="button" class="btn-table btn-compact task-view" data-task-id="${id}" data-task-action="view">Abrir</button>`
+  );
+
   if (terminal) {
     return `<div class="task-actions-cell">${buttons.join("")}</div>`;
   }
 
   if (!t.assignedToId && (canAssignTasks() || (currentRole === "OPERATOR" && t.createdById === currentUserId))) {
     if (canActOnTask(t) || canAssignTasks()) {
-      buttons.push(`<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="claim">Tomar</button>`);
+      buttons.push(
+        `<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="claim">Tomar</button>`
+      );
     }
   }
 
   if (canActOnTask(t) && (t.assignedToId === currentUserId || canManageAllTasks())) {
     if (t.status === "PENDING" || t.status === "ASSIGNED") {
-      buttons.push(`<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="start">Iniciar</button>`);
+      buttons.push(
+        `<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="start">Iniciar</button>`
+      );
     }
     if (t.status === "IN_PROGRESS" || t.status === "ASSIGNED" || t.status === "PENDING") {
-      buttons.push(`<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="complete">Completar</button>`);
+      buttons.push(
+        `<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="complete">Completar</button>`
+      );
     }
   }
 
   if (canCancelOrRejectTasks()) {
-    buttons.push(`<button type="button" class="btn-table btn-compact btn-danger task-act" data-task-id="${id}" data-task-action="cancel">Cancelar</button>`);
-    buttons.push(`<button type="button" class="btn-table btn-compact btn-danger task-act" data-task-id="${id}" data-task-action="reject">Rechazar</button>`);
+    buttons.push(
+      `<button type="button" class="btn-table btn-compact btn-danger task-act" data-task-id="${id}" data-task-action="cancel">Cancelar</button>`
+    );
+    buttons.push(
+      `<button type="button" class="btn-table btn-compact btn-danger task-act" data-task-id="${id}" data-task-action="reject">Rechazar</button>`
+    );
   }
 
   return `<div class="task-actions-cell">${buttons.join("")}</div>`;
@@ -1908,6 +1987,7 @@ async function appendTaskFollowUp(task, comment) {
 function openTaskDetail(taskId) {
   const t = tasksCache.find((x) => x.id === taskId);
   if (!t) return;
+  const isNotice = isInternalNoticeTask(t) || taskViewMode === "notices";
   const followLines = (t._followUp || [])
     .map((f) => {
       const when = f.at ? formatDateShort(f.at) : "";
@@ -1915,109 +1995,158 @@ function openTaskDetail(taskId) {
     })
     .filter(Boolean);
 
-  const fields = [
-    { label: "Título", value: t._title },
-    { label: "Descripción", value: t._description || "—" },
-    { label: "Tipo", value: t._taskLabel },
-    { label: "Estatus", value: TASK_STATUS_LABELS[t.status] || t.status },
-    { label: "Responsable", value: t._assignName },
-    { label: "Fecha objetivo", value: t._dueDate ? formatDateShort(t._dueDate) : "—" },
-    { label: "Proyecto", value: t._project || "—" },
-    { label: "Lote", value: t._lote || "—" },
-    { label: "SKU", value: t._sku || "—" },
-    { label: "Ubicación", value: t._location || "—" },
-    { label: "Creador", value: t._creatorName },
-    { label: "Fecha creación", value: formatDateShort(t.createdAt) },
-    {
-      label: "Seguimiento",
-      value: followLines.length ? followLines.join(" | ") : "Sin comentarios"
-    }
-  ];
+  const fields = isNotice
+    ? [
+        { label: "Asunto", value: t._title },
+        { label: "Mensaje", value: t._description || "—" },
+        { label: "Responsable", value: t._assignName },
+        {
+          label: "Estado",
+          value:
+            t.status === "COMPLETED"
+              ? "Atendido"
+              : TASK_STATUS_LABELS[t.status] || t.status
+        },
+        { label: "Prioridad", value: "" },
+        {
+          label: "Fecha",
+          value: t._dueDate ? formatDateShort(t._dueDate) : formatDateShort(t.createdAt)
+        },
+        { label: "Enviado por", value: t._creatorName },
+        {
+          label: "Seguimiento",
+          value: followLines.length ? followLines.join(" | ") : "Sin comentarios"
+        }
+      ]
+    : [
+        { label: "Título", value: t._title },
+        { label: "Descripción", value: t._description || "—" },
+        { label: "Tipo", value: t._taskLabel },
+        { label: "Estatus", value: TASK_STATUS_LABELS[t.status] || t.status },
+        { label: "Responsable", value: t._assignName },
+        { label: "Fecha objetivo", value: t._dueDate ? formatDateShort(t._dueDate) : "—" },
+        { label: "Proyecto", value: t._project || "—" },
+        { label: "Lote", value: t._lote || "—" },
+        { label: "SKU", value: t._sku || "—" },
+        { label: "Ubicación", value: t._location || "—" },
+        { label: "Creador", value: t._creatorName },
+        { label: "Fecha creación", value: formatDateShort(t.createdAt) },
+        {
+          label: "Seguimiento",
+          value: followLines.length ? followLines.join(" | ") : "Sin comentarios"
+        }
+      ];
+
+  // Prioridad como texto legible en detalle de aviso
+  if (isNotice) {
+    const p = Number(t.priority ?? 0);
+    const pLabel = p >= 80 ? "Alta" : p >= 50 ? "Media" : "Baja";
+    const prioField = fields.find((f) => f.label === "Prioridad");
+    if (prioField) prioField.value = `${pLabel} (${p})`;
+  }
 
   const actions = [];
   const terminal = t.status === "COMPLETED" || t.status === "CANCELLED" || t.status === "REJECTED";
   if (!terminal) {
-    if (!t.assignedToId && (canAssignTasks() || canActOnTask(t))) {
-      actions.push({
-        id: "claim",
-        label: "Tomar tarea",
-        className: "btn-primary btn-compact",
-        onClick: async () => {
-          if (await claimTask(t.id)) {
-            closeDetailDrawer();
-            await loadTasks();
-          }
-        }
-      });
-    }
-    if (canActOnTask(t) && (t.assignedToId === currentUserId || canManageAllTasks())) {
-      if (t.status !== "IN_PROGRESS") {
+    if (isNotice) {
+      if (canActOnTask(t) || t.assignedToId === currentUserId || canManageAllTasks()) {
         actions.push({
-          id: "start",
-          label: "Iniciar",
-          className: "btn-secondary btn-compact",
+          id: "complete",
+          label: "Marcar atendido",
+          className: "btn-primary btn-compact",
           onClick: async () => {
-            if (await setTaskStatus(t.id, "IN_PROGRESS")) {
+            if (await setTaskStatus(t.id, "COMPLETED")) {
               closeDetailDrawer();
               await loadTasks();
             }
           }
         });
       }
-      actions.push({
-        id: "complete",
-        label: "Completar",
-        className: "btn-primary btn-compact",
-        onClick: async () => {
-          if (await setTaskStatus(t.id, "COMPLETED")) {
-            closeDetailDrawer();
-            await loadTasks();
+    } else {
+      if (!t.assignedToId && (canAssignTasks() || canActOnTask(t))) {
+        actions.push({
+          id: "claim",
+          label: "Tomar tarea",
+          className: "btn-primary btn-compact",
+          onClick: async () => {
+            if (await claimTask(t.id)) {
+              closeDetailDrawer();
+              await loadTasks();
+            }
           }
+        });
+      }
+      if (canActOnTask(t) && (t.assignedToId === currentUserId || canManageAllTasks())) {
+        if (t.status !== "IN_PROGRESS") {
+          actions.push({
+            id: "start",
+            label: "Iniciar",
+            className: "btn-secondary btn-compact",
+            onClick: async () => {
+              if (await setTaskStatus(t.id, "IN_PROGRESS")) {
+                closeDetailDrawer();
+                await loadTasks();
+              }
+            }
+          });
         }
-      });
-    }
-    if (canCancelOrRejectTasks()) {
-      actions.push({
-        id: "cancel",
-        label: "Cancelar",
-        className: "btn-secondary btn-compact",
-        onClick: async () => {
-          if (await setTaskStatus(t.id, "CANCELLED")) {
-            closeDetailDrawer();
-            await loadTasks();
+        actions.push({
+          id: "complete",
+          label: "Completar",
+          className: "btn-primary btn-compact",
+          onClick: async () => {
+            if (await setTaskStatus(t.id, "COMPLETED")) {
+              closeDetailDrawer();
+              await loadTasks();
+            }
           }
-        }
-      });
-      actions.push({
-        id: "reject",
-        label: "Rechazar",
-        className: "btn-danger btn-compact",
-        onClick: async () => {
-          if (await setTaskStatus(t.id, "REJECTED")) {
-            closeDetailDrawer();
-            await loadTasks();
+        });
+      }
+      if (canCancelOrRejectTasks()) {
+        actions.push({
+          id: "cancel",
+          label: "Cancelar",
+          className: "btn-secondary btn-compact",
+          onClick: async () => {
+            if (await setTaskStatus(t.id, "CANCELLED")) {
+              closeDetailDrawer();
+              await loadTasks();
+            }
           }
-        }
-      });
-    }
-  }
-  actions.push({
-    id: "follow",
-    label: "Añadir seguimiento",
-    className: "btn-secondary btn-compact",
-    onClick: async () => {
-      const text = window.prompt("Comentario de seguimiento:", "");
-      if (text === null || !text.trim()) return;
-      if (await appendTaskFollowUp(t, text.trim())) {
-        await loadTasks();
-        openTaskDetail(taskId);
-      } else {
-        window.alert("No se pudo guardar el seguimiento.");
+        });
+        actions.push({
+          id: "reject",
+          label: "Rechazar",
+          className: "btn-danger btn-compact",
+          onClick: async () => {
+            if (await setTaskStatus(t.id, "REJECTED")) {
+              closeDetailDrawer();
+              await loadTasks();
+            }
+          }
+        });
       }
     }
-  });
+  }
+  if (!isNotice) {
+    actions.push({
+      id: "follow",
+      label: "Añadir seguimiento",
+      className: "btn-secondary btn-compact",
+      onClick: async () => {
+        const text = window.prompt("Comentario de seguimiento:", "");
+        if (text === null || !text.trim()) return;
+        if (await appendTaskFollowUp(t, text.trim())) {
+          await loadTasks();
+          openTaskDetail(taskId);
+        } else {
+          window.alert("No se pudo guardar el seguimiento.");
+        }
+      }
+    });
+  }
 
-  openDetailDrawer(t._title || "Detalle de tarea", fields, actions);
+  openDetailDrawer(isNotice ? t._title || "Detalle del aviso" : t._title || "Detalle de tarea", fields, actions);
 }
 
 async function handleTaskAction(taskId, action) {
@@ -2139,9 +2268,11 @@ function wireNavSectionTabs() {
 async function createTaskClick() {
   if (!taskCreateBtn || !taskCreateError) return;
   taskCreateError.textContent = "";
+  taskCreateError.classList.remove("success");
   const reference = document.getElementById("taskRef")?.value?.trim();
   if (!reference) {
-    taskCreateError.textContent = "Indica un título o folio.";
+    taskCreateError.textContent =
+      taskViewMode === "notices" ? "Indica el asunto del aviso." : "Indica un título o folio.";
     return;
   }
   const uiType = document.getElementById("taskType")?.value || "GENERAL";
@@ -2151,18 +2282,32 @@ async function createTaskClick() {
     uiType === "INTERNAL_NOTICE" ||
     mapped.label === INTERNAL_NOTICE_LABEL;
   const description = document.getElementById("taskDescription")?.value?.trim() || "";
+  if (isNotice && !description) {
+    taskCreateError.textContent = "Indica el mensaje del aviso.";
+    return;
+  }
   const priority = Number(document.getElementById("taskPriority")?.value || 50);
-  const warehouse = readSmartFieldValue("taskWarehouse") || document.getElementById("taskWarehouse")?.value?.trim();
+  const warehouse = isNotice
+    ? ""
+    : readSmartFieldValue("taskWarehouse") || document.getElementById("taskWarehouse")?.value?.trim();
   const dueDate = document.getElementById("taskDueDate")?.value || "";
-  const project = readSmartFieldValue("taskProject") || document.getElementById("taskProject")?.value?.trim() || "";
-  const lote = document.getElementById("taskLote")?.value?.trim() || "";
-  const sku = document.getElementById("taskSku")?.value?.trim() || "";
-  const location = readSmartFieldValue("taskLocation") || document.getElementById("taskLocation")?.value?.trim() || "";
-  const follow = document.getElementById("taskFollowUp")?.value?.trim() || "";
+  const project = isNotice
+    ? ""
+    : readSmartFieldValue("taskProject") || document.getElementById("taskProject")?.value?.trim() || "";
+  const lote = isNotice ? "" : document.getElementById("taskLote")?.value?.trim() || "";
+  const sku = isNotice ? "" : document.getElementById("taskSku")?.value?.trim() || "";
+  const location = isNotice
+    ? ""
+    : readSmartFieldValue("taskLocation") || document.getElementById("taskLocation")?.value?.trim() || "";
+  const follow = isNotice ? "" : document.getElementById("taskFollowUp")?.value?.trim() || "";
   let assignedToId = document.getElementById("taskAssignee")?.value || "";
 
   if (!canAssignTasks()) {
     assignedToId = currentUserId || "";
+  }
+  if (isNotice && canAssignTasks() && !assignedToId) {
+    taskCreateError.textContent = "Selecciona un destinatario para el aviso.";
+    return;
   }
 
   const notesPayload = {
@@ -2218,9 +2363,11 @@ async function createTaskClick() {
     if (prio) prio.value = "50";
     const asn = document.getElementById("taskAssignee");
     if (asn) asn.value = "";
-    if (taskViewMode === "notices") {
+    if (taskViewMode === "notices" || isNotice) {
       const typeSel = document.getElementById("taskType");
       if (typeSel) typeSel.value = "INTERNAL_NOTICE";
+      taskCreateError.textContent = "Aviso interno enviado correctamente.";
+      taskCreateError.classList.add("success");
     }
     await loadTasks();
   } catch (_e) {
@@ -2697,10 +2844,13 @@ const NOTICE_COLUMNS = [
   {
     label: "Estado",
     sortKey: (t) => t.status || "",
-    render: (t) => taskStatusBadge(t.status)
+    render: (t) =>
+      t.status === "COMPLETED"
+        ? `<span class="badge status-done">Atendido</span>`
+        : taskStatusBadge(t.status)
   },
   {
-    label: "Mensaje",
+    label: "Asunto",
     sortKey: (t) => t._title || t.reference || "",
     render: (t) => renderCellWithClamp(t._title || t.reference, "cell-truncate", 36),
     title: (t) => [t._title, t._description].filter(Boolean).join(" — ")
@@ -2713,9 +2863,9 @@ const NOTICE_COLUMNS = [
   },
   {
     label: "Fecha",
-    sortKey: (t) => t.createdAt,
+    sortKey: (t) => t._dueDate || t.createdAt,
     sortType: "date",
-    render: (t) => formatDateShort(t.createdAt)
+    render: (t) => formatDateShort(t._dueDate || t.createdAt)
   }
 ];
 
@@ -6124,20 +6274,20 @@ moduleButtons.forEach((btn) => {
     const mod = btn.dataset.module;
     const panel = btn.closest("[data-nav-section-panel]");
     const section = panel?.getAttribute("data-nav-section-panel") || null;
-    navigateTo(section, mod);
+    // Fijar vista de tareas ANTES de navigateTo para activar la tarjeta correcta.
     if (mod === "tasks") {
       const view = btn.getAttribute("data-task-view");
       const pref = btn.getAttribute("data-task-pref-type");
-      if (view === "notices" || pref === "INTERNAL_NOTICE") {
-        setTaskViewMode("notices");
-      } else {
-        setTaskViewMode("ops");
-      }
-      if (pref || view === "notices") {
-        const typeSel = document.getElementById("taskType");
-        if (typeSel && (pref === "INTERNAL_NOTICE" || view === "notices")) {
-          typeSel.value = "INTERNAL_NOTICE";
-        }
+      taskViewMode = view === "notices" || pref === "INTERNAL_NOTICE" ? "notices" : "ops";
+    }
+    navigateTo(section, mod);
+    if (mod === "tasks") {
+      applyTaskViewModeUi();
+      updateTaskKpis(getTasksPoolForView());
+      renderTasksTable();
+      const typeSel = document.getElementById("taskType");
+      if (typeSel && taskViewMode === "notices") {
+        typeSel.value = "INTERNAL_NOTICE";
       }
     }
   });
