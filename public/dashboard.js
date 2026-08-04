@@ -28,8 +28,15 @@ const moduleAccount = document.getElementById("moduleAccount");
 const moduleInbound = document.getElementById("moduleInbound");
 const moduleOutbound = document.getElementById("moduleOutbound");
 const moduleRequisitions = document.getElementById("moduleRequisitions");
+const moduleRelocate = document.getElementById("moduleRelocate");
+const moduleBulkInbound = document.getElementById("moduleBulkInbound");
+const moduleProjects = document.getElementById("moduleProjects");
+const moduleWarehouses = document.getElementById("moduleWarehouses");
+const moduleLocations = document.getElementById("moduleLocations");
+const moduleConfig = document.getElementById("moduleConfig");
 const modulePlaceholder = document.getElementById("modulePlaceholder");
 const moduleButtons = document.querySelectorAll(".module-btn");
+let assigneesLoadError = false;
 const newFullName = document.getElementById("newFullName");
 const newEmail = document.getElementById("newEmail");
 const newPassword = document.getElementById("newPassword");
@@ -387,19 +394,30 @@ function buildOpsReference(lote, referenceRaw, kind) {
 }
 
 const roleModules = {
-  ADMIN: ["control", "tasks", "picking", "inbound", "requisitions", "outbound", "incidents", "inventory", "catalog", "clients", "traceability", "reports", "users", "account"],
-  SUPERVISOR: ["control", "tasks", "picking", "inbound", "requisitions", "outbound", "incidents", "inventory", "catalog", "clients", "traceability", "reports", "account"],
-  OPERATOR: ["control", "tasks", "picking", "inbound", "requisitions", "outbound", "incidents", "inventory", "catalog", "traceability", "account"],
-  CLIENT: ["catalog", "account"]
+  ADMIN: [
+    "control", "tasks", "picking", "inbound", "bulk-inbound", "relocate", "requisitions", "outbound",
+    "incidents", "inventory", "catalog", "projects", "warehouses", "locations", "clients",
+    "traceability", "reports", "users", "config", "account"
+  ],
+  SUPERVISOR: [
+    "control", "tasks", "picking", "inbound", "bulk-inbound", "relocate", "requisitions", "outbound",
+    "incidents", "inventory", "catalog", "projects", "warehouses", "locations", "clients",
+    "traceability", "reports", "config", "account"
+  ],
+  OPERATOR: [
+    "control", "tasks", "picking", "inbound", "bulk-inbound", "relocate", "requisitions", "outbound",
+    "incidents", "inventory", "catalog", "projects", "warehouses", "locations", "traceability", "config", "account"
+  ],
+  CLIENT: ["catalog", "account", "config"]
 };
 
-/** Secciones de menú v39. clients se mantiene en registry pero fuera del menú principal. */
+/** Secciones de menú v40. clients se mantiene en registry pero fuera del menú principal. */
 const NAV_SECTION_MODULES = {
-  hoy: ["control", "tasks", "picking", "incidents"],
-  operacion: ["inbound", "requisitions", "picking", "outbound"],
-  inventario: ["inventory", "catalog"],
-  control: ["traceability", "incidents", "reports"],
-  sistema: ["users", "account"]
+  inicio: ["control", "tasks", "picking", "incidents"],
+  operacion: ["inbound", "bulk-inbound", "requisitions", "picking", "relocate", "outbound"],
+  inventario: ["inventory", "catalog", "projects", "warehouses", "locations"],
+  control: ["incidents", "traceability", "reports"],
+  sistema: ["users", "config", "account"]
 };
 
 /**
@@ -457,6 +475,12 @@ const MODULE_REGISTRY = {
   catalog: moduleCatalog,
   inventory: moduleInventory,
   inbound: moduleInbound,
+  "bulk-inbound": moduleBulkInbound,
+  relocate: moduleRelocate,
+  projects: moduleProjects,
+  warehouses: moduleWarehouses,
+  locations: moduleLocations,
+  config: moduleConfig,
   requisitions: moduleRequisitions,
   picking: modulePicking,
   outbound: moduleOutbound,
@@ -523,6 +547,12 @@ function activateModule(moduleName) {
   const showInbound = moduleName === "inbound";
   const showOutbound = moduleName === "outbound";
   const showRequisitions = moduleName === "requisitions";
+  const showRelocate = moduleName === "relocate";
+  const showBulkInbound = moduleName === "bulk-inbound";
+  const showProjects = moduleName === "projects";
+  const showWarehouses = moduleName === "warehouses";
+  const showLocations = moduleName === "locations";
+  const showConfig = moduleName === "config";
 
   const hasKnownModule =
     showUsers ||
@@ -538,7 +568,13 @@ function activateModule(moduleName) {
     showIncidents ||
     showInbound ||
     showOutbound ||
-    showRequisitions;
+    showRequisitions ||
+    showRelocate ||
+    showBulkInbound ||
+    showProjects ||
+    showWarehouses ||
+    showLocations ||
+    showConfig;
 
   if (modulePlaceholder) modulePlaceholder.classList.toggle("hidden", hasKnownModule);
 
@@ -566,12 +602,24 @@ function activateModule(moduleName) {
     populateOperationalSelects();
     void loadRequisitionsList();
   }
+  if (showRelocate) {
+    populateOperationalSelects();
+  }
+  if (showProjects) renderProjectsModule();
+  if (showWarehouses) renderWarehousesModule();
+  if (showLocations) renderLocationsModule();
+  if (showBulkInbound) {
+    /* informative module — import opens on demand */
+  }
   if (showTraceability) void loadTraceability();
   if (showTasks) {
     wireTasksModuleUi();
     void loadTasks();
   }
-  if (showIncidents) void loadIncidents();
+  if (showIncidents) {
+    populateOperationalSelects();
+    void loadIncidents();
+  }
   if (showPicking) {
     resetPickingFlow();
     setTimeout(() => scanInput?.focus(), 0);
@@ -1501,22 +1549,46 @@ function renderTasksTable() {
 async function loadAssigneesForTasks() {
   const assigneeSelect = document.getElementById("taskAssignee");
   const filterSelect = document.getElementById("taskFilterAssignee");
+  const hint = document.getElementById("taskAssigneeHint");
+  const createUserBtn = document.getElementById("taskCreateUserBtn");
+  const setHint = (text, cls = "") => {
+    if (!hint) return;
+    hint.textContent = text || "";
+    hint.classList.remove("warn", "error");
+    if (cls) hint.classList.add(cls);
+  };
+  if (createUserBtn) {
+    createUserBtn.classList.toggle("hidden", currentRole !== "ADMIN");
+  }
   if (!canAssignTasks()) {
     assigneesCache = [];
+    assigneesLoadError = false;
     if (assigneeSelect) {
       assigneeSelect.innerHTML = `<option value="${escCell(currentUserId || "")}">Yo</option>`;
     }
     if (filterSelect) filterSelect.innerHTML = '<option value="">Todos</option>';
+    setHint("");
     return;
   }
   try {
     const response = await authenticatedFetch("/api/users/assignees");
     if (!response?.ok) {
       assigneesCache = [];
+      assigneesLoadError = true;
+      if (assigneeSelect) assigneeSelect.innerHTML = '<option value="">Sin asignar</option>';
+      if (filterSelect) filterSelect.innerHTML = '<option value="">Todos</option>';
+      setHint("No se pudieron cargar responsables. Revisa usuarios activos.", "error");
       return;
     }
     const users = await response.json();
     assigneesCache = Array.isArray(users) ? users : [];
+    assigneesLoadError = false;
+    if (assigneesCache.length === 0) {
+      if (assigneeSelect) assigneeSelect.innerHTML = '<option value="">Sin asignar</option>';
+      if (filterSelect) filterSelect.innerHTML = '<option value="">Todos</option>';
+      setHint("No hay operadores o supervisores activos para asignar.", "warn");
+      return;
+    }
     const opts = ['<option value="">Sin asignar</option>']
       .concat(
         assigneesCache.map(
@@ -1533,8 +1605,12 @@ async function loadAssigneesForTasks() {
           .map((u) => `<option value="${escCell(u.id)}">${escCell(u.fullName)}</option>`)
           .join("");
     }
+    setHint(`${assigneesCache.length} responsable(s) disponibles para asignar.`);
   } catch (_e) {
     assigneesCache = [];
+    assigneesLoadError = true;
+    if (assigneeSelect) assigneeSelect.innerHTML = '<option value="">Sin asignar</option>';
+    setHint("No se pudieron cargar responsables. Revisa usuarios activos.", "error");
   }
 }
 
@@ -1866,12 +1942,12 @@ async function createTaskClick() {
   const mapped = resolveTaskTypeFromUi(uiType);
   const description = document.getElementById("taskDescription")?.value?.trim() || "";
   const priority = Number(document.getElementById("taskPriority")?.value || 50);
-  const warehouse = document.getElementById("taskWarehouse")?.value?.trim();
+  const warehouse = readSmartFieldValue("taskWarehouse") || document.getElementById("taskWarehouse")?.value?.trim();
   const dueDate = document.getElementById("taskDueDate")?.value || "";
-  const project = document.getElementById("taskProject")?.value?.trim() || "";
+  const project = readSmartFieldValue("taskProject") || document.getElementById("taskProject")?.value?.trim() || "";
   const lote = document.getElementById("taskLote")?.value?.trim() || "";
   const sku = document.getElementById("taskSku")?.value?.trim() || "";
-  const location = document.getElementById("taskLocation")?.value?.trim() || "";
+  const location = readSmartFieldValue("taskLocation") || document.getElementById("taskLocation")?.value?.trim() || "";
   const follow = document.getElementById("taskFollowUp")?.value?.trim() || "";
   let assignedToId = document.getElementById("taskAssignee")?.value || "";
 
@@ -3935,37 +4011,69 @@ async function createIncidentClick() {
   const typeUi = document.getElementById("incidentType")?.value;
   const mapped = resolveIncidentTypeFromUi(typeUi);
   const type = mapped.value;
-  const warehouse = document.getElementById("incidentWarehouse")?.value?.trim();
-  const location = document.getElementById("incidentLocation")?.value?.trim();
-  const productId = document.getElementById("incidentProductId")?.value?.trim();
-  const notes = document.getElementById("incidentNotes")?.value?.trim();
-  if (!notes) {
+  const warehouse = readSmartFieldValue("incidentWarehouse");
+  const location = readSmartFieldValue("incidentLocation");
+  const productSkuRaw =
+    document.getElementById("incidentProductSku")?.value?.trim() ||
+    document.getElementById("incidentProductId")?.value?.trim() ||
+    "";
+  const notesBase = document.getElementById("incidentNotes")?.value?.trim();
+  if (!notesBase) {
     incidentCreateError.textContent = "Las notas son obligatorias.";
     return;
   }
+
+  let productId;
+  let notes = notesBase;
+  let usedManualRef = false;
+  if (productSkuRaw) {
+    const product = resolveProductBySkuOrCode(productSkuRaw);
+    if (product?.id) {
+      productId = product.id;
+    } else {
+      usedManualRef = true;
+      notes = `${notesBase}\n[SKU/ref manual: ${productSkuRaw}]`;
+    }
+  }
+
   incidentCreateBtn.disabled = true;
   try {
+    const body = {
+      type,
+      warehouse: warehouse || undefined,
+      location: location || undefined,
+      notes
+    };
+    if (productId) body.productId = productId;
+
     const response = await authenticatedFetch("/api/incidents", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type,
-        warehouse: warehouse || undefined,
-        location: location || undefined,
-        productId: productId || undefined,
-        notes
-      })
+      body: JSON.stringify(body)
     });
     if (!response) return;
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      incidentCreateError.textContent = data.message || "No se pudo registrar.";
+      const msg =
+        data.message ||
+        (response.status >= 500
+          ? "No se pudo registrar la incidencia. Verifica el SKU/código o déjalo vacío."
+          : "No se pudo registrar.");
+      incidentCreateError.textContent = msg;
       return;
     }
     document.getElementById("incidentNotes").value = "";
+    const skuEl = document.getElementById("incidentProductSku");
+    if (skuEl) skuEl.value = "";
+    if (usedManualRef) {
+      incidentCreateError.textContent =
+        "Incidencia registrada. Producto no encontrado en catálogo; se guardó como referencia manual.";
+    } else {
+      incidentCreateError.textContent = "";
+    }
     await loadIncidents();
   } catch (_e) {
-    incidentCreateError.textContent = "Error de red.";
+    incidentCreateError.textContent = "Error de red al registrar la incidencia.";
   } finally {
     incidentCreateBtn.disabled = false;
   }
@@ -4080,6 +4188,205 @@ async function loadInventoryMovements() {
   if (moduleOutbound && !moduleOutbound.classList.contains("hidden")) void loadOutboundList();
 }
 
+function uniqueSortedStrings(values) {
+  const set = new Set();
+  for (const v of values) {
+    if (v == null) continue;
+    const s = String(v).trim();
+    if (s) set.add(s);
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
+}
+
+function getKnownWarehouses() {
+  const fromStock = stockRowsCache.map(
+    (r) => r.warehouse || r.location?.warehouse || r.Location?.warehouse
+  );
+  const fromMov = movementsRowsCache.map((m) => m.warehouse || m.location?.warehouse);
+  const fromProducts = productsCache.map((p) => p.defaultWarehouse || p.warehouse);
+  return uniqueSortedStrings(["TULTITLAN24", ...fromStock, ...fromMov, ...fromProducts]);
+}
+
+function getKnownLocations() {
+  const fromStock = stockRowsCache.map(
+    (r) => r.location?.code || r.locationCode || r.location || r.Location?.code
+  );
+  const fromMov = movementsRowsCache.map((m) => m.location?.code || m.location || m.locationCode);
+  return uniqueSortedStrings(fromStock.concat(fromMov));
+}
+
+function getKnownProjects() {
+  return getCustomersForSelect();
+}
+
+function getKnownUsers() {
+  return Array.isArray(assigneesCache) ? assigneesCache.slice() : [];
+}
+
+function getKnownStatuses() {
+  return ["AVAILABLE", "OPERATIONS", "HOLD", "BLOCKED", "QUARANTINE"];
+}
+
+const SMART_OTHER = "__OTHER__";
+
+function fillSmartSelect(selectId, values, { includeEmpty = true, emptyLabel = "— Seleccionar —", otherLabel = "Otro…", preferred = "" } = {}) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const prev = sel.value;
+  const opts = [];
+  if (includeEmpty) opts.push(`<option value="">${escCell(emptyLabel)}</option>`);
+  for (const v of values) {
+    opts.push(`<option value="${escCell(v)}">${escCell(v)}</option>`);
+  }
+  opts.push(`<option value="${SMART_OTHER}">${escCell(otherLabel)}</option>`);
+  sel.innerHTML = opts.join("");
+  if (preferred && values.includes(preferred)) sel.value = preferred;
+  else if (prev && (prev === SMART_OTHER || values.includes(prev))) sel.value = prev;
+}
+
+function wireSmartSelectPair(selectId, inputId, { otherLabel } = {}) {
+  const sel = document.getElementById(selectId);
+  const inp = document.getElementById(inputId);
+  if (!sel || !inp || sel.dataset.smartWired === "1") return;
+  sel.dataset.smartWired = "1";
+  const sync = () => {
+    if (sel.value === SMART_OTHER) {
+      inp.classList.remove("hidden");
+      if (!inp.value && otherLabel) inp.placeholder = otherLabel;
+      inp.focus();
+    } else if (sel.value) {
+      inp.value = sel.value;
+      inp.classList.add("hidden");
+    } else {
+      inp.value = "";
+      inp.classList.add("hidden");
+    }
+  };
+  sel.addEventListener("change", sync);
+  sync();
+}
+
+function readSmartFieldValue(baseId) {
+  const sel = document.getElementById(`${baseId}Select`);
+  const inp = document.getElementById(baseId);
+  if (sel) {
+    if (sel.value === SMART_OTHER) return (inp?.value || "").trim();
+    if (sel.value) return sel.value.trim();
+  }
+  return (inp?.value || "").trim();
+}
+
+function resolveProductBySkuOrCode(raw) {
+  const q = String(raw || "").trim();
+  if (!q) return null;
+  const upper = q.toUpperCase();
+  return (
+    productsCache.find((p) => p.id === q) ||
+    productsCache.find((p) => String(p.sku || "").toUpperCase() === upper) ||
+    productsCache.find((p) => String(p.barcode || "").toUpperCase() === upper) ||
+    null
+  );
+}
+
+function populateSmartOperationalFields() {
+  const warehouses = getKnownWarehouses();
+  const locations = getKnownLocations();
+  const projects = getKnownProjects();
+
+  const pairs = [
+    ["inboundWarehouseSelect", "inboundWarehouse", warehouses, "TULTITLAN24", "Otro almacén"],
+    ["inboundLocationSelect", "inboundLocation", locations, "", "Otra ubicación"],
+    ["outboundWarehouseSelect", "outboundWarehouse", warehouses, "TULTITLAN24", "Otro almacén"],
+    ["outboundLocationSelect", "outboundLocation", locations, "", "Otra ubicación"],
+    ["incidentWarehouseSelect", "incidentWarehouse", warehouses, "", "Otro almacén"],
+    ["incidentLocationSelect", "incidentLocation", locations, "", "Otra ubicación"],
+    ["taskWarehouseSelect", "taskWarehouse", warehouses, "TULTITLAN24", "Otro almacén"],
+    ["taskLocationSelect", "taskLocation", locations, "", "Otra ubicación"],
+    ["relocateWarehouseSelect", "relocateWarehouse", warehouses, "TULTITLAN24", "Otro almacén"],
+    ["relocateFromSelect", "relocateFrom", locations, "", "Otra ubicación origen"],
+    ["relocateToSelect", "relocateTo", locations, "", "Otra ubicación destino"]
+  ];
+
+  for (const [selId, inpId, values, preferred, otherLabel] of pairs) {
+    fillSmartSelect(selId, values, {
+      preferred,
+      otherLabel,
+      emptyLabel: preferred ? "— Seleccionar —" : "— Seleccionar —"
+    });
+    wireSmartSelectPair(selId, inpId, { otherLabel });
+    const sel = document.getElementById(selId);
+    const inp = document.getElementById(inpId);
+    if (sel && preferred && values.includes(preferred) && !sel.value) {
+      sel.value = preferred;
+      if (inp) {
+        inp.value = preferred;
+        inp.classList.add("hidden");
+      }
+    }
+  }
+
+  const taskProjectSelect = document.getElementById("taskProjectSelect");
+  const taskProject = document.getElementById("taskProject");
+  if (taskProjectSelect && taskProject) {
+    const codes = projects.map((p) => p.code);
+    const labels = projects.map((p) => `${p.name} (${p.code})`);
+    const prev = taskProjectSelect.value;
+    let html = '<option value="">— Seleccionar proyecto —</option>';
+    projects.forEach((p, i) => {
+      html += `<option value="${escCell(p.code)}">${escCell(labels[i])}</option>`;
+    });
+    if (currentRole === "ADMIN" || currentRole === "SUPERVISOR") {
+      html += `<option value="${SMART_OTHER}">Agregar proyecto (manual)</option>`;
+    } else {
+      html += `<option value="${SMART_OTHER}">Otro proyecto</option>`;
+    }
+    taskProjectSelect.innerHTML = html;
+    if (prev) taskProjectSelect.value = prev;
+    wireSmartSelectPair("taskProjectSelect", "taskProject");
+  }
+}
+
+function renderInfoList(listId, items, emptyMsg) {
+  const el = document.getElementById(listId);
+  if (!el) return;
+  if (!items.length) {
+    el.innerHTML = `<li>${escCell(emptyMsg)}</li>`;
+    return;
+  }
+  el.innerHTML = items.map((t) => `<li>${escCell(t)}</li>`).join("");
+}
+
+function renderProjectsModule() {
+  const projects = getKnownProjects();
+  renderAviatProjectChips(document.getElementById("projectsViewChips"));
+  renderInfoList(
+    "projectsKnownList",
+    projects.map((p) => `${p.name} · ${p.code}`),
+    "Aún no hay proyectos detectados. Agrégalos desde Catálogo y productos."
+  );
+  const addBtn = document.getElementById("projectsAddBtn");
+  const ccAdd = document.getElementById("ccAddProjectBtn");
+  const canAdd = currentRole === "ADMIN" || currentRole === "SUPERVISOR";
+  if (addBtn) addBtn.style.display = canAdd ? "" : "none";
+  if (ccAdd) ccAdd.style.display = canAdd ? "" : "none";
+}
+
+function renderWarehousesModule() {
+  renderInfoList(
+    "warehousesKnownList",
+    getKnownWarehouses(),
+    "No hay almacenes detectados. Al capturar movimientos aparecerán aquí."
+  );
+}
+
+function renderLocationsModule() {
+  renderInfoList(
+    "locationsKnownList",
+    getKnownLocations(),
+    "No hay ubicaciones detectadas todavía."
+  );
+}
+
 function getCustomersForSelect() {
   const map = new Map();
   for (const p of productsCache) {
@@ -4098,16 +4405,29 @@ function fillCustomerSelect(selectId, clienteInputId) {
   if (!sel) return;
   const prev = sel.value;
   const customers = getCustomersForSelect();
-  sel.innerHTML =
+  let html =
     '<option value="">— Seleccionar proyecto —</option>' +
     customers.map((c) => `<option value="${escCell(c.code)}">${escCell(c.name)} (${escCell(c.code)})</option>`).join("");
-  if (prev) sel.value = prev;
+  if (currentRole === "ADMIN" || currentRole === "SUPERVISOR") {
+    html += `<option value="${SMART_OTHER}">Agregar proyecto…</option>`;
+  }
+  sel.innerHTML = html;
+  if (prev && prev !== SMART_OTHER) sel.value = prev;
   if (clienteInputId) {
     const inp = document.getElementById(clienteInputId);
     if (inp) {
       const match = customers.find((c) => c.code === sel.value);
       inp.value = match ? match.name : "";
     }
+  }
+  if (sel.dataset.projectOtherWired !== "1") {
+    sel.dataset.projectOtherWired = "1";
+    sel.addEventListener("change", () => {
+      if (sel.value === SMART_OTHER) {
+        activateModule("catalog");
+        sel.value = "";
+      }
+    });
   }
 }
 
@@ -4134,6 +4454,7 @@ function populateOperationalSelects() {
   fillSkuSelect("inboundSku", document.getElementById("inboundCustomer")?.value || "", "inboundProduct");
   fillSkuSelect("outboundSku", document.getElementById("outboundCustomer")?.value || "", "outboundProduct");
   fillSkuSelect("reqSku", document.getElementById("reqCustomer")?.value || "", null);
+  populateSmartOperationalFields();
 }
 
 function setOpsMessage(elId, text, isOk) {
@@ -4157,12 +4478,22 @@ async function submitOperationalMovement(kind) {
   const customerCode = document.getElementById(`${prefix}Customer`)?.value?.trim();
   const sku = document.getElementById(`${prefix}Sku`)?.value?.trim();
   const qty = Number(document.getElementById(`${prefix}Qty`)?.value);
-  const warehouse = document.getElementById(`${prefix}Warehouse`)?.value?.trim() || "TULTITLAN24";
-  const location = document.getElementById(`${prefix}Location`)?.value?.trim();
+  const warehouse =
+    readSmartFieldValue(`${prefix}Warehouse`) ||
+    document.getElementById(`${prefix}Warehouse`)?.value?.trim() ||
+    "TULTITLAN24";
+  const location =
+    readSmartFieldValue(`${prefix}Location`) ||
+    document.getElementById(`${prefix}Location`)?.value?.trim();
   const status = document.getElementById(`${prefix}Status`)?.value || "AVAILABLE";
   const referenceRaw = document.getElementById(`${prefix}Reference`)?.value?.trim();
   const notes = document.getElementById(`${prefix}Notes`)?.value?.trim();
   const lote = document.getElementById(`${prefix}Lote`)?.value?.trim();
+
+  if (customerCode === SMART_OTHER) {
+    setOpsMessage(msgId, "Seleccione un proyecto válido o créelo en catálogo.", false);
+    return;
+  }
 
   if (!customerCode) {
     setOpsMessage(msgId, "Seleccione un proyecto.", false);
@@ -4224,6 +4555,135 @@ async function submitOperationalMovement(kind) {
     else await loadOutboundList();
   } catch (_e) {
     setOpsMessage(msgId, "Error de red.", false);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/**
+ * v40.1 — Reubicación segura: crea tarea operativa MOVE.
+ * NO ejecuta OUT/IN ni altera stock (evita inconsistencia OUT-sin-IN).
+ */
+async function submitRelocate() {
+  const msgId = "relocateMessage";
+  const btn = document.getElementById("relocateSubmitBtn");
+  setOpsMessage(msgId, "", true);
+  const sku = document.getElementById("relocateSku")?.value?.trim();
+  const qty = Number(document.getElementById("relocateQty")?.value);
+  const warehouse = readSmartFieldValue("relocateWarehouse") || "";
+  const fromLoc = readSmartFieldValue("relocateFrom");
+  const toLoc = readSmartFieldValue("relocateTo");
+  const stockStatus = document.getElementById("relocateStatus")?.value || "AVAILABLE";
+  const referenceRaw = document.getElementById("relocateReference")?.value?.trim();
+  const notesExtra = document.getElementById("relocateNotes")?.value?.trim();
+
+  if (!sku) {
+    setOpsMessage(msgId, "Indica el SKU.", false);
+    return;
+  }
+  if (!warehouse) {
+    setOpsMessage(msgId, "Indica el almacén.", false);
+    return;
+  }
+  if (!fromLoc || !toLoc) {
+    setOpsMessage(msgId, "Indica ubicación origen y destino.", false);
+    return;
+  }
+  if (fromLoc.toUpperCase() === toLoc.toUpperCase()) {
+    setOpsMessage(msgId, "Origen y destino deben ser distintos.", false);
+    return;
+  }
+  if (!Number.isFinite(qty) || qty <= 0) {
+    setOpsMessage(msgId, "La cantidad debe ser mayor que 0.", false);
+    return;
+  }
+
+  const product = findProductBySku(sku) || resolveProductBySkuOrCode(sku);
+  const resolvedSku = product?.sku || sku;
+  const productName = product?.name || product?.productName || "";
+  const reference = referenceRaw || `RELOC-${Date.now()}`;
+  const descriptionParts = [
+    `Mover producto de ubicación ${fromLoc} a ubicación ${toLoc}.`,
+    notesExtra ? `Motivo: ${notesExtra}` : null,
+    `Cantidad: ${qty}. Status de inventario objetivo: ${stockStatus}.`,
+    "Para proteger el inventario, la reubicación queda como tarea operativa pendiente de confirmación."
+  ].filter(Boolean);
+
+  const notesPayload = {
+    title: "Solicitud de reubicación",
+    description: descriptionParts.join(" "),
+    taskLabel: "Movimiento interno / Reubicación",
+    project: product?.customerCode || product?.customer?.code || product?.cliente || null,
+    lote: product?.lote || product?.lot || null,
+    sku: resolvedSku,
+    product: productName || resolvedSku,
+    warehouse,
+    fromLocation: fromLoc,
+    toLocation: toLoc,
+    location: `${fromLoc} → ${toLoc}`,
+    qty,
+    stockStatus,
+    followUp: [
+      {
+        text: "Solicitud de reubicación creada sin afectar inventario.",
+        at: new Date().toISOString(),
+        by: currentUserId || null
+      }
+    ]
+  };
+
+  if (btn) btn.disabled = true;
+  try {
+    const response = await authenticatedFetch("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "MOVE",
+        status: "PENDING",
+        warehouse,
+        priority: 50,
+        reference,
+        notes: JSON.stringify(notesPayload)
+      })
+    });
+    if (!response) {
+      setOpsMessage(
+        msgId,
+        "No se pudo crear la solicitud. No se afectó inventario.",
+        false
+      );
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setOpsMessage(
+        msgId,
+        (data.message || "No se pudo crear la solicitud de reubicación.") +
+          " No se afectó inventario.",
+        false
+      );
+      return;
+    }
+    setOpsMessage(
+      msgId,
+      "Solicitud de reubicación creada. No se afectó inventario hasta su confirmación operativa.",
+      true
+    );
+    const qtyEl = document.getElementById("relocateQty");
+    if (qtyEl) qtyEl.value = "";
+    const notesEl = document.getElementById("relocateNotes");
+    if (notesEl) notesEl.value = "";
+    const refEl = document.getElementById("relocateReference");
+    if (refEl) refEl.value = "";
+    if (typeof loadTasks === "function") {
+      try {
+        await loadTasks();
+      } catch (_e) {
+        /* cola de tareas no abierta: no bloquear */
+      }
+    }
+  } catch (_e) {
+    setOpsMessage(msgId, "Error de red. No se afectó inventario.", false);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -4704,6 +5164,14 @@ function applyRoleNavigation(role) {
   if (exportMovementsBtn) exportMovementsBtn.style.display = canExportInventory ? "inline-block" : "none";
   if (exportTraceBtn) exportTraceBtn.style.display = canExportTrace ? "inline-block" : "none";
   if (exportProductsBtn) exportProductsBtn.style.display = canExportProducts ? "inline-block" : "none";
+
+  const canAddProject = role === "ADMIN" || role === "SUPERVISOR";
+  const projectsAddBtn = document.getElementById("projectsAddBtn");
+  const ccAddProjectBtn = document.getElementById("ccAddProjectBtn");
+  if (projectsAddBtn) projectsAddBtn.style.display = canAddProject ? "" : "none";
+  if (ccAddProjectBtn) ccAddProjectBtn.style.display = canAddProject ? "" : "none";
+  const configUsersBtn = document.getElementById("configUsersBtn");
+  if (configUsersBtn) configUsersBtn.style.display = role === "ADMIN" ? "" : "none";
   const rStock = document.getElementById("reportsExportStock");
   const rStockF = document.getElementById("reportsExportStockFiltered");
   const rMov = document.getElementById("reportsExportMovements");
@@ -5255,11 +5723,36 @@ async function validateSession() {
 }
 
 moduleButtons.forEach((btn) => {
-  btn.addEventListener("click", () => activateModule(btn.dataset.module));
+  btn.addEventListener("click", () => {
+    const mod = btn.dataset.module;
+    activateModule(mod);
+    if (mod === "tasks" && btn.getAttribute("data-task-pref-type")) {
+      const pref = btn.getAttribute("data-task-pref-type");
+      const typeSel = document.getElementById("taskType");
+      if (typeSel && pref) {
+        typeSel.value = pref;
+      }
+      const tabMine = document.querySelector('.tasks-tab[data-task-tab="mine"]');
+      if (tabMine instanceof HTMLElement) tabMine.click();
+    }
+  });
 });
 
 wireNavSectionTabs();
 populateOperationalTypeSelects();
+
+document.getElementById("relocateSubmitBtn")?.addEventListener("click", () => void submitRelocate());
+document.getElementById("bulkInboundOpenImportBtn")?.addEventListener("click", () => {
+  if (typeof openModal === "function") openModal("inventoryImportModal");
+  else {
+    const modal = document.getElementById("inventoryImportModal");
+    if (modal) {
+      modal.classList.add("open");
+      modal.setAttribute("aria-hidden", "false");
+    }
+  }
+});
+document.getElementById("taskCreateUserBtn")?.addEventListener("click", () => activateModule("users"));
 
 usersList.addEventListener("click", (event) => {
   const target = event.target;

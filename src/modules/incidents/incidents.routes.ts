@@ -17,6 +17,7 @@ const createIncidentSchema = z.object({
   warehouse: z.string().max(80).optional(),
   location: z.string().max(160).optional(),
   productId: z.string().optional(),
+  productSku: z.string().max(120).optional(),
   notes: z.string().min(1).max(4000)
 });
 
@@ -48,22 +49,55 @@ incidentsRouter.get("/", async (req, res) => {
 incidentsRouter.post("/", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]), async (req, res) => {
   const data = createIncidentSchema.parse(req.body);
 
-  const incident = await prisma.incident.create({
-    data: {
-      type: data.type,
-      status: "OPEN",
-      reportedById: req.auth!.userId,
-      warehouse: data.warehouse?.trim() || null,
-      location: data.location?.trim() || null,
-      productId: data.productId?.trim() || null,
-      notes: data.notes.trim()
-    },
-    include: {
-      product: { select: { sku: true, name: true } }
-    }
-  });
+  let productId: string | null = null;
+  let notes = data.notes.trim();
+  const rawProductRef = (data.productId || data.productSku || "").trim();
 
-  res.status(201).json(incident);
+  if (rawProductRef) {
+    const byId = await prisma.product.findUnique({ where: { id: rawProductRef } });
+    if (byId) {
+      productId = byId.id;
+    } else {
+      const bySku = await prisma.product.findFirst({
+        where: {
+          OR: [{ sku: rawProductRef }, { barcode: rawProductRef }]
+        }
+      });
+      if (bySku) {
+        productId = bySku.id;
+      } else {
+        // No romper por FK: registrar referencia en notes
+        if (!notes.includes(rawProductRef)) {
+          notes = `${notes}\n[SKU/ref manual: ${rawProductRef}]`;
+        }
+        productId = null;
+      }
+    }
+  }
+
+  try {
+    const incident = await prisma.incident.create({
+      data: {
+        type: data.type,
+        status: "OPEN",
+        reportedById: req.auth!.userId,
+        warehouse: data.warehouse?.trim() || null,
+        location: data.location?.trim() || null,
+        productId,
+        notes
+      },
+      include: {
+        product: { select: { sku: true, name: true } }
+      }
+    });
+
+    res.status(201).json(incident);
+  } catch (_err) {
+    throw new HttpError(
+      400,
+      "No se pudo registrar la incidencia. Verifica el producto (SKU) o regístrala solo con notas."
+    );
+  }
 });
 
 incidentsRouter.patch("/:id", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {

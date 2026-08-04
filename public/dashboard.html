@@ -86,8 +86,8 @@
         white-space: nowrap;
       }
       .app-body {
-        display: grid;
-        grid-template-columns: 208px minmax(0, 1fr);
+        display: flex;
+        flex-direction: column;
         gap: 0;
         flex: 1;
         min-height: 0;
@@ -142,113 +142,175 @@
         margin-top: 16px;
       }
       .sidebar {
-        border-right: 1px solid var(--line);
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
         border-radius: 0;
-        padding: 12px 10px;
+        padding: 14px 22px 16px;
         background: var(--panel-solid);
         position: sticky;
         top: 57px;
-        align-self: start;
-        height: calc(100vh - 57px);
-        overflow-y: auto;
+        z-index: 80;
+        height: auto;
+        overflow: visible;
+        width: 100%;
+        box-shadow: 0 4px 16px rgba(15, 76, 129, 0.06);
       }
       .nav-shell {
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 12px;
+        max-width: 1400px;
+        margin: 0 auto;
       }
       .nav-section-tabs {
         display: flex;
         flex-wrap: wrap;
-        gap: 4px;
-        padding-bottom: 10px;
+        gap: 8px;
+        padding: 2px 0 12px;
         border-bottom: 1px solid var(--line);
       }
       .nav-section-tab {
-        border: 1px solid transparent;
-        background: transparent;
-        color: var(--muted);
+        border: 1px solid var(--line);
+        background: #f3f7fc;
+        color: var(--text);
         border-radius: 999px;
-        padding: 5px 9px;
-        font-size: 0.68rem;
+        padding: 11px 22px;
+        font-size: 0.95rem;
         font-weight: 700;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
+        letter-spacing: 0.01em;
+        text-transform: none;
         cursor: pointer;
-        transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+        transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
       }
       .nav-section-tab:hover {
-        background: #f0f5fb;
+        background: #e8f1fa;
         color: var(--accent);
+        border-color: #b7cfe6;
       }
       .nav-section-tab.active {
         background: var(--accent);
         border-color: var(--accent-dark);
         color: #fff;
+        box-shadow: 0 3px 10px rgba(15, 76, 129, 0.22);
+      }
+      .nav-section-body {
+        min-height: 0;
       }
       .nav-section-panel {
         display: none;
-        flex-direction: column;
-        gap: 4px;
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: stretch;
       }
       .nav-section-panel.active {
         display: flex;
       }
       .nav-section-hint {
-        margin: 0 0 6px 4px;
-        font-size: 0.72rem;
+        width: 100%;
+        margin: 0 0 2px 2px;
+        font-size: 0.8rem;
         color: var(--muted);
-        line-height: 1.3;
+        line-height: 1.35;
       }
       .module-btn {
-        width: 100%;
+        width: auto;
+        min-width: 168px;
+        max-width: 260px;
+        flex: 1 1 168px;
         display: flex;
         flex-direction: column;
         align-items: flex-start;
-        gap: 2px;
+        gap: 4px;
         text-align: left;
         margin-bottom: 0;
-        border: 1px solid transparent;
-        border-radius: 10px;
-        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px 16px;
         font-weight: 600;
-        font-size: 0.84rem;
+        font-size: 0.9rem;
         color: var(--text);
         cursor: pointer;
-        background: transparent;
-        transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+        background: #fff;
+        box-shadow: 0 1px 3px rgba(15, 76, 129, 0.05);
+        transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
       }
       .module-btn-label {
-        font-weight: 600;
-        font-size: 0.84rem;
+        font-weight: 700;
+        font-size: 0.92rem;
         line-height: 1.25;
       }
       .module-btn-desc {
         font-weight: 500;
-        font-size: 0.7rem;
+        font-size: 0.74rem;
         color: var(--muted);
-        line-height: 1.3;
+        line-height: 1.35;
       }
       .module-btn.active {
         border-color: var(--accent);
         background: var(--accent-soft);
         color: var(--accent-dark);
+        box-shadow: 0 2px 8px rgba(15, 76, 129, 0.12);
       }
       .module-btn.active .module-btn-desc {
         color: var(--accent);
       }
       .module-btn:hover:not(:disabled) {
-        background: #f0f5fb;
+        background: #f0f6fc;
         color: var(--accent);
+        border-color: #b7cfe6;
       }
       .module-btn.nav-primary {
         font-weight: 700;
         color: var(--accent-dark);
-        background: linear-gradient(180deg, #eef5fc 0%, #e4effa 100%);
+        background: linear-gradient(180deg, #f7fbff 0%, #eaf3fb 100%);
         border-color: #c5d9ef;
       }
       .module-btn.nav-primary .module-btn-label {
         font-weight: 700;
+      }
+      .smart-select-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .smart-other-input.hidden {
+        display: none !important;
+      }
+      .assignee-hint {
+        margin: 4px 0 0;
+        font-size: 0.78rem;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+      .assignee-hint.warn {
+        color: var(--warn);
+      }
+      .assignee-hint.error {
+        color: var(--error);
+      }
+      .project-actions-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        margin: 0 0 12px;
+      }
+      .info-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 8px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .info-list li {
+        margin: 0;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+        font-size: 0.88rem;
       }
       .module-hint {
         margin: 8px 0 0;
@@ -334,10 +396,13 @@
       .content {
         border: 0;
         border-radius: 0;
-        padding: 20px 24px 28px;
+        padding: 22px 28px 32px;
         background: var(--bg);
-        min-height: calc(100vh - 57px);
+        min-height: calc(100vh - 180px);
         overflow: auto;
+        max-width: 1400px;
+        width: 100%;
+        margin: 0 auto;
       }
       .content h3 {
         margin: 0 0 8px;
@@ -2169,74 +2234,98 @@
         </div>
       </header>
       <div class="app-body">
-        <aside class="sidebar">
+        <aside class="sidebar" aria-label="Navegación principal">
           <div class="nav-shell">
             <div class="nav-section-tabs" role="tablist" aria-label="Áreas del sistema">
-              <button type="button" class="nav-section-tab active" data-nav-section="hoy" role="tab" aria-selected="true">Hoy</button>
+              <button type="button" class="nav-section-tab active" data-nav-section="inicio" role="tab" aria-selected="true">Inicio</button>
               <button type="button" class="nav-section-tab" data-nav-section="operacion" role="tab" aria-selected="false">Operación</button>
               <button type="button" class="nav-section-tab" data-nav-section="inventario" role="tab" aria-selected="false">Inventario</button>
               <button type="button" class="nav-section-tab" data-nav-section="control" role="tab" aria-selected="false">Control</button>
               <button type="button" class="nav-section-tab" data-nav-section="sistema" role="tab" aria-selected="false">Sistema</button>
             </div>
             <div class="nav-section-body">
-              <div class="nav-section-panel active" data-nav-section-panel="hoy" data-nav-group="hoy">
-                <p class="nav-section-hint">Trabajo del día: control, cola y surtido</p>
+              <div class="nav-section-panel active" data-nav-section-panel="inicio" data-nav-group="inicio">
+                <p class="nav-section-hint">Resumen del día, pendientes y accesos críticos</p>
                 <button class="module-btn nav-primary" data-module="control" id="btnControl" type="button">
                   <span class="module-btn-label">Centro de Control</span>
                   <span class="module-btn-desc">Resumen operativo del almacén</span>
                 </button>
                 <button class="module-btn" data-module="tasks" id="btnTasks" type="button">
                   <span class="module-btn-label">Mis tareas</span>
-                  <span class="module-btn-desc">Cola de trabajo asignada</span>
+                  <span class="module-btn-desc">Cola de trabajo y avisos internos</span>
                 </button>
-                <button class="module-btn" data-module="picking" id="btnPicking" type="button">
-                  <span class="module-btn-label">Picking / Surtido</span>
-                  <span class="module-btn-desc">Escaneo y preparación en piso</span>
+                <button class="module-btn" data-module="tasks" id="btnInternalNotices" type="button" data-task-pref-type="INTERNAL_NOTICE">
+                  <span class="module-btn-label">Avisos internos</span>
+                  <span class="module-btn-desc">Comunicación operativa sin chat</span>
                 </button>
                 <button class="module-btn" data-module="incidents" id="btnIncidentsHoy" type="button">
                   <span class="module-btn-label">Incidencias abiertas</span>
                   <span class="module-btn-desc">Excepciones pendientes en piso</span>
                 </button>
+                <button class="module-btn" data-module="picking" id="btnPicking" type="button">
+                  <span class="module-btn-label">Picking / Surtido de salida</span>
+                  <span class="module-btn-desc">Surtido con escaneo</span>
+                </button>
               </div>
               <div class="nav-section-panel" data-nav-section-panel="operacion" data-nav-group="operacion">
-                <p class="nav-section-hint">Flujo de mercancía y órdenes</p>
+                <p class="nav-section-hint">Flujo de mercancía: recepción, órdenes, surtido y despacho</p>
                 <button class="module-btn" data-module="inbound" id="btnInbound" type="button">
-                  <span class="module-btn-label">Entradas</span>
-                  <span class="module-btn-desc">Recepción y alta de existencias</span>
+                  <span class="module-btn-label">Entradas / Recepción</span>
+                  <span class="module-btn-desc">Alta de existencias por proyecto, lote y ubicación</span>
+                </button>
+                <button class="module-btn" data-module="bulk-inbound" id="btnBulkInbound" type="button">
+                  <span class="module-btn-label">Entrada masiva</span>
+                  <span class="module-btn-desc">Carga por archivo o lote operativo</span>
                 </button>
                 <button class="module-btn" data-module="requisitions" id="btnRequisitions" type="button">
                   <span class="module-btn-label">Requisiciones / Órdenes</span>
-                  <span class="module-btn-desc">Solicitudes de surtido</span>
+                  <span class="module-btn-desc">Órdenes de trabajo para surtido</span>
                 </button>
                 <button class="module-btn" data-module="picking" id="btnPickingOps" type="button">
-                  <span class="module-btn-label">Picking / Surtido</span>
-                  <span class="module-btn-desc">Preparación con escaneo</span>
+                  <span class="module-btn-label">Picking / Surtido de salida</span>
+                  <span class="module-btn-desc">Prepara productos para despacho</span>
+                </button>
+                <button class="module-btn" data-module="relocate" id="btnRelocate" type="button">
+                  <span class="module-btn-label">Movimiento interno / Reubicación</span>
+                  <span class="module-btn-desc">Mueve stock entre ubicaciones</span>
                 </button>
                 <button class="module-btn" data-module="outbound" id="btnOutbound" type="button">
                   <span class="module-btn-label">Salidas / Despacho</span>
-                  <span class="module-btn-desc">Confirmar salida de mercancía</span>
+                  <span class="module-btn-desc">Confirma salida y descuenta existencias</span>
                 </button>
               </div>
               <div class="nav-section-panel" data-nav-section-panel="inventario" data-nav-group="inventario">
-                <p class="nav-section-hint">Existencias, catálogo y proyectos AVIAT</p>
+                <p class="nav-section-hint">Existencias, catálogo, proyectos y estructura de almacén</p>
                 <button class="module-btn" data-module="inventory" id="btnInventory" type="button">
-                  <span class="module-btn-label">Inventario</span>
+                  <span class="module-btn-label">Existencias</span>
                   <span class="module-btn-desc">Saldos por proyecto, lote y ubicación</span>
                 </button>
                 <button class="module-btn" data-module="catalog" id="btnCatalog" type="button">
-                  <span class="module-btn-label">Catálogo y proyectos</span>
-                  <span class="module-btn-desc">Productos y proyectos de AVIAT</span>
+                  <span class="module-btn-label">Catálogo y productos</span>
+                  <span class="module-btn-desc">Maestro de productos AVIAT</span>
+                </button>
+                <button class="module-btn" data-module="projects" id="btnProjects" type="button">
+                  <span class="module-btn-label">Proyectos</span>
+                  <span class="module-btn-desc">Proyectos detectados de AVIAT</span>
+                </button>
+                <button class="module-btn" data-module="warehouses" id="btnWarehouses" type="button">
+                  <span class="module-btn-label">Almacenes</span>
+                  <span class="module-btn-desc">Almacenes detectados en operación</span>
+                </button>
+                <button class="module-btn" data-module="locations" id="btnLocations" type="button">
+                  <span class="module-btn-label">Ubicaciones</span>
+                  <span class="module-btn-desc">Ubicaciones detectadas en inventarios</span>
                 </button>
               </div>
               <div class="nav-section-panel" data-nav-section-panel="control" data-nav-group="control">
-                <p class="nav-section-hint">Auditoría, excepciones e indicadores</p>
-                <button class="module-btn" data-module="traceability" id="btnTraceability" type="button">
-                  <span class="module-btn-label">Trazabilidad / Auditoría</span>
-                  <span class="module-btn-desc">Historial de operaciones</span>
-                </button>
+                <p class="nav-section-hint">Excepciones, auditoría e indicadores</p>
                 <button class="module-btn" data-module="incidents" id="btnIncidents" type="button">
                   <span class="module-btn-label">Incidencias</span>
                   <span class="module-btn-desc">Registro y seguimiento de excepciones</span>
+                </button>
+                <button class="module-btn" data-module="traceability" id="btnTraceability" type="button">
+                  <span class="module-btn-label">Trazabilidad / Auditoría</span>
+                  <span class="module-btn-desc">Historial de operaciones</span>
                 </button>
                 <button class="module-btn" data-module="reports" id="btnReports" type="button">
                   <span class="module-btn-label">Reportes y exportaciones</span>
@@ -2244,10 +2333,14 @@
                 </button>
               </div>
               <div class="nav-section-panel" data-nav-section-panel="sistema" data-nav-group="sistema">
-                <p class="nav-section-hint">Accesos de cuenta y administración</p>
+                <p class="nav-section-hint">Administración y cuenta</p>
                 <button class="module-btn" data-module="users" id="btnUsers" type="button">
                   <span class="module-btn-label">Usuarios</span>
                   <span class="module-btn-desc">Altas y roles del equipo</span>
+                </button>
+                <button class="module-btn" data-module="config" id="btnConfig" type="button">
+                  <span class="module-btn-label">Configuración operativa</span>
+                  <span class="module-btn-desc">Preferencias y reinicio controlado</span>
                 </button>
                 <button class="module-btn" data-module="account" id="btnAccount" type="button">
                   <span class="module-btn-label">Mi cuenta</span>
@@ -2266,6 +2359,11 @@
             <div class="aviat-context-bar">
               <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
               <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
+            </div>
+            <div class="project-actions-row">
+              <button type="button" class="btn-secondary btn-compact" data-goto-module="projects">Ver proyectos</button>
+              <button type="button" id="ccAddProjectBtn" class="btn-primary btn-compact" data-goto-module="catalog">Agregar proyecto</button>
+              <span class="assignee-hint">Los proyectos se alimentan desde Catálogo y productos.</span>
             </div>
             <p id="aviatScopeControl" class="operational-table-meta" style="margin:0 0 10px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
             <p id="aviatFilterFallbackNotice" class="aviat-filter-notice hidden">No se encontraron registros para ese proyecto. Mostrando todos los proyectos de AVIAT.</p>
@@ -2554,10 +2652,12 @@
                   </select>
                 </div>
                 <div class="field" id="taskAssigneeField">
-                  <label for="taskAssignee">Responsable</label>
+                  <label for="taskAssignee">Responsable asignado</label>
                   <select id="taskAssignee">
                     <option value="">Sin asignar</option>
                   </select>
+                  <p id="taskAssigneeHint" class="assignee-hint"></p>
+                  <button type="button" id="taskCreateUserBtn" class="btn-secondary btn-compact hidden" style="margin-top:8px">Crear usuario</button>
                 </div>
                 <div class="field">
                   <label for="taskDueDate">Fecha objetivo</label>
@@ -2565,7 +2665,10 @@
                 </div>
                 <div class="field">
                   <label for="taskProject">Proyecto</label>
-                  <input id="taskProject" type="text" placeholder="Proyecto AVIAT" />
+                  <div class="smart-select-wrap">
+                    <select id="taskProjectSelect"><option value="">— Seleccionar proyecto —</option></select>
+                    <input id="taskProject" type="text" class="smart-other-input hidden" placeholder="Nuevo o manual" />
+                  </div>
                 </div>
                 <div class="field">
                   <label for="taskLote">Lote</label>
@@ -2577,11 +2680,17 @@
                 </div>
                 <div class="field">
                   <label for="taskLocation">Ubicación</label>
-                  <input id="taskLocation" type="text" placeholder="Opcional" />
+                  <div class="smart-select-wrap">
+                    <select id="taskLocationSelect"><option value="">— Seleccionar —</option></select>
+                    <input id="taskLocation" type="text" class="smart-other-input hidden" placeholder="Otra ubicación" />
+                  </div>
                 </div>
                 <div class="field">
                   <label for="taskWarehouse">Almacén</label>
-                  <input id="taskWarehouse" type="text" placeholder="TULTITLAN24" value="TULTITLAN24" />
+                  <div class="smart-select-wrap">
+                    <select id="taskWarehouseSelect"><option value="">— Seleccionar —</option></select>
+                    <input id="taskWarehouse" type="text" class="smart-other-input hidden" placeholder="Otro almacén" value="" />
+                  </div>
                 </div>
                 <div class="field full">
                   <label for="taskFollowUp">Comentario inicial</label>
@@ -2668,15 +2777,22 @@
               </div>
               <div class="field">
                 <label for="incidentWarehouse">Almacén</label>
-                <input id="incidentWarehouse" type="text" placeholder="Opcional" />
+                <div class="smart-select-wrap">
+                  <select id="incidentWarehouseSelect"><option value="">— Seleccionar —</option></select>
+                  <input id="incidentWarehouse" type="text" class="smart-other-input hidden" placeholder="Otro almacén" />
+                </div>
               </div>
               <div class="field full">
                 <label for="incidentLocation">Ubicación / detalle</label>
-                <input id="incidentLocation" type="text" />
+                <div class="smart-select-wrap">
+                  <select id="incidentLocationSelect"><option value="">— Seleccionar —</option></select>
+                  <input id="incidentLocation" type="text" class="smart-other-input hidden" placeholder="Otra ubicación o detalle" />
+                </div>
               </div>
               <div class="field full">
-                <label for="incidentProductId">ID producto (opcional)</label>
-                <input id="incidentProductId" type="text" placeholder="cuid" />
+                <label for="incidentProductSku">SKU / Código de producto</label>
+                <input id="incidentProductSku" type="text" placeholder="SKU o código de barras" />
+                <p class="assignee-hint">No uses IDs internos. Si el SKU no está en catálogo se registrará como referencia manual.</p>
               </div>
               <div class="field full">
                 <label for="incidentNotes">Notas</label>
@@ -2739,8 +2855,8 @@
           </div>
           <div id="modulePicking" class="module-pane hidden picking-panel">
             <div class="module-screen-header module-header-band">
-              <h3>Picking / Surtido</h3>
-              <p class="module-lead">Prepara surtidos con escaneo para salida o movimiento operativo. Principal herramienta del operador de piso.</p>
+              <h3>Picking / Surtido de salida</h3>
+              <p class="module-lead">Prepara productos para salida mediante escaneo, validación y surtido. No es una entrada de mercancía.</p>
             </div>
             <div class="picking-flow" id="pickingFlow" aria-label="Flujo de picking">
               <div class="picking-step" data-step="read">
@@ -2932,8 +3048,8 @@
           </div>
           <div id="moduleCatalog" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3 id="catalogModuleTitle">Catálogo y proyectos</h3>
-              <p class="module-lead">Productos maestros y proyectos de AVIAT. Consulta maestra e importaciones para catálogo.</p>
+              <h3 id="catalogModuleTitle">Catálogo y productos</h3>
+              <p class="module-lead">Productos maestros de AVIAT. Los proyectos se gestionan desde aquí y se listan en Inventario › Proyectos.</p>
             </div>
             <div class="aviat-context-bar">
               <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
@@ -3066,7 +3182,7 @@
           </div>
           <div id="moduleInbound" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Entradas</h3>
+              <h3>Entradas / Recepción</h3>
               <p class="module-lead">Registra mercancía recibida y aumenta existencias por proyecto, lote y ubicación. Usado en recepción de almacén.</p>
             </div>
             <div class="card-panel ops-form-panel">
@@ -3099,11 +3215,17 @@
                 </div>
                 <div class="field">
                   <label for="inboundWarehouse">Almacén</label>
-                  <input id="inboundWarehouse" type="text" value="TULTITLAN24" />
+                  <div class="smart-select-wrap">
+                    <select id="inboundWarehouseSelect"><option value="">— Seleccionar —</option></select>
+                    <input id="inboundWarehouse" type="text" class="smart-other-input hidden" value="TULTITLAN24" />
+                  </div>
                 </div>
                 <div class="field">
                   <label for="inboundLocation">Ubicación destino</label>
-                  <input id="inboundLocation" type="text" placeholder="Ej. TULTITLAN24-GEN-STAGE-01" required />
+                  <div class="smart-select-wrap">
+                    <select id="inboundLocationSelect"><option value="">— Seleccionar —</option></select>
+                    <input id="inboundLocation" type="text" class="smart-other-input hidden" placeholder="Ej. TULTITLAN24-GEN-STAGE-01" />
+                  </div>
                 </div>
                 <div class="field">
                   <label for="inboundStatus">Status</label>
@@ -3139,7 +3261,7 @@
           <div id="moduleOutbound" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Salidas / Despacho</h3>
-              <p class="module-lead">Confirma despacho o salida directa de mercancía con validación de stock. Cierre del flujo operativo.</p>
+              <p class="module-lead">Confirma la salida final de mercancía y descuenta existencias.</p>
             </div>
             <div class="card-panel ops-form-panel">
               <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong></p>
@@ -3171,11 +3293,17 @@
                 </div>
                 <div class="field">
                   <label for="outboundWarehouse">Almacén</label>
-                  <input id="outboundWarehouse" type="text" value="TULTITLAN24" />
+                  <div class="smart-select-wrap">
+                    <select id="outboundWarehouseSelect"><option value="">— Seleccionar —</option></select>
+                    <input id="outboundWarehouse" type="text" class="smart-other-input hidden" value="TULTITLAN24" />
+                  </div>
                 </div>
                 <div class="field">
                   <label for="outboundLocation">Ubicación origen</label>
-                  <input id="outboundLocation" type="text" placeholder="Ej. TULTITLAN24-GEN-STAGE-01" required />
+                  <div class="smart-select-wrap">
+                    <select id="outboundLocationSelect"><option value="">— Seleccionar —</option></select>
+                    <input id="outboundLocation" type="text" class="smart-other-input hidden" placeholder="Ej. TULTITLAN24-GEN-STAGE-01" />
+                  </div>
                 </div>
                 <div class="field">
                   <label for="outboundStatus">Status</label>
@@ -3210,8 +3338,8 @@
           </div>
           <div id="moduleRequisitions" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Requisiciones / Órdenes</h3>
-              <p class="module-lead">Solicitudes de surtido que generan trabajo de picking. Usado por operación y supervisión.</p>
+              <h3>Requisiciones / Órdenes de trabajo</h3>
+              <p class="module-lead">Solicita trabajo operativo para entrada, surtido, inventario o movimiento.</p>
             </div>
             <div class="card-panel ops-form-panel">
               <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong></p>
@@ -3270,9 +3398,138 @@
             </div>
           </div>
           <div id="modulePlaceholder" class="module-pane hidden">
-            <h3>Módulo en construcción</h3>
-            <p class="subtitle">Este módulo se habilitará en una siguiente iteración.</p>
+            <div class="module-screen-header module-header-band">
+              <h3>Módulo no disponible</h3>
+              <p class="module-lead">Selecciona otra opción del menú superior.</p>
+            </div>
           </div>
+          <div id="moduleRelocate" class="module-pane hidden">
+            <div class="module-screen-header module-header-band">
+              <h3>Movimiento interno / Reubicación</h3>
+              <p class="module-lead">Solicita reubicación entre ubicaciones dentro del almacén. No es picking ni salida.</p>
+            </div>
+            <div class="card-panel ops-form-panel">
+              <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong> · Control operativo de reubicación</p>
+              <p class="module-lead" style="margin:0 0 12px">
+                Por seguridad, esta acción crea una orden de reubicación. El movimiento real de inventario se confirmará desde el flujo operativo validado.
+              </p>
+              <h4 class="secondary-panel-title">Solicitud de reubicación</h4>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="relocateSku">SKU / Código de barras</label>
+                  <input id="relocateSku" type="text" placeholder="SKU exacto del catálogo" required />
+                </div>
+                <div class="field">
+                  <label for="relocateQty">Cantidad</label>
+                  <input id="relocateQty" type="number" step="0.0001" min="0.0001" required />
+                </div>
+                <div class="field">
+                  <label for="relocateWarehouse">Almacén</label>
+                  <div class="smart-select-wrap">
+                    <select id="relocateWarehouseSelect"><option value="">— Seleccionar —</option></select>
+                    <input id="relocateWarehouse" type="text" class="smart-other-input hidden" value="TULTITLAN24" />
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="relocateStatus">Status</label>
+                  <select id="relocateStatus">
+                    <option value="AVAILABLE">AVAILABLE</option>
+                    <option value="OPERATIONS">OPERATIONS</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="relocateFrom">Ubicación origen</label>
+                  <div class="smart-select-wrap">
+                    <select id="relocateFromSelect"><option value="">— Seleccionar —</option></select>
+                    <input id="relocateFrom" type="text" class="smart-other-input hidden" placeholder="Origen" required />
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="relocateTo">Ubicación destino</label>
+                  <div class="smart-select-wrap">
+                    <select id="relocateToSelect"><option value="">— Seleccionar —</option></select>
+                    <input id="relocateTo" type="text" class="smart-other-input hidden" placeholder="Destino" required />
+                  </div>
+                </div>
+                <div class="field full">
+                  <label for="relocateReference">Referencia</label>
+                  <input id="relocateReference" type="text" placeholder="RELOC-..." />
+                </div>
+                <div class="field full">
+                  <label for="relocateNotes">Notas</label>
+                  <input id="relocateNotes" type="text" placeholder="Motivo de reubicación" />
+                </div>
+              </div>
+              <p id="relocateMessage" class="ops-message"></p>
+              <button type="button" id="relocateSubmitBtn" class="btn-primary btn-compact">Crear solicitud de reubicación</button>
+            </div>
+          </div>
+          <div id="moduleBulkInbound" class="module-pane hidden">
+            <div class="module-screen-header module-header-band">
+              <h3>Entrada masiva</h3>
+              <p class="module-lead">Carga varias líneas de inventario desde archivo o captura por lote operativo.</p>
+            </div>
+            <div class="card-panel">
+              <h4 class="secondary-panel-title">Carga masiva / archivo</h4>
+              <p class="module-lead" style="margin-bottom:12px">
+                Usa la importación de inventario existente (CSV/Excel) para actualizar saldos y ubicaciones.
+                Para una sola línea usa <strong>Entradas / Recepción</strong>.
+              </p>
+              <div class="page-toolbar">
+                <button type="button" class="btn-primary btn-compact" id="bulkInboundOpenImportBtn">Abrir importación de inventario</button>
+                <button type="button" class="btn-secondary btn-compact" data-goto-module="inbound">Entrada unitaria</button>
+              </div>
+              <p class="assignee-hint">Entrada con escaneo masivo queda preparada como concepto para versiones futuras.</p>
+            </div>
+          </div>
+          <div id="moduleProjects" class="module-pane hidden">
+            <div class="module-screen-header module-header-band">
+              <h3>Proyectos</h3>
+              <p class="module-lead">Proyectos detectados del cliente principal AVIAT. Se alimentan desde catálogo e inventario.</p>
+            </div>
+            <div class="project-actions-row">
+              <button type="button" class="btn-primary btn-compact" id="projectsAddBtn" data-goto-module="catalog">Agregar proyecto</button>
+              <button type="button" class="btn-secondary btn-compact" data-goto-module="catalog">Ir a catálogo</button>
+              <span class="assignee-hint">Los proyectos se alimentan desde Catálogo y productos.</span>
+            </div>
+            <div class="card-panel">
+              <div id="projectsViewChips"></div>
+              <ul id="projectsKnownList" class="info-list" style="margin-top:14px"></ul>
+            </div>
+          </div>
+          <div id="moduleWarehouses" class="module-pane hidden">
+            <div class="module-screen-header module-header-band">
+              <h3>Almacenes</h3>
+              <p class="module-lead">Almacenes detectados en existencias y movimientos. Puedes usar “Otro almacén” en capturas operativas.</p>
+            </div>
+            <div class="card-panel">
+              <ul id="warehousesKnownList" class="info-list"></ul>
+            </div>
+          </div>
+          <div id="moduleLocations" class="module-pane hidden">
+            <div class="module-screen-header module-header-band">
+              <h3>Ubicaciones</h3>
+              <p class="module-lead">Ubicaciones detectadas en operación. Las nuevas capturas aparecen aquí en la siguiente carga de datos.</p>
+            </div>
+            <div class="card-panel">
+              <ul id="locationsKnownList" class="info-list"></ul>
+            </div>
+          </div>
+          <div id="moduleConfig" class="module-pane hidden">
+            <div class="module-screen-header module-header-band">
+              <h3>Configuración operativa</h3>
+              <p class="module-lead">Preferencias de sesión, cuenta y utilidades del sistema. Sin cambios de base de datos desde esta pantalla.</p>
+            </div>
+            <div class="card-panel">
+              <h4 class="secondary-panel-title">Accesos rápidos</h4>
+              <div class="page-toolbar">
+                <button type="button" class="btn-secondary btn-compact" data-goto-module="account">Mi cuenta / contraseña</button>
+                <button type="button" class="btn-secondary btn-compact" data-goto-module="users" id="configUsersBtn">Usuarios</button>
+              </div>
+              <p class="assignee-hint">Tipos de tarea e incidencia se administran en el front (listas v40). Persistencia en BD se contempla para v41+.</p>
+            </div>
+          </div>
+
         </main>
       </div>
     </div>
@@ -3357,6 +3614,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=39"></script>
+    <script src="/dashboard.js?v=40"></script>
   </body>
 </html>
