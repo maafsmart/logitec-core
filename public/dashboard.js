@@ -387,16 +387,16 @@ function buildOpsReference(lote, referenceRaw, kind) {
 }
 
 const roleModules = {
-  ADMIN: ["control", "clients", "catalog", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "reports", "users", "account"],
-  SUPERVISOR: ["control", "clients", "catalog", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "reports", "account"],
-  OPERATOR: ["control", "clients", "inventory", "inbound", "requisitions", "picking", "outbound", "traceability", "incidents", "tasks", "reports", "account"],
+  ADMIN: ["control", "tasks", "picking", "inbound", "requisitions", "outbound", "incidents", "inventory", "catalog", "clients", "traceability", "reports", "users", "account"],
+  SUPERVISOR: ["control", "tasks", "picking", "inbound", "requisitions", "outbound", "incidents", "inventory", "catalog", "clients", "traceability", "reports", "account"],
+  OPERATOR: ["control", "tasks", "picking", "inbound", "requisitions", "outbound", "incidents", "inventory", "catalog", "traceability", "account"],
   CLIENT: ["catalog", "account"]
 };
 
 const defaultLandingModule = {
   ADMIN: "control",
   SUPERVISOR: "control",
-  OPERATOR: "control",
+  OPERATOR: "tasks",
   CLIENT: "catalog"
 };
 
@@ -515,7 +515,10 @@ function activateModule(moduleName) {
     void loadRequisitionsList();
   }
   if (showTraceability) void loadTraceability();
-  if (showTasks) void loadTasks();
+  if (showTasks) {
+    wireTasksModuleUi();
+    void loadTasks();
+  }
   if (showIncidents) void loadIncidents();
   if (showPicking) {
     resetPickingFlow();
@@ -596,7 +599,7 @@ const GRID_DEFAULT_WIDTHS = {
   inbound: [140, 90, 170, 90, 90, 120, 120, 90],
   outbound: [140, 90, 170, 90, 90, 120, 120, 90],
   requisitions: [120, 140, 90, 200, 110, 100],
-  tasks: [130, 90, 100, 110, 140, 140, 80],
+  tasks: [90, 110, 110, 180, 130, 110, 110, 120, 90, 100],
   incidents: [130, 100, 110, 140, 120, 200],
   picking: [140, 120, 90, 200],
   picking_op: [140, 120, 120, 90, 200]
@@ -1215,10 +1218,615 @@ function statusBadge(value) {
       ? "success"
       : raw.includes("IN_PROGRESS")
         ? "warn"
-        : raw.includes("ERROR")
+        : raw.includes("ERROR") || raw.includes("REJECTED")
           ? "error"
           : "info";
   return `<span class="badge ${tone}">${escCell(raw)}</span>`;
+}
+
+function taskStatusBadge(status) {
+  const key = String(status || "").toUpperCase();
+  const label = TASK_STATUS_LABELS[key] || status || "—";
+  const toneMap = {
+    PENDING: "status-pending",
+    ASSIGNED: "status-assigned",
+    IN_PROGRESS: "status-progress",
+    COMPLETED: "status-done",
+    REJECTED: "status-rejected",
+    CANCELLED: "status-cancelled"
+  };
+  return `<span class="badge ${toneMap[key] || "info"}">${escCell(label)}</span>`;
+}
+
+function priorityBadge(priority) {
+  const n = Number(priority) || 0;
+  if (n >= 80) return `<span class="badge prio-alta">${n >= 100 ? "Urgente" : "Alta"}</span>`;
+  if (n >= 40) return `<span class="badge prio-media">Media</span>`;
+  return `<span class="badge prio-baja">Baja</span>`;
+}
+
+/** Parser dual: notes de tareas operativas y de requisiciones (PICK). */
+function parseTaskNotes(notes) {
+  if (!notes) return {};
+  if (typeof notes === "object" && notes !== null) return notes;
+  try {
+    const parsed = JSON.parse(notes);
+    return parsed && typeof parsed === "object" ? parsed : { description: String(notes) };
+  } catch (_e) {
+    return { description: String(notes) };
+  }
+}
+
+function enrichTaskRow(t) {
+  const notes = parseTaskNotes(t.notes);
+  const title = notes.title || t.reference || "Sin título";
+  const taskLabel =
+    notes.taskLabel ||
+    (notes.customerCode || notes.customerName || notes.qty != null ? "Picking (req.)" : null) ||
+    (t.type === "PICK"
+      ? "Picking"
+      : t.type === "COUNT"
+        ? "Inventario"
+        : t.type === "MOVE"
+          ? "Movimiento"
+          : t.type === "ADJUSTMENT"
+            ? "General"
+            : t.type === "RECEIVE"
+              ? "Recepción"
+              : t.type || "—");
+  const dueDate = notes.dueDate || "";
+  const project = notes.project || notes.customerName || notes.customerCode || "";
+  const lote = notes.lote || "";
+  const sku = notes.sku || "";
+  const location = notes.location || "";
+  const description = notes.description || notes.detail || "";
+  const followUp = Array.isArray(notes.followUp) ? notes.followUp : [];
+  return {
+    ...t,
+    _notes: notes,
+    _title: title,
+    _taskLabel: taskLabel,
+    _dueDate: dueDate,
+    _project: project,
+    _lote: lote,
+    _sku: sku,
+    _location: location,
+    _description: description,
+    _followUp: followUp,
+    _assignName: t.assignedTo?.fullName || "—",
+    _creatorName: t.createdBy?.fullName || "—"
+  };
+}
+
+function isTaskOverdue(task) {
+  if (!task._dueDate) return false;
+  if (task.status === "COMPLETED" || task.status === "CANCELLED" || task.status === "REJECTED") return false;
+  const due = new Date(task._dueDate);
+  if (Number.isNaN(due.getTime())) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  due.setHours(0, 0, 0, 0);
+  return due < today;
+}
+
+function canManageAllTasks() {
+  return currentRole === "ADMIN" || currentRole === "SUPERVISOR";
+}
+
+function canCreateTasks() {
+  return currentRole === "ADMIN" || currentRole === "SUPERVISOR" || currentRole === "OPERATOR";
+}
+
+function canAssignTasks() {
+  return currentRole === "ADMIN" || currentRole === "SUPERVISOR";
+}
+
+function canCancelOrRejectTasks() {
+  return currentRole === "ADMIN" || currentRole === "SUPERVISOR";
+}
+
+function canActOnTask(task) {
+  if (canManageAllTasks()) return true;
+  if (currentRole === "OPERATOR") {
+    return task.assignedToId === currentUserId || task.createdById === currentUserId || !task.assignedToId;
+  }
+  return false;
+}
+
+let tasksCache = [];
+let assigneesCache = [];
+let taskActiveTab = "mine";
+
+function updateTaskKpis(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const set = (id, n) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(n);
+  };
+  set("taskKpiPending", list.filter((t) => t.status === "PENDING").length);
+  set("taskKpiAssigned", list.filter((t) => t.status === "ASSIGNED").length);
+  set("taskKpiInProgress", list.filter((t) => t.status === "IN_PROGRESS").length);
+  set("taskKpiCompleted", list.filter((t) => t.status === "COMPLETED").length);
+  set("taskKpiOverdue", list.filter((t) => isTaskOverdue(t)).length);
+  set(
+    "taskKpiMine",
+    list.filter((t) => t.assignedToId === currentUserId || t.createdById === currentUserId).length
+  );
+}
+
+function filterTasksForTab(rows, tab) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (tab === "mine") {
+    return list.filter((t) => t.assignedToId === currentUserId || (!t.assignedToId && t.createdById === currentUserId));
+  }
+  if (tab === "created") return list.filter((t) => t.createdById === currentUserId);
+  if (tab === "completed") return list.filter((t) => t.status === "COMPLETED");
+  return list;
+}
+
+function applyTaskFilters(rows) {
+  let list = Array.isArray(rows) ? rows.slice() : [];
+  const type = document.getElementById("taskFilterType")?.value || "";
+  const status = document.getElementById("taskFilterStatus")?.value || "";
+  const assignee = document.getElementById("taskFilterAssignee")?.value || "";
+  const priority = document.getElementById("taskFilterPriority")?.value || "";
+  const due = document.getElementById("taskFilterDue")?.value || "";
+  const text = (document.getElementById("taskFilterText")?.value || "").trim().toLowerCase();
+
+  if (type) list = list.filter((t) => t.type === type);
+  if (status) list = list.filter((t) => t.status === status);
+  if (assignee) list = list.filter((t) => t.assignedToId === assignee);
+  if (priority === "low") list = list.filter((t) => (t.priority ?? 0) < 40);
+  if (priority === "mid") list = list.filter((t) => (t.priority ?? 0) >= 40 && (t.priority ?? 0) < 80);
+  if (priority === "high") list = list.filter((t) => (t.priority ?? 0) >= 80);
+  if (due) list = list.filter((t) => String(t._dueDate || "").slice(0, 10) === due);
+  if (text) {
+    list = list.filter((t) => {
+      const hay = [t._title, t.reference, t._description, t._sku, t._lote, t._project, t._taskLabel, t._assignName]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(text);
+    });
+  }
+  return list;
+}
+
+function buildTaskActionHtml(t) {
+  const buttons = [];
+  const id = escCell(t.id);
+  buttons.push(`<button type="button" class="btn-table btn-compact task-view" data-task-id="${id}" data-task-action="view">Detalle</button>`);
+
+  const terminal = t.status === "COMPLETED" || t.status === "CANCELLED" || t.status === "REJECTED";
+  if (terminal) {
+    return `<div class="task-actions-cell">${buttons.join("")}</div>`;
+  }
+
+  if (!t.assignedToId && (canAssignTasks() || (currentRole === "OPERATOR" && t.createdById === currentUserId))) {
+    if (canActOnTask(t) || canAssignTasks()) {
+      buttons.push(`<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="claim">Tomar</button>`);
+    }
+  }
+
+  if (canActOnTask(t) && (t.assignedToId === currentUserId || canManageAllTasks())) {
+    if (t.status === "PENDING" || t.status === "ASSIGNED") {
+      buttons.push(`<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="start">Iniciar</button>`);
+    }
+    if (t.status === "IN_PROGRESS" || t.status === "ASSIGNED" || t.status === "PENDING") {
+      buttons.push(`<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="complete">Completar</button>`);
+    }
+  }
+
+  if (canCancelOrRejectTasks()) {
+    buttons.push(`<button type="button" class="btn-table btn-compact btn-danger task-act" data-task-id="${id}" data-task-action="cancel">Cancelar</button>`);
+    buttons.push(`<button type="button" class="btn-table btn-compact btn-danger task-act" data-task-id="${id}" data-task-action="reject">Rechazar</button>`);
+  }
+
+  return `<div class="task-actions-cell">${buttons.join("")}</div>`;
+}
+
+function renderTasksTable() {
+  if (!taskList) return;
+  const tabbed = filterTasksForTab(tasksCache, taskActiveTab);
+  const filtered = applyTaskFilters(tabbed);
+  if (taskMessage) {
+    taskMessage.textContent = `${filtered.length} tarea(s) en vista · ${tasksCache.length} en cola total.`;
+  }
+  const taskRows = filtered.map((t) => ({
+    ...t,
+    _actionHtml: buildTaskActionHtml(t)
+  }));
+  renderExcelTable(taskList, {
+    gridId: "tasks",
+    columns: TASK_COLUMNS,
+    rows: taskRows,
+    emptyMessage: "Sin tareas en esta vista",
+    selectable: false,
+    allowActions: true
+  });
+}
+
+async function loadAssigneesForTasks() {
+  const assigneeSelect = document.getElementById("taskAssignee");
+  const filterSelect = document.getElementById("taskFilterAssignee");
+  if (!canAssignTasks()) {
+    assigneesCache = [];
+    if (assigneeSelect) {
+      assigneeSelect.innerHTML = `<option value="${escCell(currentUserId || "")}">Yo</option>`;
+    }
+    if (filterSelect) filterSelect.innerHTML = '<option value="">Todos</option>';
+    return;
+  }
+  try {
+    const response = await authenticatedFetch("/api/users/assignees");
+    if (!response?.ok) {
+      assigneesCache = [];
+      return;
+    }
+    const users = await response.json();
+    assigneesCache = Array.isArray(users) ? users : [];
+    const opts = ['<option value="">Sin asignar</option>']
+      .concat(
+        assigneesCache.map(
+          (u) =>
+            `<option value="${escCell(u.id)}">${escCell(u.fullName)} (${escCell(u.role)})</option>`
+        )
+      )
+      .join("");
+    if (assigneeSelect) assigneeSelect.innerHTML = opts;
+    if (filterSelect) {
+      filterSelect.innerHTML =
+        '<option value="">Todos</option>' +
+        assigneesCache
+          .map((u) => `<option value="${escCell(u.id)}">${escCell(u.fullName)}</option>`)
+          .join("");
+    }
+  } catch (_e) {
+    assigneesCache = [];
+  }
+}
+
+async function loadTasks() {
+  if (!taskList) return;
+  if (taskMessage) taskMessage.textContent = "Cargando…";
+  try {
+    await loadAssigneesForTasks();
+    const response = await authenticatedFetch("/api/tasks");
+    if (!response) return;
+    if (!response.ok) {
+      if (taskMessage) taskMessage.textContent = "No se pudieron cargar tareas.";
+      taskList.innerHTML = "";
+      return;
+    }
+    const rows = await response.json();
+    tasksCache = (Array.isArray(rows) ? rows : []).map(enrichTaskRow);
+    updateTaskKpis(tasksCache);
+    renderTasksTable();
+  } catch (_e) {
+    if (taskMessage) taskMessage.textContent = "Error de red.";
+  }
+}
+
+async function patchTask(taskId, body) {
+  const response = await authenticatedFetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return response;
+}
+
+async function setTaskStatus(taskId, status) {
+  const response = await authenticatedFetch(`/api/tasks/${encodeURIComponent(taskId)}/status`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status })
+  });
+  if (!response?.ok) {
+    const data = await response?.json().catch(() => ({}));
+    window.alert(data.message || "No se pudo actualizar el estatus.");
+    return false;
+  }
+  return true;
+}
+
+async function claimTask(taskId) {
+  const response = await patchTask(taskId, { assignedToId: currentUserId, status: "ASSIGNED" });
+  if (!response?.ok) {
+    const data = await response?.json().catch(() => ({}));
+    window.alert(data.message || "No se pudo tomar la tarea.");
+    return false;
+  }
+  return true;
+}
+
+async function appendTaskFollowUp(task, comment) {
+  if (!comment) return true;
+  const notes = { ...parseTaskNotes(task.notes) };
+  const followUp = Array.isArray(notes.followUp) ? notes.followUp.slice() : [];
+  followUp.push({
+    at: new Date().toISOString(),
+    by: currentUserId,
+    text: comment
+  });
+  notes.followUp = followUp;
+  const response = await patchTask(task.id, { notes: JSON.stringify(notes) });
+  return Boolean(response?.ok);
+}
+
+function openTaskDetail(taskId) {
+  const t = tasksCache.find((x) => x.id === taskId);
+  if (!t) return;
+  const followLines = (t._followUp || [])
+    .map((f) => {
+      const when = f.at ? formatDateShort(f.at) : "";
+      return `${when}: ${f.text || ""}`;
+    })
+    .filter(Boolean);
+
+  const fields = [
+    { label: "Título", value: t._title },
+    { label: "Descripción", value: t._description || "—" },
+    { label: "Tipo", value: t._taskLabel },
+    { label: "Estatus", value: TASK_STATUS_LABELS[t.status] || t.status },
+    { label: "Responsable", value: t._assignName },
+    { label: "Fecha objetivo", value: t._dueDate ? formatDateShort(t._dueDate) : "—" },
+    { label: "Proyecto", value: t._project || "—" },
+    { label: "Lote", value: t._lote || "—" },
+    { label: "SKU", value: t._sku || "—" },
+    { label: "Ubicación", value: t._location || "—" },
+    { label: "Creador", value: t._creatorName },
+    { label: "Fecha creación", value: formatDateShort(t.createdAt) },
+    {
+      label: "Seguimiento",
+      value: followLines.length ? followLines.join(" | ") : "Sin comentarios"
+    }
+  ];
+
+  const actions = [];
+  const terminal = t.status === "COMPLETED" || t.status === "CANCELLED" || t.status === "REJECTED";
+  if (!terminal) {
+    if (!t.assignedToId && (canAssignTasks() || canActOnTask(t))) {
+      actions.push({
+        id: "claim",
+        label: "Tomar tarea",
+        className: "btn-primary btn-compact",
+        onClick: async () => {
+          if (await claimTask(t.id)) {
+            closeDetailDrawer();
+            await loadTasks();
+          }
+        }
+      });
+    }
+    if (canActOnTask(t) && (t.assignedToId === currentUserId || canManageAllTasks())) {
+      if (t.status !== "IN_PROGRESS") {
+        actions.push({
+          id: "start",
+          label: "Iniciar",
+          className: "btn-secondary btn-compact",
+          onClick: async () => {
+            if (await setTaskStatus(t.id, "IN_PROGRESS")) {
+              closeDetailDrawer();
+              await loadTasks();
+            }
+          }
+        });
+      }
+      actions.push({
+        id: "complete",
+        label: "Completar",
+        className: "btn-primary btn-compact",
+        onClick: async () => {
+          if (await setTaskStatus(t.id, "COMPLETED")) {
+            closeDetailDrawer();
+            await loadTasks();
+          }
+        }
+      });
+    }
+    if (canCancelOrRejectTasks()) {
+      actions.push({
+        id: "cancel",
+        label: "Cancelar",
+        className: "btn-secondary btn-compact",
+        onClick: async () => {
+          if (await setTaskStatus(t.id, "CANCELLED")) {
+            closeDetailDrawer();
+            await loadTasks();
+          }
+        }
+      });
+      actions.push({
+        id: "reject",
+        label: "Rechazar",
+        className: "btn-danger btn-compact",
+        onClick: async () => {
+          if (await setTaskStatus(t.id, "REJECTED")) {
+            closeDetailDrawer();
+            await loadTasks();
+          }
+        }
+      });
+    }
+  }
+  actions.push({
+    id: "follow",
+    label: "Añadir seguimiento",
+    className: "btn-secondary btn-compact",
+    onClick: async () => {
+      const text = window.prompt("Comentario de seguimiento:", "");
+      if (text === null || !text.trim()) return;
+      if (await appendTaskFollowUp(t, text.trim())) {
+        await loadTasks();
+        openTaskDetail(taskId);
+      } else {
+        window.alert("No se pudo guardar el seguimiento.");
+      }
+    }
+  });
+
+  openDetailDrawer(t._title || "Detalle de tarea", fields, actions);
+}
+
+async function handleTaskAction(taskId, action) {
+  if (!taskId || !action) return;
+  if (action === "view") {
+    openTaskDetail(taskId);
+    return;
+  }
+  if (action === "claim") {
+    if (await claimTask(taskId)) await loadTasks();
+    return;
+  }
+  if (action === "start") {
+    if (await setTaskStatus(taskId, "IN_PROGRESS")) await loadTasks();
+    return;
+  }
+  if (action === "complete") {
+    if (await setTaskStatus(taskId, "COMPLETED")) await loadTasks();
+    return;
+  }
+  if (action === "cancel") {
+    if (!canCancelOrRejectTasks()) return;
+    if (await setTaskStatus(taskId, "CANCELLED")) await loadTasks();
+    return;
+  }
+  if (action === "reject") {
+    if (!canCancelOrRejectTasks()) return;
+    if (await setTaskStatus(taskId, "REJECTED")) await loadTasks();
+  }
+}
+
+function resolveTaskTypeFromUi(uiValue) {
+  return TASK_TYPE_UI_MAP[uiValue] || { type: uiValue, label: uiValue };
+}
+
+async function createTaskClick() {
+  if (!taskCreateBtn || !taskCreateError) return;
+  taskCreateError.textContent = "";
+  const reference = document.getElementById("taskRef")?.value?.trim();
+  if (!reference) {
+    taskCreateError.textContent = "Indica un título o folio.";
+    return;
+  }
+  const uiType = document.getElementById("taskType")?.value || "GENERAL";
+  const mapped = resolveTaskTypeFromUi(uiType);
+  const description = document.getElementById("taskDescription")?.value?.trim() || "";
+  const priority = Number(document.getElementById("taskPriority")?.value || 50);
+  const warehouse = document.getElementById("taskWarehouse")?.value?.trim();
+  const dueDate = document.getElementById("taskDueDate")?.value || "";
+  const project = document.getElementById("taskProject")?.value?.trim() || "";
+  const lote = document.getElementById("taskLote")?.value?.trim() || "";
+  const sku = document.getElementById("taskSku")?.value?.trim() || "";
+  const location = document.getElementById("taskLocation")?.value?.trim() || "";
+  const follow = document.getElementById("taskFollowUp")?.value?.trim() || "";
+  let assignedToId = document.getElementById("taskAssignee")?.value || "";
+
+  if (!canAssignTasks()) {
+    assignedToId = currentUserId || "";
+  }
+
+  const notesPayload = {
+    title: reference,
+    description,
+    dueDate: dueDate || null,
+    project: project || null,
+    lote: lote || null,
+    sku: sku || null,
+    location: location || null,
+    taskLabel: mapped.label,
+    followUp: follow
+      ? [{ at: new Date().toISOString(), by: currentUserId, text: follow }]
+      : []
+  };
+
+  taskCreateBtn.disabled = true;
+  try {
+    const response = await authenticatedFetch("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: mapped.type,
+        warehouse: warehouse || undefined,
+        reference,
+        priority: Number.isFinite(priority) ? priority : 50,
+        assignedToId: assignedToId || undefined,
+        notes: JSON.stringify(notesPayload)
+      })
+    });
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      taskCreateError.textContent = data.message || "No se pudo crear.";
+      return;
+    }
+    const formIds = [
+      "taskRef",
+      "taskDescription",
+      "taskDueDate",
+      "taskProject",
+      "taskLote",
+      "taskSku",
+      "taskLocation",
+      "taskFollowUp"
+    ];
+    formIds.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.value = "";
+    });
+    const prio = document.getElementById("taskPriority");
+    if (prio) prio.value = "50";
+    const asn = document.getElementById("taskAssignee");
+    if (asn) asn.value = "";
+    await loadTasks();
+  } catch (_e) {
+    taskCreateError.textContent = "Error de red.";
+  } finally {
+    taskCreateBtn.disabled = false;
+  }
+}
+
+function wireTasksModuleUi() {
+  const tabs = document.getElementById("taskTabs");
+  if (tabs && tabs.dataset.wired !== "1") {
+    tabs.dataset.wired = "1";
+    tabs.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const tab = target.getAttribute("data-task-tab");
+      if (!tab) return;
+      if (tab === "all" && !canManageAllTasks()) return;
+      taskActiveTab = tab;
+      tabs.querySelectorAll(".tasks-tab").forEach((btn) => {
+        btn.classList.toggle("active", btn.getAttribute("data-task-tab") === tab);
+      });
+      renderTasksTable();
+    });
+  }
+  ["taskFilterType", "taskFilterStatus", "taskFilterAssignee", "taskFilterPriority", "taskFilterDue", "taskFilterText"].forEach(
+    (id) => {
+      const el = document.getElementById(id);
+      if (el && el.dataset.wired !== "1") {
+        el.dataset.wired = "1";
+        el.addEventListener("input", () => renderTasksTable());
+        el.addEventListener("change", () => renderTasksTable());
+      }
+    }
+  );
+  const clearBtn = document.getElementById("taskFilterClearBtn");
+  if (clearBtn && clearBtn.dataset.wired !== "1") {
+    clearBtn.dataset.wired = "1";
+    clearBtn.addEventListener("click", () => {
+      ["taskFilterType", "taskFilterStatus", "taskFilterAssignee", "taskFilterPriority", "taskFilterDue", "taskFilterText"].forEach(
+        (id) => {
+          const el = document.getElementById(id);
+          if (el) el.value = "";
+        }
+      );
+      renderTasksTable();
+    });
+  }
 }
 
 function resetPickingFlow() {
@@ -1567,14 +2175,85 @@ const TRACE_COLUMNS = [
 ];
 
 const TASK_COLUMNS = [
-  { label: "Creado", sortKey: (t) => t.createdAt, sortType: "date", render: (t) => formatDateShort(t.createdAt) },
-  { label: "Tipo", sortKey: (t) => t.type || "", render: (t) => statusBadge(t.type) },
-  { label: "Estado", sortKey: (t) => t.status || "", render: (t) => statusBadge(t.status) },
-  { label: "Almacén", sortKey: (t) => t.warehouse || "", render: (t) => renderCellWithClamp(t.warehouse, "cell-truncate", 18), title: (t) => t.warehouse || "" },
-  { label: "Asignado", sortKey: (t) => t._assignName || "", render: (t) => renderCellWithClamp(t._assignName || "—", "cell-truncate", 20), title: (t) => t._assignName || "" },
-  { label: "Ref.", sortKey: (t) => t.reference || "", render: (t) => renderCellWithClamp(t.reference, "cell-truncate", 22), title: (t) => t.reference || "" },
-  { label: "Prioridad", align: "right", sortKey: (t) => t.priority ?? 0, sortType: "number", render: (t) => String(t.priority ?? 0) }
+  {
+    label: "Prioridad",
+    sortKey: (t) => t.priority ?? 0,
+    sortType: "number",
+    render: (t) => priorityBadge(t.priority)
+  },
+  {
+    label: "Estatus",
+    sortKey: (t) => t.status || "",
+    render: (t) => taskStatusBadge(t.status)
+  },
+  {
+    label: "Tipo",
+    sortKey: (t) => t._taskLabel || t.type || "",
+    render: (t) => statusBadge(t._taskLabel || t.type)
+  },
+  {
+    label: "Título",
+    sortKey: (t) => t._title || t.reference || "",
+    render: (t) => renderCellWithClamp(t._title || t.reference, "cell-truncate", 28),
+    title: (t) => t._title || t.reference || ""
+  },
+  {
+    label: "Responsable",
+    sortKey: (t) => t._assignName || "",
+    render: (t) => renderCellWithClamp(t._assignName || "—", "cell-truncate", 18),
+    title: (t) => t._assignName || ""
+  },
+  {
+    label: "Fecha objetivo",
+    sortKey: (t) => t._dueDate || "",
+    sortType: "date",
+    render: (t) => (t._dueDate ? formatDateShort(t._dueDate) : "—")
+  },
+  {
+    label: "Creada",
+    sortKey: (t) => t.createdAt,
+    sortType: "date",
+    render: (t) => formatDateShort(t.createdAt)
+  },
+  {
+    label: "Proyecto",
+    sortKey: (t) => t._project || "",
+    render: (t) => renderCellWithClamp(t._project || "—", "cell-truncate", 18),
+    title: (t) => t._project || ""
+  },
+  {
+    label: "Lote",
+    sortKey: (t) => t._lote || "",
+    render: (t) => renderCellEllipsis(t._lote || "—"),
+    title: (t) => t._lote || ""
+  },
+  {
+    label: "SKU",
+    sortKey: (t) => t._sku || "",
+    render: (t) => escCell(t._sku || "—"),
+    title: (t) => t._sku || ""
+  }
 ];
+
+const TASK_STATUS_LABELS = {
+  PENDING: "Pendiente",
+  ASSIGNED: "Asignada",
+  IN_PROGRESS: "En proceso",
+  COMPLETED: "Completada",
+  REJECTED: "Rechazada",
+  CANCELLED: "Cancelada"
+};
+
+const TASK_TYPE_UI_MAP = {
+  PICK: { type: "PICK", label: "Picking" },
+  COUNT: { type: "COUNT", label: "Inventario" },
+  COUNT_REV: { type: "COUNT", label: "Revisión" },
+  COUNT_VAL: { type: "COUNT", label: "Validación" },
+  ADJUSTMENT: { type: "ADJUSTMENT", label: "Incidencia" },
+  MOVE: { type: "MOVE", label: "Movimiento" },
+  GENERAL: { type: "ADJUSTMENT", label: "General" },
+  RECEIVE: { type: "RECEIVE", label: "Recepción" }
+};
 
 const MOVEMENT_COLUMNS = [
   { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
@@ -3052,106 +3731,6 @@ async function loadTraceability() {
   }
 }
 
-async function loadTasks() {
-  if (!taskList) return;
-  if (taskMessage) taskMessage.textContent = "Cargando…";
-  try {
-    const response = await authenticatedFetch("/api/tasks");
-    if (!response) return;
-    if (!response.ok) {
-      if (taskMessage) taskMessage.textContent = "No se pudieron cargar tareas.";
-      taskList.innerHTML = "";
-      return;
-    }
-    const rows = await response.json();
-    if (taskMessage) taskMessage.textContent = `${Array.isArray(rows) ? rows.length : 0} tareas.`;
-    if (!Array.isArray(rows) || rows.length === 0) {
-      taskList.innerHTML = "";
-      renderExcelTable(taskList, { gridId: "tasks", columns: TASK_COLUMNS, rows: [], emptyMessage: "Sin registros operativos aún", selectable: false, allowActions: true });
-      return;
-    }
-    const taskRows = rows.map((t) => {
-      const assign = t.assignedTo ? t.assignedTo.fullName : "—";
-      const canUpdate =
-        currentRole === "ADMIN" ||
-        currentRole === "SUPERVISOR" ||
-        (currentRole === "OPERATOR" && t.assignedToId === currentUserId);
-      return {
-        ...t,
-        _assignName: assign,
-        _actionHtml: canUpdate
-          ? `<button type="button" class="task-advance btn-table btn-compact" data-task-id="${escCell(t.id)}">Avanzar</button>`
-          : "—"
-      };
-    });
-    renderExcelTable(taskList, {
-      gridId: "tasks",
-      columns: TASK_COLUMNS,
-      rows: taskRows,
-      emptyMessage: "Sin registros operativos aún",
-      selectable: false,
-      allowActions: true
-    });
-  } catch (_e) {
-    if (taskMessage) taskMessage.textContent = "Error de red.";
-  }
-}
-
-async function advanceTaskStatus(taskId) {
-  if (!taskId) return;
-  const order = ["PENDING", "ASSIGNED", "IN_PROGRESS", "COMPLETED"];
-  try {
-    const list = await authenticatedFetch("/api/tasks");
-    if (!list?.ok) return;
-    const tasks = await list.json();
-    const t = Array.isArray(tasks) ? tasks.find((x) => x.id === taskId) : null;
-    const cur = t?.status || "PENDING";
-    const idx = order.indexOf(cur);
-    const next = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : "COMPLETED";
-    const response = await authenticatedFetch(`/api/tasks/${encodeURIComponent(taskId)}/status`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: next })
-    });
-    if (response?.ok) await loadTasks();
-  } catch (_e) {
-    window.alert("No se pudo actualizar la tarea.");
-  }
-}
-
-async function createTaskClick() {
-  if (!taskCreateBtn || !taskCreateError) return;
-  taskCreateError.textContent = "";
-  const type = document.getElementById("taskType")?.value;
-  const warehouse = document.getElementById("taskWarehouse")?.value?.trim();
-  const reference = document.getElementById("taskRef")?.value?.trim();
-  const priority = Number(document.getElementById("taskPriority")?.value || 0);
-  taskCreateBtn.disabled = true;
-  try {
-    const response = await authenticatedFetch("/api/tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type,
-        warehouse: warehouse || undefined,
-        reference: reference || undefined,
-        priority: Number.isFinite(priority) ? priority : 0
-      })
-    });
-    if (!response) return;
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      taskCreateError.textContent = data.message || "No se pudo crear.";
-      return;
-    }
-    await loadTasks();
-  } catch (_e) {
-    taskCreateError.textContent = "Error de red.";
-  } finally {
-    taskCreateBtn.disabled = false;
-  }
-}
-
 async function loadIncidents() {
   if (!incidentList) return;
   if (incidentMessage) incidentMessage.textContent = "Cargando…";
@@ -3898,6 +4477,33 @@ function applyRoleNavigation(role) {
     btn.style.display = enabled ? "block" : "none";
   });
 
+  document.querySelectorAll(".nav-group").forEach((group) => {
+    const anyVisible = Array.from(group.querySelectorAll(".module-btn")).some(
+      (btn) => btn.style.display !== "none" && !btn.disabled
+    );
+    group.style.display = anyVisible ? "" : "none";
+  });
+
+  const tabAll = document.getElementById("taskTabAll");
+  if (tabAll) {
+    const showAll = role === "ADMIN" || role === "SUPERVISOR";
+    tabAll.style.display = showAll ? "" : "none";
+    if (!showAll && taskActiveTab === "all") {
+      taskActiveTab = "mine";
+      document.querySelectorAll(".tasks-tab").forEach((btn) => {
+        btn.classList.toggle("active", btn.getAttribute("data-task-tab") === "mine");
+      });
+    }
+  }
+  const filterAssigneeWrap = document.getElementById("taskFilterAssigneeWrap");
+  if (filterAssigneeWrap) {
+    filterAssigneeWrap.style.display = role === "ADMIN" || role === "SUPERVISOR" ? "" : "none";
+  }
+  const assigneeField = document.getElementById("taskAssigneeField");
+  if (assigneeField) {
+    assigneeField.style.display = role === "ADMIN" || role === "SUPERVISOR" ? "" : "none";
+  }
+
   createProductForm.classList.toggle("hidden", role !== "ADMIN");
   createCustomerForm.classList.toggle("hidden", role !== "ADMIN");
   if (importSection) importSection.classList.remove("hidden");
@@ -4545,9 +5151,11 @@ if (taskList) {
   taskList.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
-    if (!target.classList.contains("task-advance")) return;
-    const id = target.getAttribute("data-task-id");
-    if (id) void advanceTaskStatus(id);
+    const btn = target.closest("[data-task-action]");
+    if (!(btn instanceof HTMLElement)) return;
+    const id = btn.getAttribute("data-task-id");
+    const action = btn.getAttribute("data-task-action");
+    if (id && action) void handleTaskAction(id, action);
   });
 }
 if (incidentList) {

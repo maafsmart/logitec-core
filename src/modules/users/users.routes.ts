@@ -58,6 +58,27 @@ usersRouter.get("/", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
   res.json(users);
 });
 
+// Responsables para asignación de tareas (ADMIN / SUPERVISOR)
+// Listado mínimo: no expone passwordHash ni abre CRUD completo.
+usersRouter.get("/assignees", requireAuth, requireRole(["ADMIN", "SUPERVISOR"]), async (_req, res) => {
+  const users = await prisma.user.findMany({
+    where: {
+      isActive: true,
+      role: { in: ["ADMIN", "SUPERVISOR", "OPERATOR"] }
+    },
+    orderBy: [{ role: "asc" }, { fullName: "asc" }],
+    select: {
+      id: true,
+      fullName: true,
+      email: true,
+      role: true,
+      isActive: true
+    }
+  });
+
+  res.json(users);
+});
+
 // Desactivar usuario (solo ADMIN; borrado logico para no romper escaneos/comentarios)
 usersRouter.delete("/:id", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);

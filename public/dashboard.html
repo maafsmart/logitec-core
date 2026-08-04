@@ -152,15 +152,30 @@
         height: calc(100vh - 57px);
         overflow-y: auto;
       }
+      .nav-group {
+        margin-bottom: 14px;
+      }
+      .nav-group:last-child {
+        margin-bottom: 0;
+      }
+      .nav-group-title {
+        margin: 0 0 6px 10px;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+        opacity: 0.9;
+      }
       .module-btn {
         width: 100%;
         text-align: left;
-        margin-bottom: 4px;
+        margin-bottom: 3px;
         border: 1px solid transparent;
         border-radius: 8px;
-        padding: 10px 12px;
+        padding: 8px 10px;
         font-weight: 600;
-        font-size: 0.88rem;
+        font-size: 0.84rem;
         color: var(--text);
         cursor: pointer;
         background: transparent;
@@ -179,6 +194,77 @@
         font-weight: 700;
         color: var(--accent);
       }
+      .tasks-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .tasks-kpi-grid .kpi-card {
+        padding: 10px 12px;
+      }
+      .tasks-kpi-grid .kpi-value {
+        font-size: 1.25rem;
+      }
+      .tasks-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 12px;
+      }
+      .tasks-tab {
+        border: 1px solid var(--line);
+        background: var(--panel-solid);
+        color: var(--muted);
+        border-radius: 8px;
+        padding: 6px 12px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .tasks-tab.active {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        color: var(--accent-dark);
+      }
+      .tasks-filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: end;
+        margin-bottom: 12px;
+      }
+      .tasks-filters .field {
+        min-width: 120px;
+        flex: 1 1 120px;
+      }
+      .tasks-filters .field.grow {
+        flex: 2 1 180px;
+      }
+      .badge.prio-alta { background: #fee2e2; color: #b91c1c; }
+      .badge.prio-media { background: #ffedd5; color: #c2410c; }
+      .badge.prio-baja { background: #e0f2fe; color: #0369a1; }
+      .badge.status-pending { background: #f1f5f9; color: #475569; }
+      .badge.status-assigned { background: #dbeafe; color: #1d4ed8; }
+      .badge.status-progress { background: #fef3c7; color: #b45309; }
+      .badge.status-done { background: #dcfce7; color: #166534; }
+      .badge.status-rejected { background: #fee2e2; color: #b91c1c; }
+      .badge.status-cancelled { background: #e2e8f0; color: #64748b; }
+      .task-actions-cell {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .task-actions-cell .btn-table {
+        white-space: nowrap;
+      }
+      .follow-up-list {
+        margin: 0;
+        padding-left: 16px;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+      .follow-up-list li { margin: 4px 0; }
       .content {
         border: 0;
         border-radius: 0;
@@ -2020,20 +2106,32 @@
       </header>
       <div class="app-body">
         <aside class="sidebar">
-          <button class="module-btn nav-primary" data-module="control" id="btnControl">◉ Centro de Control</button>
-          <button class="module-btn" data-module="clients" id="btnClients">◎ Clientes</button>
-          <button class="module-btn" data-module="catalog" id="btnCatalog">▦ Catálogo</button>
-          <button class="module-btn" data-module="inventory" id="btnInventory">▤ Inventario</button>
-          <button class="module-btn" data-module="inbound" id="btnInbound">↓ Entradas</button>
-          <button class="module-btn" data-module="requisitions" id="btnRequisitions">☰ Requisiciones</button>
-          <button class="module-btn" data-module="picking" id="btnPicking">⎔ Picking</button>
-          <button class="module-btn" data-module="outbound" id="btnOutbound">↑ Salidas</button>
-          <button class="module-btn" data-module="traceability" id="btnTraceability">⌕ Trazabilidad</button>
-          <button class="module-btn" data-module="incidents" id="btnIncidents">! Incidencias</button>
-          <button class="module-btn" data-module="tasks" id="btnTasks">☑ Tareas</button>
-          <button class="module-btn" data-module="reports" id="btnReports">▣ Reportes</button>
-          <button class="module-btn" data-module="users" id="btnUsers">👤 Usuarios</button>
-          <button class="module-btn" data-module="account" id="btnAccount">⚙ Mi cuenta</button>
+          <div class="nav-group" data-nav-group="hoy">
+            <div class="nav-group-title">Hoy</div>
+            <button class="module-btn nav-primary" data-module="control" id="btnControl">◉ Centro de Control</button>
+            <button class="module-btn" data-module="tasks" id="btnTasks">☑ Mis tareas</button>
+            <button class="module-btn" data-module="picking" id="btnPicking">⎔ Picking</button>
+          </div>
+          <div class="nav-group" data-nav-group="operacion">
+            <div class="nav-group-title">Operación</div>
+            <button class="module-btn" data-module="inbound" id="btnInbound">↓ Entradas</button>
+            <button class="module-btn" data-module="requisitions" id="btnRequisitions">☰ Requisiciones</button>
+            <button class="module-btn" data-module="outbound" id="btnOutbound">↑ Salidas</button>
+            <button class="module-btn" data-module="incidents" id="btnIncidents">! Incidencias</button>
+          </div>
+          <div class="nav-group" data-nav-group="consulta">
+            <div class="nav-group-title">Consulta</div>
+            <button class="module-btn" data-module="inventory" id="btnInventory">▤ Inventario</button>
+            <button class="module-btn" data-module="catalog" id="btnCatalog">▦ Catálogo / Proyectos</button>
+            <button class="module-btn" data-module="clients" id="btnClients">◎ Proyectos AVIAT</button>
+            <button class="module-btn" data-module="traceability" id="btnTraceability">⌕ Trazabilidad</button>
+          </div>
+          <div class="nav-group" data-nav-group="sistema">
+            <div class="nav-group-title">Sistema</div>
+            <button class="module-btn" data-module="reports" id="btnReports">▣ Reportes</button>
+            <button class="module-btn" data-module="users" id="btnUsers">👤 Usuarios</button>
+            <button class="module-btn" data-module="account" id="btnAccount">⚙ Mi cuenta</button>
+          </div>
         </aside>
         <main class="content">
           <div id="moduleControlCenter" class="module-pane hidden">
@@ -2269,36 +2367,160 @@
           <div id="moduleTasks" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Tareas operativas</h3>
-              <p class="module-lead">Cola de trabajo del almacén. Creación disponible para roles operativos autorizados.</p>
+              <p class="module-lead">Cola de trabajo para almacén, picking, inventario, incidencias y seguimiento diario.</p>
+            </div>
+            <div class="tasks-kpi-grid" aria-label="Indicadores de tareas">
+              <div class="kpi-card">
+                <span class="kpi-value" id="taskKpiPending">0</span>
+                <span class="kpi-label">Pendientes</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-value" id="taskKpiAssigned">0</span>
+                <span class="kpi-label">Asignadas</span>
+              </div>
+              <div class="kpi-card warn">
+                <span class="kpi-value" id="taskKpiInProgress">0</span>
+                <span class="kpi-label">En proceso</span>
+              </div>
+              <div class="kpi-card ok">
+                <span class="kpi-value" id="taskKpiCompleted">0</span>
+                <span class="kpi-label">Completadas</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-value" id="taskKpiOverdue">0</span>
+                <span class="kpi-label">Vencidas</span>
+              </div>
+              <div class="kpi-card accent">
+                <span class="kpi-value" id="taskKpiMine">0</span>
+                <span class="kpi-label">Mis tareas</span>
+              </div>
+            </div>
+            <div class="tasks-tabs" id="taskTabs" role="tablist">
+              <button type="button" class="tasks-tab active" data-task-tab="mine">Mis tareas</button>
+              <button type="button" class="tasks-tab" data-task-tab="all" id="taskTabAll">Todas las tareas</button>
+              <button type="button" class="tasks-tab" data-task-tab="created">Creadas por mí</button>
+              <button type="button" class="tasks-tab" data-task-tab="completed">Completadas</button>
             </div>
             <div id="taskCreateWrap" class="hidden card-panel ops-form-panel">
-              <h4 class="secondary-panel-title">Nueva tarea</h4>
+              <h4 class="secondary-panel-title">Crear tarea</h4>
               <div class="form-grid">
+                <div class="field full">
+                  <label for="taskRef">Título / folio</label>
+                  <input id="taskRef" type="text" placeholder="Ej. INV-COUNT-014 o REVISIÓN PASILLO B" maxlength="200" />
+                </div>
+                <div class="field full">
+                  <label for="taskDescription">Descripción</label>
+                  <textarea id="taskDescription" rows="2" placeholder="Detalle operativo de la tarea"></textarea>
+                </div>
                 <div class="field">
-                  <label for="taskType">Tipo</label>
+                  <label for="taskType">Tipo de tarea</label>
                   <select id="taskType">
-                    <option value="PICK">PICK</option>
-                    <option value="RECEIVE">RECEIVE</option>
-                    <option value="MOVE">MOVE</option>
-                    <option value="ADJUSTMENT">ADJUSTMENT</option>
-                    <option value="COUNT">COUNT</option>
+                    <option value="PICK">Picking</option>
+                    <option value="COUNT" data-label="Inventario">Inventario</option>
+                    <option value="COUNT_REV" data-label="Revisión">Revisión</option>
+                    <option value="ADJUSTMENT" data-label="Incidencia">Incidencia</option>
+                    <option value="MOVE">Movimiento</option>
+                    <option value="COUNT_VAL" data-label="Validación">Validación</option>
+                    <option value="GENERAL" data-label="General">General</option>
                   </select>
                 </div>
                 <div class="field">
-                  <label for="taskWarehouse">Almacén</label>
-                  <input id="taskWarehouse" type="text" placeholder="Opcional" />
-                </div>
-                <div class="field">
-                  <label for="taskRef">Referencia</label>
-                  <input id="taskRef" type="text" />
-                </div>
-                <div class="field">
                   <label for="taskPriority">Prioridad</label>
-                  <input id="taskPriority" type="number" min="0" max="100" value="0" />
+                  <select id="taskPriority">
+                    <option value="30">Baja</option>
+                    <option value="50" selected>Media</option>
+                    <option value="80">Alta</option>
+                    <option value="100">Urgente</option>
+                  </select>
+                </div>
+                <div class="field" id="taskAssigneeField">
+                  <label for="taskAssignee">Responsable</label>
+                  <select id="taskAssignee">
+                    <option value="">Sin asignar</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="taskDueDate">Fecha objetivo</label>
+                  <input id="taskDueDate" type="date" />
+                </div>
+                <div class="field">
+                  <label for="taskProject">Proyecto</label>
+                  <input id="taskProject" type="text" placeholder="Proyecto AVIAT" />
+                </div>
+                <div class="field">
+                  <label for="taskLote">Lote</label>
+                  <input id="taskLote" type="text" placeholder="Opcional" />
+                </div>
+                <div class="field">
+                  <label for="taskSku">SKU / Código de barras</label>
+                  <input id="taskSku" type="text" placeholder="Opcional" />
+                </div>
+                <div class="field">
+                  <label for="taskLocation">Ubicación</label>
+                  <input id="taskLocation" type="text" placeholder="Opcional" />
+                </div>
+                <div class="field">
+                  <label for="taskWarehouse">Almacén</label>
+                  <input id="taskWarehouse" type="text" placeholder="TULTITLAN24" value="TULTITLAN24" />
+                </div>
+                <div class="field full">
+                  <label for="taskFollowUp">Comentario inicial</label>
+                  <input id="taskFollowUp" type="text" placeholder="Seguimiento o contexto" />
                 </div>
               </div>
               <p id="taskCreateError" class="inline-error"></p>
               <button type="button" id="taskCreateBtn" class="btn-primary btn-compact">Crear tarea</button>
+            </div>
+            <div class="card-panel" style="padding:12px 12px 0">
+              <div class="tasks-filters" id="taskFilters">
+                <div class="field">
+                  <label for="taskFilterType">Tipo</label>
+                  <select id="taskFilterType">
+                    <option value="">Todos</option>
+                    <option value="PICK">Picking</option>
+                    <option value="COUNT">Inventario / Conteo</option>
+                    <option value="MOVE">Movimiento</option>
+                    <option value="ADJUSTMENT">Incidencia / General</option>
+                    <option value="RECEIVE">Recepción</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="taskFilterStatus">Estatus</label>
+                  <select id="taskFilterStatus">
+                    <option value="">Todos</option>
+                    <option value="PENDING">Pendiente</option>
+                    <option value="ASSIGNED">Asignada</option>
+                    <option value="IN_PROGRESS">En proceso</option>
+                    <option value="COMPLETED">Completada</option>
+                    <option value="REJECTED">Rechazada</option>
+                    <option value="CANCELLED">Cancelada</option>
+                  </select>
+                </div>
+                <div class="field" id="taskFilterAssigneeWrap">
+                  <label for="taskFilterAssignee">Responsable</label>
+                  <select id="taskFilterAssignee">
+                    <option value="">Todos</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="taskFilterPriority">Prioridad</label>
+                  <select id="taskFilterPriority">
+                    <option value="">Todas</option>
+                    <option value="low">Baja</option>
+                    <option value="mid">Media</option>
+                    <option value="high">Alta / Urgente</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="taskFilterDue">Fecha objetivo</label>
+                  <input id="taskFilterDue" type="date" />
+                </div>
+                <div class="field grow">
+                  <label for="taskFilterText">Texto / título</label>
+                  <input id="taskFilterText" type="search" placeholder="Buscar por título, SKU, lote…" />
+                </div>
+                <button type="button" id="taskFilterClearBtn" class="btn-secondary btn-compact">Limpiar</button>
+              </div>
             </div>
             <div class="card-panel" style="padding:0">
             <p id="taskMessage" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0;border-bottom:0;min-height:1.2em"></p>
@@ -3019,6 +3241,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=37"></script>
+    <script src="/dashboard.js?v=38"></script>
   </body>
 </html>
