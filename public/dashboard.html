@@ -2179,12 +2179,54 @@
       }
       .aviat-filter-notice {
         margin: 0 0 12px;
-        padding: 8px 12px;
-        border-radius: 8px;
-        border: 1px solid rgba(245, 158, 11, 0.4);
-        background: rgba(245, 158, 11, 0.1);
-        color: #fde68a;
-        font-size: 0.88rem;
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: 1px solid #d6e0ee;
+        background: #eef4fb;
+        color: #1e3a5f;
+        font-size: 0.9rem;
+        font-weight: 600;
+        line-height: 1.4;
+      }
+      .tasks-filter-panel {
+        margin-top: 4px;
+      }
+      .tasks-filter-head {
+        margin: 0 0 6px;
+      }
+      .tasks-filter-title {
+        margin: 0;
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .tasks-filter-hint {
+        margin: 2px 0 10px;
+        font-size: 0.8rem;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+      .req-mode-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 0 0 14px;
+      }
+      .req-bulk-line {
+        display: grid;
+        grid-template-columns: 1.4fr 0.7fr 0.8fr auto;
+        gap: 8px;
+        align-items: end;
+        margin-bottom: 8px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #f8fafc;
+      }
+      @media (max-width: 720px) {
+        .req-bulk-line {
+          grid-template-columns: 1fr;
+        }
       }
       .project-chips-label {
         margin: 0 0 8px;
@@ -2258,11 +2300,11 @@
                   <span class="module-btn-label">Centro de Control</span>
                   <span class="module-btn-desc">Resumen operativo del almacén</span>
                 </button>
-                <button class="module-btn" data-module="tasks" id="btnTasks" type="button">
+                <button class="module-btn" data-module="tasks" id="btnTasks" type="button" data-task-view="ops">
                   <span class="module-btn-label">Mis tareas</span>
-                  <span class="module-btn-desc">Cola de trabajo y avisos internos</span>
+                  <span class="module-btn-desc">Trabajo operativo asignado</span>
                 </button>
-                <button class="module-btn" data-module="tasks" id="btnInternalNotices" type="button" data-task-pref-type="INTERNAL_NOTICE">
+                <button class="module-btn" data-module="tasks" id="btnInternalNotices" type="button" data-task-view="notices" data-task-pref-type="INTERNAL_NOTICE">
                   <span class="module-btn-label">Avisos internos</span>
                   <span class="module-btn-desc">Comunicación operativa sin chat</span>
                 </button>
@@ -2283,15 +2325,15 @@
                 </button>
                 <button class="module-btn" data-module="bulk-inbound" id="btnBulkInbound" type="button">
                   <span class="module-btn-label">Entrada masiva</span>
-                  <span class="module-btn-desc">Carga por archivo o lote operativo</span>
+                  <span class="module-btn-desc">Registra mercancía recibida en volumen</span>
                 </button>
                 <button class="module-btn" data-module="requisitions" id="btnRequisitions" type="button">
-                  <span class="module-btn-label">Requisiciones / Órdenes</span>
-                  <span class="module-btn-desc">Órdenes de trabajo para surtido</span>
+                  <span class="module-btn-label">Órdenes de surtido / Requisiciones</span>
+                  <span class="module-btn-desc">Solicita productos para surtido de salida</span>
                 </button>
                 <button class="module-btn" data-module="picking" id="btnPickingOps" type="button">
                   <span class="module-btn-label">Picking / Surtido de salida</span>
-                  <span class="module-btn-desc">Prepara productos para despacho</span>
+                  <span class="module-btn-desc">Ejecuta el surtido con escaneo</span>
                 </button>
                 <button class="module-btn" data-module="relocate" id="btnRelocate" type="button">
                   <span class="module-btn-label">Movimiento interno / Reubicación</span>
@@ -2374,7 +2416,7 @@
               <span class="assignee-hint">Los proyectos se alimentan desde Catálogo y productos.</span>
             </div>
             <p id="aviatScopeControl" class="operational-table-meta" style="margin:0 0 10px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
-            <p id="aviatFilterFallbackNotice" class="aviat-filter-notice hidden">No se encontraron registros para ese proyecto. Mostrando todos los proyectos de AVIAT.</p>
+            <p id="aviatFilterFallbackNotice" class="aviat-filter-notice hidden" role="status">No hay registros para este proyecto. Se muestran todos los proyectos de AVIAT.</p>
             <section class="card-panel" aria-label="Proyectos de AVIAT" style="margin-bottom:16px">
               <div id="ccAviatProjectChips"></div>
             </section>
@@ -2599,8 +2641,8 @@
           </div>
           <div id="moduleTasks" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Tareas operativas</h3>
-              <p class="module-lead">Organiza el trabajo diario por responsable, prioridad y estatus. Usado por operadores, supervisores y administración.</p>
+              <h3 id="tasksModuleTitle">Mis tareas operativas</h3>
+              <p class="module-lead" id="tasksModuleLead">Trabajo asignado para almacén, inventario, surtido, incidencias y movimientos.</p>
             </div>
             <div class="tasks-kpi-grid" aria-label="Indicadores de tareas">
               <div class="kpi-card">
@@ -2629,14 +2671,16 @@
               </div>
             </div>
             <div class="tasks-tabs" id="taskTabs" role="tablist">
-              <button type="button" class="tasks-tab active" data-task-tab="mine">Mis tareas</button>
-              <button type="button" class="tasks-tab" data-task-tab="all" id="taskTabAll">Todas las tareas</button>
-              <button type="button" class="tasks-tab" data-task-tab="created">Creadas por mí</button>
-              <button type="button" class="tasks-tab" data-task-tab="completed">Completadas</button>
+              <button type="button" class="tasks-tab active" data-task-tab="mine" data-ops-only="1">Mis tareas</button>
+              <button type="button" class="tasks-tab" data-task-tab="all" id="taskTabAll" data-ops-only="1">Todas las tareas</button>
+              <button type="button" class="tasks-tab" data-task-tab="created" data-ops-only="1">Creadas por mí</button>
+              <button type="button" class="tasks-tab" data-task-tab="completed" data-ops-only="1">Completadas</button>
+              <button type="button" class="tasks-tab hidden" data-task-tab="notices" id="taskTabNotices" data-notices-only="1">Avisos recibidos</button>
+              <button type="button" class="tasks-tab hidden" data-task-tab="notices-sent" id="taskTabNoticesSent" data-notices-only="1">Enviados por mí</button>
             </div>
             <div id="taskCreateWrap" class="hidden card-panel ops-form-panel">
-              <h4 class="secondary-panel-title">Crear tarea</h4>
-              <p class="module-hint">Para enviar un aviso a un usuario, crea una tarea tipo <strong>Aviso interno</strong>.</p>
+              <h4 class="secondary-panel-title" id="taskCreateTitle">Crear tarea</h4>
+              <p id="taskInternalNoticeHint" class="module-hint hidden">Este aviso aparecerá en la sección Avisos internos del responsable.</p>
               <div class="form-grid">
                 <div class="field full">
                   <label for="taskRef">Título / folio</label>
@@ -2708,16 +2752,20 @@
               <p id="taskCreateError" class="inline-error"></p>
               <button type="button" id="taskCreateBtn" class="btn-primary btn-compact">Crear tarea</button>
             </div>
-            <div class="card-panel" style="padding:12px 12px 0">
+            <div class="card-panel tasks-filter-panel" style="padding:12px 12px 0">
+              <div class="tasks-filter-head">
+                <h4 class="tasks-filter-title" id="taskFiltersTitle">Buscar y filtrar tareas</h4>
+                <p class="tasks-filter-hint" id="taskFiltersHint">Filtra por tipo, estatus, responsable, prioridad, fecha objetivo o texto.</p>
+              </div>
               <div class="tasks-filters" id="taskFilters">
-                <div class="field">
+                <div class="field" id="taskFilterTypeField">
                   <label for="taskFilterType">Tipo</label>
                   <select id="taskFilterType">
                     <option value="">Todos</option>
                     <option value="PICK">Picking</option>
                     <option value="COUNT">Inventario / Revisión</option>
                     <option value="MOVE">Movimiento</option>
-                    <option value="ADJUSTMENT">Incidencia / General / Aviso</option>
+                    <option value="ADJUSTMENT">Incidencia / General</option>
                     <option value="RECEIVE">Recepción</option>
                   </select>
                 </div>
@@ -3346,16 +3394,24 @@
           </div>
           <div id="moduleRequisitions" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Requisiciones / Órdenes de trabajo</h3>
-              <p class="module-lead">Solicita trabajo operativo para entrada, surtido, inventario o movimiento.</p>
+              <h3>Órdenes de surtido / Requisiciones</h3>
+              <p class="module-lead">Crea solicitudes para preparar productos de salida. Puede ser una orden simple o una orden por volumen.</p>
             </div>
             <div class="card-panel ops-form-panel">
-              <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong></p>
-              <h4 class="secondary-panel-title">Nueva requisición</h4>
+              <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong> · No registra entrada de inventario</p>
+              <p class="module-hint" style="margin:0 0 12px">
+                <strong>Entrada masiva</strong> aumenta existencias. <strong>Órdenes de surtido</strong> solicitan preparación de salida.
+                <strong>Picking</strong> ejecuta el surtido. <strong>Salidas</strong> confirman el despacho.
+              </p>
+              <h4 class="secondary-panel-title">Nueva orden de surtido</h4>
+              <div class="req-mode-tabs" id="reqModeTabs" role="tablist">
+                <button type="button" class="tasks-tab active" data-req-mode="simple">Orden simple</button>
+                <button type="button" class="tasks-tab" data-req-mode="bulk">Orden por volumen</button>
+              </div>
               <div class="form-grid">
                 <div class="field">
                   <label for="reqReference">Folio / referencia</label>
-                  <input id="reqReference" type="text" placeholder="REQ-2026-001" required />
+                  <input id="reqReference" type="text" placeholder="OS-2026-001" required />
                 </div>
                 <div class="field">
                   <label for="reqCustomer">Proyecto</label>
@@ -3366,13 +3422,19 @@
                   <input id="reqCliente" type="text" class="field-readonly hidden" readonly tabindex="-1" aria-hidden="true" />
                 </div>
                 <div class="field">
-                  <label for="reqLote">Lote</label>
-                  <input id="reqLote" type="text" placeholder="Opcional" />
-                </div>
-                <div class="field">
                   <label for="reqPriority">Prioridad</label>
                   <input id="reqPriority" type="number" min="0" max="100" value="50" />
                 </div>
+                <div class="field">
+                  <label for="reqWarehouse">Almacén</label>
+                  <input id="reqWarehouse" type="text" value="TULTITLAN24" />
+                </div>
+                <div class="field full">
+                  <label for="reqNotes">Notas</label>
+                  <input id="reqNotes" type="text" placeholder="Contexto de la orden" />
+                </div>
+              </div>
+              <div id="reqSimpleFields" class="form-grid" style="margin-top:8px">
                 <div class="field">
                   <label for="reqSku">SKU / Código de barras</label>
                   <select id="reqSku"><option value="">— Seleccionar —</option></select>
@@ -3382,19 +3444,20 @@
                   <input id="reqQty" type="number" step="0.0001" min="0.0001" />
                 </div>
                 <div class="field">
-                  <label for="reqWarehouse">Almacén</label>
-                  <input id="reqWarehouse" type="text" value="TULTITLAN24" />
-                </div>
-                <div class="field full">
-                  <label for="reqNotes">Notas</label>
-                  <input id="reqNotes" type="text" />
+                  <label for="reqLote">Lote</label>
+                  <input id="reqLote" type="text" placeholder="Opcional" />
                 </div>
               </div>
+              <div id="reqBulkFields" class="hidden" style="margin-top:10px">
+                <p class="assignee-hint" style="margin:0 0 8px">Agrega varias líneas con el mismo folio. Se creará una tarea de surtido por cada línea.</p>
+                <div id="reqBulkLines"></div>
+                <button type="button" id="reqAddLineBtn" class="btn-secondary btn-compact">Agregar línea</button>
+              </div>
               <p id="reqMessage" class="ops-message"></p>
-              <button type="button" id="reqSubmitBtn" class="btn-primary btn-compact">Crear requisición</button>
+              <button type="button" id="reqSubmitBtn" class="btn-primary btn-compact">Crear orden</button>
             </div>
             <div class="card-panel" style="padding:0">
-              <p id="reqTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Requisiciones registradas</p>
+              <p id="reqTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Órdenes / requisiciones registradas</p>
               <div class="grid-toolbar" style="padding:0 12px" data-grid-toolbar="requisitions">
                 <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
                   <button type="button" data-density="compact">Modo compacto</button>
@@ -3475,13 +3538,15 @@
           <div id="moduleBulkInbound" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Entrada masiva</h3>
-              <p class="module-lead">Carga varias líneas de inventario desde archivo o captura por lote operativo.</p>
+              <p class="module-lead">Registra mercancía recibida en volumen y aumenta existencias.</p>
             </div>
             <div class="card-panel">
               <h4 class="secondary-panel-title">Carga masiva / archivo</h4>
               <p class="module-lead" style="margin-bottom:12px">
-                Usa la importación de inventario existente (CSV/Excel) para actualizar saldos y ubicaciones.
-                Para una sola línea usa <strong>Entradas / Recepción</strong>.
+                Usa la importación de inventario (CSV/Excel) para actualizar saldos y ubicaciones.
+                No es una orden de surtido: <strong>aumenta existencias</strong>. Para salida usa
+                <strong>Órdenes de surtido / Requisiciones</strong>. Para una sola línea usa
+                <strong>Entradas / Recepción</strong>.
               </p>
               <div class="page-toolbar">
                 <button type="button" class="btn-primary btn-compact" id="bulkInboundOpenImportBtn">Abrir importación de inventario</button>
@@ -3627,6 +3692,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=41"></script>
+    <script src="/dashboard.js?v=42"></script>
   </body>
 </html>

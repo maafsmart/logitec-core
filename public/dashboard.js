@@ -273,10 +273,9 @@ function getActiveAviatProjectDisplayLabel() {
 }
 
 function getAviatScopeSummaryText() {
+  // Un solo mensaje de fallback vive en #aviatFilterFallbackNotice (evitar duplicar aquí).
   if (getActiveAviatProject() === AVIAT_PROJECT_ALL) {
-    return aviatProjectFilterFallback
-      ? "No se encontraron registros para ese proyecto. Mostrando todos los proyectos de AVIAT."
-      : "Mostrando todos los proyectos de AVIAT";
+    return "Mostrando todos los proyectos de AVIAT";
   }
   return `Mostrando proyecto ${getActiveAviatProjectDisplayLabel()} de AVIAT`;
 }
@@ -309,9 +308,10 @@ function updateAviatHeaderUi() {
   const notice = document.getElementById("aviatFilterFallbackNotice");
   if (notice) {
     if (aviatProjectFilterFallback) {
-      notice.textContent = "No se encontraron registros para ese proyecto. Se restauró Todos los proyectos de AVIAT.";
+      notice.textContent = "No hay registros para este proyecto. Se muestran todos los proyectos de AVIAT.";
       notice.classList.remove("hidden");
     } else {
+      notice.textContent = "No hay registros para este proyecto. Se muestran todos los proyectos de AVIAT.";
       notice.classList.add("hidden");
     }
   }
@@ -1477,13 +1477,17 @@ function enrichTaskRow(t) {
   const title = notes.title || t.reference || "Sin título";
   const taskLabel =
     notes.taskLabel ||
-    (notes.customerCode || notes.customerName || notes.qty != null ? "Picking (req.)" : null) ||
+    (notes.customerCode || notes.customerName || notes.qty != null
+      ? notes.orderMode
+        ? "Orden de surtido"
+        : "Picking (req.)"
+      : null) ||
     (t.type === "PICK"
       ? "Picking"
       : t.type === "COUNT"
         ? "Inventario"
         : t.type === "MOVE"
-          ? "Movimiento"
+          ? "Movimiento interno / Reubicación"
           : t.type === "ADJUSTMENT"
             ? "General"
             : t.type === "RECEIVE"
@@ -1551,9 +1555,28 @@ function canActOnTask(task) {
 let tasksCache = [];
 let assigneesCache = [];
 let taskActiveTab = "mine";
+/** "ops" = tareas operativas; "notices" = avisos internos (misma capa Task, vista separada). */
+let taskViewMode = "ops";
+let reqOrderMode = "simple";
+
+const INTERNAL_NOTICE_LABEL = "Aviso interno";
+
+function isInternalNoticeTask(t) {
+  if (!t) return false;
+  const notes = t._notes || parseTaskNotes(t.notes);
+  if (notes?.isInternalNotice === true) return true;
+  const label = String(t._taskLabel || notes?.taskLabel || "").trim().toLowerCase();
+  return label === INTERNAL_NOTICE_LABEL.toLowerCase();
+}
+
+function getTasksPoolForView() {
+  const list = Array.isArray(tasksCache) ? tasksCache : [];
+  if (taskViewMode === "notices") return list.filter((t) => isInternalNoticeTask(t));
+  return list.filter((t) => !isInternalNoticeTask(t));
+}
 
 function updateTaskKpis(rows) {
-  const list = Array.isArray(rows) ? rows : [];
+  const list = Array.isArray(rows) ? rows : getTasksPoolForView();
   const set = (id, n) => {
     const el = document.getElementById(id);
     if (el) el.textContent = String(n);
@@ -1571,12 +1594,92 @@ function updateTaskKpis(rows) {
 
 function filterTasksForTab(rows, tab) {
   const list = Array.isArray(rows) ? rows : [];
+  if (taskViewMode === "notices") {
+    if (tab === "notices-sent") return list.filter((t) => t.createdById === currentUserId);
+    // Avisos recibidos: asignados a mí o creados por mí sin asignar
+    return list.filter(
+      (t) => t.assignedToId === currentUserId || (!t.assignedToId && t.createdById === currentUserId)
+    );
+  }
   if (tab === "mine") {
     return list.filter((t) => t.assignedToId === currentUserId || (!t.assignedToId && t.createdById === currentUserId));
   }
   if (tab === "created") return list.filter((t) => t.createdById === currentUserId);
   if (tab === "completed") return list.filter((t) => t.status === "COMPLETED");
   return list;
+}
+
+function applyTaskViewModeUi() {
+  const notices = taskViewMode === "notices";
+  const title = document.getElementById("tasksModuleTitle");
+  const lead = document.getElementById("tasksModuleLead");
+  const createTitle = document.getElementById("taskCreateTitle");
+  const createBtn = document.getElementById("taskCreateBtn");
+  const hint = document.getElementById("taskInternalNoticeHint");
+  const typeSel = document.getElementById("taskType");
+  const typeField = typeSel?.closest(".field");
+  const filterTypeField = document.getElementById("taskFilterTypeField");
+  const filtersTitle = document.getElementById("taskFiltersTitle");
+  const filtersHint = document.getElementById("taskFiltersHint");
+
+  if (title) title.textContent = notices ? "Avisos internos" : "Mis tareas operativas";
+  if (lead) {
+    lead.textContent = notices
+      ? "Comunicación operativa asignada a usuarios."
+      : "Trabajo asignado para almacén, inventario, surtido, incidencias y movimientos.";
+  }
+  if (createTitle) createTitle.textContent = notices ? "Enviar aviso interno" : "Crear tarea";
+  if (createBtn) createBtn.textContent = notices ? "Enviar aviso interno" : "Crear tarea";
+  if (hint) hint.classList.toggle("hidden", !notices);
+  if (filtersTitle) {
+    filtersTitle.textContent = notices ? "Buscar y filtrar avisos" : "Buscar y filtrar tareas";
+  }
+  if (filtersHint) {
+    filtersHint.textContent = notices
+      ? "Filtra por estatus, responsable, prioridad o texto del mensaje."
+      : "Filtra por tipo, estatus, responsable, prioridad, fecha objetivo o texto.";
+  }
+  if (filterTypeField) filterTypeField.style.display = notices ? "none" : "";
+
+  document.querySelectorAll("#taskTabs [data-ops-only]").forEach((el) => {
+    el.classList.toggle("hidden", notices);
+  });
+  document.querySelectorAll("#taskTabs [data-notices-only]").forEach((el) => {
+    el.classList.toggle("hidden", !notices);
+  });
+
+  const tabAll = document.getElementById("taskTabAll");
+  if (tabAll && !notices) {
+    const showAll = canManageAllTasks();
+    tabAll.style.display = showAll ? "" : "none";
+  }
+
+  if (notices) {
+    if (typeSel) {
+      typeSel.value = "INTERNAL_NOTICE";
+      typeSel.disabled = true;
+    }
+    if (typeField) typeField.style.display = "none";
+    taskActiveTab = taskActiveTab === "notices-sent" ? "notices-sent" : "notices";
+  } else {
+    if (typeSel) {
+      typeSel.disabled = false;
+      if (typeSel.value === "INTERNAL_NOTICE") typeSel.value = "GENERAL";
+    }
+    if (typeField) typeField.style.display = "";
+    if (taskActiveTab === "notices" || taskActiveTab === "notices-sent") taskActiveTab = "mine";
+  }
+
+  document.querySelectorAll("#taskTabs .tasks-tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.getAttribute("data-task-tab") === taskActiveTab);
+  });
+}
+
+function setTaskViewMode(mode) {
+  taskViewMode = mode === "notices" ? "notices" : "ops";
+  applyTaskViewModeUi();
+  updateTaskKpis(getTasksPoolForView());
+  renderTasksTable();
 }
 
 function applyTaskFilters(rows) {
@@ -1642,20 +1745,24 @@ function buildTaskActionHtml(t) {
 
 function renderTasksTable() {
   if (!taskList) return;
-  const tabbed = filterTasksForTab(tasksCache, taskActiveTab);
+  const pool = getTasksPoolForView();
+  const tabbed = filterTasksForTab(pool, taskActiveTab);
   const filtered = applyTaskFilters(tabbed);
   if (taskMessage) {
-    taskMessage.textContent = `${filtered.length} tarea(s) en vista · ${tasksCache.length} en cola total.`;
+    const unit = taskViewMode === "notices" ? "aviso" : "tarea";
+    taskMessage.textContent = `${filtered.length} ${unit}(s) en vista · ${pool.length} en esta sección · ${tasksCache.length} total.`;
   }
+  const columns = taskViewMode === "notices" ? NOTICE_COLUMNS : TASK_COLUMNS;
   const taskRows = filtered.map((t) => ({
     ...t,
     _actionHtml: buildTaskActionHtml(t)
   }));
   renderExcelTable(taskList, {
     gridId: "tasks",
-    columns: TASK_COLUMNS,
+    columns,
     rows: taskRows,
-    emptyMessage: "Sin tareas en esta vista",
+    emptyMessage:
+      taskViewMode === "notices" ? "Sin avisos internos en esta vista" : "Sin tareas en esta vista",
     selectable: false,
     allowActions: true
   });
@@ -1743,7 +1850,8 @@ async function loadTasks() {
     }
     const rows = await response.json();
     tasksCache = (Array.isArray(rows) ? rows : []).map(enrichTaskRow);
-    updateTaskKpis(tasksCache);
+    applyTaskViewModeUi();
+    updateTaskKpis(getTasksPoolForView());
     renderTasksTable();
   } catch (_e) {
     if (taskMessage) taskMessage.textContent = "Error de red.";
@@ -2038,6 +2146,10 @@ async function createTaskClick() {
   }
   const uiType = document.getElementById("taskType")?.value || "GENERAL";
   const mapped = resolveTaskTypeFromUi(uiType);
+  const isNotice =
+    taskViewMode === "notices" ||
+    uiType === "INTERNAL_NOTICE" ||
+    mapped.label === INTERNAL_NOTICE_LABEL;
   const description = document.getElementById("taskDescription")?.value?.trim() || "";
   const priority = Number(document.getElementById("taskPriority")?.value || 50);
   const warehouse = readSmartFieldValue("taskWarehouse") || document.getElementById("taskWarehouse")?.value?.trim();
@@ -2061,7 +2173,8 @@ async function createTaskClick() {
     lote: lote || null,
     sku: sku || null,
     location: location || null,
-    taskLabel: mapped.label,
+    taskLabel: isNotice ? INTERNAL_NOTICE_LABEL : mapped.label,
+    isInternalNotice: isNotice,
     followUp: follow
       ? [{ at: new Date().toISOString(), by: currentUserId, text: follow }]
       : []
@@ -2073,7 +2186,7 @@ async function createTaskClick() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        type: mapped.type,
+        type: isNotice ? "ADJUSTMENT" : mapped.type,
         warehouse: warehouse || undefined,
         reference,
         priority: Number.isFinite(priority) ? priority : 50,
@@ -2105,6 +2218,10 @@ async function createTaskClick() {
     if (prio) prio.value = "50";
     const asn = document.getElementById("taskAssignee");
     if (asn) asn.value = "";
+    if (taskViewMode === "notices") {
+      const typeSel = document.getElementById("taskType");
+      if (typeSel) typeSel.value = "INTERNAL_NOTICE";
+    }
     await loadTasks();
   } catch (_e) {
     taskCreateError.textContent = "Error de red.";
@@ -2128,6 +2245,15 @@ function wireTasksModuleUi() {
         btn.classList.toggle("active", btn.getAttribute("data-task-tab") === tab);
       });
       renderTasksTable();
+    });
+  }
+  const typeSel = document.getElementById("taskType");
+  if (typeSel && typeSel.dataset.noticeHintWired !== "1") {
+    typeSel.dataset.noticeHintWired = "1";
+    typeSel.addEventListener("change", () => {
+      if (taskViewMode === "notices") return;
+      const hint = document.getElementById("taskInternalNoticeHint");
+      if (hint) hint.classList.toggle("hidden", typeSel.value !== "INTERNAL_NOTICE");
     });
   }
   ["taskFilterType", "taskFilterStatus", "taskFilterAssignee", "taskFilterPriority", "taskFilterDue", "taskFilterText"].forEach(
@@ -2558,6 +2684,38 @@ const TASK_COLUMNS = [
     sortKey: (t) => t._sku || "",
     render: (t) => escCell(t._sku || "—"),
     title: (t) => t._sku || ""
+  }
+];
+
+const NOTICE_COLUMNS = [
+  {
+    label: "Prioridad",
+    sortKey: (t) => t.priority ?? 0,
+    sortType: "number",
+    render: (t) => priorityBadge(t.priority)
+  },
+  {
+    label: "Estado",
+    sortKey: (t) => t.status || "",
+    render: (t) => taskStatusBadge(t.status)
+  },
+  {
+    label: "Mensaje",
+    sortKey: (t) => t._title || t.reference || "",
+    render: (t) => renderCellWithClamp(t._title || t.reference, "cell-truncate", 36),
+    title: (t) => [t._title, t._description].filter(Boolean).join(" — ")
+  },
+  {
+    label: "Responsable",
+    sortKey: (t) => t._assignName || "",
+    render: (t) => renderCellWithClamp(t._assignName || "—", "cell-truncate", 18),
+    title: (t) => t._assignName || ""
+  },
+  {
+    label: "Fecha",
+    sortKey: (t) => t.createdAt,
+    sortType: "date",
+    render: (t) => formatDateShort(t.createdAt)
   }
 ];
 
@@ -4906,10 +5064,9 @@ async function submitRequisition() {
   const reference = document.getElementById("reqReference")?.value?.trim();
   const customerCode = document.getElementById("reqCustomer")?.value?.trim();
   const customerName = document.getElementById("reqCliente")?.value?.trim();
-  const sku = document.getElementById("reqSku")?.value?.trim();
-  const qty = Number(document.getElementById("reqQty")?.value);
   const warehouse = document.getElementById("reqWarehouse")?.value?.trim() || "TULTITLAN24";
   const extraNotes = document.getElementById("reqNotes")?.value?.trim();
+  const priority = Number(document.getElementById("reqPriority")?.value || 0);
 
   if (!reference) {
     setOpsMessage("reqMessage", "Indique folio o referencia.", false);
@@ -4919,49 +5076,110 @@ async function submitRequisition() {
     setOpsMessage("reqMessage", "Seleccione un proyecto.", false);
     return;
   }
-  const lote = document.getElementById("reqLote")?.value?.trim();
-  if (sku && !findProductBySku(sku)) {
-    setOpsMessage("reqMessage", "SKU inexistente en catálogo.", false);
-    return;
-  }
-  if (sku && (!Number.isFinite(qty) || qty <= 0)) {
-    setOpsMessage("reqMessage", "Cantidad solicitada debe ser mayor que 0.", false);
-    return;
-  }
 
-  const notesPayload = {
-    customerCode: customerCode || null,
-    customerName: customerName || null,
-    lote: lote || null,
-    sku: sku || null,
-    qty: Number.isFinite(qty) ? qty : null,
-    detail: extraNotes || null
-  };
+  /** @type {{ sku: string, qty: number, lote: string }[]} */
+  let lines = [];
+  if (reqOrderMode === "bulk") {
+    const lineNodes = document.querySelectorAll("#reqBulkLines .req-bulk-line");
+    lineNodes.forEach((node) => {
+      const sku = node.querySelector("[data-req-line-sku]")?.value?.trim();
+      const qty = Number(node.querySelector("[data-req-line-qty]")?.value);
+      const lote = node.querySelector("[data-req-line-lote]")?.value?.trim() || "";
+      if (sku) lines.push({ sku, qty, lote });
+    });
+    if (!lines.length) {
+      setOpsMessage("reqMessage", "Agrega al menos una línea con SKU.", false);
+      return;
+    }
+    for (const line of lines) {
+      if (!findProductBySku(line.sku) && !resolveProductBySkuOrCode(line.sku)) {
+        setOpsMessage("reqMessage", `SKU inexistente en catálogo: ${line.sku}`, false);
+        return;
+      }
+      if (!Number.isFinite(line.qty) || line.qty <= 0) {
+        setOpsMessage("reqMessage", `Cantidad inválida en línea SKU ${line.sku}.`, false);
+        return;
+      }
+    }
+  } else {
+    const sku = document.getElementById("reqSku")?.value?.trim();
+    const qty = Number(document.getElementById("reqQty")?.value);
+    const lote = document.getElementById("reqLote")?.value?.trim() || "";
+    if (sku && !findProductBySku(sku) && !resolveProductBySkuOrCode(sku)) {
+      setOpsMessage("reqMessage", "SKU inexistente en catálogo.", false);
+      return;
+    }
+    if (sku && (!Number.isFinite(qty) || qty <= 0)) {
+      setOpsMessage("reqMessage", "Cantidad solicitada debe ser mayor que 0.", false);
+      return;
+    }
+    lines = [{ sku: sku || "", qty: Number.isFinite(qty) ? qty : null, lote }];
+  }
 
   if (btn) btn.disabled = true;
   try {
-    const response = await authenticatedFetch("/api/tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "PICK",
-        status: "PENDING",
-        warehouse,
-        priority: Number(document.getElementById("reqPriority")?.value || 0),
-        reference,
-        notes: JSON.stringify(notesPayload)
-      })
-    });
-    if (!response) return;
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      setOpsMessage("reqMessage", data.message || "No se pudo crear la requisición.", false);
-      return;
+    let created = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineNumber = i + 1;
+      const notesPayload = {
+        orderMode: reqOrderMode === "bulk" ? "bulk" : "simple",
+        orderFolio: reference,
+        lineNumber: reqOrderMode === "bulk" ? lineNumber : 1,
+        customerCode: customerCode || null,
+        customerName: customerName || null,
+        lote: line.lote || null,
+        sku: line.sku || null,
+        qty: line.qty,
+        detail: extraNotes || null,
+        taskLabel: "Orden de surtido"
+      };
+      const response = await authenticatedFetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "PICK",
+          status: "PENDING",
+          warehouse,
+          priority: Number.isFinite(priority) ? priority : 50,
+          reference,
+          notes: JSON.stringify(notesPayload)
+        })
+      });
+      if (!response) {
+        setOpsMessage(
+          "reqMessage",
+          created
+            ? `Se crearon ${created} línea(s); falló la siguiente. Stock no se afecta.`
+            : "No se pudo crear la orden.",
+          false
+        );
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setOpsMessage(
+          "reqMessage",
+          (data.message || "No se pudo crear la orden.") +
+            (created ? ` (${created} línea(s) ya creadas).` : ""),
+          false
+        );
+        return;
+      }
+      created += 1;
     }
-    setOpsMessage("reqMessage", "Requisición registrada correctamente.", true);
+    setOpsMessage(
+      "reqMessage",
+      reqOrderMode === "bulk"
+        ? `Orden por volumen creada: ${created} tarea(s) de surtido bajo folio ${reference}.`
+        : "Orden de surtido registrada correctamente.",
+      true
+    );
     document.getElementById("reqReference").value = "";
-    document.getElementById("reqQty").value = "";
-    document.getElementById("reqNotes").value = "";
+    document.getElementById("reqQty") && (document.getElementById("reqQty").value = "");
+    document.getElementById("reqNotes") && (document.getElementById("reqNotes").value = "");
+    document.getElementById("reqLote") && (document.getElementById("reqLote").value = "");
+    if (reqOrderMode === "bulk") renderReqBulkLines(1);
     await loadRequisitionsList();
     await loadTasks();
   } catch (_e) {
@@ -4969,6 +5187,82 @@ async function submitRequisition() {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+function renderReqBulkLines(count = 1) {
+  const wrap = document.getElementById("reqBulkLines");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const n = Math.max(1, Number(count) || 1);
+  for (let i = 0; i < n; i++) appendReqBulkLine();
+}
+
+function getReqSkuOptionsHtml() {
+  const options = Array.from(document.getElementById("reqSku")?.options || []);
+  if (!options.length) return '<option value="">— Seleccionar —</option>';
+  return options
+    .map((o) => `<option value="${escCell(o.value)}">${escCell(o.textContent || o.value)}</option>`)
+    .join("");
+}
+
+function appendReqBulkLine() {
+  const wrap = document.getElementById("reqBulkLines");
+  if (!wrap) return;
+  const line = document.createElement("div");
+  line.className = "req-bulk-line";
+  line.innerHTML = `
+      <div class="field" style="margin:0">
+        <label>SKU / Código</label>
+        <select data-req-line-sku>${getReqSkuOptionsHtml()}</select>
+      </div>
+      <div class="field" style="margin:0">
+        <label>Cantidad</label>
+        <input data-req-line-qty type="number" step="0.0001" min="0.0001" />
+      </div>
+      <div class="field" style="margin:0">
+        <label>Lote</label>
+        <input data-req-line-lote type="text" placeholder="Opcional" />
+      </div>
+      <button type="button" class="btn-secondary btn-compact" data-req-remove-line>Quitar</button>`;
+  line.querySelector("[data-req-remove-line]")?.addEventListener("click", () => {
+    if (wrap.querySelectorAll(".req-bulk-line").length > 1) line.remove();
+  });
+  wrap.appendChild(line);
+}
+
+function setReqOrderMode(mode) {
+  reqOrderMode = mode === "bulk" ? "bulk" : "simple";
+  const simple = document.getElementById("reqSimpleFields");
+  const bulk = document.getElementById("reqBulkFields");
+  if (simple) simple.classList.toggle("hidden", reqOrderMode === "bulk");
+  if (bulk) bulk.classList.toggle("hidden", reqOrderMode !== "bulk");
+  document.querySelectorAll("#reqModeTabs [data-req-mode]").forEach((btn) => {
+    btn.classList.toggle("active", btn.getAttribute("data-req-mode") === reqOrderMode);
+  });
+  if (reqOrderMode === "bulk") {
+    const wrap = document.getElementById("reqBulkLines");
+    if (wrap && !wrap.querySelector(".req-bulk-line")) renderReqBulkLines(1);
+  }
+}
+
+function wireRequisitionModes() {
+  const tabs = document.getElementById("reqModeTabs");
+  if (tabs && tabs.dataset.wired !== "1") {
+    tabs.dataset.wired = "1";
+    tabs.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const mode = target.getAttribute("data-req-mode");
+      if (!mode) return;
+      setReqOrderMode(mode);
+    });
+  }
+  const addBtn = document.getElementById("reqAddLineBtn");
+  if (addBtn && addBtn.dataset.wired !== "1") {
+    addBtn.dataset.wired = "1";
+    addBtn.addEventListener("click", () => appendReqBulkLine());
+  }
+  setReqOrderMode(reqOrderMode);
 }
 
 function wireOperationalForms() {
@@ -5831,19 +6125,26 @@ moduleButtons.forEach((btn) => {
     const panel = btn.closest("[data-nav-section-panel]");
     const section = panel?.getAttribute("data-nav-section-panel") || null;
     navigateTo(section, mod);
-    if (mod === "tasks" && btn.getAttribute("data-task-pref-type")) {
+    if (mod === "tasks") {
+      const view = btn.getAttribute("data-task-view");
       const pref = btn.getAttribute("data-task-pref-type");
-      const typeSel = document.getElementById("taskType");
-      if (typeSel && pref) {
-        typeSel.value = pref;
+      if (view === "notices" || pref === "INTERNAL_NOTICE") {
+        setTaskViewMode("notices");
+      } else {
+        setTaskViewMode("ops");
       }
-      const tabMine = document.querySelector('.tasks-tab[data-task-tab="mine"]');
-      if (tabMine instanceof HTMLElement) tabMine.click();
+      if (pref || view === "notices") {
+        const typeSel = document.getElementById("taskType");
+        if (typeSel && (pref === "INTERNAL_NOTICE" || view === "notices")) {
+          typeSel.value = "INTERNAL_NOTICE";
+        }
+      }
     }
   });
 });
 
 wireNavSectionTabs();
+wireRequisitionModes();
 populateOperationalTypeSelects();
 
 document.getElementById("relocateSubmitBtn")?.addEventListener("click", () => void submitRelocate());
