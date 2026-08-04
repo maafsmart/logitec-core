@@ -165,33 +165,41 @@
       .nav-section-tabs {
         display: flex;
         flex-wrap: wrap;
-        gap: 8px;
-        padding: 2px 0 12px;
-        border-bottom: 1px solid var(--line);
+        gap: 0;
+        padding: 4px;
+        margin: 0 0 16px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #eef4fa;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
       }
       .nav-section-tab {
-        border: 1px solid var(--line);
-        background: #f3f7fc;
-        color: var(--text);
-        border-radius: 999px;
-        padding: 11px 22px;
-        font-size: 0.95rem;
+        flex: 1 1 auto;
+        min-width: 108px;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        border-radius: 11px;
+        padding: 14px 20px;
+        font-size: 1rem;
         font-weight: 700;
         letter-spacing: 0.01em;
         text-transform: none;
         cursor: pointer;
-        transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+        transition: background 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
       }
       .nav-section-tab:hover {
-        background: #e8f1fa;
+        background: rgba(255, 255, 255, 0.65);
         color: var(--accent);
-        border-color: #b7cfe6;
       }
       .nav-section-tab.active {
-        background: var(--accent);
-        border-color: var(--accent-dark);
-        color: #fff;
-        box-shadow: 0 3px 10px rgba(15, 76, 129, 0.22);
+        background: #fff;
+        color: var(--accent-dark);
+        box-shadow: 0 2px 8px rgba(15, 76, 129, 0.14);
+      }
+      .nav-section-tab:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
       }
       .nav-section-body {
         min-height: 0;
@@ -3518,15 +3526,20 @@
           <div id="moduleConfig" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Configuración operativa</h3>
-              <p class="module-lead">Preferencias de sesión, cuenta y utilidades del sistema. Sin cambios de base de datos desde esta pantalla.</p>
+              <p class="module-lead">Centraliza accesos de administración y preferencias operativas del sistema.</p>
             </div>
             <div class="card-panel">
               <h4 class="secondary-panel-title">Accesos rápidos</h4>
               <div class="page-toolbar">
-                <button type="button" class="btn-secondary btn-compact" data-goto-module="account">Mi cuenta / contraseña</button>
-                <button type="button" class="btn-secondary btn-compact" data-goto-module="users" id="configUsersBtn">Usuarios</button>
+                <button type="button" class="btn-secondary btn-compact" data-goto-module="account" data-nav-section="sistema">Mi cuenta / contraseña</button>
+                <button type="button" class="btn-secondary btn-compact" data-goto-module="users" data-nav-section="sistema" id="configUsersBtn">Usuarios</button>
               </div>
-              <p class="assignee-hint">Tipos de tarea e incidencia se administran en el front (listas v40). Persistencia en BD se contempla para v41+.</p>
+              <ul class="info-list" style="margin-top:12px">
+                <li><strong>Usuarios</strong> — altas y roles del equipo operativo (solo administración).</li>
+                <li><strong>Mi cuenta</strong> — contraseña y datos de acceso personal.</li>
+                <li><strong>Seguridad de acceso</strong> — cada sesión usa tu usuario y rol asignados.</li>
+                <li><strong>Preferencias operativas</strong> — atajos y módulos visibles según tu rol.</li>
+              </ul>
             </div>
           </div>
 
@@ -3614,6 +3627,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=40"></script>
+    <script src="/dashboard.js?v=41"></script>
   </body>
 </html>

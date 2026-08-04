@@ -411,7 +411,7 @@ const roleModules = {
   CLIENT: ["catalog", "account", "config"]
 };
 
-/** Secciones de menú v40. clients se mantiene en registry pero fuera del menú principal. */
+/** Secciones de menú. clients se mantiene en registry pero fuera del menú principal. */
 const NAV_SECTION_MODULES = {
   inicio: ["control", "tasks", "picking", "incidents"],
   operacion: ["inbound", "bulk-inbound", "requisitions", "picking", "relocate", "outbound"],
@@ -419,6 +419,18 @@ const NAV_SECTION_MODULES = {
   control: ["incidents", "traceability", "reports"],
   sistema: ["users", "config", "account"]
 };
+
+/** Módulo landing al clic en cada pestaña principal (v41). */
+const NAV_SECTION_DEFAULTS = {
+  inicio: "control",
+  operacion: "inbound",
+  inventario: "inventory",
+  control: "incidents",
+  sistema: "users"
+};
+
+let currentNavSection = "inicio";
+let currentModuleName = null;
 
 /**
  * Tipos de tarea visibles en UI.
@@ -500,11 +512,28 @@ function closeMovementsPanel() {
 }
 
 function hideAllModules() {
+  // Ocultar TODOS los paneles de módulo (evita contenido residual de secciones previas).
+  document.querySelectorAll(".module-pane").forEach((el) => {
+    el.classList.add("hidden");
+  });
   Object.values(MODULE_REGISTRY).forEach((el) => {
     if (el) el.classList.add("hidden");
   });
   if (modulePlaceholder) modulePlaceholder.classList.add("hidden");
   closeMovementsPanel();
+}
+
+function resetContentScroll() {
+  const content =
+    document.querySelector("main.content") ||
+    document.querySelector(".content") ||
+    document.querySelector("main");
+  if (content) content.scrollTop = 0;
+  try {
+    window.scrollTo(0, 0);
+  } catch (_e) {
+    /* ignore */
+  }
 }
 
 currentUrl && (currentUrl.textContent = window.location.href);
@@ -518,41 +547,119 @@ if (!token) {
   forceLogout();
 }
 
-function activateModule(moduleName) {
-  if (!currentRole) return;
+function getDefaultModuleForSection(sectionId) {
   const allowed = roleModules[currentRole] || [];
-  if (!allowed.includes(moduleName)) return;
+  const sectionMods = NAV_SECTION_MODULES[sectionId] || [];
+
+  if (sectionId === "sistema") {
+    if (currentRole === "ADMIN" && allowed.includes("users")) return "users";
+    if (allowed.includes("account")) return "account";
+    if (allowed.includes("config")) return "config";
+  }
+
+  const preferred = NAV_SECTION_DEFAULTS[sectionId];
+  if (preferred && allowed.includes(preferred) && sectionMods.includes(preferred)) {
+    return preferred;
+  }
+  const firstAllowed = sectionMods.find((m) => allowed.includes(m));
+  return firstAllowed || preferred || null;
+}
+
+function resolveSectionForModule(moduleName, preferredSection) {
+  if (
+    preferredSection &&
+    (NAV_SECTION_MODULES[preferredSection] || []).includes(moduleName)
+  ) {
+    return preferredSection;
+  }
+  if (
+    currentNavSection &&
+    (NAV_SECTION_MODULES[currentNavSection] || []).includes(moduleName)
+  ) {
+    return currentNavSection;
+  }
+  const activePanel = document.querySelector(".nav-section-panel.active");
+  if (activePanel) {
+    const sid = activePanel.getAttribute("data-nav-section-panel");
+    if (sid && (NAV_SECTION_MODULES[sid] || []).includes(moduleName)) return sid;
+  }
+  for (const [section, modules] of Object.entries(NAV_SECTION_MODULES)) {
+    if (modules.includes(moduleName)) return section;
+  }
+  return preferredSection || currentNavSection || "inicio";
+}
+
+/**
+ * Navegación única v41: una pestaña, un módulo, sin contenido residual.
+ * navigateTo(section, module) — si module es null, usa landing de la sección.
+ */
+function navigateTo(sectionId, moduleName) {
+  if (!currentRole) return;
+
+  const allowed = roleModules[currentRole] || [];
+  let section = sectionId || null;
+  let mod = moduleName || null;
+
+  if (mod && !section) {
+    section = resolveSectionForModule(mod, null);
+  }
+  if (!section || !NAV_SECTION_MODULES[section]) {
+    section = currentNavSection && NAV_SECTION_MODULES[currentNavSection] ? currentNavSection : "inicio";
+  }
+  if (!mod) {
+    mod = getDefaultModuleForSection(section);
+  }
+  if (mod && !allowed.includes(mod)) {
+    mod = getDefaultModuleForSection(section);
+  }
+  if (!mod || !allowed.includes(mod)) {
+    // Sin módulo permitido en la sección: solo limpia y muestra tarjetas.
+    hideAllModules();
+    setNavSection(section);
+    currentNavSection = section;
+    currentModuleName = null;
+    moduleButtons.forEach((btn) => btn.classList.remove("active"));
+    resetContentScroll();
+    return;
+  }
+
+  // Alinear sección con el módulo si la sección explícita no lo contiene.
+  if (!(NAV_SECTION_MODULES[section] || []).includes(mod)) {
+    section = resolveSectionForModule(mod, section);
+  }
 
   moduleButtons.forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.module === moduleName);
+    btn.classList.toggle("active", btn.dataset.module === mod);
   });
 
   hideAllModules();
-  syncNavSectionForModule(moduleName);
+  setNavSection(section);
+  currentNavSection = section;
+  currentModuleName = mod;
 
-  const activeEl = MODULE_REGISTRY[moduleName];
+  const activeEl = MODULE_REGISTRY[mod];
   if (activeEl) activeEl.classList.remove("hidden");
 
-  const showUsers = moduleName === "users";
-  const showControl = moduleName === "control";
-  const showClients = moduleName === "clients";
-  const showReports = moduleName === "reports";
-  const showPicking = moduleName === "picking";
-  const showInventory = moduleName === "inventory";
-  const showCatalog = moduleName === "catalog";
-  const showAccount = moduleName === "account";
-  const showTraceability = moduleName === "traceability";
-  const showTasks = moduleName === "tasks";
-  const showIncidents = moduleName === "incidents";
-  const showInbound = moduleName === "inbound";
-  const showOutbound = moduleName === "outbound";
-  const showRequisitions = moduleName === "requisitions";
-  const showRelocate = moduleName === "relocate";
-  const showBulkInbound = moduleName === "bulk-inbound";
-  const showProjects = moduleName === "projects";
-  const showWarehouses = moduleName === "warehouses";
-  const showLocations = moduleName === "locations";
-  const showConfig = moduleName === "config";
+  const showUsers = mod === "users";
+  const showControl = mod === "control";
+  const showClients = mod === "clients";
+  const showReports = mod === "reports";
+  const showPicking = mod === "picking";
+  const showInventory = mod === "inventory";
+  const showCatalog = mod === "catalog";
+  const showAccount = mod === "account";
+  const showTraceability = mod === "traceability";
+  const showTasks = mod === "tasks";
+  const showIncidents = mod === "incidents";
+  const showInbound = mod === "inbound";
+  const showOutbound = mod === "outbound";
+  const showRequisitions = mod === "requisitions";
+  const showRelocate = mod === "relocate";
+  const showBulkInbound = mod === "bulk-inbound";
+  const showProjects = mod === "projects";
+  const showWarehouses = mod === "warehouses";
+  const showLocations = mod === "locations";
+  const showConfig = mod === "config";
 
   const hasKnownModule =
     showUsers ||
@@ -608,9 +715,6 @@ function activateModule(moduleName) {
   if (showProjects) renderProjectsModule();
   if (showWarehouses) renderWarehousesModule();
   if (showLocations) renderLocationsModule();
-  if (showBulkInbound) {
-    /* informative module — import opens on demand */
-  }
   if (showTraceability) void loadTraceability();
   if (showTasks) {
     wireTasksModuleUi();
@@ -624,6 +728,17 @@ function activateModule(moduleName) {
     resetPickingFlow();
     setTimeout(() => scanInput?.focus(), 0);
   }
+
+  resetContentScroll();
+}
+
+/** Compatibilidad: activa un módulo y sincroniza su pestaña. */
+function activateModule(moduleName) {
+  if (!moduleName || !currentRole) return;
+  const allowed = roleModules[currentRole] || [];
+  if (!allowed.includes(moduleName)) return;
+  const section = resolveSectionForModule(moduleName, null);
+  navigateTo(section, moduleName);
 }
 
 async function authenticatedFetch(path, options = {}) {
@@ -1878,6 +1993,7 @@ function populateOperationalTypeSelects() {
 
 function setNavSection(sectionId) {
   if (!sectionId) return;
+  currentNavSection = sectionId;
   document.querySelectorAll(".nav-section-tab").forEach((tab) => {
     const active = tab.getAttribute("data-nav-section") === sectionId;
     tab.classList.toggle("active", active);
@@ -1893,20 +2009,7 @@ function setNavSection(sectionId) {
 }
 
 function findNavSectionForModule(moduleName) {
-  // Prefer the currently active section if it contains the module
-  const activePanel = document.querySelector(".nav-section-panel.active");
-  if (
-    activePanel &&
-    Array.from(activePanel.querySelectorAll(".module-btn")).some(
-      (b) => b.dataset.module === moduleName && b.style.display !== "none"
-    )
-  ) {
-    return activePanel.getAttribute("data-nav-section-panel");
-  }
-  for (const [section, modules] of Object.entries(NAV_SECTION_MODULES)) {
-    if (modules.includes(moduleName)) return section;
-  }
-  return null;
+  return resolveSectionForModule(moduleName, null);
 }
 
 function syncNavSectionForModule(moduleName) {
@@ -1919,13 +2022,8 @@ function wireNavSectionTabs() {
     tab.addEventListener("click", () => {
       const section = tab.getAttribute("data-nav-section");
       if (!section) return;
-      setNavSection(section);
-      const panel = document.querySelector(`[data-nav-section-panel="${section}"]`);
-      if (!panel) return;
-      const firstVisible = Array.from(panel.querySelectorAll(".module-btn")).find(
-        (btn) => btn.style.display !== "none" && !btn.disabled
-      );
-      // Only switch section content; do not auto-open module unless none active in view
+      // Siempre abre el módulo default de la sección y limpia el anterior.
+      navigateTo(section, null);
     });
   });
 }
@@ -2745,7 +2843,10 @@ function wireQuickActions() {
     btn.dataset.qaWired = "1";
     btn.addEventListener("click", () => {
       const mod = btn.getAttribute("data-goto-module");
-      if (mod) activateModule(mod);
+      if (!mod) return;
+      const sectionHint = btn.getAttribute("data-nav-section") || null;
+      if (sectionHint) navigateTo(sectionHint, mod);
+      else activateModule(mod);
     });
   });
 }
@@ -5112,6 +5213,7 @@ function applyRoleNavigation(role) {
     Array.from(activePanel.querySelectorAll(".module-btn")).some(
       (btn) => btn.style.display !== "none" && !btn.disabled
     );
+  // Solo sincroniza tabs/tarjetas; el landing de módulo lo hace validateSession → navigateTo.
   if (activeVisible) {
     setNavSection(activePanel.getAttribute("data-nav-section-panel"));
   } else if (firstVisibleSection) {
@@ -5713,7 +5815,8 @@ async function validateSession() {
     }
     if (scanHint) scanHint.textContent = "";
     const landing = defaultLandingModule[currentRole] || roleModules[currentRole]?.[0] || "account";
-    activateModule(landing);
+    const landingSection = resolveSectionForModule(landing, "inicio");
+    navigateTo(landingSection, landing);
   } catch (_error) {
     if (statusBox) statusBox.innerHTML = '<span class="error">Error de red validando sesion.</span>';
     if (currentUserEmail) currentUserEmail.textContent = "No disponible";
@@ -5725,7 +5828,9 @@ async function validateSession() {
 moduleButtons.forEach((btn) => {
   btn.addEventListener("click", () => {
     const mod = btn.dataset.module;
-    activateModule(mod);
+    const panel = btn.closest("[data-nav-section-panel]");
+    const section = panel?.getAttribute("data-nav-section-panel") || null;
+    navigateTo(section, mod);
     if (mod === "tasks" && btn.getAttribute("data-task-pref-type")) {
       const pref = btn.getAttribute("data-task-pref-type");
       const typeSel = document.getElementById("taskType");
@@ -5752,7 +5857,7 @@ document.getElementById("bulkInboundOpenImportBtn")?.addEventListener("click", (
     }
   }
 });
-document.getElementById("taskCreateUserBtn")?.addEventListener("click", () => activateModule("users"));
+document.getElementById("taskCreateUserBtn")?.addEventListener("click", () => navigateTo("sistema", "users"));
 
 usersList.addEventListener("click", (event) => {
   const target = event.target;
