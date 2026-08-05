@@ -2960,11 +2960,50 @@
                   placeholder="Apunta el lector o escribe el código"
                 />
               </div>
+              <div class="form-grid" style="margin-top:10px">
+                <div class="field">
+                  <label for="pickProject">Proyecto</label>
+                  <select id="pickProject">
+                    <option value="">— Si hay varias líneas, elige proyecto —</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="pickStatus">Estatus de stock</label>
+                  <select id="pickStatus">
+                    <option value="">— Cualquiera (solo si hay una línea) —</option>
+                    <option value="AVAILABLE">AVAILABLE</option>
+                    <option value="OPERATIONS">OPERATIONS</option>
+                    <option value="HOLD">HOLD</option>
+                    <option value="BLOCKED">BLOCKED</option>
+                    <option value="QUARANTINE">QUARANTINE</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="pickWarehouse">Almacén</label>
+                  <select id="pickWarehouse">
+                    <option value="">— Opcional —</option>
+                    <option value="TULTITLAN24">TULTITLAN24</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="pickLocation">Ubicación</label>
+                  <select id="pickLocation">
+                    <option value="">— Si hay varias líneas, elige ubicación —</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="pickQty">Cantidad a surtir</label>
+                  <input id="pickQty" type="number" min="0.0001" step="0.0001" value="1" />
+                </div>
+              </div>
               <p class="picking-hint">
-                Escanea el código de barras desde handheld o lector físico. El sistema valida producto, descuenta stock y registra trazabilidad.
+                El sistema descuenta solo la línea exacta de inventario (proyecto, ubicación y estatus).
+                Si el SKU está en varias líneas, debes seleccionarlas: no se descuenta al azar.
+                Primero puede escanearse el código; si hay ambigüedad, elige ubicación/estatus y vuelve a confirmar.
               </p>
+              <div id="pickCandidates" class="hidden" style="margin:8px 0 12px"></div>
               <p id="scanHint" class="inline-error"></p>
-              <button id="scanBtn" class="btn-scan" type="submit">Escanear</button>
+              <button id="scanBtn" class="btn-scan" type="submit">Confirmar surtido / escaneo</button>
             </form>
             <div id="scanResult" class="scan-result-box" role="status" aria-live="polite"></div>
             <section class="picking-history card-panel">

@@ -45,11 +45,22 @@ traceabilityRouter.get("/activity", async (req, res) => {
   if (q.from?.trim() || q.to?.trim()) {
     where.createdAt = {};
     if (q.from?.trim()) {
-      const d = new Date(q.from.trim());
+      // date-only (YYYY-MM-DD) → inicio del día local del servidor
+      const fromRaw = q.from.trim();
+      const d = /^\d{4}-\d{2}-\d{2}$/.test(fromRaw)
+        ? new Date(`${fromRaw}T00:00:00`)
+        : new Date(fromRaw);
       if (!Number.isNaN(d.getTime())) where.createdAt.gte = d;
     }
     if (q.to?.trim()) {
-      const d = new Date(q.to.trim());
+      // date-only → fin del día (evita excluir eventos del mismo día)
+      const toRaw = q.to.trim();
+      let d: Date;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(toRaw)) {
+        d = new Date(`${toRaw}T23:59:59.999`);
+      } else {
+        d = new Date(toRaw);
+      }
       if (!Number.isNaN(d.getTime())) where.createdAt.lte = d;
     }
   }

@@ -748,6 +748,8 @@ function navigateTo(sectionId, moduleName) {
   }
   if (showPicking) {
     resetPickingFlow();
+    populatePickContextSelects();
+    clearPickCandidates();
     setTimeout(() => scanInput?.focus(), 0);
   }
 
@@ -2515,6 +2517,150 @@ function resetPickingFlow() {
   });
 }
 
+function clearPickCandidates() {
+  const box = document.getElementById("pickCandidates");
+  if (!box) return;
+  box.innerHTML = "";
+  box.classList.add("hidden");
+}
+
+function populatePickContextSelects() {
+  const projectSel = document.getElementById("pickProject");
+  const whSel = document.getElementById("pickWarehouse");
+  const locSel = document.getElementById("pickLocation");
+  if (projectSel) {
+    const prev = projectSel.value;
+    const projects = new Map();
+    (Array.isArray(productsCache) ? productsCache : []).forEach((p) => {
+      const code = p?.customer?.code || "";
+      const name = p?.customer?.name || code;
+      if (code) projects.set(String(code).toUpperCase(), name || code);
+    });
+    (Array.isArray(stockRowsCache) ? stockRowsCache : []).forEach((row) => {
+      const pr = getAviatProjectFromRow(row);
+      if (pr.code) projects.set(String(pr.code).toUpperCase(), pr.name || pr.code);
+    });
+    projectSel.innerHTML =
+      '<option value="">— Si hay varias líneas, elige proyecto —</option>' +
+      [...projects.entries()]
+        .sort((a, b) => String(a[1]).localeCompare(String(b[1]), "es"))
+        .map(([code, name]) => `<option value="${escCell(code)}">${escCell(name)} (${escCell(code)})</option>`)
+        .join("");
+    if (prev && [...projectSel.options].some((o) => o.value === prev)) projectSel.value = prev;
+  }
+  if (whSel) {
+    const prev = whSel.value;
+    const whs = new Set(["TULTITLAN24"]);
+    (Array.isArray(stockRowsCache) ? stockRowsCache : []).forEach((row) => {
+      const w = row?.location?.warehouse;
+      if (w) whs.add(String(w).toUpperCase());
+    });
+    whSel.innerHTML =
+      '<option value="">— Opcional —</option>' +
+      [...whs].sort().map((w) => `<option value="${escCell(w)}">${escCell(w)}</option>`).join("");
+    if (prev && [...whSel.options].some((o) => o.value === prev)) whSel.value = prev;
+  }
+  if (locSel) {
+    const prev = locSel.value;
+    const locs = new Set();
+    (Array.isArray(stockRowsCache) ? stockRowsCache : []).forEach((row) => {
+      const c = row?.location?.code;
+      if (c) locs.add(String(c).toUpperCase());
+    });
+    locSel.innerHTML =
+      '<option value="">— Si hay varias líneas, elige ubicación —</option>' +
+      [...locs]
+        .sort()
+        .map((c) => `<option value="${escCell(c)}">${escCell(c)}</option>`)
+        .join("");
+    if (prev && [...locSel.options].some((o) => o.value === prev)) locSel.value = prev;
+  }
+}
+
+function renderPickCandidates(candidates) {
+  const box = document.getElementById("pickCandidates");
+  if (!box) return;
+  if (!Array.isArray(candidates) || !candidates.length) {
+    clearPickCandidates();
+    return;
+  }
+  box.classList.remove("hidden");
+  box.innerHTML = `
+    <p class="module-hint" style="margin:0 0 8px">Líneas con stock. Elige una para descontar exactamente esa ubicación/estatus:</p>
+    <div style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto">
+      ${candidates
+        .map((c, idx) => {
+          const label = `${c.projectCode || "—"} · ${c.location || "—"} · ${c.status || "—"} · qty ${c.qty ?? "—"}`;
+          return `<button type="button" class="btn-secondary btn-compact" data-pick-candidate="${idx}" style="text-align:left;justify-content:flex-start">${escCell(label)}</button>`;
+        })
+        .join("")}
+    </div>`;
+  box.querySelectorAll("[data-pick-candidate]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.getAttribute("data-pick-candidate"));
+      const c = candidates[i];
+      if (!c) return;
+      const projectSel = document.getElementById("pickProject");
+      const statusSel = document.getElementById("pickStatus");
+      const whSel = document.getElementById("pickWarehouse");
+      const locSel = document.getElementById("pickLocation");
+      if (projectSel && c.projectCode) {
+        if (![...projectSel.options].some((o) => o.value === c.projectCode)) {
+          const opt = document.createElement("option");
+          opt.value = c.projectCode;
+          opt.textContent = c.projectName || c.projectCode;
+          projectSel.appendChild(opt);
+        }
+        projectSel.value = c.projectCode;
+      }
+      if (statusSel && c.status) statusSel.value = c.status;
+      if (whSel && c.warehouse) {
+        if (![...whSel.options].some((o) => o.value === c.warehouse)) {
+          const opt = document.createElement("option");
+          opt.value = c.warehouse;
+          opt.textContent = c.warehouse;
+          whSel.appendChild(opt);
+        }
+        whSel.value = c.warehouse;
+      }
+      if (locSel && c.location) {
+        if (![...locSel.options].some((o) => o.value === c.location)) {
+          const opt = document.createElement("option");
+          opt.value = c.location;
+          opt.textContent = c.location;
+          locSel.appendChild(opt);
+        }
+        locSel.value = c.location;
+      }
+      box.dataset.inventoryId = c.inventoryId || "";
+      setScanResult(
+        `Línea seleccionada: ${c.location} / ${c.status} (qty ${c.qty}). Confirma de nuevo el surtido.`,
+        "ok"
+      );
+    });
+  });
+}
+
+function buildPickScanPayload(code) {
+  const project = document.getElementById("pickProject")?.value?.trim() || "";
+  const status = document.getElementById("pickStatus")?.value?.trim() || "";
+  const warehouse = document.getElementById("pickWarehouse")?.value?.trim() || "";
+  const location = document.getElementById("pickLocation")?.value?.trim() || "";
+  const qtyRaw = document.getElementById("pickQty")?.value;
+  const qty = qtyRaw === "" || qtyRaw == null ? 1 : Number(qtyRaw);
+  const invBox = document.getElementById("pickCandidates");
+  const inventoryId = invBox?.dataset?.inventoryId || "";
+  /** @type {Record<string, unknown>} */
+  const body = { code };
+  if (project) body.project = project;
+  if (status) body.status = status;
+  if (warehouse) body.warehouse = warehouse;
+  if (location) body.location = location;
+  if (Number.isFinite(qty) && qty > 0) body.quantity = qty;
+  if (inventoryId) body.inventoryId = inventoryId;
+  return body;
+}
+
 function setPickingFlowState(state) {
   if (!pickingFlow) return;
   const order = ["read", "validate", "stock", "trace"];
@@ -2846,12 +2992,51 @@ const TRACE_COLUMNS = [
   { label: "Tipo", sortKey: (r) => r.type || r.subtype || "", render: (r) => statusBadge(r.subtype || r.type) },
   { label: "SKU / Código", sortKey: (r) => r.product?.sku || "", render: (r) => escCell(formatSkuBarcode(r.product)), title: (r) => r.product?.sku || "" },
   { label: "Producto", sortKey: (r) => r.product?.name || "", render: (r) => renderCellWithClamp(r.product?.name || "—", "cell-truncate", 28), title: (r) => r.product?.name || "" },
-  { label: "Antes", align: "right", sortKey: () => 0, sortType: "number", render: () => "—" },
-  { label: "Después", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number", render: (r) => formatQty(r.qty) },
+  {
+    label: "Antes",
+    align: "right",
+    sortKey: (r) => Number(activityMetaQty(r, "before")) || 0,
+    sortType: "number",
+    render: (r) => formatQty(activityMetaQty(r, "before")),
+    title: (r) => `Saldo anterior: ${formatQty(activityMetaQty(r, "before"))}`
+  },
+  {
+    label: "Movimiento",
+    align: "right",
+    sortKey: (r) => Number(activityMovedQty(r)) || 0,
+    sortType: "number",
+    render: (r) => formatQty(activityMovedQty(r)),
+    title: (r) => `Cantidad del movimiento: ${formatQty(activityMovedQty(r))}`
+  },
+  {
+    label: "Después",
+    align: "right",
+    sortKey: (r) => Number(activityMetaQty(r, "after")) || 0,
+    sortType: "number",
+    render: (r) => formatQty(activityMetaQty(r, "after")),
+    title: (r) => `Saldo posterior: ${formatQty(activityMetaQty(r, "after"))}`
+  },
   { label: "Ubicación", sortKey: (r) => r.location || r.warehouse || "", render: (r) => renderCellWithClamp(r.location || r.warehouse, "cell-truncate", 22), title: (r) => r.location || r.warehouse || "" },
   { label: "Usuario", sortKey: (r) => r.user?.fullName || "", render: (r) => renderCellWithClamp(r.user?.fullName || "—", "cell-truncate", 20), title: (r) => r.user?.fullName || "" },
   { label: "Referencia", sortKey: (r) => r.reference || "", render: (r) => renderCellWithClamp(r.reference, "cell-truncate", 24), title: (r) => r.reference || "" }
 ];
+
+/** Cantidad de saldo en metadata de actividad (antes/después del movimiento). */
+function activityMetaQty(row, which) {
+  const meta = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  if (which === "before") {
+    return meta.quantityBefore ?? meta.qtyBefore ?? meta.before ?? null;
+  }
+  return meta.quantityAfter ?? meta.qtyAfter ?? meta.after ?? null;
+}
+
+/** Cantidad movida/pickeada en el evento. */
+function activityMovedQty(row) {
+  const meta = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  if (meta.pickedQty != null) return meta.pickedQty;
+  if (meta.quantityMoved != null) return meta.quantityMoved;
+  return row?.qty ?? null;
+}
 
 const TASK_COLUMNS = [
   {
@@ -6242,16 +6427,26 @@ async function runCatalogImport(mode) {
 async function scanCode(event) {
   event.preventDefault();
   scanHint.textContent = "";
-  setScanResult("Procesando escaneo…");
+  setScanResult("Procesando surtido…");
   setPickingFlowState("read");
-  scanBtn.disabled = true;
+  if (scanBtn) scanBtn.disabled = true;
 
   const code = scanInput.value.trim();
   if (!code) {
-    scanHint.textContent = "Escanea un SKU o codigo.";
-    setScanResult("Ingresa un código para escanear.");
+    scanHint.textContent = "Escanea o escribe un SKU / código de barras.";
+    setScanResult("Ingresa un código para surtir.", "error");
     resetPickingFlow();
-    scanBtn.disabled = false;
+    if (scanBtn) scanBtn.disabled = false;
+    return;
+  }
+
+  const qtyRaw = document.getElementById("pickQty")?.value;
+  const qty = qtyRaw === "" || qtyRaw == null ? 1 : Number(qtyRaw);
+  if (!Number.isFinite(qty) || qty <= 0) {
+    scanHint.textContent = "La cantidad a surtir debe ser mayor a 0.";
+    setScanResult("Cantidad inválida.", "error");
+    resetPickingFlow();
+    if (scanBtn) scanBtn.disabled = false;
     return;
   }
 
@@ -6262,37 +6457,77 @@ async function scanCode(event) {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ code })
+      body: JSON.stringify(buildPickScanPayload(code))
     });
 
-    if (!response) return;
+    // authenticatedFetch solo devuelve null en 401 (logout real por token).
+    if (!response) {
+      setScanResult("Sesión no válida. Vuelve a iniciar sesión.", "error");
+      resetPickingFlow();
+      return;
+    }
+
     const payload = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      scanHint.textContent = payload.message || "ERROR: producto no existe.";
-      setScanResult(`Resultado: ERROR — ${payload.message || "producto no encontrado"}`, "error");
+      if (payload.code === "AMBIGUOUS_STOCK" && Array.isArray(payload.candidates)) {
+        setPickingFlowState("stock");
+        renderPickCandidates(payload.candidates);
+        scanHint.textContent =
+          payload.message ||
+          "Hay varias líneas de stock. Elige una línea (ubicación + estatus) y confirma de nuevo.";
+        setScanResult(
+          `Ambiguo — ${payload.product?.sku || code}: elige la línea correcta. No se descontó inventario.`,
+          "error"
+        );
+        resetPickingFlow();
+        return;
+      }
+      clearPickCandidates();
+      const candHint = payload.candidate
+        ? ` Disponible en ${payload.candidate.location} / ${payload.candidate.status}: ${payload.candidate.qty}.`
+        : "";
+      scanHint.textContent = (payload.message || "No se pudo completar el picking.") + candHint;
+      setScanResult(`Resultado: ERROR — ${payload.message || "sin descuento de stock"}`, "error");
       resetPickingFlow();
       await loadScanEvents();
       return;
     }
+
+    if (!payload.deducted) {
+      clearPickCandidates();
+      scanHint.textContent = "La API no confirmó descuento de stock. No se marca surtido OK.";
+      setScanResult("ERROR — sin confirmación de descuento. Revisa Inventario.", "error");
+      resetPickingFlow();
+      await loadScanEvents();
+      return;
+    }
+
+    clearPickCandidates();
+    const candBox = document.getElementById("pickCandidates");
+    if (candBox) delete candBox.dataset.inventoryId;
 
     const product = payload.product;
     setPickingFlowState("stock");
     setPickingFlowState("trace");
     setPickingFlowState("success");
     setScanResult(
-      `OK — ${product?.sku || code}: ${product?.name || "Producto validado"} · Almacén ${product?.warehouse || "TULTITLAN24"} · Stock descontado y trazabilidad registrada.`,
+      `OK — descontado ${payload.pickedQty ?? qty} de ${product?.sku || code} ` +
+        `(${product?.name || "producto"}) · Proyecto ${product?.projectCode || product?.projectName || "—"} · ` +
+        `${payload.warehouse || "—"} / ${payload.location || "—"} / ${payload.status || "—"} · ` +
+        `Antes ${payload.quantityBefore ?? "—"} → Después ${payload.quantityAfter ?? "—"}.`,
       "ok"
     );
     scanInput.value = "";
     await loadScanEvents();
+    if (typeof loadStockStrip === "function") await loadStockStrip().catch(() => {});
     scanInput.focus();
   } catch (_error) {
-    scanHint.textContent = "Error de red en escaneo.";
-    setScanResult("Error de red en escaneo.", "error");
+    scanHint.textContent = "Error de red en surtido. No se descontó inventario.";
+    setScanResult("Error de red en surtido.", "error");
     resetPickingFlow();
   } finally {
-    scanBtn.disabled = false;
+    if (scanBtn) scanBtn.disabled = false;
   }
 }
 
