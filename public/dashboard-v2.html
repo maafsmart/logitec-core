@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LOGITEC CORE WMS — Panel V2</title>
+    <link rel="stylesheet" href="/dashboard-v2.css?v=5" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <!-- Header navy + folder tabs -->
+      <header class="app-header">
+        <div class="app-header-inner">
+          <div class="app-header-top">
+            <div>
+              <div class="brand">
+                <div class="brand-mark" aria-hidden="true">LC</div>
+                <div class="brand-text">
+                  <strong>LOGITEC CORE WMS</strong>
+                  <span>Panel operativo V2 · Cliente principal AVIAT</span>
+                </div>
+              </div>
+              <div class="greeting">Hola, <em id="sessionName">…</em></div>
+            </div>
+            <div class="topbar-meta">
+              <div class="user-chip">
+                <strong id="sessionRoleChip">—</strong>
+                <span id="sessionMeta">—</span>
+              </div>
+              <button type="button" class="btn btn-header btn-sm" id="openStableBtn" title="Abrir dashboard clásico en nueva pestaña">
+                Dashboard clásico
+              </button>
+              <button type="button" class="icon-btn" id="logoutBtn" title="Cerrar sesión" aria-label="Cerrar sesión">Salir</button>
+            </div>
+          </div>
+          <p class="v2-mode-tag">Panel V2 · Vista de supervisión</p>
+        </div>
+
+        <nav class="tab-rail" role="tablist" aria-label="Navegación principal">
+          <button type="button" class="app-tab active" data-tab="inicio" role="tab" aria-selected="true">Inicio</button>
+          <button type="button" class="app-tab" data-tab="operacion" role="tab" aria-selected="false">Operación</button>
+          <button type="button" class="app-tab" data-tab="inventario" role="tab" aria-selected="false">Inventario</button>
+          <button type="button" class="app-tab" data-tab="control" role="tab" aria-selected="false">Control</button>
+          <button type="button" class="app-tab" data-tab="sistema" role="tab" aria-selected="false">Sistema</button>
+        </nav>
+      </header>
+
+      <!-- Content stage connected to active tab -->
+      <div class="app-stage">
+        <main class="stage-panel" id="stagePanel" data-corner="first">
+          <!-- INICIO -->
+          <section class="view section-view active" id="view-inicio" data-view="inicio" aria-label="Inicio">
+            <div class="page-head section-head">
+              <div>
+                <h1 class="section-title">Inicio</h1>
+                <p class="section-subtitle">Resumen operativo del almacén. Accesos claros para el día de trabajo.</p>
+              </div>
+              <div class="page-actions section-actions">
+                <button type="button" class="btn btn-secondary btn-sm" id="refreshHomeBtn">Actualizar</button>
+              </div>
+            </div>
+            <div class="section-content">
+            <div id="homeBanner" class="banner banner-info hidden"></div>
+
+            <div class="stats-grid" id="homeStats">
+              <div class="stat-card"><span class="label">Productos</span><span class="value" id="kpiProducts">—</span><span class="hint">Catálogo activo</span></div>
+              <div class="stat-card"><span class="label">Proyectos</span><span class="value" id="kpiProjects">—</span><span class="hint">Detectados en operación</span></div>
+              <div class="stat-card"><span class="label">Ubicaciones</span><span class="value" id="kpiLocations">—</span><span class="hint">Con existencias</span></div>
+              <div class="stat-card"><span class="label">Saldos</span><span class="value" id="kpiStock">—</span><span class="hint">Líneas de inventario</span></div>
+              <div class="stat-card"><span class="label">Movimientos</span><span class="value" id="kpiMovements">—</span><span class="hint">Recientes</span></div>
+              <div class="stat-card"><span class="label">Incidencias</span><span class="value" id="kpiIncidents">—</span><span class="hint">Abiertas</span></div>
+              <div class="stat-card"><span class="label">Tareas</span><span class="value" id="kpiTasks">—</span><span class="hint">Pendientes / en proceso</span></div>
+              <div class="stat-card"><span class="label">Avisos</span><span class="value" id="kpiNotices">—</span><span class="hint">Internos no completados</span></div>
+            </div>
+
+            <div class="section-block">
+              <h2 class="section-title">Accesos rápidos</h2>
+              <p class="section-sub">Navegación dentro de Panel V2 · la captura avanzada es opcional (nueva pestaña)</p>
+              <div class="module-grid" id="homeQuick">
+                <article class="module-card">
+                  <span class="mod-kicker">Recepción</span>
+                  <h3>Entradas</h3>
+                  <p>Registra mercancía recibida y aumenta existencias por proyecto, lote y ubicación.</p>
+                  <div class="card-footer card-footer-stack">
+                    <button type="button" class="btn btn-primary btn-sm" data-v2-op="inbound">Ver en Operación</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-open-classic="inbound">Abrir captura clásica</button>
+                  </div>
+                </article>
+                <article class="module-card">
+                  <span class="mod-kicker">Órdenes</span>
+                  <h3>Órdenes de surtido</h3>
+                  <p>Solicita preparación de salida (requisiciones / órdenes de trabajo).</p>
+                  <div class="card-footer card-footer-stack">
+                    <button type="button" class="btn btn-primary btn-sm" data-v2-op="requisitions">Ver en Operación</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-open-classic="requisitions">Abrir captura clásica</button>
+                  </div>
+                </article>
+                <article class="module-card">
+                  <span class="mod-kicker">Surtido</span>
+                  <h3>Picking / Surtido de salida</h3>
+                  <p>Ejecuta el surtido con escaneo y validación operativa.</p>
+                  <div class="card-footer card-footer-stack">
+                    <button type="button" class="btn btn-primary btn-sm" data-v2-op="picking">Ver en Operación</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-open-classic="picking">Abrir captura clásica</button>
+                  </div>
+                </article>
+                <article class="module-card">
+                  <span class="mod-kicker">Despacho</span>
+                  <h3>Salidas</h3>
+                  <p>Confirma el despacho final y descuenta existencias.</p>
+                  <div class="card-footer card-footer-stack">
+                    <button type="button" class="btn btn-primary btn-sm" data-v2-op="outbound">Ver en Operación</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-open-classic="outbound">Abrir captura clásica</button>
+                  </div>
+                </article>
+                <article class="module-card">
+                  <span class="mod-kicker">Excepciones</span>
+                  <h3>Incidencias abiertas</h3>
+                  <p>Registra y da seguimiento a excepciones de piso.</p>
+                  <div class="card-footer">
+                    <button type="button" class="btn btn-primary btn-sm" data-v2-goto="control" data-sub="incidents">Ir a Control</button>
+                  </div>
+                </article>
+                <article class="module-card">
+                  <span class="mod-kicker">Auditoría</span>
+                  <h3>Trazabilidad</h3>
+                  <p>Consulta actividad y eventos del almacén en español.</p>
+                  <div class="card-footer">
+                    <button type="button" class="btn btn-primary btn-sm" data-v2-goto="control" data-sub="trace">Ver auditoría</button>
+                  </div>
+                </article>
+              </div>
+            </div>
+            </div>
+          </section>
+
+          <!-- OPERACIÓN -->
+          <section class="view section-view" id="view-operacion" data-view="operacion" aria-label="Operación">
+            <div class="page-head section-head">
+              <div>
+                <h1 class="section-title">Operación</h1>
+                <p class="section-subtitle">Flujo de mercancía: recepción → orden → surtido → despacho. Todo se consulta aquí en V2.</p>
+              </div>
+            </div>
+            <div class="section-content">
+            <div class="module-grid">
+              <article class="module-card">
+                <span class="mod-kicker">Aumenta stock</span>
+                <h3>Entradas / Recepción</h3>
+                <p>Registra mercancía recibida. <strong>Aumenta inventario</strong> por proyecto, lote y ubicación.</p>
+                <div class="card-footer card-footer-stack">
+                  <button type="button" class="btn btn-primary btn-sm" data-v2-op="inbound">Ver detalle V2</button>
+                  <button type="button" class="btn btn-ghost btn-sm" data-open-classic="inbound">Abrir captura clásica</button>
+                </div>
+              </article>
+              <article class="module-card">
+                <span class="mod-kicker">Solicita</span>
+                <h3>Órdenes de surtido</h3>
+                <p>Solicita preparación de salida u otros trabajos. <strong>No mueve stock</strong> por sí sola.</p>
+                <div class="card-footer card-footer-stack">
+                  <button type="button" class="btn btn-primary btn-sm" data-v2-op="requisitions">Ver detalle V2</button>
+                  <button type="button" class="btn btn-ghost btn-sm" data-open-classic="requisitions">Abrir captura clásica</button>
+                </div>
+              </article>
+              <article class="module-card">
+                <span class="mod-kicker">Ejecuta</span>
+                <h3>Picking / Surtido de salida</h3>
+                <p>Prepara productos para salida con escaneo y validación. <strong>Ejecuta el surtido</strong>.</p>
+                <div class="card-footer card-footer-stack">
+                  <button type="button" class="btn btn-primary btn-sm" data-v2-op="picking">Ver detalle V2</button>
+                  <button type="button" class="btn btn-ghost btn-sm" data-open-classic="picking">Abrir captura clásica</button>
+                </div>
+              </article>
+              <article class="module-card">
+                <span class="mod-kicker">Seguro</span>
+                <h3>Movimiento interno / Reubicación</h3>
+                <p>Crea una <strong>solicitud operativa</strong>. No mueve stock automáticamente hasta confirmación.</p>
+                <div class="card-footer card-footer-stack">
+                  <button type="button" class="btn btn-primary btn-sm" data-v2-op="relocate">Ver detalle V2</button>
+                  <button type="button" class="btn btn-ghost btn-sm" data-open-classic="relocate">Abrir captura clásica</button>
+                </div>
+              </article>
+              <article class="module-card">
+                <span class="mod-kicker">Confirma</span>
+                <h3>Salidas / Despacho</h3>
+                <p>Confirma la salida final de mercancía. <strong>Descuenta existencias</strong>.</p>
+                <div class="card-footer card-footer-stack">
+                  <button type="button" class="btn btn-primary btn-sm" data-v2-op="outbound">Ver detalle V2</button>
+                  <button type="button" class="btn btn-ghost btn-sm" data-open-classic="outbound">Abrir captura clásica</button>
+                </div>
+              </article>
+            </div>
+
+            <div id="opsDetailPanel" class="ops-detail-panel hidden" aria-live="polite">
+              <div class="ops-detail-head">
+                <div>
+                  <p class="mod-kicker" id="opsDetailEffect">—</p>
+                  <h2 id="opsDetailTitle">Operación</h2>
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm" id="opsDetailCloseBtn">Cerrar</button>
+              </div>
+              <p id="opsDetailSummary" class="ops-detail-summary">—</p>
+              <h3 class="ops-detail-steps-title">Cómo se usa</h3>
+              <ol id="opsDetailSteps" class="ops-detail-steps"></ol>
+              <div class="ops-detail-actions">
+                <button type="button" class="btn btn-primary btn-sm" data-v2-goto="inventario">Ver existencias en V2</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="opsDetailClassicBtn" data-open-classic="inbound">
+                  Abrir captura clásica
+                </button>
+              </div>
+              <p class="ops-detail-note">
+                La captura con escáner y formularios de piso está en el dashboard clásico. Se abre en <strong>nueva pestaña</strong> para no perder este Panel V2.
+              </p>
+            </div>
+
+            <div class="banner banner-info" style="margin-top: 18px">
+              Navegación V2: permaneces en <code>dashboard-v2.html</code>. El dashboard clásico solo se abre si eliges “Abrir captura clásica” (nueva pestaña).
+            </div>
+            </div>
+          </section>
+
+          <!-- INVENTARIO -->
+          <section class="view section-view" id="view-inventario" data-view="inventario" aria-label="Inventario">
+            <div class="page-head section-head">
+              <div>
+                <h1 class="section-title">Inventario</h1>
+                <p class="section-subtitle">Existencias por proyecto, almacén, ubicación, SKU y status. Proyectos como filtros y tarjetas.</p>
+              </div>
+              <div class="page-actions section-actions">
+                <button type="button" class="btn btn-secondary btn-sm" id="refreshInventoryBtn">Actualizar</button>
+              </div>
+            </div>
+            <div class="section-content">
+            <div id="inventoryBanner" class="banner banner-info hidden"></div>
+
+            <section class="projects-module" aria-label="Proyectos">
+              <div class="mod-head">
+                <div>
+                  <h2>Proyectos</h2>
+                  <p>Filtra existencias por proyecto de AVIAT</p>
+                </div>
+                <span class="loading-inline" id="projectsCountMeta">—</span>
+              </div>
+              <div class="chip-row" id="projectChips"></div>
+              <div class="project-cards" id="projectCards"></div>
+            </section>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>Existencias</h2>
+                  <p id="inventoryMeta" class="loading-inline">Cargando…</p>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="filter-bar">
+                  <div class="field field-md">
+                    <label for="invFilterWarehouse">Almacén</label>
+                    <select id="invFilterWarehouse"><option value="">Todos</option></select>
+                  </div>
+                  <div class="field field-md">
+                    <label for="invFilterLocation">Ubicación</label>
+                    <select id="invFilterLocation"><option value="">Todas</option></select>
+                  </div>
+                  <div class="field field-md">
+                    <label for="invFilterStatus">Status</label>
+                    <select id="invFilterStatus"><option value="">Todos</option></select>
+                  </div>
+                  <div class="field field-grow">
+                    <label for="invFilterText">Buscar SKU / producto</label>
+                    <input id="invFilterText" type="search" placeholder="SKU, nombre o código" />
+                  </div>
+                </div>
+                <div class="table-wrap">
+                  <table class="data-table" id="inventoryTable">
+                    <thead>
+                      <tr>
+                        <th>Proyecto</th>
+                        <th>Almacén</th>
+                        <th>Ubicación</th>
+                        <th>SKU</th>
+                        <th>Producto</th>
+                        <th>Cantidad</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody id="inventoryBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            </div>
+          </section>
+
+          <!-- CONTROL -->
+          <section class="view section-view" id="view-control" data-view="control" aria-label="Control">
+            <div class="page-head section-head">
+              <div>
+                <h1 class="section-title">Control</h1>
+                <p class="section-subtitle">Incidencias y trazabilidad / auditoría con lenguaje operativo en español.</p>
+              </div>
+              <div class="page-actions section-actions">
+                <button type="button" class="btn btn-secondary btn-sm" id="refreshControlBtn">Actualizar</button>
+              </div>
+            </div>
+            <div class="section-content">
+            <div class="subnav" id="controlSubnav">
+              <button type="button" class="active" data-control-sub="incidents">Incidencias</button>
+              <button type="button" data-control-sub="trace">Trazabilidad</button>
+            </div>
+            <div id="controlSub-incidents" class="control-sub">
+              <div id="incidentsBanner" class="banner banner-info hidden"></div>
+              <div class="panel">
+                <div class="panel-head">
+                  <div>
+                    <h2>Incidencias</h2>
+                    <p id="incidentsMeta">Cargando…</p>
+                  </div>
+                </div>
+                <div class="panel-body tight">
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Tipo</th>
+                          <th>Estatus</th>
+                          <th>Almacén</th>
+                          <th>Ubicación</th>
+                          <th>Producto</th>
+                          <th>Notas</th>
+                          <th>Reportó</th>
+                        </tr>
+                      </thead>
+                      <tbody id="incidentsBody"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="controlSub-trace" class="control-sub hidden">
+              <div id="traceBanner" class="banner banner-info hidden"></div>
+              <div class="panel">
+                <div class="panel-head">
+                  <div>
+                    <h2>Trazabilidad / Auditoría</h2>
+                    <p id="traceMeta">Cargando…</p>
+                  </div>
+                </div>
+                <div class="panel-body tight">
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Evento</th>
+                          <th>Detalle técnico</th>
+                          <th>SKU</th>
+                          <th>Proyecto</th>
+                          <th>Usuario</th>
+                          <th>Almacén</th>
+                        </tr>
+                      </thead>
+                      <tbody id="traceBody"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+            </div>
+          </section>
+
+          <!-- SISTEMA -->
+          <section class="view section-view" id="view-sistema" data-view="sistema" aria-label="Sistema">
+            <div class="page-head section-head">
+              <div>
+                <h1 class="section-title">Sistema</h1>
+                <p class="section-subtitle">Usuarios, avisos internos y tu cuenta. Los avisos son comunicación, no tareas de almacén.</p>
+              </div>
+            </div>
+            <div class="section-content">
+            <div class="subnav" id="systemSubnav">
+              <button type="button" class="active" data-system-sub="notices">Avisos internos</button>
+              <button type="button" data-system-sub="users">Usuarios</button>
+              <button type="button" data-system-sub="account">Mi cuenta</button>
+            </div>
+
+            <div id="systemSub-notices" class="system-sub">
+              <div class="two-col">
+                <div class="panel">
+                  <div class="panel-head">
+                    <div>
+                      <h2>Enviar aviso interno</h2>
+                      <p>Comunicación simple · sin datos de almacén</p>
+                    </div>
+                  </div>
+                  <div class="panel-body">
+                    <div id="noticeBanner" class="banner banner-info hidden"></div>
+                    <form id="noticeForm" class="form-grid" autocomplete="off">
+                      <div class="field full">
+                        <label for="noticeTo">Destinatario</label>
+                        <select id="noticeTo" required>
+                          <option value="">Selecciona un destinatario…</option>
+                        </select>
+                      </div>
+                      <div class="field full">
+                        <label for="noticeSubject">Asunto</label>
+                        <input id="noticeSubject" type="text" maxlength="200" placeholder="Asunto del aviso" required />
+                      </div>
+                      <div class="field full">
+                        <label for="noticeBody">Mensaje</label>
+                        <textarea id="noticeBody" maxlength="2000" placeholder="Escribe el mensaje…" required></textarea>
+                      </div>
+                      <div class="field">
+                        <label for="noticePriority">Prioridad</label>
+                        <select id="noticePriority">
+                          <option value="20">Baja</option>
+                          <option value="50" selected>Media</option>
+                          <option value="80">Alta</option>
+                        </select>
+                      </div>
+                      <div class="field">
+                        <label for="noticeDue">Fecha opcional</label>
+                        <input id="noticeDue" type="date" />
+                      </div>
+                      <div class="form-actions full">
+                        <button type="submit" class="btn btn-primary" id="noticeSubmitBtn">Enviar aviso</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+                <div class="panel">
+                  <div class="panel-head">
+                    <div>
+                      <h2>Bandeja de avisos</h2>
+                      <p id="noticesMeta">Cargando…</p>
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm" id="refreshNoticesBtn">Actualizar</button>
+                  </div>
+                  <div class="panel-body tight">
+                    <div class="table-wrap">
+                      <table class="data-table" style="min-width: 520px">
+                        <thead>
+                          <tr>
+                            <th>Asunto</th>
+                            <th>De / Para</th>
+                            <th>Prioridad</th>
+                            <th>Estatus</th>
+                            <th>Fecha</th>
+                          </tr>
+                        </thead>
+                        <tbody id="noticesBody"></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="systemSub-users" class="system-sub hidden">
+              <div id="usersBanner" class="banner banner-info hidden"></div>
+              <div class="panel">
+                <div class="panel-head">
+                  <div>
+                    <h2>Usuarios</h2>
+                    <p id="usersMeta">Cargando…</p>
+                  </div>
+                  <button type="button" class="btn btn-secondary btn-sm" data-open-classic="users">
+                    Gestionar en clásico (nueva pestaña)
+                  </button>
+                </div>
+                <div class="panel-body tight">
+                  <div class="table-wrap">
+                    <table class="data-table" style="min-width: 560px">
+                      <thead>
+                        <tr>
+                          <th>Nombre</th>
+                          <th>Correo</th>
+                          <th>Rol</th>
+                          <th>Activo</th>
+                        </tr>
+                      </thead>
+                      <tbody id="usersBody"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="systemSub-account" class="system-sub hidden">
+              <div class="panel" style="max-width: 480px">
+                <div class="panel-head">
+                  <div>
+                    <h2>Mi cuenta</h2>
+                    <p>Sesión actual</p>
+                  </div>
+                </div>
+                <div class="panel-body">
+                  <div class="form-grid">
+                    <div class="field full">
+                      <label>Nombre</label>
+                      <input id="accountName" type="text" readonly />
+                    </div>
+                    <div class="field full">
+                      <label>Correo</label>
+                      <input id="accountEmail" type="text" readonly />
+                    </div>
+                    <div class="field full">
+                      <label>Rol</label>
+                      <input id="accountRole" type="text" readonly />
+                    </div>
+                  </div>
+                  <p class="cell-muted" style="margin-top: 12px">
+                    Para cambiar contraseña usa el
+                    <a class="link-stable" href="/dashboard.html" id="accountPasswordLink" target="_blank" rel="noopener">
+                      dashboard clásico (nueva pestaña)
+                    </a>.
+                  </p>
+                </div>
+              </div>
+            </div>
+            </div>
+          </section>
+
+          <p class="footer-note">
+            Panel V2 · Vista de supervisión ·
+            <a href="/dashboard.html" id="footerClassicLink" target="_blank" rel="noopener">Dashboard clásico</a>
+            (opcional, nueva pestaña)
+          </p>
+        </main>
+      </div>
+    </div>
+
+    <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+    <script src="/dashboard-v2.js?v=5"></script>
+  </body>
+</html>
