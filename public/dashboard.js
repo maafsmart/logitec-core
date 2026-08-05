@@ -404,7 +404,7 @@ function renderAviatProjectChips(container, options = {}) {
       : "Cargando proyectos de AVIAT…";
   const navHint =
     mode === "catalog"
-      ? `<p class="project-chips-hint">Los chips son navegables: elige un proyecto para abrir su catálogo. Usa las tarjetas para catálogo o existencias.</p>`
+      ? `<p class="project-chips-hint">Selecciona un proyecto para ver su catálogo filtrado.</p>`
       : "";
   container.innerHTML = `<div class="project-chips-label">Proyectos de ${escCell(
     PRIMARY_CLIENT_AVIAT_NAME
@@ -5705,74 +5705,7 @@ function renderInfoList(listId, items, emptyMsg) {
 }
 
 function renderProjectsModule() {
-  const projectsMap = new Map();
-  for (const p of getKnownProjects()) {
-    if (p?.code) projectsMap.set(String(p.code).toUpperCase(), { code: p.code, name: p.name || p.code });
-  }
-  for (const p of collectAviatProjectsFromData()) {
-    if (p?.code) {
-      const key = String(p.code).toUpperCase();
-      const existing = projectsMap.get(key);
-      if (!existing || String(p.name || "").length > String(existing.name || "").length) {
-        projectsMap.set(key, { code: p.code, name: p.name || p.code });
-      }
-    }
-  }
-  const projects = Array.from(projectsMap.values()).sort((a, b) =>
-    String(a.name).localeCompare(String(b.name), "es")
-  );
-
   renderAviatProjectChips(document.getElementById("projectsViewChips"), { mode: "catalog" });
-
-  const el = document.getElementById("projectsKnownList");
-  if (el) {
-    if (!projects.length) {
-      el.innerHTML = `<li class="project-card project-card-empty">${escCell(
-        "Aún no hay proyectos detectados. Agrégalos desde Catálogo y productos."
-      )}</li>`;
-    } else {
-      el.innerHTML = projects
-        .map((p) => {
-          const active =
-            normalizeProjectCode(getActiveAviatProject()) === normalizeProjectCode(p.code)
-              ? " is-active"
-              : "";
-          return `<li class="project-card${active}" data-project-code="${escCell(p.code)}">
-            <button type="button" class="project-card-main" data-project-open-catalog="${escCell(
-              p.code
-            )}" title="Ver catálogo de ${escCell(p.name)}">
-              <strong class="project-card-name">${escCell(p.name)}</strong>
-              <span class="project-card-code">${escCell(p.code)}</span>
-              <span class="project-card-hint">Clic para ver catálogo →</span>
-            </button>
-            <div class="project-card-actions">
-              <button type="button" class="btn-secondary btn-compact" data-project-open-catalog="${escCell(
-                p.code
-              )}">Ver catálogo</button>
-              <button type="button" class="btn-secondary btn-compact" data-project-open-stock="${escCell(
-                p.code
-              )}">Ver existencias</button>
-            </div>
-          </li>`;
-        })
-        .join("");
-      el.querySelectorAll("[data-project-open-catalog]").forEach((btn) => {
-        btn.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          openProjectCatalogView(btn.getAttribute("data-project-open-catalog"));
-        });
-      });
-      el.querySelectorAll("[data-project-open-stock]").forEach((btn) => {
-        btn.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          openProjectInventoryView(btn.getAttribute("data-project-open-stock"));
-        });
-      });
-    }
-  }
-
   const addBtn = document.getElementById("projectsAddBtn");
   const ccAdd = document.getElementById("ccAddProjectBtn");
   const canAdd = currentRole === "ADMIN" || currentRole === "SUPERVISOR";
