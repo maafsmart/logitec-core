@@ -1461,6 +1461,33 @@ function statusBadge(value) {
   return `<span class="badge ${tone}">${escCell(raw)}</span>`;
 }
 
+/** Labels en español para códigos técnicos de actividad/trazabilidad (solo UI). */
+function formatActivityType(code) {
+  if (code == null || code === undefined) return "No especificado";
+  const raw = String(code).trim();
+  if (!raw || raw.toUpperCase() === "N/D") return "No especificado";
+
+  const MAP = {
+    inventory_csv_batch: "Carga de inventario",
+    catalog_bulk: "Carga de catálogo",
+    CSV_CATALOG: "Importación de catálogo",
+    CSV_INVENTORY: "Importación de inventario",
+    MANUAL_IN: "Entrada manual",
+    MANUAL_OUT: "Salida manual",
+    PICK: "Picking / surtido",
+    IMPORT_PICK: "Picking por importación",
+    manual: "Manual",
+    bulk: "Carga masiva"
+  };
+
+  if (MAP[raw] != null) return MAP[raw];
+  const lower = raw.toLowerCase();
+  for (const [key, label] of Object.entries(MAP)) {
+    if (key.toLowerCase() === lower) return label;
+  }
+  return raw.replace(/_/g, " ");
+}
+
 function taskStatusBadge(status) {
   const key = String(status || "").toUpperCase();
   const label = TASK_STATUS_LABELS[key] || status || "—";
@@ -1768,7 +1795,7 @@ function buildTaskActionHtml(t) {
   const id = escCell(t.id);
   const terminal = t.status === "COMPLETED" || t.status === "CANCELLED" || t.status === "REJECTED";
 
-  // Avisos internos: comunicación, no workflow operativo
+  // Avisos internos: Abrir + Marcar atendido (comunicación, no workflow denso)
   if (taskViewMode === "notices" || isInternalNoticeTask(t)) {
     buttons.push(
       `<button type="button" class="btn-table btn-compact task-view" data-task-id="${id}" data-task-action="view">Abrir</button>`
@@ -1781,44 +1808,10 @@ function buildTaskActionHtml(t) {
     return `<div class="task-actions-cell">${buttons.join("")}</div>`;
   }
 
+  // Tareas operativas: solo Abrir; acciones fuertes viven en el detalle
   buttons.push(
     `<button type="button" class="btn-table btn-compact task-view" data-task-id="${id}" data-task-action="view">Abrir</button>`
   );
-
-  if (terminal) {
-    return `<div class="task-actions-cell">${buttons.join("")}</div>`;
-  }
-
-  if (!t.assignedToId && (canAssignTasks() || (currentRole === "OPERATOR" && t.createdById === currentUserId))) {
-    if (canActOnTask(t) || canAssignTasks()) {
-      buttons.push(
-        `<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="claim">Tomar</button>`
-      );
-    }
-  }
-
-  if (canActOnTask(t) && (t.assignedToId === currentUserId || canManageAllTasks())) {
-    if (t.status === "PENDING" || t.status === "ASSIGNED") {
-      buttons.push(
-        `<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="start">Iniciar</button>`
-      );
-    }
-    if (t.status === "IN_PROGRESS" || t.status === "ASSIGNED" || t.status === "PENDING") {
-      buttons.push(
-        `<button type="button" class="btn-table btn-compact task-act" data-task-id="${id}" data-task-action="complete">Completar</button>`
-      );
-    }
-  }
-
-  if (canCancelOrRejectTasks()) {
-    buttons.push(
-      `<button type="button" class="btn-table btn-compact btn-danger task-act" data-task-id="${id}" data-task-action="cancel">Cancelar</button>`
-    );
-    buttons.push(
-      `<button type="button" class="btn-table btn-compact btn-danger task-act" data-task-id="${id}" data-task-action="reject">Rechazar</button>`
-    );
-  }
-
   return `<div class="task-actions-cell">${buttons.join("")}</div>`;
 }
 
@@ -2426,6 +2419,21 @@ function wireTasksModuleUi() {
       renderTasksTable();
     });
   }
+  const filterToggle = document.getElementById("taskFilterToggleBtn");
+  const filtersEl = document.getElementById("taskFilters");
+  if (filterToggle && filtersEl && filterToggle.dataset.wired !== "1") {
+    filterToggle.dataset.wired = "1";
+    const syncFilterToggleLabel = () => {
+      const collapsed = filtersEl.classList.contains("is-collapsed");
+      filterToggle.textContent = collapsed ? "Mostrar filtros" : "Ocultar filtros";
+      filterToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    };
+    filterToggle.addEventListener("click", () => {
+      filtersEl.classList.toggle("is-collapsed");
+      syncFilterToggleLabel();
+    });
+    syncFilterToggleLabel();
+  }
 }
 
 function resetPickingFlow() {
@@ -2763,7 +2771,16 @@ const TRACE_COLUMNS = [
   { label: "Fecha", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatDateShort(r.createdAt), title: (r) => formatDateShort(r.createdAt) },
   { label: "Proyecto", sortKey: (r) => getAviatProjectDisplayFromRow(r), render: (r) => renderCellWithClamp(getAviatProjectDisplayFromRow(r), "cell-truncate", 22), title: (r) => getAviatProjectDisplayFromRow(r) },
   { label: "Lote", sortKey: (r) => extractLoteFromRow(r), render: (r) => renderCellEllipsis(extractLoteFromRow(r)), title: (r) => extractLoteFromRow(r) },
-  { label: "Tipo", sortKey: (r) => r.type || r.subtype || "", render: (r) => statusBadge(r.subtype || r.type) },
+  {
+    label: "Tipo",
+    sortKey: (r) => formatActivityType(r.subtype || r.type),
+    render: (r) => {
+      const code = r.subtype || r.type;
+      const label = formatActivityType(code);
+      return `<span class="badge info" title="${escCell(code == null || code === "" ? "N/D" : String(code))}">${escCell(label)}</span>`;
+    },
+    title: (r) => formatActivityType(r.subtype || r.type)
+  },
   { label: "SKU / Código", sortKey: (r) => r.product?.sku || "", render: (r) => escCell(formatSkuBarcode(r.product)), title: (r) => r.product?.sku || "" },
   { label: "Producto", sortKey: (r) => r.product?.name || "", render: (r) => renderCellWithClamp(r.product?.name || "—", "cell-truncate", 28), title: (r) => r.product?.name || "" },
   { label: "Antes", align: "right", sortKey: () => 0, sortType: "number", render: () => "—" },
@@ -4765,14 +4782,51 @@ function renderInfoList(listId, items, emptyMsg) {
   el.innerHTML = items.map((t) => `<li>${escCell(t)}</li>`).join("");
 }
 
+function renderEntityCardGrid(gridId, items, emptyMsg, mapItem) {
+  const grid = document.getElementById(gridId);
+  if (!grid) return;
+  if (!items.length) {
+    grid.innerHTML = `<div class="entity-empty">${escCell(emptyMsg)}</div>`;
+    return;
+  }
+  grid.innerHTML = items.map((item) => mapItem(item)).join("");
+}
+
 function renderProjectsModule() {
   const projects = getKnownProjects();
+  const activeProject = getActiveAviatProject();
   renderAviatProjectChips(document.getElementById("projectsViewChips"));
-  renderInfoList(
-    "projectsKnownList",
-    projects.map((p) => `${p.name} · ${p.code}`),
-    "Aún no hay proyectos detectados. Agrégalos desde Catálogo y productos."
+  renderEntityCardGrid(
+    "projectsGrid",
+    projects,
+    "Aún no hay proyectos detectados. Agrégalos desde Catálogo y productos.",
+    (p) => {
+      const code = String(p.code || "");
+      const name = String(p.name || code || "Proyecto");
+      const isActive =
+        activeProject !== AVIAT_PROJECT_ALL &&
+        String(activeProject).toUpperCase() === code.toUpperCase();
+      return `<article class="entity-card project-entity-card${isActive ? " is-active" : ""}" role="listitem" data-pick-aviat-project="${escCell(code)}" title="${escCell(name)} · ${escCell(code)}">
+        <div>
+          <span class="entity-card-kicker">Proyecto AVIAT</span>
+          <h4 class="entity-card-title">${escCell(name)}</h4>
+        </div>
+        <div>
+          <p class="entity-card-code">${escCell(code)}</p>
+          <div class="entity-card-meta">Filtrar inventario y catálogo</div>
+        </div>
+      </article>`;
+    }
   );
+  const grid = document.getElementById("projectsGrid");
+  if (grid) {
+    grid.querySelectorAll("[data-pick-aviat-project]").forEach((card) => {
+      card.addEventListener("click", () => {
+        setActiveAviatProject(card.getAttribute("data-pick-aviat-project"));
+        renderProjectsModule();
+      });
+    });
+  }
   const addBtn = document.getElementById("projectsAddBtn");
   const ccAdd = document.getElementById("ccAddProjectBtn");
   const canAdd = currentRole === "ADMIN" || currentRole === "SUPERVISOR";
@@ -4781,18 +4835,36 @@ function renderProjectsModule() {
 }
 
 function renderWarehousesModule() {
-  renderInfoList(
-    "warehousesKnownList",
-    getKnownWarehouses(),
-    "No hay almacenes detectados. Al capturar movimientos aparecerán aquí."
+  const warehouses = getKnownWarehouses();
+  renderEntityCardGrid(
+    "warehousesGrid",
+    warehouses,
+    "No hay almacenes detectados. Al capturar movimientos aparecerán aquí.",
+    (wh) =>
+      `<article class="entity-card" role="listitem" title="${escCell(wh)}">
+        <div>
+          <span class="entity-card-kicker">Almacén</span>
+          <h4 class="entity-card-title">${escCell(wh)}</h4>
+        </div>
+        <p class="entity-card-code">${escCell(wh)}</p>
+      </article>`
   );
 }
 
 function renderLocationsModule() {
-  renderInfoList(
-    "locationsKnownList",
-    getKnownLocations(),
-    "No hay ubicaciones detectadas todavía."
+  const locations = getKnownLocations();
+  renderEntityCardGrid(
+    "locationsGrid",
+    locations,
+    "No hay ubicaciones detectadas todavía.",
+    (loc) =>
+      `<article class="entity-card" role="listitem" title="${escCell(loc)}">
+        <div>
+          <span class="entity-card-kicker">Ubicación</span>
+          <h4 class="entity-card-title">${escCell(loc)}</h4>
+        </div>
+        <p class="entity-card-code">${escCell(loc)}</p>
+      </article>`
   );
 }
 
@@ -5688,7 +5760,12 @@ function applyRoleNavigation(role) {
   createCustomerForm.classList.toggle("hidden", role !== "ADMIN");
   if (importSection) importSection.classList.remove("hidden");
   if (catalogImportSection) catalogImportSection.classList.remove("hidden");
-  movementForm.classList.toggle("hidden", role !== "ADMIN");
+  const manualAdjustPanel = document.getElementById("manualAdjustPanel");
+  if (manualAdjustPanel) {
+    manualAdjustPanel.classList.toggle("hidden", role !== "ADMIN");
+    if (role !== "ADMIN") manualAdjustPanel.open = false;
+  }
+  if (movementForm) movementForm.classList.remove("hidden");
   const openCatBtn = document.getElementById("openCatalogImportBtn");
   const openInvBtn = document.getElementById("openInventoryImportBtn");
   if (openCatBtn) openCatBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
