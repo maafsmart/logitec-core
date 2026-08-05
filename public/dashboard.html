@@ -290,6 +290,69 @@
       .smart-other-input.hidden {
         display: none !important;
       }
+      .product-typeahead {
+        position: relative;
+        width: 100%;
+      }
+      .product-typeahead-list {
+        position: absolute;
+        z-index: 80;
+        left: 0;
+        right: 0;
+        top: calc(100% + 4px);
+        max-height: 280px;
+        overflow: auto;
+        margin: 0;
+        padding: 4px 0;
+        list-style: none;
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        box-shadow: 0 10px 28px rgba(15, 76, 129, 0.14);
+      }
+      .product-typeahead-list.hidden {
+        display: none !important;
+      }
+      .product-typeahead-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: 0;
+        background: transparent;
+        padding: 8px 12px;
+        cursor: pointer;
+        color: var(--text);
+        font: inherit;
+      }
+      .product-typeahead-item:hover,
+      .product-typeahead-item[aria-selected="true"] {
+        background: var(--accent-soft);
+      }
+      .product-typeahead-item .pta-sku {
+        font-weight: 700;
+        font-size: 0.9rem;
+        color: var(--accent-dark);
+        word-break: break-all;
+      }
+      .product-typeahead-item .pta-name {
+        font-size: 0.82rem;
+        margin-top: 2px;
+        color: var(--text);
+      }
+      .product-typeahead-item .pta-meta {
+        font-size: 0.75rem;
+        color: var(--muted);
+        margin-top: 3px;
+        line-height: 1.35;
+      }
+      .product-typeahead-empty {
+        padding: 10px 12px;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+      .field.compact .product-typeahead-list {
+        min-width: min(420px, 80vw);
+      }
       .assignee-hint {
         margin: 4px 0 0;
         font-size: 0.78rem;
@@ -2949,16 +3012,19 @@
             <form id="scanForm" class="picking-scan-card">
               <div class="field full">
                 <label for="scanInput">Código de barras / SKU</label>
-                <input
-                  id="scanInput"
-                  class="scan-input-lg"
-                  type="text"
-                  inputmode="text"
-                  autocomplete="off"
-                  autocapitalize="off"
-                  spellcheck="false"
-                  placeholder="Apunta el lector o escribe el código"
-                />
+                <div class="product-typeahead" data-pta="picking">
+                  <input
+                    id="scanInput"
+                    class="scan-input-lg"
+                    type="text"
+                    inputmode="text"
+                    autocomplete="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    placeholder="Buscar o escanear: SKU, barras, nombre o proyecto…"
+                  />
+                  <div id="scanSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                </div>
               </div>
               <div class="form-grid" style="margin-top:10px">
                 <div class="field">
@@ -3088,7 +3154,10 @@
                   </div>
                   <div class="field compact">
                     <label for="invFilterSku">SKU</label>
-                    <input id="invFilterSku" type="text" placeholder="SKU" autocomplete="off" />
+                    <div class="product-typeahead" data-pta="inventory">
+                      <input id="invFilterSku" type="text" placeholder="SKU, barras, nombre…" autocomplete="off" />
+                      <div id="invFilterSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                    </div>
                   </div>
                   <div class="field compact">
                     <label for="invFilterProducto">Producto</label>
@@ -3313,7 +3382,16 @@
                 </div>
                 <div class="field">
                   <label for="inboundSku">SKU / Código de barras</label>
-                  <select id="inboundSku"><option value="">— Seleccionar —</option></select>
+                  <div class="product-typeahead" data-pta="inbound">
+                    <input
+                      id="inboundSku"
+                      type="text"
+                      autocomplete="off"
+                      spellcheck="false"
+                      placeholder="Buscar SKU, barras, nombre o proyecto…"
+                    />
+                    <div id="inboundSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                  </div>
                 </div>
                 <div class="field">
                   <label for="inboundProduct">Producto</label>
@@ -3391,7 +3469,16 @@
                 </div>
                 <div class="field">
                   <label for="outboundSku">SKU / Código de barras</label>
-                  <select id="outboundSku"><option value="">— Seleccionar —</option></select>
+                  <div class="product-typeahead" data-pta="outbound">
+                    <input
+                      id="outboundSku"
+                      type="text"
+                      autocomplete="off"
+                      spellcheck="false"
+                      placeholder="Buscar SKU, barras, nombre o proyecto…"
+                    />
+                    <div id="outboundSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                  </div>
                 </div>
                 <div class="field">
                   <label for="outboundProduct">Producto</label>
@@ -3491,7 +3578,16 @@
               <div id="reqSimpleFields" class="form-grid" style="margin-top:8px">
                 <div class="field">
                   <label for="reqSku">SKU / Código de barras</label>
-                  <select id="reqSku"><option value="">— Seleccionar —</option></select>
+                  <div class="product-typeahead" data-pta="req">
+                    <input
+                      id="reqSku"
+                      type="text"
+                      autocomplete="off"
+                      spellcheck="false"
+                      placeholder="Buscar SKU, barras, nombre o proyecto…"
+                    />
+                    <div id="reqSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                  </div>
                 </div>
                 <div class="field">
                   <label for="reqQty">Cantidad solicitada</label>

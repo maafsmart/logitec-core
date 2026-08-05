@@ -2897,11 +2897,17 @@ function filterStockRowsWithFilters(rows, filters) {
     const p = row.product || {};
     const project = getAviatProjectFromRow(row);
     const lote = extractLoteFromRow(row);
+    const skuOk =
+      !filters.sku ||
+      matchesFilter(p.sku, filters.sku) ||
+      matchesSkuFlexible(p.sku, filters.sku) ||
+      matchesFilter(p.barcode, filters.sku) ||
+      matchesSkuFlexible(p.barcode, filters.sku);
     return (
       matchesFilter(project.name, filters.cliente) &&
       matchesFilter(project.code, filters.customer) &&
       matchesFilter(lote, filters.lote) &&
-      matchesFilter(p.sku, filters.sku) &&
+      skuOk &&
       matchesFilter(p.name, filters.producto) &&
       matchesFilter(row.location?.code, filters.ubicacion) &&
       matchesFilter(inventoryStatusSearchBlob(row.status), filters.status)
@@ -4994,6 +5000,504 @@ function resolveProductBySkuOrCode(raw) {
   );
 }
 
+const PRODUCT_TYPEAHEAD_MIN_CHARS = 2;
+const PRODUCT_TYPEAHEAD_MAX = 24;
+/** @type {WeakMap<HTMLElement, { items: any[], active: number, timer: any }>} */
+const productTypeaheadState = new WeakMap();
+
+function stripInventorySearchNoise(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+/** Puntuación de coincidencia flexible (SKU con guiones/asteriscos, fragmento, texto). */
+function inventorySearchMatchScore(haystack, query) {
+  if (haystack == null || haystack === "" || !query) return 0;
+  const h = String(haystack).toUpperCase().trim();
+  const q = String(query).toUpperCase().trim();
+  if (!h || !q) return 0;
+  if (h === q) return 100;
+  if (h.startsWith(q)) return 85;
+  if (h.includes(q)) return 60;
+  const hn = stripInventorySearchNoise(h);
+  const qn = stripInventorySearchNoise(q);
+  if (qn.length >= 2) {
+    if (hn === qn) return 95;
+    if (hn.startsWith(qn)) return 75;
+    if (hn.includes(qn)) return 55;
+  }
+  return 0;
+}
+
+function matchesSkuFlexible(sku, query) {
+  if (!query) return true;
+  return inventorySearchMatchScore(sku, query) > 0;
+}
+
+/**
+ * Sugerencias de catálogo y/o líneas de inventario para typeahead.
+ * @param {string} query
+ * @param {{ mode?: "catalog"|"stock"|"both", customerCode?: string, max?: number }} [opts]
+ */
+function searchProductSuggestions(query, opts = {}) {
+  const q = String(query || "").trim();
+  if (q.length < PRODUCT_TYPEAHEAD_MIN_CHARS) return [];
+  const mode = opts.mode || "both";
+  const customerCode = String(opts.customerCode || "").trim();
+  const customerUpper = customerCode.toUpperCase();
+  const max = opts.max || PRODUCT_TYPEAHEAD_MAX;
+  /** @type {any[]} */
+  const items = [];
+
+  const scoreProductFields = (p) => {
+    let score = 0;
+    score = Math.max(score, inventorySearchMatchScore(p?.sku, q) * 3);
+    score = Math.max(score, inventorySearchMatchScore(p?.barcode, q) * 2.6);
+    score = Math.max(score, inventorySearchMatchScore(p?.name, q) * 2);
+    score = Math.max(score, inventorySearchMatchScore(p?.customer?.code, q) * 1.6);
+    score = Math.max(score, inventorySearchMatchScore(p?.customer?.name, q) * 1.5);
+    return score;
+  };
+
+  if (mode === "catalog" || mode === "both") {
+    for (const p of Array.isArray(productsCache) ? productsCache : []) {
+      if (!p?.sku) continue;
+      if (customerCode && String(p.customer?.code || "").toUpperCase() !== customerUpper) continue;
+      const score = scoreProductFields(p);
+      if (score <= 0) continue;
+      items.push({
+        kind: "catalog",
+        score,
+        key: `cat:${p.sku}:${p.customer?.code || ""}`,
+        sku: p.sku,
+        barcode: p.barcode || "",
+        productName: p.name || "",
+        projectCode: p.customer?.code || "",
+        projectName: p.customer?.name || p.customer?.code || "",
+        warehouse: p.defaultWarehouse || p.warehouse || "",
+        location: "",
+        status: "",
+        qty: null,
+        inventoryId: "",
+        product: p
+      });
+    }
+  }
+
+  if (mode === "stock" || mode === "both") {
+    for (const row of Array.isArray(stockRowsCache) ? stockRowsCache : []) {
+      const p = row?.product || {};
+      if (!p.sku) continue;
+      const project = getAviatProjectFromRow(row);
+      if (customerCode && String(project.code || p.customer?.code || "").toUpperCase() !== customerUpper) continue;
+      let score = scoreProductFields(p);
+      score = Math.max(score, inventorySearchMatchScore(project.code, q) * 1.6);
+      score = Math.max(score, inventorySearchMatchScore(project.name, q) * 1.5);
+      score = Math.max(score, inventorySearchMatchScore(row.location?.code, q) * 1.2);
+      score = Math.max(score, inventorySearchMatchScore(row.status, q) * 0.8);
+      score = Math.max(score, inventorySearchMatchScore(formatInventoryStatus(row.status), q) * 0.8);
+      if (score <= 0) continue;
+      items.push({
+        kind: "stock",
+        score: score + 4,
+        key: `stock:${row.id || `${p.sku}:${row.location?.code}:${row.status}`}`,
+        sku: p.sku,
+        barcode: p.barcode || "",
+        productName: p.name || "",
+        projectCode: project.code || p.customer?.code || "",
+        projectName: project.name || p.customer?.name || "",
+        warehouse: row.location?.warehouse || p.defaultWarehouse || p.warehouse || "",
+        location: row.location?.code || "",
+        status: row.status || "",
+        qty: row.qty,
+        inventoryId: row.id || "",
+        product: p,
+        stockRow: row
+      });
+    }
+  }
+
+  items.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const skuCmp = String(a.sku || "").localeCompare(String(b.sku || ""), "es");
+    if (skuCmp) return skuCmp;
+    return String(a.location || "").localeCompare(String(b.location || ""), "es");
+  });
+  return items.slice(0, max);
+}
+
+function setSelectValueFlexible(selectId, value, { allowCreate = false, labelFn = null } = {}) {
+  const sel = document.getElementById(selectId);
+  if (!sel || value == null || value === "") return false;
+  const str = String(value);
+  if ([...sel.options].some((o) => o.value === str)) {
+    sel.value = str;
+    return true;
+  }
+  const found = [...sel.options].find((o) => o.value && o.value.toUpperCase() === str.toUpperCase());
+  if (found) {
+    sel.value = found.value;
+    return true;
+  }
+  if (allowCreate) {
+    const opt = document.createElement("option");
+    opt.value = str;
+    opt.textContent = typeof labelFn === "function" ? labelFn(str) : str;
+    sel.appendChild(opt);
+    sel.value = str;
+    return true;
+  }
+  return false;
+}
+
+function setSmartFieldValue(baseId, value) {
+  if (value == null || value === "") return;
+  const str = String(value);
+  const sel = document.getElementById(`${baseId}Select`);
+  const inp = document.getElementById(baseId);
+  if (sel) {
+    const match = [...sel.options].find((o) => o.value && o.value.toUpperCase() === str.toUpperCase());
+    if (match) {
+      sel.value = match.value;
+      if (inp) {
+        inp.value = match.value;
+        inp.classList.add("hidden");
+      }
+      return;
+    }
+    if ([...sel.options].some((o) => o.value === SMART_OTHER)) {
+      sel.value = SMART_OTHER;
+      if (inp) {
+        inp.value = str;
+        inp.classList.remove("hidden");
+      }
+      return;
+    }
+  }
+  if (inp) inp.value = str;
+}
+
+function hideProductTypeaheadList(listEl) {
+  if (!listEl) return;
+  listEl.classList.add("hidden");
+  listEl.hidden = true;
+  listEl.innerHTML = "";
+}
+
+function showProductTypeaheadList(listEl, items, activeIdx, onPick) {
+  if (!listEl) return;
+  if (!items.length) {
+    listEl.innerHTML = `<div class="product-typeahead-empty">Sin coincidencias. Sigue escribiendo o usa el código completo.</div>`;
+    listEl.classList.remove("hidden");
+    listEl.hidden = false;
+    return;
+  }
+  listEl.innerHTML = items
+    .map((item, idx) => {
+      const qtyPart =
+        item.qty != null && item.qty !== ""
+          ? ` · qty ${formatQty(item.qty)}`
+          : item.kind === "catalog"
+            ? " · catálogo"
+            : "";
+      const statusPart = item.status ? ` · ${formatInventoryStatus(item.status)}` : "";
+      const locPart = item.location || "—";
+      const whPart = item.warehouse || "—";
+      const projectPart = item.projectName
+        ? `${item.projectName}${item.projectCode ? ` (${item.projectCode})` : ""}`
+        : item.projectCode || "—";
+      return `<button type="button" class="product-typeahead-item" role="option" data-pta-idx="${idx}" aria-selected="${
+        idx === activeIdx ? "true" : "false"
+      }">
+        <div class="pta-sku">${escCell(item.sku)}${item.barcode && item.barcode !== item.sku ? ` · ${escCell(item.barcode)}` : ""}</div>
+        <div class="pta-name">${escCell(item.productName || "—")}</div>
+        <div class="pta-meta">${escCell(projectPart)} · ${escCell(whPart)} · ${escCell(locPart)}${escCell(
+        statusPart
+      )}${escCell(qtyPart)}</div>
+      </button>`;
+    })
+    .join("");
+  listEl.classList.remove("hidden");
+  listEl.hidden = false;
+  listEl.querySelectorAll("[data-pta-idx]").forEach((btn) => {
+    btn.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      const i = Number(btn.getAttribute("data-pta-idx"));
+      if (items[i]) onPick(items[i]);
+    });
+  });
+}
+
+/**
+ * Autocomplete visual de SKU/producto. Solo llena campos; no mueve inventario.
+ * @param {{
+ *  input: HTMLInputElement,
+ *  listEl: HTMLElement,
+ *  mode?: "catalog"|"stock"|"both",
+ *  getCustomerCode?: () => string,
+ *  onSelect: (item: any) => void,
+ *  minChars?: number
+ * }} cfg
+ */
+function wireProductTypeahead(cfg) {
+  const input = cfg.input;
+  const listEl = cfg.listEl;
+  if (!input || !listEl || input.dataset.ptaWired === "1") return;
+  input.dataset.ptaWired = "1";
+  input.setAttribute("autocomplete", "off");
+  const minChars = cfg.minChars ?? PRODUCT_TYPEAHEAD_MIN_CHARS;
+  const state = { items: /** @type {any[]} */ ([]), active: -1, timer: null };
+  productTypeaheadState.set(input, state);
+
+  const close = () => {
+    hideProductTypeaheadList(listEl);
+    state.items = [];
+    state.active = -1;
+  };
+
+  const pick = (item) => {
+    close();
+    cfg.onSelect(item);
+  };
+
+  const refresh = () => {
+    const q = input.value.trim();
+    if (q.length < minChars) {
+      close();
+      return;
+    }
+    const customerCode = typeof cfg.getCustomerCode === "function" ? cfg.getCustomerCode() : "";
+    state.items = searchProductSuggestions(q, {
+      mode: cfg.mode || "both",
+      customerCode: customerCode || "",
+      max: PRODUCT_TYPEAHEAD_MAX
+    });
+    state.active = state.items.length ? 0 : -1;
+    showProductTypeaheadList(listEl, state.items, state.active, pick);
+  };
+
+  input.addEventListener("input", () => {
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = setTimeout(refresh, 120);
+  });
+  input.addEventListener("focus", () => {
+    if (input.value.trim().length >= minChars) refresh();
+  });
+  input.addEventListener("blur", () => {
+    setTimeout(close, 160);
+  });
+  input.addEventListener("keydown", (ev) => {
+    if (listEl.classList.contains("hidden") || !state.items.length) {
+      if (ev.key === "Escape") close();
+      return;
+    }
+    if (ev.key === "ArrowDown") {
+      ev.preventDefault();
+      state.active = Math.min(state.items.length - 1, state.active + 1);
+      showProductTypeaheadList(listEl, state.items, state.active, pick);
+    } else if (ev.key === "ArrowUp") {
+      ev.preventDefault();
+      state.active = Math.max(0, state.active - 1);
+      showProductTypeaheadList(listEl, state.items, state.active, pick);
+    } else if (ev.key === "Enter" && state.active >= 0 && state.items[state.active]) {
+      ev.preventDefault();
+      pick(state.items[state.active]);
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      close();
+    }
+  });
+}
+
+function applyCatalogSuggestionToOps(prefix, item) {
+  const skuEl = document.getElementById(`${prefix}Sku`);
+  if (skuEl) {
+    skuEl.value = item.sku || "";
+    skuEl.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  const productEl = document.getElementById(`${prefix}Product`);
+  if (productEl) productEl.value = item.productName || item.product?.name || "";
+  if (item.projectCode) {
+    setSelectValueFlexible(`${prefix}Customer`, item.projectCode);
+    const cliente = document.getElementById(`${prefix}Cliente`);
+    if (cliente) cliente.value = item.projectName || item.projectCode;
+  }
+}
+
+function applyStockSuggestionToOps(prefix, item) {
+  applyCatalogSuggestionToOps(prefix, item);
+  populateSmartOperationalFields();
+  if (item.warehouse) setSmartFieldValue(`${prefix}Warehouse`, item.warehouse);
+  if (item.location) setSmartFieldValue(`${prefix}Location`, item.location);
+  if (item.status) {
+    setSelectValueFlexible(`${prefix}Status`, item.status, {
+      allowCreate: true,
+      labelFn: (code) => formatInventoryStatus(code)
+    });
+  }
+}
+
+function applyPickSuggestion(item) {
+  const scan = document.getElementById("scanInput");
+  if (scan) scan.value = item.sku || item.barcode || "";
+  populatePickContextSelects();
+  if (item.projectCode) setSelectValueFlexible("pickProject", item.projectCode);
+  if (item.warehouse) setSelectValueFlexible("pickWarehouse", item.warehouse);
+  if (item.location) {
+    const locSel = document.getElementById("pickLocation");
+    if (locSel) {
+      if (![...locSel.options].some((o) => o.value === item.location)) {
+        const opt = document.createElement("option");
+        opt.value = item.location;
+        opt.textContent = item.location;
+        locSel.appendChild(opt);
+      }
+      locSel.value = item.location;
+    }
+  }
+  if (item.status) setSelectValueFlexible("pickStatus", item.status);
+  const box = document.getElementById("pickCandidates");
+  if (box) {
+    if (item.kind === "stock" && item.inventoryId) {
+      box.dataset.inventoryId = item.inventoryId;
+      if (item.stockRow || item.location) {
+        renderPickCandidates([
+          {
+            inventoryId: item.inventoryId,
+            projectCode: item.projectCode,
+            location: item.location,
+            status: item.status,
+            qty: item.qty,
+            warehouse: item.warehouse
+          }
+        ]);
+      }
+    } else {
+      delete box.dataset.inventoryId;
+      clearPickCandidates();
+    }
+  }
+  if (typeof setScanResult === "function") {
+    if (item.kind === "stock") {
+      setScanResult(
+        `Línea elegida en búsqueda: ${item.location || "—"} / ${formatInventoryStatus(item.status)} (qty ${formatQty(item.qty)}). Confirma el surtido para descontar.`,
+        "ok"
+      );
+    } else {
+      setScanResult(
+        `Producto seleccionado: ${item.sku}. Si hay varias líneas de stock, elige ubicación/estatus antes de confirmar.`,
+        "ok"
+      );
+    }
+  }
+}
+
+function wireAllProductTypeaheads() {
+  const invSku = document.getElementById("invFilterSku");
+  const invList = document.getElementById("invFilterSkuSuggestions");
+  if (invSku instanceof HTMLInputElement && invList) {
+    wireProductTypeahead({
+      input: invSku,
+      listEl: invList,
+      mode: "both",
+      onSelect: (item) => {
+        invSku.value = item.sku || "";
+        const prod = document.getElementById("invFilterProducto");
+        if (prod && item.productName) prod.value = item.productName;
+        if (item.projectCode) {
+          const code = document.getElementById("invFilterCustomer");
+          if (code) code.value = item.projectCode;
+        }
+        if (item.projectName) {
+          const name = document.getElementById("invFilterCliente");
+          if (name) name.value = item.projectName;
+        }
+        if (item.location) {
+          const loc = document.getElementById("invFilterUbicacion");
+          if (loc) loc.value = item.location;
+        }
+        if (item.status) {
+          const st = document.getElementById("invFilterStatus");
+          if (st) st.value = formatInventoryStatus(item.status);
+        }
+        applyInventoryFilters();
+      }
+    });
+  }
+
+  const scan = document.getElementById("scanInput");
+  const scanList = document.getElementById("scanSkuSuggestions");
+  if (scan instanceof HTMLInputElement && scanList) {
+    wireProductTypeahead({
+      input: scan,
+      listEl: scanList,
+      mode: "both",
+      onSelect: (item) => applyPickSuggestion(item)
+    });
+    if (scan.dataset.ptaClearLine !== "1") {
+      scan.dataset.ptaClearLine = "1";
+      scan.addEventListener("input", () => {
+        const box = document.getElementById("pickCandidates");
+        if (!box?.dataset?.inventoryId) return;
+        delete box.dataset.inventoryId;
+        clearPickCandidates();
+      });
+    }
+  }
+
+  [
+    ["inboundSku", "inboundSkuSuggestions", "inbound", "catalog"],
+    ["outboundSku", "outboundSkuSuggestions", "outbound", "both"],
+    ["reqSku", "reqSkuSuggestions", "req", "catalog"]
+  ].forEach(([inputId, listId, prefix, mode]) => {
+    const input = document.getElementById(inputId);
+    const listEl = document.getElementById(listId);
+    if (!(input instanceof HTMLInputElement) || !listEl) return;
+    wireProductTypeahead({
+      input,
+      listEl,
+      mode,
+      getCustomerCode: () => document.getElementById(`${prefix}Customer`)?.value?.trim() || "",
+      onSelect: (item) => {
+        if (prefix === "outbound" && item.kind === "stock") {
+          applyStockSuggestionToOps(prefix, item);
+        } else {
+          applyCatalogSuggestionToOps(prefix, item);
+        }
+      }
+    });
+  });
+}
+
+function wireReqLineSkuTypeahead(input) {
+  if (!(input instanceof HTMLInputElement) || input.dataset.ptaWired === "1") return;
+  const wrap = input.closest(".product-typeahead") || input.parentElement;
+  let listEl = wrap?.querySelector(".product-typeahead-list");
+  if (!listEl && wrap) {
+    listEl = document.createElement("div");
+    listEl.className = "product-typeahead-list hidden";
+    listEl.setAttribute("role", "listbox");
+    listEl.hidden = true;
+    wrap.appendChild(listEl);
+  }
+  if (!listEl) return;
+  wireProductTypeahead({
+    input,
+    listEl,
+    mode: "catalog",
+    getCustomerCode: () => document.getElementById("reqCustomer")?.value?.trim() || "",
+    onSelect: (item) => {
+      input.value = item.sku || "";
+      if (item.projectCode) {
+        setSelectValueFlexible("reqCustomer", item.projectCode);
+        const cliente = document.getElementById("reqCliente");
+        if (cliente) cliente.value = item.projectName || item.projectCode;
+      }
+    }
+  });
+}
+
 function populateSmartOperationalFields() {
   const warehouses = getKnownWarehouses();
   const locations = getKnownLocations();
@@ -5140,6 +5644,22 @@ function fillCustomerSelect(selectId, clienteInputId) {
 function fillSkuSelect(selectId, customerCode, productInputId) {
   const sel = document.getElementById(selectId);
   if (!sel) return;
+  // Inputs typeahead: no options list; only sync product name if SKU is exact match.
+  if (sel.tagName !== "SELECT") {
+    if (productInputId) {
+      const inp = document.getElementById(productInputId);
+      const raw = String(sel.value || "").trim();
+      const prod = raw ? findProductBySku(raw) || resolveProductBySkuOrCode(raw) : null;
+      if (inp) {
+        if (prod && (!customerCode || prod.customer?.code === customerCode || !customerCode)) {
+          inp.value = prod.name || "";
+        } else if (!raw) {
+          inp.value = "";
+        }
+      }
+    }
+    return;
+  }
   const prev = sel.value;
   const list = productsCache.filter((p) => !customerCode || p.customer?.code === customerCode);
   sel.innerHTML =
@@ -5172,7 +5692,14 @@ function setOpsMessage(elId, text, isOk) {
 }
 
 function findProductBySku(sku) {
-  return productsCache.find((p) => p.sku === sku);
+  const q = String(sku || "").trim();
+  if (!q) return null;
+  const upper = q.toUpperCase();
+  return (
+    productsCache.find((p) => p.sku === q) ||
+    productsCache.find((p) => String(p.sku || "").toUpperCase() === upper) ||
+    null
+  );
 }
 
 async function submitOperationalMovement(kind) {
@@ -5660,7 +6187,9 @@ function appendReqBulkLine() {
   line.innerHTML = `
       <div class="field" style="margin:0">
         <label>SKU / Código</label>
-        <select data-req-line-sku>${getReqSkuOptionsHtml()}</select>
+        <div class="product-typeahead">
+          <input data-req-line-sku type="text" autocomplete="off" spellcheck="false" placeholder="Buscar SKU, barras o nombre…" />
+        </div>
       </div>
       <div class="field" style="margin:0">
         <label>Cantidad</label>
@@ -5674,6 +6203,8 @@ function appendReqBulkLine() {
   line.querySelector("[data-req-remove-line]")?.addEventListener("click", () => {
     if (wrap.querySelectorAll(".req-bulk-line").length > 1) line.remove();
   });
+  const skuInput = line.querySelector("[data-req-line-sku]");
+  if (skuInput instanceof HTMLInputElement) wireReqLineSkuTypeahead(skuInput);
   wrap.appendChild(line);
 }
 
@@ -5734,13 +6265,15 @@ function wireOperationalForms() {
     const sku = document.getElementById(skuId);
     if (sku && sku.dataset.opsWired !== "1") {
       sku.dataset.opsWired = "1";
-      sku.addEventListener("change", () => {
-        if (prodId) {
-          const prod = findProductBySku(sku.value);
-          const inp = document.getElementById(prodId);
-          if (inp) inp.value = prod?.name || "";
-        }
-      });
+      const syncProductName = () => {
+        if (!prodId) return;
+        const prod =
+          findProductBySku(sku.value) || resolveProductBySkuOrCode(String(sku.value || "").trim());
+        const inp = document.getElementById(prodId);
+        if (inp) inp.value = prod?.name || "";
+      };
+      sku.addEventListener("change", syncProductName);
+      sku.addEventListener("blur", syncProductName);
     }
   });
 
@@ -5769,6 +6302,8 @@ function wireOperationalForms() {
     exportProductsFilteredBtn.dataset.opsWired = "1";
     exportProductsFilteredBtn.addEventListener("click", () => void exportProductsCsvFiltered());
   }
+
+  wireAllProductTypeaheads();
 }
 
 async function submitMovement(event) {
