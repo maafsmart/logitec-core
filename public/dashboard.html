@@ -3536,13 +3536,19 @@
           <div id="moduleRequisitions" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Órdenes de surtido / Requisiciones</h3>
-              <p class="module-lead">Crea solicitudes para preparar productos de salida. Puede ser una orden simple o una orden por volumen.</p>
+              <p class="module-lead">
+                Crea solicitudes para preparar productos de salida. Puede ser una orden simple o una orden por volumen.
+              </p>
+              <p class="module-hint" style="margin:10px 0 0;padding:10px 12px;background:#eef6ff;border:1px solid #c5d9ef;border-radius:10px;color:var(--text)">
+                La orden de surtido solicita preparar mercancía. <strong>No descuenta inventario</strong> hasta confirmar
+                <strong>Picking</strong> o <strong>Salida / Despacho</strong>.
+              </p>
             </div>
             <div class="card-panel ops-form-panel">
               <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong> · No registra entrada de inventario</p>
               <p class="module-hint" style="margin:0 0 12px">
                 <strong>Entrada masiva</strong> aumenta existencias. <strong>Órdenes de surtido</strong> solicitan preparación de salida.
-                <strong>Picking</strong> ejecuta el surtido. <strong>Salidas</strong> confirman el despacho.
+                <strong>Picking</strong> ejecuta el surtido y puede descontar. <strong>Salidas</strong> confirman el despacho.
               </p>
               <h4 class="secondary-panel-title">Nueva orden de surtido</h4>
               <div class="req-mode-tabs" id="reqModeTabs" role="tablist">
@@ -3564,7 +3570,12 @@
                 </div>
                 <div class="field">
                   <label for="reqPriority">Prioridad</label>
-                  <input id="reqPriority" type="number" min="0" max="100" value="50" />
+                  <select id="reqPriority">
+                    <option value="80">Alta</option>
+                    <option value="50" selected>Normal</option>
+                    <option value="20">Baja</option>
+                  </select>
+                  <p class="assignee-hint" style="margin:4px 0 0">Alta / Normal / Baja. Internamente se envía 80 / 50 / 20 al sistema.</p>
                 </div>
                 <div class="field">
                   <label for="reqWarehouse">Almacén</label>
@@ -3607,7 +3618,9 @@
               <button type="button" id="reqSubmitBtn" class="btn-primary btn-compact">Crear orden</button>
             </div>
             <div class="card-panel" style="padding:0">
-              <p id="reqTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Órdenes / requisiciones registradas</p>
+              <p id="reqTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">
+                Órdenes registradas · Estado de la solicitud y avance de surtido (sin descuento automático de stock)
+              </p>
               <div class="grid-toolbar" style="padding:0 12px" data-grid-toolbar="requisitions">
                 <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
                   <button type="button" data-density="compact">Modo compacto</button>

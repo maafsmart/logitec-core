@@ -3175,6 +3175,38 @@ const TASK_STATUS_LABELS = {
   CANCELLED: "Cancelada"
 };
 
+/** Etiquetas de avance de surtido (columna en órdenes / requisiciones). */
+const REQ_PICKING_STATUS_LABELS = {
+  PENDING: "Pendiente de surtido",
+  ASSIGNED: "Pendiente de surtido",
+  IN_PROGRESS: "En surtido",
+  COMPLETED: "Surtido completado",
+  REJECTED: "Surtido rechazado",
+  CANCELLED: "Surtido cancelado"
+};
+
+function formatReqPriorityLabel(priority) {
+  const n = Number(priority);
+  if (!Number.isFinite(n)) return "—";
+  if (n >= 70) return "Alta";
+  if (n >= 40) return "Normal";
+  return "Baja";
+}
+
+function reqPickingStatusBadge(status) {
+  const key = String(status || "").toUpperCase();
+  const label = REQ_PICKING_STATUS_LABELS[key] || TASK_STATUS_LABELS[key] || status || "—";
+  const toneMap = {
+    PENDING: "status-pending",
+    ASSIGNED: "status-assigned",
+    IN_PROGRESS: "status-progress",
+    COMPLETED: "status-done",
+    REJECTED: "status-rejected",
+    CANCELLED: "status-cancelled"
+  };
+  return `<span class="badge ${toneMap[key] || "info"}" title="${escCell(key || "—")}">${escCell(label)}</span>`;
+}
+
 const MOVEMENT_COLUMNS = [
   { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
   { label: "Proyecto", sortKey: (m) => getAviatProjectDisplayFromRow(m), render: (m) => renderCellWithClamp(getAviatProjectDisplayFromRow(m), "cell-truncate", 22), title: (m) => getAviatProjectDisplayFromRow(m) },
@@ -3202,10 +3234,30 @@ const OPS_MOVEMENT_COLUMNS = [
 const REQ_COLUMNS = [
   { label: "Folio", sortKey: (t) => t.reference || "", render: (t) => renderCellWithClamp(t.reference, "cell-truncate", 18), title: (t) => t.reference || "" },
   { label: "Proyecto", sortKey: (t) => formatReqProyecto(t), render: (t) => renderCellWithClamp(formatReqProyecto(t), "cell-truncate", 22), title: (t) => formatReqProyecto(t) },
-  { label: "Prioridad", align: "right", sortKey: (t) => t.priority ?? 0, sortType: "number", render: (t) => String(t.priority ?? 0) },
+  {
+    label: "Prioridad",
+    sortKey: (t) => t.priority ?? 0,
+    sortType: "number",
+    render: (t) => {
+      const label = formatReqPriorityLabel(t.priority);
+      const raw = t.priority == null ? "—" : String(t.priority);
+      return `<span title="Valor interno: ${escCell(raw)}">${escCell(label)}</span>`;
+    },
+    title: (t) => `Prioridad ${formatReqPriorityLabel(t.priority)} (${t.priority ?? "—"})`
+  },
   { label: "Productos", sortKey: (t) => formatReqProducts(t), render: (t) => renderCellWithClamp(formatReqProducts(t), "cell-truncate", 28), title: (t) => formatReqProducts(t) },
-  { label: "Estado", sortKey: (t) => t.status || "", render: (t) => statusBadge(t.status) },
-  { label: "Picking", sortKey: (t) => t.status || "", render: (t) => (t.status === "COMPLETED" ? statusBadge("COMPLETED") : t.status === "IN_PROGRESS" ? statusBadge("IN_PROGRESS") : statusBadge("PENDING")) }
+  {
+    label: "Estado",
+    sortKey: (t) => t.status || "",
+    render: (t) => taskStatusBadge(t.status),
+    title: (t) => TASK_STATUS_LABELS[String(t.status || "").toUpperCase()] || t.status || ""
+  },
+  {
+    label: "Estado de surtido",
+    sortKey: (t) => t.status || "",
+    render: (t) => reqPickingStatusBadge(t.status),
+    title: (t) => REQ_PICKING_STATUS_LABELS[String(t.status || "").toUpperCase()] || t.status || ""
+  }
 ];
 
 const INCIDENT_COLUMNS = [
@@ -6145,8 +6197,8 @@ async function submitRequisition() {
     setOpsMessage(
       "reqMessage",
       reqOrderMode === "bulk"
-        ? `Orden por volumen creada: ${created} tarea(s) de surtido bajo folio ${reference}.`
-        : "Orden de surtido registrada correctamente.",
+        ? `Orden por volumen creada: ${created} tarea(s) de surtido bajo folio ${reference}. No descuenta inventario hasta Picking o Salida.`
+        : "Orden de surtido registrada. No descuenta inventario: confirma el surtido en Picking o la salida en Despacho.",
       true
     );
     document.getElementById("reqReference").value = "";
