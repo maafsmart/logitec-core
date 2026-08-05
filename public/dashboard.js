@@ -1195,7 +1195,7 @@ function openInventoryDetail(row) {
     { label: "Producto", value: p.name },
     { label: "Almacén", value: row.location?.warehouse },
     { label: "Ubicación", value: row.location?.code },
-    { label: "Status", value: row.status },
+    { label: "Estatus", value: formatInventoryStatus(row.status) },
     { label: "Cantidad", value: formatQty(row.qty) }
   ], [
     {
@@ -1495,6 +1495,30 @@ function wireGridToolbars() {
   });
 }
 
+/** Etiquetas visibles de estatus de inventario (el valor API permanece en inglés). */
+const INVENTORY_STATUS_LABELS_ES = {
+  AVAILABLE: "Disponible",
+  OPERATIONS: "Operaciones",
+  HOLD: "Retenido",
+  BLOCKED: "Bloqueado",
+  QUARANTINE: "Cuarentena"
+};
+
+/**
+ * Traduce códigos de estatus de inventario a español para UI.
+ * No modifica el valor usado en API/BD.
+ */
+function formatInventoryStatus(status) {
+  if (status == null || status === "") return "—";
+  const upper = String(status).trim().toUpperCase();
+  return INVENTORY_STATUS_LABELS_ES[upper] || String(status);
+}
+
+function inventoryStatusSearchBlob(status) {
+  const raw = status == null ? "" : String(status);
+  return `${raw} ${formatInventoryStatus(raw)}`.toLowerCase();
+}
+
 function inventoryStatusBadge(value) {
   const raw = value == null || value === "" ? "—" : String(value);
   const upper = raw.toUpperCase();
@@ -1506,7 +1530,8 @@ function inventoryStatusBadge(value) {
     QUARANTINE: "quarantine"
   };
   if (inventoryTones[upper]) {
-    return `<span class="badge status-badge ${inventoryTones[upper]}">${escCell(upper)}</span>`;
+    const label = formatInventoryStatus(upper);
+    return `<span class="badge status-badge ${inventoryTones[upper]}" title="${escCell(upper)}">${escCell(label)}</span>`;
   }
   return statusBadge(raw);
 }
@@ -1530,7 +1555,8 @@ function statusBadge(value) {
     QUARANTINE: "quarantine"
   };
   if (inventoryTones[upper]) {
-    return `<span class="badge ${inventoryTones[upper]}">${escCell(upper)}</span>`;
+    const label = formatInventoryStatus(upper);
+    return `<span class="badge ${inventoryTones[upper]}" title="${escCell(upper)}">${escCell(label)}</span>`;
   }
   const tone =
     raw.includes("COMPLETED") || raw.includes("RESOLVED") || raw === "OK"
@@ -2590,7 +2616,7 @@ function renderPickCandidates(candidates) {
     <div style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto">
       ${candidates
         .map((c, idx) => {
-          const label = `${c.projectCode || "—"} · ${c.location || "—"} · ${c.status || "—"} · qty ${c.qty ?? "—"}`;
+          const label = `${c.projectCode || "—"} · ${c.location || "—"} · ${formatInventoryStatus(c.status)} · qty ${c.qty ?? "—"}`;
           return `<button type="button" class="btn-secondary btn-compact" data-pick-candidate="${idx}" style="text-align:left;justify-content:flex-start">${escCell(label)}</button>`;
         })
         .join("")}
@@ -2634,7 +2660,7 @@ function renderPickCandidates(candidates) {
       }
       box.dataset.inventoryId = c.inventoryId || "";
       setScanResult(
-        `Línea seleccionada: ${c.location} / ${c.status} (qty ${c.qty}). Confirma de nuevo el surtido.`,
+        `Línea seleccionada: ${c.location} / ${formatInventoryStatus(c.status)} (qty ${c.qty}). Confirma de nuevo el surtido.`,
         "ok"
       );
     });
@@ -2878,7 +2904,7 @@ function filterStockRowsWithFilters(rows, filters) {
       matchesFilter(p.sku, filters.sku) &&
       matchesFilter(p.name, filters.producto) &&
       matchesFilter(row.location?.code, filters.ubicacion) &&
-      matchesFilter(row.status, filters.status)
+      matchesFilter(inventoryStatusSearchBlob(row.status), filters.status)
     );
   });
 }
@@ -2954,7 +2980,7 @@ const STOCK_COLUMNS_FULL = [
   { label: "Producto", sortKey: (r) => r.product?.name || "", sortType: "text" },
   { label: "Almacén", sortKey: (r) => r.location?.warehouse || "", sortType: "text" },
   { label: "Ubicación", sortKey: (r) => r.location?.code || "", sortType: "text" },
-  { label: "Status", sortKey: (r) => r.status || "", sortType: "text" },
+  { label: "Estatus", sortKey: (r) => r.status || "", sortType: "text" },
   { label: "Cantidad", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number" }
 ];
 
@@ -2964,7 +2990,7 @@ const STOCK_COLUMNS_CC = [
   { label: "SKU / Código de barras", sortKey: (r) => r.product?.sku || "" },
   { label: "Producto", sortKey: (r) => r.product?.name || "" },
   { label: "Ubicación", sortKey: (r) => r.location?.code || "" },
-  { label: "Status", sortKey: (r) => r.status || "" },
+  { label: "Estatus", sortKey: (r) => r.status || "" },
   { label: "Cantidad", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number" }
 ];
 
@@ -4248,7 +4274,7 @@ function buildImportFileStatusMessage(result, filename, nextStepLabel, importKin
     const kindLabel =
       importKind === "catalog"
         ? "Formato Logitec detectado: catálogo convertido con códigos de cliente limpios y nombre completo para revisión."
-        : "Formato Logitec detectado: inventario agrupado por cliente, SKU, ubicación y status.";
+        : "Formato Logitec detectado: inventario agrupado por cliente, SKU, ubicación y estatus.";
     const details = [
       kindLabel,
       result.sheetName ? `Hoja detectada: ${result.sheetName}.` : null,
@@ -4263,7 +4289,11 @@ function buildImportFileStatusMessage(result, filename, nextStepLabel, importKin
       const summary = result.importSummary;
       details.push(`Clientes detectados: ${summary.customers}.`);
       if (summary.locations != null) details.push(`Ubicaciones detectadas: ${summary.locations}.`);
-      if (summary.statuses?.length) details.push(`Status detectados: ${summary.statuses.join(", ")}.`);
+      if (summary.statuses?.length) {
+        details.push(
+          `Estatus detectados: ${summary.statuses.map((s) => formatInventoryStatus(s)).join(", ")}.`
+        );
+      }
       if (summary.financialRows) {
         details.push(
           `Datos financieros detectados en ${summary.financialRows} fila(s); pendientes de modelo de valorización (ver notes/reference).`
@@ -4278,7 +4308,9 @@ function buildImportFileStatusMessage(result, filename, nextStepLabel, importKin
     if (result.emptyQuantityRows) extras.push(`${result.emptyQuantityRows} filas con cantidad vacía (se usó 0)`);
     if (result.emptyLocationRows) extras.push(`${result.emptyLocationRows} filas con ubicación vacía`);
     if (result.unrecognizedStatusRows) {
-      extras.push(`${result.unrecognizedStatusRows} filas con STATUS no reconocido (se usó AVAILABLE y se conserva en reference)`);
+      extras.push(
+        `${result.unrecognizedStatusRows} filas con estatus no reconocido (se usó Disponible y se conserva en reference)`
+      );
     }
     if (result.conflicts?.length) {
       extras.push(`Conflictos (${result.conflicts.length}): ${result.conflicts.slice(0, 2).join("; ")}`);
@@ -5279,7 +5311,7 @@ async function submitRelocate() {
   const descriptionParts = [
     `Mover producto de ubicación ${fromLoc} a ubicación ${toLoc}.`,
     notesExtra ? `Motivo: ${notesExtra}` : null,
-    `Cantidad: ${qty}. Status de inventario objetivo: ${stockStatus}.`,
+    `Cantidad: ${qty}. Estatus de inventario objetivo: ${formatInventoryStatus(stockStatus)}.`,
     "Para proteger el inventario, la reubicación queda como tarea operativa pendiente de confirmación."
   ].filter(Boolean);
 
@@ -6485,7 +6517,7 @@ async function scanCode(event) {
       }
       clearPickCandidates();
       const candHint = payload.candidate
-        ? ` Disponible en ${payload.candidate.location} / ${payload.candidate.status}: ${payload.candidate.qty}.`
+        ? ` Disponible en ${payload.candidate.location} / ${formatInventoryStatus(payload.candidate.status)}: ${payload.candidate.qty}.`
         : "";
       scanHint.textContent = (payload.message || "No se pudo completar el picking.") + candHint;
       setScanResult(`Resultado: ERROR — ${payload.message || "sin descuento de stock"}`, "error");
@@ -6514,7 +6546,7 @@ async function scanCode(event) {
     setScanResult(
       `OK — descontado ${payload.pickedQty ?? qty} de ${product?.sku || code} ` +
         `(${product?.name || "producto"}) · Proyecto ${product?.projectCode || product?.projectName || "—"} · ` +
-        `${payload.warehouse || "—"} / ${payload.location || "—"} / ${payload.status || "—"} · ` +
+        `${payload.warehouse || "—"} / ${payload.location || "—"} / ${formatInventoryStatus(payload.status)} · ` +
         `Antes ${payload.quantityBefore ?? "—"} → Después ${payload.quantityAfter ?? "—"}.`,
       "ok"
     );
