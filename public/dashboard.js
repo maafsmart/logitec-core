@@ -763,6 +763,86 @@ function activateModule(moduleName) {
   navigateTo(section, moduleName);
 }
 
+/**
+ * Deep-link: #module=inbound (también tolera #module=inbound&x=1).
+ * Se aplica solo tras sesión/role listos.
+ */
+function parseModuleFromLocationHash(hash = window.location.hash) {
+  const raw = String(hash || "")
+    .replace(/^#/, "")
+    .trim();
+  if (!raw) return null;
+  // Formatos: module=inbound | module=inbound&foo=1 | ?module=inbound (si se coló query en hash)
+  let candidate = null;
+  if (/^module=/i.test(raw)) {
+    candidate = raw.slice(raw.indexOf("=") + 1);
+  } else if (raw.includes("module=")) {
+    try {
+      candidate = new URLSearchParams(raw).get("module");
+    } catch (_e) {
+      candidate = null;
+    }
+  }
+  if (!candidate) return null;
+  const moduleName = String(candidate).split("&")[0].split("/")[0].trim();
+  if (!moduleName) return null;
+  return moduleName;
+}
+
+function isRegisteredDashboardModule(moduleName) {
+  return Boolean(moduleName && Object.prototype.hasOwnProperty.call(MODULE_REGISTRY, moduleName));
+}
+
+/**
+ * Activa módulo desde hash o cae a Centro de Control / landing seguro.
+ * @returns {boolean} true si se intentó navegar por hash (válido o fallback por hash inválido/sin permiso)
+ */
+function applyModuleDeepLinkFromHash() {
+  if (!currentRole) return false;
+  const moduleName = parseModuleFromLocationHash();
+  if (!moduleName) return false;
+
+  const allowed = roleModules[currentRole] || [];
+  const canOpen =
+    isRegisteredDashboardModule(moduleName) && allowed.includes(moduleName);
+
+  if (!canOpen) {
+    const fallback =
+      allowed.includes("control")
+        ? "control"
+        : defaultLandingModule[currentRole] || roleModules[currentRole]?.[0] || "account";
+    navigateTo(resolveSectionForModule(fallback, "inicio"), fallback);
+    return true;
+  }
+
+  if (moduleName === "tasks") {
+    taskViewMode = "ops";
+  }
+
+  navigateTo(resolveSectionForModule(moduleName, null), moduleName);
+
+  if (moduleName === "tasks" && typeof applyTaskViewModeUi === "function") {
+    applyTaskViewModeUi();
+    updateTaskKpis(getTasksPoolForView());
+    if (typeof renderTasksTable === "function") renderTasksTable();
+    const typeSel = document.getElementById("taskType");
+    if (typeSel && taskViewMode === "notices") typeSel.value = "INTERNAL_NOTICE";
+  }
+
+  return true;
+}
+
+function wireHashModuleNavigation() {
+  if (window.__logitecHashNavWired) return;
+  window.__logitecHashNavWired = true;
+  window.addEventListener("hashchange", () => {
+    if (!currentRole) return;
+    // Hash vacío o sin module=: no forzar navegación (respeta clicks sin reescribir URL).
+    if (!parseModuleFromLocationHash()) return;
+    applyModuleDeepLinkFromHash();
+  });
+}
+
 async function authenticatedFetch(path, options = {}) {
   const response = await fetch(path, {
     method: "GET",
@@ -6258,9 +6338,14 @@ async function validateSession() {
         '<p class="subtitle" style="margin:0">El historial de picking no aplica a tu rol.</p>';
     }
     if (scanHint) scanHint.textContent = "";
-    const landing = defaultLandingModule[currentRole] || roleModules[currentRole]?.[0] || "account";
-    const landingSection = resolveSectionForModule(landing, "inicio");
-    navigateTo(landingSection, landing);
+    wireHashModuleNavigation();
+    // Preferir deep-link #module=… si es válido/permisible; si no hay hash, Centro de Control (por rol).
+    const openedFromHash = applyModuleDeepLinkFromHash();
+    if (!openedFromHash) {
+      const landing = defaultLandingModule[currentRole] || roleModules[currentRole]?.[0] || "account";
+      const landingSection = resolveSectionForModule(landing, "inicio");
+      navigateTo(landingSection, landing);
+    }
   } catch (_error) {
     if (statusBox) statusBox.innerHTML = '<span class="error">Error de red validando sesion.</span>';
     if (currentUserEmail) currentUserEmail.textContent = "No disponible";
