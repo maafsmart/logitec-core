@@ -2311,6 +2311,12 @@
         font-weight: 700;
         color: var(--muted);
       }
+      .project-chips-hint {
+        margin: 0 0 10px;
+        font-size: 0.8rem;
+        color: var(--muted);
+        line-height: 1.35;
+      }
       .project-chips-row {
         display: flex;
         flex-wrap: wrap;
@@ -2326,9 +2332,74 @@
         font-weight: 600;
         cursor: pointer;
       }
+      .project-chip:hover {
+        border-color: #8ec0ff;
+        background: #1a3562;
+      }
       .project-chip.active {
         border-color: #6ca8ff;
         background: linear-gradient(180deg, #1f4a9a 0%, #17356b 100%);
+      }
+      .project-card {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin: 0;
+        padding: 0;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+        overflow: hidden;
+        box-shadow: 0 1px 0 rgba(15, 76, 129, 0.04);
+      }
+      .project-card.is-active {
+        border-color: #6ca8ff;
+        box-shadow: 0 0 0 1px rgba(108, 168, 255, 0.35);
+      }
+      .project-card-empty {
+        padding: 14px 12px;
+        font-size: 0.88rem;
+        color: var(--muted);
+      }
+      .project-card-main {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+        width: 100%;
+        margin: 0;
+        padding: 12px 12px 4px;
+        border: 0;
+        background: transparent;
+        text-align: left;
+        cursor: pointer;
+        color: inherit;
+        font: inherit;
+      }
+      .project-card-main:hover .project-card-name {
+        color: var(--accent);
+      }
+      .project-card-name {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: var(--accent-dark);
+      }
+      .project-card-code {
+        font-size: 0.78rem;
+        color: var(--muted);
+        word-break: break-all;
+      }
+      .project-card-hint {
+        font-size: 0.75rem;
+        color: var(--accent);
+        font-weight: 600;
+        margin-top: 2px;
+      }
+      .project-card-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 0 12px 12px;
       }
       .ops-aviat-banner {
         margin: 0 0 12px;
@@ -3721,16 +3792,19 @@
           <div id="moduleProjects" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Proyectos</h3>
-              <p class="module-lead">Proyectos detectados del cliente principal AVIAT. Se alimentan desde catálogo e inventario.</p>
+              <p class="module-lead">
+                Proyectos detectados del cliente principal AVIAT. Los chips y tarjetas son navegables:
+                abren el catálogo o las existencias del proyecto seleccionado.
+              </p>
             </div>
             <div class="project-actions-row">
               <button type="button" class="btn-primary btn-compact" id="projectsAddBtn" data-goto-module="catalog">Agregar proyecto</button>
               <button type="button" class="btn-secondary btn-compact" data-goto-module="catalog">Ir a catálogo</button>
-              <span class="assignee-hint">Los proyectos se alimentan desde Catálogo y productos.</span>
+              <span class="assignee-hint">Chip o tarjeta → catálogo. Botón «Ver existencias» → inventario filtrado.</span>
             </div>
             <div class="card-panel">
               <div id="projectsViewChips"></div>
-              <ul id="projectsKnownList" class="info-list" style="margin-top:14px"></ul>
+              <ul id="projectsKnownList" class="info-list project-cards-list" style="margin-top:14px"></ul>
             </div>
           </div>
           <div id="moduleWarehouses" class="module-pane hidden">

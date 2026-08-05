@@ -152,6 +152,55 @@ function setActiveAviatProject(code) {
   refreshAviatScopedViews();
 }
 
+/** Metadatos de proyecto (código + nombre) para navegación y filtros. */
+function resolveAviatProjectMeta(code) {
+  if (!code || String(code).trim().toUpperCase() === AVIAT_PROJECT_ALL) {
+    return { code: AVIAT_PROJECT_ALL, name: "Todos los proyectos" };
+  }
+  const normalized = normalizeProjectCode(code);
+  const fromData = collectAviatProjectsFromData().find(
+    (p) => normalizeProjectCode(p.code) === normalized || normalizeProjectToken(p.name) === normalizeProjectToken(code)
+  );
+  if (fromData) return { code: fromData.code, name: fromData.name || fromData.code };
+  const fromCustomers = getCustomersForSelect().find((p) => normalizeProjectCode(p.code) === normalized);
+  if (fromCustomers) return { code: fromCustomers.code, name: fromCustomers.name || fromCustomers.code };
+  return { code: String(code).trim(), name: String(code).trim() };
+}
+
+/** Rellena filtros de texto de catálogo/existencias (además del filtro global Aviat). */
+function setProjectTextFilters(code, name) {
+  const clear = !code || String(code).toUpperCase() === AVIAT_PROJECT_ALL;
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = clear ? "" : val || "";
+  };
+  setVal("invFilterCustomer", clear ? "" : code);
+  setVal("invFilterCliente", clear ? "" : name || code);
+  setVal("catFilterCustomer", clear ? "" : code);
+  setVal("catFilterCliente", clear ? "" : name || code);
+}
+
+function clearAviatProjectScope() {
+  setActiveAviatProject(AVIAT_PROJECT_ALL);
+  setProjectTextFilters(AVIAT_PROJECT_ALL, "");
+}
+
+/** Selecciona proyecto y abre Catálogo y productos filtrado. */
+function openProjectCatalogView(projectCode) {
+  const meta = resolveAviatProjectMeta(projectCode);
+  setActiveAviatProject(meta.code);
+  setProjectTextFilters(meta.code, meta.name);
+  navigateTo("inventario", "catalog");
+}
+
+/** Selecciona proyecto y abre Inventario / Existencias filtrado. */
+function openProjectInventoryView(projectCode) {
+  const meta = resolveAviatProjectMeta(projectCode);
+  setActiveAviatProject(meta.code);
+  setProjectTextFilters(meta.code, meta.name);
+  navigateTo("inventario", "inventory");
+}
+
 function normalizeProjectToken(value) {
   return String(value || "")
     .trim()
@@ -318,25 +367,62 @@ function updateAviatHeaderUi() {
   renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
 }
 
-function renderAviatProjectChips(container) {
+/**
+ * Chips de proyecto Aviat.
+ * @param {HTMLElement|null} container
+ * @param {{ mode?: "filter"|"catalog" }} [options]
+ *   filter (default): solo cambia el alcance global (Centro de control, etc.).
+ *   catalog: chip de proyecto abre catálogo filtrado; "Todos" limpia el alcance.
+ */
+function renderAviatProjectChips(container, options = {}) {
   if (!container) return;
+  const mode = options.mode === "catalog" ? "catalog" : "filter";
   const projects = collectAviatProjectsFromData();
   const activeProject = getActiveAviatProject();
-  const allChip = `<button type="button" class="project-chip${activeProject === AVIAT_PROJECT_ALL ? " active" : ""}" data-pick-aviat-project="${AVIAT_PROJECT_ALL}">Todos los proyectos</button>`;
+  const allTitle =
+    mode === "catalog"
+      ? "Quitar filtro y mostrar todos los proyectos"
+      : "Mostrar todos los proyectos";
+  const chipTitle =
+    mode === "catalog"
+      ? "Abrir catálogo filtrado por este proyecto"
+      : "Filtrar vistas por este proyecto";
+  const allChip = `<button type="button" class="project-chip${
+    activeProject === AVIAT_PROJECT_ALL ? " active" : ""
+  }" data-pick-aviat-project="${AVIAT_PROJECT_ALL}" title="${escCell(allTitle)}">Todos los proyectos</button>`;
   const projectChips = projects
-    .map(
-      (p) =>
-        `<button type="button" class="project-chip${activeProject === String(p.code).toUpperCase() ? " active" : ""}" data-pick-aviat-project="${escCell(p.code)}" title="${escCell(p.code)}">${escCell(p.name)}</button>`
-    )
+    .map((p) => {
+      const isActive = normalizeProjectCode(activeProject) === normalizeProjectCode(p.code);
+      return `<button type="button" class="project-chip${isActive ? " active" : ""}" data-pick-aviat-project="${escCell(
+        p.code
+      )}" title="${escCell(`${chipTitle}: ${p.name} (${p.code})`)}">${escCell(p.name)}</button>`;
+    })
     .join("");
   const emptyMsg =
     productsCache.length || stockRowsCache.length
       ? "No se detectaron proyectos. Revisa carga de catálogo."
       : "Cargando proyectos de AVIAT…";
-  container.innerHTML = `<div class="project-chips-label">Proyectos de ${escCell(PRIMARY_CLIENT_AVIAT_NAME)}</div><div class="project-chips-row">${allChip}${projectChips || `<span class="filter-hint">${emptyMsg}</span>`}</div>`;
+  const navHint =
+    mode === "catalog"
+      ? `<p class="project-chips-hint">Los chips son navegables: elige un proyecto para abrir su catálogo. Usa las tarjetas para catálogo o existencias.</p>`
+      : "";
+  container.innerHTML = `<div class="project-chips-label">Proyectos de ${escCell(
+    PRIMARY_CLIENT_AVIAT_NAME
+  )}</div>${navHint}<div class="project-chips-row">${allChip}${
+    projectChips || `<span class="filter-hint">${emptyMsg}</span>`
+  }</div>`;
   container.querySelectorAll("[data-pick-aviat-project]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      setActiveAviatProject(btn.getAttribute("data-pick-aviat-project"));
+      const code = btn.getAttribute("data-pick-aviat-project") || AVIAT_PROJECT_ALL;
+      if (code === AVIAT_PROJECT_ALL) {
+        clearAviatProjectScope();
+        return;
+      }
+      if (mode === "catalog") {
+        openProjectCatalogView(code);
+        return;
+      }
+      setActiveAviatProject(code);
     });
   });
 }
@@ -5619,13 +5705,74 @@ function renderInfoList(listId, items, emptyMsg) {
 }
 
 function renderProjectsModule() {
-  const projects = getKnownProjects();
-  renderAviatProjectChips(document.getElementById("projectsViewChips"));
-  renderInfoList(
-    "projectsKnownList",
-    projects.map((p) => `${p.name} · ${p.code}`),
-    "Aún no hay proyectos detectados. Agrégalos desde Catálogo y productos."
+  const projectsMap = new Map();
+  for (const p of getKnownProjects()) {
+    if (p?.code) projectsMap.set(String(p.code).toUpperCase(), { code: p.code, name: p.name || p.code });
+  }
+  for (const p of collectAviatProjectsFromData()) {
+    if (p?.code) {
+      const key = String(p.code).toUpperCase();
+      const existing = projectsMap.get(key);
+      if (!existing || String(p.name || "").length > String(existing.name || "").length) {
+        projectsMap.set(key, { code: p.code, name: p.name || p.code });
+      }
+    }
+  }
+  const projects = Array.from(projectsMap.values()).sort((a, b) =>
+    String(a.name).localeCompare(String(b.name), "es")
   );
+
+  renderAviatProjectChips(document.getElementById("projectsViewChips"), { mode: "catalog" });
+
+  const el = document.getElementById("projectsKnownList");
+  if (el) {
+    if (!projects.length) {
+      el.innerHTML = `<li class="project-card project-card-empty">${escCell(
+        "Aún no hay proyectos detectados. Agrégalos desde Catálogo y productos."
+      )}</li>`;
+    } else {
+      el.innerHTML = projects
+        .map((p) => {
+          const active =
+            normalizeProjectCode(getActiveAviatProject()) === normalizeProjectCode(p.code)
+              ? " is-active"
+              : "";
+          return `<li class="project-card${active}" data-project-code="${escCell(p.code)}">
+            <button type="button" class="project-card-main" data-project-open-catalog="${escCell(
+              p.code
+            )}" title="Ver catálogo de ${escCell(p.name)}">
+              <strong class="project-card-name">${escCell(p.name)}</strong>
+              <span class="project-card-code">${escCell(p.code)}</span>
+              <span class="project-card-hint">Clic para ver catálogo →</span>
+            </button>
+            <div class="project-card-actions">
+              <button type="button" class="btn-secondary btn-compact" data-project-open-catalog="${escCell(
+                p.code
+              )}">Ver catálogo</button>
+              <button type="button" class="btn-secondary btn-compact" data-project-open-stock="${escCell(
+                p.code
+              )}">Ver existencias</button>
+            </div>
+          </li>`;
+        })
+        .join("");
+      el.querySelectorAll("[data-project-open-catalog]").forEach((btn) => {
+        btn.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openProjectCatalogView(btn.getAttribute("data-project-open-catalog"));
+        });
+      });
+      el.querySelectorAll("[data-project-open-stock]").forEach((btn) => {
+        btn.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openProjectInventoryView(btn.getAttribute("data-project-open-stock"));
+        });
+      });
+    }
+  }
+
   const addBtn = document.getElementById("projectsAddBtn");
   const ccAdd = document.getElementById("ccAddProjectBtn");
   const canAdd = currentRole === "ADMIN" || currentRole === "SUPERVISOR";
