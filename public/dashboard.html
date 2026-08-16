@@ -2216,6 +2216,9 @@
         gap: 8px;
       }
       .grid-detail-actions button { width: 100%; }
+      #reqActionModal .modal-panel { width: min(480px, 96vw); }
+      #reqActionSummary .detail-field { margin-bottom: 8px; padding-bottom: 8px; }
+      #reqActionMessage { min-height: 1.2em; margin: 8px 0 0; }
       .data-grid-row.body .data-grid-cell {
         border-right: 1px solid rgba(15, 76, 129, 0.06);
       }
@@ -3922,6 +3925,33 @@
         <div id="gridDetailBody"></div>
         <div id="gridDetailActions" class="grid-detail-actions"></div>
       </aside>
+    </div>
+
+    <div id="reqActionModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-labelledby="reqActionTitle">
+        <div class="modal-header">
+          <h3 id="reqActionTitle">Reservar inventario</h3>
+          <button type="button" class="modal-close" data-close-modal="reqActionModal" aria-label="Cerrar">×</button>
+        </div>
+        <div id="reqActionSummary"></div>
+        <div id="reqActionInventoryField" class="field hidden">
+          <label for="reqActionInventoryId">Línea de inventario</label>
+          <select id="reqActionInventoryId"><option value="">— Seleccionar —</option></select>
+        </div>
+        <div id="reqActionLayerField" class="field hidden">
+          <label for="reqActionLayerId">Capa / lote</label>
+          <select id="reqActionLayerId"><option value="">— Seleccionar —</option></select>
+        </div>
+        <div class="field">
+          <label for="reqActionQty" id="reqActionQtyLabel">Cantidad</label>
+          <input id="reqActionQty" type="number" min="0.0001" step="0.0001" />
+        </div>
+        <p id="reqActionMessage" class="ops-message"></p>
+        <div class="import-actions" style="margin-top:12px">
+          <button type="button" id="reqActionCancelBtn" class="btn-secondary">Cancelar</button>
+          <button type="button" id="reqActionConfirmBtn" class="btn-primary">Confirmar</button>
+        </div>
+      </div>
     </div>
 
     <div id="catalogImportModal" class="modal-overlay" aria-hidden="true">
