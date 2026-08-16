@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
+import { clientActivityWhere } from "../clients/client-scope.js";
 
 const traceabilityRouter = Router();
 
@@ -18,7 +19,7 @@ const querySchema = z.object({
   limit: z.coerce.number().min(1).max(500).optional().default(150)
 });
 
-traceabilityRouter.use(requireAuth, requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]));
+traceabilityRouter.use(requireAuth, requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]));
 
 traceabilityRouter.get("/activity", async (req, res) => {
   const q = querySchema.parse(req.query);
@@ -63,6 +64,10 @@ traceabilityRouter.get("/activity", async (req, res) => {
       }
       if (!Number.isNaN(d.getTime())) where.createdAt.lte = d;
     }
+  }
+  const scope = clientActivityWhere(req.auth!);
+  if (Object.keys(scope).length) {
+    where.AND = [scope];
   }
 
   const rows = await prisma.activityLog.findMany({

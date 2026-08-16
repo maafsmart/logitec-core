@@ -4,6 +4,7 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
+import { clientCustomerWhere, clientProductWhere } from "../clients/client-scope.js";
 
 const catalogRouter = Router();
 
@@ -89,8 +90,9 @@ function normalizeCustomerCode(nameOrCode: string): string {
 
 catalogRouter.use(requireAuth);
 
-catalogRouter.get("/products", async (_req, res) => {
+catalogRouter.get("/products", async (req, res) => {
   const products = await prisma.product.findMany({
+    where: clientProductWhere(req.auth!),
     orderBy: { createdAt: "desc" },
     take: 400,
     include: {
@@ -140,8 +142,9 @@ catalogRouter.post("/products", requireRole(["ADMIN"]), async (req, res) => {
   res.status(201).json(product);
 });
 
-catalogRouter.get("/customers", async (_req, res) => {
+catalogRouter.get("/customers", async (req, res) => {
   const customers = await prisma.customer.findMany({
+    where: clientCustomerWhere(req.auth!),
     orderBy: { createdAt: "desc" },
     take: 200,
     include: { client: { select: projectClientSelect } }
@@ -171,8 +174,9 @@ catalogRouter.post("/customers", requireRole(["ADMIN"]), async (req, res) => {
 });
 
 // Legacy compatibility for current UI label "clientes" (Customer = proyecto).
-catalogRouter.get("/clients", async (_req, res) => {
+catalogRouter.get("/clients", async (req, res) => {
   const customers = await prisma.customer.findMany({
+    where: clientCustomerWhere(req.auth!),
     orderBy: { createdAt: "desc" },
     take: 200
   });

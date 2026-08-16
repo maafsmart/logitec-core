@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
+import { isClientRole, scopedClientId } from "./client-scope.js";
 
 const clientsRouter = Router();
 
@@ -109,8 +110,9 @@ function updateClientData(data: z.infer<typeof clientFieldsSchema>) {
 
 clientsRouter.use(requireAuth);
 
-clientsRouter.get("/", async (_req, res) => {
+clientsRouter.get("/", async (req, res) => {
   const clients = await prisma.client.findMany({
+    where: isClientRole(req.auth!) ? { id: scopedClientId(req.auth!) } : {},
     orderBy: [{ active: "desc" }, { name: "asc" }],
     take: 200,
     select: {
@@ -132,6 +134,9 @@ clientsRouter.post("/", requireRole(["ADMIN"]), async (req, res) => {
 
 clientsRouter.get("/:id", async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
+  if (isClientRole(req.auth!) && id !== scopedClientId(req.auth!)) {
+    throw new HttpError(403, "No autorizado para consultar otro cliente.");
+  }
   const client = await prisma.client.findUnique({
     where: { id },
     select: {
@@ -150,6 +155,9 @@ clientsRouter.get("/:id", async (req, res) => {
 
 clientsRouter.get("/:id/projects", async (req, res) => {
   const clientId = z.string().min(1).parse(req.params.id);
+  if (isClientRole(req.auth!) && clientId !== scopedClientId(req.auth!)) {
+    throw new HttpError(403, "No autorizado para consultar proyectos de otro cliente.");
+  }
   const client = await prisma.client.findUnique({ where: { id: clientId }, select: { id: true } });
   if (!client) {
     throw new HttpError(404, "Cliente no encontrado.");

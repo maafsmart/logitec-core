@@ -22,8 +22,11 @@ authRouter.post("/login", async (req, res) => {
   const { email: rawEmail, password } = loginSchema.parse(req.body);
   const email = rawEmail.trim().toLowerCase();
 
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user?.isActive) {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    include: { client: { select: { id: true, name: true, tradeName: true, active: true } } }
+  });
+  if (!user?.isActive || (user.role === "CLIENT" && (!user.clientId || !user.client?.active))) {
     throw new HttpError(401, "Credenciales invalidas");
   }
 
@@ -50,7 +53,9 @@ authRouter.post("/login", async (req, res) => {
       id: user.id,
       email: user.email,
       fullName: user.fullName,
-      role: user.role
+      role: user.role,
+      clientId: user.clientId,
+      client: user.client
     }
   });
 });
@@ -63,8 +68,10 @@ authRouter.get("/me", requireAuth, async (req, res) => {
       email: true,
       fullName: true,
       role: true,
+      clientId: true,
       isActive: true,
-      createdAt: true
+      createdAt: true,
+      client: { select: { id: true, name: true, tradeName: true, active: true } }
     }
   });
 

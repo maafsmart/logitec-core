@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth } from "../../middlewares/auth.middleware.js";
+import { requireNonClient } from "../clients/client-scope.js";
 
 const commentsRouter = Router();
 
@@ -12,6 +13,7 @@ const createCommentSchema = z.object({
 });
 
 commentsRouter.post("/", requireAuth, async (req, res) => {
+  requireNonClient(req.auth!);
   const data = createCommentSchema.parse(req.body);
 
   const comment = await prisma.comment.create({
@@ -27,6 +29,7 @@ commentsRouter.post("/", requireAuth, async (req, res) => {
 });
 
 commentsRouter.get("/", requireAuth, async (req, res) => {
+  requireNonClient(req.auth!);
   const { entityType, entityId } = req.query;
 
   const comments = await prisma.comment.findMany({

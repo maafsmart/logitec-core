@@ -5,6 +5,7 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
+import { clientInventoryWhere, clientMovementWhere, isClientRole } from "../clients/client-scope.js";
 
 const inventoryRouter = Router();
 
@@ -91,8 +92,9 @@ async function resolveOrCreateLocation(
 
 inventoryRouter.use(requireAuth);
 
-inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]), async (_req, res) => {
+inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   const rows = await prisma.inventory.findMany({
+    where: clientInventoryWhere(req.auth!),
     orderBy: [{ location: { warehouse: "asc" } }, { updatedAt: "desc" }],
     take: 500,
     include: {
@@ -106,8 +108,11 @@ inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]), 
   res.json(rows);
 });
 
-inventoryRouter.get("/locations", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]), async (_req, res) => {
+inventoryRouter.get("/locations", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   const rows = await prisma.location.findMany({
+    where: isClientRole(req.auth!)
+      ? { inventories: { some: clientInventoryWhere(req.auth!) } }
+      : {},
     orderBy: [{ warehouse: "asc" }, { code: "asc" }],
     take: 500
   });
@@ -139,7 +144,7 @@ inventoryRouter.post("/locations", requireRole(["ADMIN"]), async (req, res) => {
   res.status(201).json(location);
 });
 
-inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]), async (req, res) => {
+inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   const rawLimit = req.query.limit;
   let take = 200;
   if (rawLimit === "all") {
@@ -152,6 +157,7 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
   }
 
   const rows = await prisma.inventoryMovement.findMany({
+    where: clientMovementWhere(req.auth!),
     orderBy: { createdAt: "desc" },
     take,
     include: {
