@@ -5,6 +5,7 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { InventoryMutationError, mutateInventory } from "../inventory/inventory-mutation.service.js";
+import { RequisitionError, consumeReservationPick } from "../requisitions/requisition.service.js";
 
 const pickingRouter = Router();
 
@@ -22,6 +23,8 @@ const scanSchema = z.object({
   /** Línea exacta de inventario cuando el operador elige un candidato */
   inventoryId: z.string().min(1).optional(),
   layerId: z.string().min(1).optional(),
+  reservationId: z.string().min(1).optional(),
+  requisitionLineId: z.string().min(1).optional(),
   taskId: z.string().optional()
 });
 
@@ -70,6 +73,8 @@ pickingRouter.post("/scan", async (req, res) => {
       quantity: qtyRaw,
       inventoryId: inventoryIdOpt,
       layerId: layerIdOpt,
+      reservationId: reservationIdOpt,
+      requisitionLineId: requisitionLineIdOpt,
       taskId: taskIdOpt
     } = parsed;
 
@@ -81,6 +86,53 @@ pickingRouter.post("/scan", async (req, res) => {
     const projectCode = (projectInput || customerInput)?.trim() || null;
     const inventoryId = inventoryIdOpt?.trim() || null;
     const layerId = layerIdOpt?.trim() || null;
+    const reservationId = reservationIdOpt?.trim() || null;
+    const requisitionLineId = requisitionLineIdOpt?.trim() || null;
+
+    if (reservationId) {
+      try {
+        const reserved = await consumeReservationPick({
+          reservationId,
+          qty: pickQty,
+          userId: req.auth!.userId,
+          scannedCode: normalizedCode,
+          taskId
+        });
+        if (requisitionLineId && reserved.movement.requisitionLineId && reserved.movement.requisitionLineId !== requisitionLineId) {
+          res.status(409).json({ code: "LINE_MISMATCH", message: "La reserva no corresponde a la línea indicada." });
+          return;
+        }
+        res.json({
+          message: "Picking reservado OK: stock y reserva consumidos atómicamente.",
+          deducted: true,
+          reserved: true,
+          product: {
+            id: reserved.product.id,
+            sku: reserved.product.sku,
+            name: reserved.product.name,
+            barcode: reserved.product.barcode,
+            warehouse: reserved.location.warehouse,
+            projectCode: null,
+            projectName: null
+          },
+          location: reserved.location.code,
+          warehouse: reserved.location.warehouse,
+          status: reserved.inventoryStatus,
+          quantityBefore: reserved.before.toString(),
+          quantityAfter: reserved.after.toString(),
+          pickedQty: pickQty.toString(),
+          scanEvent: reserved.scanEvent,
+          movementId: reserved.movement.id
+        });
+        return;
+      } catch (error) {
+        if (error instanceof RequisitionError) {
+          res.status(409).json({ message: error.message, code: error.code, details: error.details });
+          return;
+        }
+        throw error;
+      }
+    }
 
     const product = await prisma.product.findFirst({
       where: {
@@ -152,7 +204,7 @@ pickingRouter.post("/scan", async (req, res) => {
       }
     };
 
-    const candidates = await prisma.inventory.findMany({
+    const candidatesRaw = await prisma.inventory.findMany({
       where: stockWhere,
       orderBy: [{ status: "asc" }, { updatedAt: "asc" }],
       include: {
@@ -168,6 +220,7 @@ pickingRouter.post("/scan", async (req, res) => {
       },
       take: 50
     });
+    const candidates = candidatesRaw.filter((row) => row.qty.minus(row.reservedQty).greaterThan(0));
 
     if (candidates.length === 0) {
       const scanEvent = await prisma.scanEvent.create({

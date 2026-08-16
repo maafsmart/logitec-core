@@ -3333,31 +3333,70 @@ const OPS_MOVEMENT_COLUMNS = [
 ];
 
 const REQ_COLUMNS = [
-  { label: "Folio", sortKey: (t) => t.reference || "", render: (t) => renderCellWithClamp(t.reference, "cell-truncate", 18), title: (t) => t.reference || "" },
-  { label: "Proyecto", sortKey: (t) => formatReqProyecto(t), render: (t) => renderCellWithClamp(formatReqProyecto(t), "cell-truncate", 22), title: (t) => formatReqProyecto(t) },
+  { label: "Requisición", sortKey: (t) => t.number || "", render: (t) => renderCellWithClamp(t.number, "cell-truncate", 18), title: (t) => t.number || "" },
+  {
+    label: "Cliente",
+    sortKey: (t) => t.client?.tradeName || t.client?.name || "",
+    render: (t) => renderCellWithClamp(t.client?.tradeName || t.client?.legalName || t.client?.name || "—", "cell-truncate", 22),
+    title: (t) => t.client?.tradeName || t.client?.name || ""
+  },
+  {
+    label: "Proyecto",
+    sortKey: (t) => t.project?.code || "",
+    render: (t) => renderCellWithClamp(t.project ? `${t.project.name} (${t.project.code})` : "—", "cell-truncate", 24),
+    title: (t) => (t.project ? `${t.project.name} (${t.project.code})` : "")
+  },
   {
     label: "Prioridad",
-    sortKey: (t) => t.priority ?? 0,
-    sortType: "number",
-    render: (t) => {
-      const label = formatReqPriorityLabel(t.priority);
-      const raw = t.priority == null ? "—" : String(t.priority);
-      return `<span title="Valor interno: ${escCell(raw)}">${escCell(label)}</span>`;
-    },
-    title: (t) => `Prioridad ${formatReqPriorityLabel(t.priority)} (${t.priority ?? "—"})`
+    sortKey: (t) => t.priority || "",
+    render: (t) => escCell(t.priorityLabel || t.priority || "—"),
+    title: (t) => t.priorityLabel || t.priority || ""
   },
-  { label: "Productos", sortKey: (t) => formatReqProducts(t), render: (t) => renderCellWithClamp(formatReqProducts(t), "cell-truncate", 28), title: (t) => formatReqProducts(t) },
   {
     label: "Estado",
     sortKey: (t) => t.status || "",
-    render: (t) => taskStatusBadge(t.status),
-    title: (t) => TASK_STATUS_LABELS[String(t.status || "").toUpperCase()] || t.status || ""
+    render: (t) => statusBadge(t.status),
+    title: (t) => t.status || ""
   },
   {
     label: "Estado de surtido",
-    sortKey: (t) => t.status || "",
-    render: (t) => reqPickingStatusBadge(t.status),
-    title: (t) => REQ_PICKING_STATUS_LABELS[String(t.status || "").toUpperCase()] || t.status || ""
+    sortKey: (t) => t.fulfillmentStatus || "",
+    render: (t) => `<span class="badge info">${escCell(t.fulfillmentStatus || "—")}</span>`,
+    title: (t) => t.fulfillmentStatus || ""
+  },
+  {
+    label: "Solicitado",
+    align: "right",
+    sortKey: (t) => Number(t.totals?.requestedQty) || 0,
+    sortType: "number",
+    render: (t) => formatQty(t.totals?.requestedQty)
+  },
+  {
+    label: "Reservado",
+    align: "right",
+    sortKey: (t) => Number(t.totals?.reservedQty) || 0,
+    sortType: "number",
+    render: (t) => formatQty(t.totals?.reservedQty)
+  },
+  {
+    label: "Surtido",
+    align: "right",
+    sortKey: (t) => Number(t.totals?.fulfilledQty) || 0,
+    sortType: "number",
+    render: (t) => formatQty(t.totals?.fulfilledQty)
+  },
+  {
+    label: "Pendiente",
+    align: "right",
+    sortKey: (t) => Number(t.totals?.pendingQty) || 0,
+    sortType: "number",
+    render: (t) => formatQty(t.totals?.pendingQty)
+  },
+  {
+    label: "Fecha",
+    sortKey: (t) => t.createdAt,
+    sortType: "date",
+    render: (t) => formatDateShort(t.createdAt)
   }
 ];
 
@@ -6166,23 +6205,14 @@ async function loadRequisitionsList() {
   const container = document.getElementById("requisitionsList");
   if (!container) return;
   try {
-    const response = await authenticatedFetch("/api/tasks");
+    const response = await authenticatedFetch("/api/requisitions");
     if (!response?.ok) {
       container.innerHTML = '<div class="data-grid-empty" style="padding:16px">No se pudieron cargar requisiciones.</div>';
       return;
     }
-    const rows = filterRowsByAviatProject((await response.json()).filter((t) => t.type === "PICK"));
+    const rows = filterRowsByAviatProject(await response.json());
     const meta = document.getElementById("reqTableMeta");
     if (meta) meta.textContent = `${rows.length} requisición(es)`;
-    if (!rows.length) {
-      renderExcelTable(container, {
-        gridId: "requisitions",
-        columns: REQ_COLUMNS,
-        rows: [],
-        emptyMessage: "Sin registros operativos aún"
-      });
-      return;
-    }
     renderExcelTable(container, {
       gridId: "requisitions",
       columns: REQ_COLUMNS,
@@ -6199,10 +6229,9 @@ async function submitRequisition() {
   setOpsMessage("reqMessage", "", true);
   const reference = document.getElementById("reqReference")?.value?.trim();
   const customerCode = document.getElementById("reqCustomer")?.value?.trim();
-  const customerName = document.getElementById("reqCliente")?.value?.trim();
   const warehouse = document.getElementById("reqWarehouse")?.value?.trim() || "TULTITLAN24";
   const extraNotes = document.getElementById("reqNotes")?.value?.trim();
-  const priority = Number(document.getElementById("reqPriority")?.value || 0);
+  const priority = Number(document.getElementById("reqPriority")?.value || 50);
 
   if (!reference) {
     setOpsMessage("reqMessage", "Indique folio o referencia.", false);
@@ -6213,7 +6242,7 @@ async function submitRequisition() {
     return;
   }
 
-  /** @type {{ sku: string, qty: number, lote: string }[]} */
+  /** @type {{ sku: string, requestedQty: number, lotNumber?: string }[]} */
   let lines = [];
   if (reqOrderMode === "bulk") {
     const lineNodes = document.querySelectorAll("#reqBulkLines .req-bulk-line");
@@ -6221,94 +6250,59 @@ async function submitRequisition() {
       const sku = node.querySelector("[data-req-line-sku]")?.value?.trim();
       const qty = Number(node.querySelector("[data-req-line-qty]")?.value);
       const lote = node.querySelector("[data-req-line-lote]")?.value?.trim() || "";
-      if (sku) lines.push({ sku, qty, lote });
+      if (sku) lines.push({ sku, requestedQty: qty, lotNumber: lote || undefined });
     });
     if (!lines.length) {
       setOpsMessage("reqMessage", "Agrega al menos una línea con SKU.", false);
       return;
     }
-    for (const line of lines) {
-      if (!findProductBySku(line.sku) && !resolveProductBySkuOrCode(line.sku)) {
-        setOpsMessage("reqMessage", `SKU inexistente en catálogo: ${line.sku}`, false);
-        return;
-      }
-      if (!Number.isFinite(line.qty) || line.qty <= 0) {
-        setOpsMessage("reqMessage", `Cantidad inválida en línea SKU ${line.sku}.`, false);
-        return;
-      }
-    }
   } else {
     const sku = document.getElementById("reqSku")?.value?.trim();
     const qty = Number(document.getElementById("reqQty")?.value);
     const lote = document.getElementById("reqLote")?.value?.trim() || "";
-    if (sku && !findProductBySku(sku) && !resolveProductBySkuOrCode(sku)) {
-      setOpsMessage("reqMessage", "SKU inexistente en catálogo.", false);
+    if (!sku) {
+      setOpsMessage("reqMessage", "Indica un SKU.", false);
       return;
     }
-    if (sku && (!Number.isFinite(qty) || qty <= 0)) {
+    if (!Number.isFinite(qty) || qty <= 0) {
       setOpsMessage("reqMessage", "Cantidad solicitada debe ser mayor que 0.", false);
       return;
     }
-    lines = [{ sku: sku || "", qty: Number.isFinite(qty) ? qty : null, lote }];
+    lines = [{ sku, requestedQty: qty, lotNumber: lote || undefined }];
+  }
+  for (const line of lines) {
+    if (!Number.isFinite(line.requestedQty) || line.requestedQty <= 0) {
+      setOpsMessage("reqMessage", `Cantidad inválida en línea SKU ${line.sku}.`, false);
+      return;
+    }
   }
 
   if (btn) btn.disabled = true;
   try {
-    let created = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const lineNumber = i + 1;
-      const notesPayload = {
-        orderMode: reqOrderMode === "bulk" ? "bulk" : "simple",
-        orderFolio: reference,
-        lineNumber: reqOrderMode === "bulk" ? lineNumber : 1,
-        customerCode: customerCode || null,
-        customerName: customerName || null,
-        lote: line.lote || null,
-        sku: line.sku || null,
-        qty: line.qty,
-        detail: extraNotes || null,
-        taskLabel: "Orden de surtido"
-      };
-      const response = await authenticatedFetch("/api/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "PICK",
-          status: "PENDING",
-          warehouse,
-          priority: Number.isFinite(priority) ? priority : 50,
-          reference,
-          notes: JSON.stringify(notesPayload)
-        })
-      });
-      if (!response) {
-        setOpsMessage(
-          "reqMessage",
-          created
-            ? `Se crearon ${created} línea(s); falló la siguiente. Stock no se afecta.`
-            : "No se pudo crear la orden.",
-          false
-        );
-        return;
-      }
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        setOpsMessage(
-          "reqMessage",
-          (data.message || "No se pudo crear la orden.") +
-            (created ? ` (${created} línea(s) ya creadas).` : ""),
-          false
-        );
-        return;
-      }
-      created += 1;
+    const response = await authenticatedFetch("/api/requisitions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        number: reference,
+        projectCode: customerCode,
+        priority,
+        reference,
+        notes: [extraNotes, warehouse ? `Almacén: ${warehouse}` : null].filter(Boolean).join(" · ") || undefined,
+        lines
+      })
+    });
+    if (!response) {
+      setOpsMessage("reqMessage", "No se pudo crear la requisición.", false);
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setOpsMessage("reqMessage", data.message || "No se pudo crear la requisición.", false);
+      return;
     }
     setOpsMessage(
       "reqMessage",
-      reqOrderMode === "bulk"
-        ? `Orden por volumen creada: ${created} tarea(s) de surtido bajo folio ${reference}. No descuenta inventario hasta Picking o Salida.`
-        : "Orden de surtido registrada. No descuenta inventario: confirma el surtido en Picking o la salida en Despacho.",
+      `Requisición ${data.number || reference} creada en DRAFT. No descuenta inventario. El stock se descuenta únicamente al surtir mediante Picking/Salida.`,
       true
     );
     document.getElementById("reqReference").value = "";

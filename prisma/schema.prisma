@@ -27,6 +27,8 @@ model User {
   tasksApproved        Task[]               @relation("TaskApproved")
   incidentsReported    Incident[]           @relation("IncidentReporter")
   incidentsReviewed    Incident[]           @relation("IncidentReviewer")
+  requisitionsCreated  Requisition[]        @relation("RequisitionCreatedBy")
+  reservationsCreated  InventoryReservation[]
 
   @@index([clientId])
 }
@@ -67,6 +69,7 @@ model Product {
   inventorySerials    InventorySerial[]
   activityLogs        ActivityLog[]
   incidents           Incident[]
+  requisitionLines    RequisitionLine[]
 
   @@index([customerId])
 }
@@ -100,6 +103,7 @@ model InventoryMovement {
   taskId          String?
   inventorySerialId String?
   inventoryLayerId String?
+  requisitionLineId String?
   createdAt       DateTime @default(now())
   product         Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
   fromLocation    Location? @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
@@ -108,6 +112,7 @@ model InventoryMovement {
   task            Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
   inventorySerial InventorySerial? @relation(fields: [inventorySerialId], references: [id], onDelete: SetNull)
   inventoryLayer  InventoryLayer?  @relation(fields: [inventoryLayerId], references: [id], onDelete: SetNull)
+  requisitionLine RequisitionLine? @relation(fields: [requisitionLineId], references: [id], onDelete: SetNull)
 
   @@index([productId, createdAt])
   @@index([userId])
@@ -116,6 +121,7 @@ model InventoryMovement {
   @@index([taskId])
   @@index([inventorySerialId])
   @@index([inventoryLayerId])
+  @@index([requisitionLineId])
 }
 
 model ScanEvent {
@@ -171,6 +177,7 @@ model Customer {
   client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
   products  Product[]
   activityLogs ActivityLog[]
+  requisitions Requisition[]
 
   @@index([clientId])
 }
@@ -204,6 +211,7 @@ model Inventory {
   product     Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
   location    Location  @relation(fields: [locationId], references: [id], onDelete: Restrict)
   layers      InventoryLayer[]
+  reservations InventoryReservation[]
 
   @@unique([productId, locationId, status])
   @@index([locationId, status])
@@ -225,9 +233,69 @@ model InventoryLayer {
   inventory      Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
   serials        InventorySerial[]
   movements      InventoryMovement[]
+  reservations   InventoryReservation[]
 
   @@index([inventoryId])
   @@index([lotNumber])
+}
+
+model Requisition {
+  id          String            @id @default(cuid())
+  number      String            @unique
+  projectId   String
+  createdById String
+  priority    String            @default("NORMAL")
+  status      String            @default("DRAFT")
+  reference   String?
+  notes       String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  project     Customer          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy   User              @relation("RequisitionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  lines       RequisitionLine[]
+  tasks       Task[]
+
+  @@index([projectId, createdAt])
+  @@index([status, createdAt])
+}
+
+model RequisitionLine {
+  id            String                 @id @default(cuid())
+  requisitionId String
+  productId     String
+  requestedQty  Decimal                @db.Decimal(18, 4)
+  fulfilledQty  Decimal                @default(0) @db.Decimal(18, 4)
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  requisition   Requisition            @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  product       Product                @relation(fields: [productId], references: [id], onDelete: Restrict)
+  reservations  InventoryReservation[]
+  movements     InventoryMovement[]
+
+  @@index([requisitionId])
+  @@index([productId])
+}
+
+model InventoryReservation {
+  id                String          @id @default(cuid())
+  requisitionLineId String
+  inventoryId       String
+  inventoryLayerId  String?
+  qty               Decimal         @db.Decimal(18, 4)
+  consumedQty       Decimal         @default(0) @db.Decimal(18, 4)
+  releasedQty       Decimal         @default(0) @db.Decimal(18, 4)
+  status            String          @default("ACTIVE")
+  createdById       String
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  requisitionLine   RequisitionLine @relation(fields: [requisitionLineId], references: [id], onDelete: Restrict)
+  inventory         Inventory       @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
+  inventoryLayer    InventoryLayer? @relation(fields: [inventoryLayerId], references: [id], onDelete: SetNull)
+  createdBy         User            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([requisitionLineId, status])
+  @@index([inventoryId, status])
+  @@index([inventoryLayerId, status])
 }
 
 model InventorySerial {
@@ -298,12 +366,14 @@ model Task {
   priority      Int      @default(0)
   reference     String?
   notes         String?
+  requisitionId String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   assignedTo    User?    @relation("TaskAssigned", fields: [assignedToId], references: [id], onDelete: SetNull)
   createdBy     User?    @relation("TaskCreated", fields: [createdById], references: [id], onDelete: SetNull)
   approvedBy    User?    @relation("TaskApproved", fields: [approvedById], references: [id], onDelete: SetNull)
+  requisition   Requisition? @relation(fields: [requisitionId], references: [id], onDelete: SetNull)
 
   activityLogs         ActivityLog[]
   inventoryMovements   InventoryMovement[]
@@ -312,6 +382,7 @@ model Task {
   @@index([status, createdAt])
   @@index([assignedToId])
   @@index([warehouse])
+  @@index([requisitionId])
 }
 
 model Incident {
