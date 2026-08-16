@@ -17,6 +17,13 @@ const productInclude = {
         select: { id: true, name: true, legalName: true, tradeName: true, active: true }
       }
     }
+  },
+  productProjects: {
+    where: { active: true },
+    select: {
+      projectId: true,
+      project: { select: { id: true, code: true, name: true } }
+    }
   }
 } as const;
 
@@ -126,7 +133,12 @@ export async function searchSkuProducts(query: string, auth: AuthContext, take =
             name: product.customer.name,
             client: product.customer.client
           }
-        : null
+        : null,
+      productProjects: product.productProjects.map((link) => ({
+        projectId: link.projectId,
+        code: link.project.code,
+        name: link.project.name
+      }))
     }));
 }
 

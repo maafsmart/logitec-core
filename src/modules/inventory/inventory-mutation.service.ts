@@ -10,6 +10,7 @@ import {
   sameAssignmentFields,
   type InventoryAssignment
 } from "./inventory-assignment.js";
+import { assertNoSerialAmbiguity } from "./inventory-serial-guard.js";
 
 export { InventoryMutationError } from "./inventory-errors.js";
 
@@ -164,16 +165,6 @@ async function selectLayer(
     );
   }
   return layers[0]!;
-}
-
-async function assertNoSerialAmbiguity(tx: Prisma.TransactionClient, layerId: string) {
-  const serialCount = await tx.inventorySerial.count({ where: { inventoryLayerId: layerId } });
-  if (serialCount > 0) {
-    throw new InventoryMutationError(
-      "SERIAL_SELECTION_REQUIRED",
-      "La capa contiene series; requiere selección explícita de seriales."
-    );
-  }
 }
 
 async function decrementLayerAndParent(

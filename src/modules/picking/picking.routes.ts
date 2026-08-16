@@ -35,26 +35,41 @@ function dec(n: string | number): Prisma.Decimal {
 function mapCandidate(row: {
   id: string;
   qty: Prisma.Decimal;
+  reservedQty: Prisma.Decimal;
   status: string;
+  assignmentType: string;
+  projectId: string | null;
   location: { code: string; warehouse: string };
+  project: { code: string; name: string } | null;
   product: {
     id: string;
     sku: string;
     name: string;
-    customer: { code: string; name: string } | null;
   };
 }) {
+  const unreservedQty = row.qty.minus(row.reservedQty);
+  const assignmentLabel =
+    row.assignmentType === "FREE_TO_SALE"
+      ? "FREE TO SALE"
+      : row.project
+        ? `${row.project.name} (${row.project.code})`
+        : row.assignmentType;
   return {
     inventoryId: row.id,
     productId: row.product.id,
     sku: row.product.sku,
     productName: row.product.name,
-    projectCode: row.product.customer?.code || null,
-    projectName: row.product.customer?.name || null,
+    assignmentType: row.assignmentType,
+    assignmentLabel,
+    projectId: row.projectId,
+    projectCode: row.project?.code || null,
+    projectName: row.project?.name || null,
     warehouse: row.location.warehouse,
     location: row.location.code,
     status: row.status,
-    qty: row.qty.toString()
+    qty: row.qty.toString(),
+    reservedQty: row.reservedQty.toString(),
+    unreservedQty: unreservedQty.toString()
   };
 }
 
@@ -89,19 +104,39 @@ pickingRouter.post("/scan", async (req, res) => {
     const reservationId = reservationIdOpt?.trim() || null;
     const requisitionLineId = requisitionLineIdOpt?.trim() || null;
 
-    if (reservationId) {
+    if (reservationId || requisitionLineId) {
       try {
+        let resolvedReservationId = reservationId;
+        if (!resolvedReservationId && requisitionLineId) {
+          const activeReservations = await prisma.inventoryReservation.findMany({
+            where: { requisitionLineId, status: "ACTIVE" },
+            select: { id: true }
+          });
+          if (!activeReservations.length) {
+            res.status(409).json({
+              code: "NO_ACTIVE_RESERVATION",
+              message: "La línea de requisición no tiene reserva activa."
+            });
+            return;
+          }
+          if (activeReservations.length > 1) {
+            res.status(409).json({
+              code: "AMBIGUOUS_RESERVATION",
+              message: "La línea tiene varias reservas activas; indica reservationId.",
+              reservations: activeReservations
+            });
+            return;
+          }
+          resolvedReservationId = activeReservations[0]!.id;
+        }
         const reserved = await consumeReservationPick({
-          reservationId,
+          reservationId: resolvedReservationId!,
           qty: pickQty,
           userId: req.auth!.userId,
           scannedCode: normalizedCode,
-          taskId
+          taskId,
+          requisitionLineId
         });
-        if (requisitionLineId && reserved.movement.requisitionLineId && reserved.movement.requisitionLineId !== requisitionLineId) {
-          res.status(409).json({ code: "LINE_MISMATCH", message: "La reserva no corresponde a la línea indicada." });
-          return;
-        }
         res.json({
           message: "Picking reservado OK: stock y reserva consumidos atómicamente.",
           deducted: true,
@@ -112,8 +147,10 @@ pickingRouter.post("/scan", async (req, res) => {
             name: reserved.product.name,
             barcode: reserved.product.barcode,
             warehouse: reserved.location.warehouse,
-            projectCode: null,
-            projectName: null
+            projectCode: reserved.project?.code || null,
+            projectName: reserved.project?.name || null,
+            assignmentType: reserved.assignmentType,
+            assignmentKey: reserved.assignmentKey
           },
           location: reserved.location.code,
           warehouse: reserved.location.warehouse,
@@ -126,7 +163,7 @@ pickingRouter.post("/scan", async (req, res) => {
         });
         return;
       } catch (error) {
-        if (error instanceof RequisitionError) {
+        if (error instanceof RequisitionError || error instanceof InventoryMutationError) {
           res.status(409).json({ message: error.message, code: error.code, details: error.details });
           return;
         }
@@ -137,18 +174,7 @@ pickingRouter.post("/scan", async (req, res) => {
     const product = await prisma.product.findFirst({
       where: {
         active: true,
-        OR: [{ sku: normalizedCode }, { barcode: normalizedCode }],
-        // Si ya eligió inventoryId, no filtrar producto por proyecto aquí (evita falsos 404).
-        ...(!inventoryId && projectCode
-          ? {
-              customer: {
-                OR: [
-                  { code: { equals: projectCode, mode: "insensitive" } },
-                  { name: { equals: projectCode, mode: "insensitive" } }
-                ]
-              }
-            }
-          : {})
+        OR: [{ sku: normalizedCode }, { barcode: normalizedCode }]
       },
       select: {
         id: true,
@@ -192,12 +218,23 @@ pickingRouter.post("/scan", async (req, res) => {
       return;
     }
 
-    // Localizar líneas con stock > 0 (cualquier estatus operativo con saldo).
+    // Localizar cubos con stock libre. El alcance de proyecto es Inventory.assignment*, no Product.customerId.
     const stockWhere: Prisma.InventoryWhereInput = {
       productId: product.id,
       qty: { gt: new Prisma.Decimal(0) },
       ...(statusInput ? { status: statusInput } : {}),
       ...(inventoryId ? { id: inventoryId } : {}),
+      ...(!inventoryId && projectCode
+        ? {
+            assignmentType: "PROJECT",
+            project: {
+              OR: [
+                { code: { equals: projectCode, mode: "insensitive" } },
+                { name: { equals: projectCode, mode: "insensitive" } }
+              ]
+            }
+          }
+        : {}),
       location: {
         ...(normalizedWarehouse ? { warehouse: normalizedWarehouse } : {}),
         ...(normalizedLocation ? { code: normalizedLocation } : {})
@@ -209,12 +246,12 @@ pickingRouter.post("/scan", async (req, res) => {
       orderBy: [{ status: "asc" }, { updatedAt: "asc" }],
       include: {
         location: true,
+        project: { select: { id: true, code: true, name: true } },
         product: {
           select: {
             id: true,
             sku: true,
-            name: true,
-            customer: { select: { code: true, name: true } }
+            name: true
           }
         }
       },
@@ -276,17 +313,15 @@ pickingRouter.post("/scan", async (req, res) => {
     }
 
     if (candidates.length > 1) {
-      // No descontar arbitrariamente entre múltiples líneas.
+      // No descontar arbitrariamente entre múltiples cubos (proyecto / FREE TO SALE / ubicación).
       res.status(409).json({
         message:
-          "Este SKU tiene stock en varias ubicaciones o estatus. Selecciona proyecto, ubicación y estatus (o elige una línea de la lista) antes de surtir.",
+          "Este SKU tiene stock en varios proyectos o cubos. Selecciona Proyecto / FREE TO SALE, ubicación y estatus (o elige una línea de la lista) antes de surtir.",
         code: "AMBIGUOUS_STOCK",
         product: {
           id: product.id,
           sku: product.sku,
-          name: product.name,
-          projectCode: product.customer?.code || null,
-          projectName: product.customer?.name || null
+          name: product.name
         },
         candidates: candidates.map(mapCandidate)
       });
@@ -324,7 +359,7 @@ pickingRouter.post("/scan", async (req, res) => {
           subtype: "PICK_SUCCESS",
           reference: normalizedCode,
           userId: req.auth!.userId,
-          customerId: product.customerId,
+          customerId: stock.projectId,
           result: "OK",
           taskId
         }
@@ -341,6 +376,7 @@ pickingRouter.post("/scan", async (req, res) => {
       return;
     }
 
+    const picked = mapCandidate(stock);
     res.json({
       message: "Picking OK: stock descontado y trazabilidad registrada.",
       deducted: true,
@@ -350,8 +386,10 @@ pickingRouter.post("/scan", async (req, res) => {
         name: product.name,
         barcode: product.barcode,
         warehouse: stock.location.warehouse,
-        projectCode: product.customer?.code || null,
-        projectName: product.customer?.name || null
+        projectCode: picked.projectCode,
+        projectName: picked.projectName,
+        assignmentType: picked.assignmentType,
+        assignmentLabel: picked.assignmentLabel
       },
       location: stock.location.code,
       warehouse: stock.location.warehouse,

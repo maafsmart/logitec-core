@@ -2719,7 +2719,10 @@ function renderPickCandidates(candidates) {
     <div style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto">
       ${candidates
         .map((c, idx) => {
-          const label = `${c.projectCode || "—"} · ${c.location || "—"} · ${formatInventoryStatus(c.status)} · qty ${c.qty ?? "—"}`;
+          const assignment = c.assignmentLabel || assignmentDisplayLabel(c);
+          const label = `${assignment} · ${c.location || "—"} · ${formatInventoryStatus(c.status)} · ${c.qty ?? "—"} · Reservada ${
+            c.reservedQty ?? "—"
+          } · No reservada ${c.unreservedQty ?? "—"}`;
           return `<button type="button" class="btn-secondary btn-compact" data-pick-candidate="${idx}" style="text-align:left;justify-content:flex-start">${escCell(label)}</button>`;
         })
         .join("")}
@@ -2733,14 +2736,18 @@ function renderPickCandidates(candidates) {
       const statusSel = document.getElementById("pickStatus");
       const whSel = document.getElementById("pickWarehouse");
       const locSel = document.getElementById("pickLocation");
-      if (projectSel && c.projectCode) {
-        if (![...projectSel.options].some((o) => o.value === c.projectCode)) {
-          const opt = document.createElement("option");
-          opt.value = c.projectCode;
-          opt.textContent = c.projectName || c.projectCode;
-          projectSel.appendChild(opt);
+      if (projectSel) {
+        if (c.assignmentType === "FREE_TO_SALE") {
+          projectSel.value = "";
+        } else if (c.projectCode) {
+          if (![...projectSel.options].some((o) => o.value === c.projectCode)) {
+            const opt = document.createElement("option");
+            opt.value = c.projectCode;
+            opt.textContent = c.projectName || c.projectCode;
+            projectSel.appendChild(opt);
+          }
+          projectSel.value = c.projectCode;
         }
-        projectSel.value = c.projectCode;
       }
       if (statusSel && c.status) statusSel.value = c.status;
       if (whSel && c.warehouse) {
@@ -2763,7 +2770,7 @@ function renderPickCandidates(candidates) {
       }
       box.dataset.inventoryId = c.inventoryId || "";
       setScanResult(
-        `Línea seleccionada: ${c.location} / ${formatInventoryStatus(c.status)} (qty ${c.qty}). Confirma de nuevo el surtido.`,
+        `Línea seleccionada: ${c.assignmentLabel || assignmentDisplayLabel(c)} · ${c.location} / ${formatInventoryStatus(c.status)} (qty ${c.qty}, no reservada ${c.unreservedQty ?? "—"}). Confirma de nuevo el surtido.`,
         "ok"
       );
     });
@@ -5294,7 +5301,13 @@ async function searchSkuSuggestions(query, opts = {}) {
   const customerCode = String(opts.customerCode || "").trim().toUpperCase();
   const rows = await response.json().catch(() => []);
   return (Array.isArray(rows) ? rows : [])
-    .filter((product) => !customerCode || String(product.customer?.code || "").toUpperCase() === customerCode)
+    .filter((product) => {
+      if (!customerCode) return true;
+      if (String(product.customer?.code || "").toUpperCase() === customerCode) return true;
+      return (Array.isArray(product.productProjects) ? product.productProjects : []).some(
+        (link) => String(link.code || link.project?.code || "").toUpperCase() === customerCode
+      );
+    })
     .map((product) => ({
       kind: "catalog",
       key: `catalog:${product.id}`,
@@ -5320,6 +5333,19 @@ async function loadSkuContext(productId) {
   return response.json().catch(() => null);
 }
 
+function assignmentDisplayLabel(row) {
+  if (!row) return "—";
+  if (row.assignmentType === "FREE_TO_SALE" || row.assignmentLabel === "FREE TO SALE") return "FREE TO SALE";
+  if (row.project?.name) {
+    return row.project.code ? `${row.project.name} (${row.project.code})` : row.project.name;
+  }
+  if (row.projectName) {
+    return row.projectCode ? `${row.projectName} (${row.projectCode})` : row.projectName;
+  }
+  if (row.projectCode) return row.projectCode;
+  return row.assignmentType || "—";
+}
+
 function renderSkuContext(listEl, context) {
   if (!listEl || !context?.product) return;
   let panel = listEl.parentElement?.querySelector(".sku-context-summary");
@@ -5334,19 +5360,21 @@ function renderSkuContext(listEl, context) {
   const locationSummary = !locations.length
     ? "Sin existencia / ubicación."
     : locations.length === 1
-      ? "1 ubicación encontrada."
-      : `${locations.length} ubicaciones: selecciona una antes de operar.`;
+      ? "1 cubo encontrado."
+      : `${locations.length} cubos: selecciona Proyecto / FREE TO SALE y ubicación antes de operar.`;
+  const pickingSelector = Boolean(document.getElementById("pickCandidates") && listEl?.id === "scanSkuSuggestions");
   const locationRows = locations
     .map((row) => {
-      const assignmentLabel =
-        row.assignmentType === "FREE_TO_SALE"
-          ? "FREE TO SALE"
-          : row.project
-            ? `${row.project.name} (${row.project.code})`
-            : row.assignmentType || "";
-      return `<li>${escCell(row.locationCode)}${assignmentLabel ? ` · ${escCell(assignmentLabel)}` : ""} · Cantidad ${escCell(formatQty(row.qty))} · No reservada ${escCell(
-          formatQty(row.unreservedQty)
-        )} · ${escCell(formatInventoryStatus(row.status))}</li>`;
+      const assignmentLabel = assignmentDisplayLabel(row);
+      const text = `${assignmentLabel} · ${row.locationCode || "—"} · ${formatInventoryStatus(row.status)} · ${formatQty(row.qty)} · Reservada ${formatQty(
+        row.reservedQty
+      )} · No reservada ${formatQty(row.unreservedQty)}`;
+      if (pickingSelector && row.inventoryId) {
+        return `<li><button type="button" class="btn-secondary btn-compact" data-sku-cube="${escCell(
+          row.inventoryId
+        )}" style="text-align:left;justify-content:flex-start">${escCell(text)}</button></li>`;
+      }
+      return `<li>${escCell(text)}</li>`;
     })
     .join("");
   const layerCount = Number(context.layers?.count || 0);
@@ -5363,6 +5391,30 @@ function renderSkuContext(listEl, context) {
     }</div>
     <div>${escCell(locationSummary)}</div>
     ${locationRows ? `<ul style="margin:4px 0 0;padding-left:18px">${locationRows}</ul>` : ""}`;
+  if (pickingSelector) {
+    panel.querySelectorAll("[data-sku-cube]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const inventoryId = btn.getAttribute("data-sku-cube");
+        const row = locations.find((item) => item.inventoryId === inventoryId);
+        if (!row) return;
+        renderPickCandidates([
+          {
+            inventoryId: row.inventoryId,
+            assignmentType: row.assignmentType,
+            assignmentLabel: assignmentDisplayLabel(row),
+            projectCode: row.project?.code || (row.assignmentType === "FREE_TO_SALE" ? "" : ""),
+            projectName: row.project?.name || "",
+            location: row.locationCode,
+            warehouse: row.warehouse,
+            status: row.status,
+            qty: row.qty,
+            reservedQty: row.reservedQty,
+            unreservedQty: row.unreservedQty
+          }
+        ]);
+      });
+    });
+  }
 }
 
 function setSelectValueFlexible(selectId, value, { allowCreate = false, labelFn = null } = {}) {
@@ -5584,46 +5636,67 @@ function applyPickSuggestion(item) {
   const scan = document.getElementById("scanInput");
   if (scan) scan.value = item.sku || item.barcode || "";
   populatePickContextSelects();
-  if (item.projectCode) setSelectValueFlexible("pickProject", item.projectCode);
-  if (item.warehouse) setSelectValueFlexible("pickWarehouse", item.warehouse);
-  if (item.location) {
+  const contextLocations = Array.isArray(item.context?.inventory?.locations) ? item.context.inventory.locations : [];
+  const selectedCube =
+    item.kind === "stock" && item.inventoryId
+      ? item
+      : contextLocations.length === 1
+        ? {
+            inventoryId: contextLocations[0].inventoryId,
+            assignmentType: contextLocations[0].assignmentType,
+            assignmentLabel: assignmentDisplayLabel(contextLocations[0]),
+            projectCode: contextLocations[0].project?.code || "",
+            projectName: contextLocations[0].project?.name || "",
+            warehouse: contextLocations[0].warehouse,
+            location: contextLocations[0].locationCode,
+            status: contextLocations[0].status,
+            qty: contextLocations[0].qty,
+            reservedQty: contextLocations[0].reservedQty,
+            unreservedQty: contextLocations[0].unreservedQty
+          }
+        : null;
+  if (selectedCube?.assignmentType === "FREE_TO_SALE") {
+    const projectSel = document.getElementById("pickProject");
+    if (projectSel) projectSel.value = "";
+  } else if (selectedCube?.projectCode) {
+    setSelectValueFlexible("pickProject", selectedCube.projectCode);
+  }
+  const locSource = selectedCube || item;
+  if (locSource.warehouse) setSelectValueFlexible("pickWarehouse", locSource.warehouse);
+  if (locSource.location || locSource.locationCode) {
     const locSel = document.getElementById("pickLocation");
-    if (locSel) {
-      if (![...locSel.options].some((o) => o.value === item.location)) {
+    const locationCode = locSource.location || locSource.locationCode;
+    if (locSel && locationCode) {
+      if (![...locSel.options].some((o) => o.value === locationCode)) {
         const opt = document.createElement("option");
-        opt.value = item.location;
-        opt.textContent = item.location;
+        opt.value = locationCode;
+        opt.textContent = locationCode;
         locSel.appendChild(opt);
       }
-      locSel.value = item.location;
+      locSel.value = locationCode;
     }
   }
-  if (item.status) setSelectValueFlexible("pickStatus", item.status);
+  if (locSource.status) setSelectValueFlexible("pickStatus", locSource.status);
   const box = document.getElementById("pickCandidates");
   if (box) {
-    if (item.kind === "stock" && item.inventoryId) {
-      box.dataset.inventoryId = item.inventoryId;
-      if (item.stockRow || item.location) {
-        renderPickCandidates([
-          {
-            inventoryId: item.inventoryId,
-            projectCode: item.projectCode,
-            location: item.location,
-            status: item.status,
-            qty: item.qty,
-            warehouse: item.warehouse
-          }
-        ]);
-      }
+    if (selectedCube?.inventoryId) {
+      renderPickCandidates([selectedCube]);
     } else {
       delete box.dataset.inventoryId;
       clearPickCandidates();
     }
   }
   if (typeof setScanResult === "function") {
-    if (item.kind === "stock") {
+    if (selectedCube?.inventoryId) {
       setScanResult(
-        `Línea elegida en búsqueda: ${item.location || "—"} / ${formatInventoryStatus(item.status)} (qty ${formatQty(item.qty)}). Confirma el surtido para descontar.`,
+        `Línea elegida: ${selectedCube.assignmentLabel || assignmentDisplayLabel(selectedCube)} · ${selectedCube.location || "—"} / ${formatInventoryStatus(
+          selectedCube.status
+        )} (qty ${formatQty(selectedCube.qty)}). Confirma el surtido para descontar.`,
+        "ok"
+      );
+    } else if (contextLocations.length > 1) {
+      setScanResult(
+        `Este SKU tiene ${contextLocations.length} cubos (proyecto / FREE TO SALE). Elige uno antes de surtir.`,
         "ok"
       );
     } else {
@@ -6263,6 +6336,40 @@ function formatReqCliente(task) {
   return formatReqProyecto(task);
 }
 
+function openRequisitionDetail(row) {
+  if (!row) return;
+  const projectLabel = row.project ? `${row.project.name} (${row.project.code})` : "—";
+  const fields = [
+    { label: "Requisición", value: row.number || "—" },
+    { label: "Proyecto", value: projectLabel },
+    { label: "Cliente", value: row.client?.tradeName || row.client?.legalName || row.client?.name || "—" },
+    { label: "Estado", value: row.status || "—" },
+    { label: "Surtido", value: row.fulfillmentStatus || "—" }
+  ];
+  for (const line of Array.isArray(row.lines) ? row.lines : []) {
+    const sku = line.product?.sku || line.productId || "SKU";
+    fields.push({ label: `${sku} · Solicitado`, value: formatQty(line.requestedQty) });
+    fields.push({ label: `${sku} · Reservado`, value: formatQty(line.reservedQty) });
+    fields.push({ label: `${sku} · Surtido`, value: formatQty(line.fulfilledQty) });
+    fields.push({ label: `${sku} · Pendiente`, value: formatQty(line.pendingQty) });
+    fields.push({
+      label: `${sku} · Disponible en este proyecto`,
+      value: formatQty(line.stock?.projectAvailable)
+    });
+    if (line.stock && (Number(line.stock.freeToSaleAvailable) > 0 || Number(line.stock.otherProjectsAvailable) > 0)) {
+      fields.push({
+        label: `${sku} · FREE TO SALE`,
+        value: `${formatQty(line.stock.freeToSaleAvailable)} — requiere reasignación`
+      });
+      fields.push({
+        label: `${sku} · Otros proyectos`,
+        value: formatQty(line.stock.otherProjectsAvailable)
+      });
+    }
+  }
+  openDetailDrawer(`Requisición ${row.number || ""}`, fields, []);
+}
+
 async function loadRequisitionsList() {
   const container = document.getElementById("requisitionsList");
   if (!container) return;
@@ -6279,7 +6386,8 @@ async function loadRequisitionsList() {
       gridId: "requisitions",
       columns: REQ_COLUMNS,
       rows,
-      emptyMessage: "Sin registros operativos aún"
+      emptyMessage: "Sin registros operativos aún",
+      onRowSelect: openRequisitionDetail
     });
   } catch (_e) {
     container.innerHTML = '<div class="data-grid-empty" style="padding:16px">Error de red.</div>';
