@@ -78,7 +78,7 @@ logitec-wms/
 
 1. Copiar variables:
    - `cp .env.example .env` (o crear `.env` manualmente en Windows)
-  - Local (`NODE_ENV=development`): `DATABASE_URL="postgresql://postgres:postgres@localhost:5432/logitec_wms?schema=public"`
+   - Local: usa exclusivamente una base PostgreSQL/Neon de **DEV/QA**.
 2. Instalar dependencias:
    - `npm install`
 3. Generar cliente y migrar:
@@ -88,6 +88,31 @@ logitec-wms/
    - `npm run db:seed`
 5. Ejecutar API:
    - `npm run dev`
+
+## Separación segura de bases de datos
+
+| Entorno | Base permitida | Dónde se configura |
+| --- | --- | --- |
+| Desarrollo local | Neon DEV/QA independiente | `.env` local, nunca versionado |
+| QA automatizado | Neon DEV/QA independiente | `.env` local o secreto de CI |
+| Producción (`control.logitec.com.mx`) | Neon PRODUCCIÓN actual | Variables del Web Service Render |
+
+Variables requeridas en el `.env` local:
+
+```dotenv
+NODE_ENV=development
+DATABASE_ENVIRONMENT=development
+DATABASE_URL="postgresql://…HOST-DEV…/neondb?sslmode=require"
+PRODUCTION_DATABASE_HOST="HOST-PRODUCCION"
+JWT_SECRET="secreto-local-no-versionado"
+```
+
+- `PRODUCTION_DATABASE_HOST` contiene **solo el hostname** del endpoint de producción, sin usuario, contraseña ni URL.
+- Como protección obligatoria, al iniciar en `development` o `test`, la app compara el host de `DATABASE_URL` con ese host protegido. Si coinciden, se detiene con: `SEGURIDAD LOGITEC: desarrollo no puede utilizar la base de datos de producción.`
+- En producción se conserva `NODE_ENV=production` y `DATABASE_ENVIRONMENT=production`; Render debe seguir usando su secreto `DATABASE_URL` de producción.
+- Antes de ejecutar cualquier prueba local, confirma `/health`: debe responder `environment: "development"` o `"qa"`. El dashboard muestra `ENTORNO DEV` fuera de producción.
+
+Nunca versionar ni compartir en GitHub: `.env`, `DATABASE_URL`, `JWT_SECRET`, credenciales Neon, tokens de Render o credenciales de cualquier proveedor.
 
 Credenciales admin seed:
 - email: `admin@logitec.local`

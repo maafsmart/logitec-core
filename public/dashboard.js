@@ -5,6 +5,7 @@ const logoutBtn = document.getElementById("logoutBtn");
 const sessionDisplayName = document.getElementById("sessionDisplayName");
 const sessionEmailInline = document.getElementById("sessionEmailInline");
 const sessionRoleInline = document.getElementById("sessionRoleInline");
+const environmentBadge = document.getElementById("environmentBadge");
 const currentUserFullName = document.getElementById("currentUserFullName");
 const currentUserEmail = document.getElementById("currentUserEmail");
 const currentUserRoleText = document.getElementById("currentUserRole");
@@ -947,6 +948,20 @@ async function authenticatedFetch(path, options = {}) {
   }
 
   return response;
+}
+
+async function loadEnvironmentBadge() {
+  if (!environmentBadge) return;
+  try {
+    const response = await fetch("/health", { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    const environment = String(payload?.environment || "").toLowerCase();
+    const isNonProduction = environment === "development" || environment === "qa";
+    environmentBadge.classList.toggle("hidden", !isNonProduction);
+    environmentBadge.textContent = environment === "qa" ? "ENTORNO QA" : "ENTORNO DEV";
+  } catch {
+    environmentBadge.classList.add("hidden");
+  }
 }
 
 function renderUsersSummary(text) {
@@ -7425,4 +7440,5 @@ updateAppDateTime();
 setInterval(updateAppDateTime, 60000);
 if (importResult) wireOperationalMessageClicks(importResult);
 if (catalogImportResult) wireOperationalMessageClicks(catalogImportResult);
+void loadEnvironmentBadge();
 validateSession();

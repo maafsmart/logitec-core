@@ -68,6 +68,22 @@
         flex-wrap: wrap;
         justify-content: flex-end;
       }
+      .environment-badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding: 3px 8px;
+        border: 1px solid #f0b85b;
+        border-radius: 999px;
+        background: #fff7e6;
+        color: #8a4b00;
+        font-size: 0.7rem;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+      }
+      .environment-badge.hidden {
+        display: none;
+      }
       .app-user-block {
         text-align: right;
         font-size: 0.85rem;
@@ -2366,6 +2382,7 @@
             <strong id="sessionDisplayName">Cargando sesión...</strong>
             <span><span id="sessionEmailInline">—</span><span id="sessionRoleInline"></span></span>
           </div>
+          <span id="environmentBadge" class="environment-badge hidden" aria-live="polite">ENTORNO DEV</span>
           <span class="app-datetime" id="appDateTime">—</span>
           <button type="button" id="logoutBtn" class="btn-secondary btn-compact">Cerrar sesión</button>
         </div>

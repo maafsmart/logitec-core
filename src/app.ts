@@ -5,6 +5,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import path from "path";
 import { fileURLToPath } from "url";
+import { env } from "./config/env.js";
 import { adminRouter } from "./modules/admin/admin.routes.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { catalogRouter } from "./modules/catalog/catalog.routes.js";
@@ -27,7 +28,11 @@ app.use(express.json());
 app.use(morgan("dev"));
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "logitec-wms-api" });
+  res.json({
+    ok: true,
+    service: "logitec-wms-api",
+    environment: env.DATABASE_ENVIRONMENT
+  });
 });
 
 app.use("/api/auth", authRouter);
