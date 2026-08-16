@@ -36,7 +36,9 @@ const createMovementSchema = z
     layerId: z.string().min(1).optional(),
     lotNumber: z.string().min(1).max(120).optional(),
     unitPriceMxn: z.coerce.number().nonnegative().optional(),
-    unitPriceUsd: z.coerce.number().nonnegative().optional()
+    unitPriceUsd: z.coerce.number().nonnegative().optional(),
+    assignmentType: z.enum(["PROJECT", "FREE_TO_SALE"]).optional(),
+    projectId: z.string().min(1).nullable().optional()
   })
   .superRefine((data, ctx) => {
     if (data.type === "ADJUST_SET") {
@@ -145,7 +147,15 @@ inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "C
       product: {
         select: { sku: true, name: true, active: true, customer: { select: { code: true, name: true } } }
       },
-      location: true
+      location: true,
+      project: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          client: { select: { id: true, name: true, tradeName: true, legalName: true } }
+        }
+      }
     }
   });
 
@@ -387,9 +397,13 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
   } else if (!inventoryId && body.location) {
     const location = await prisma.location.findUnique({ where: { code: body.location.trim().toUpperCase() } });
     if (!location) throw new HttpError(400, "La ubicación indicada no existe.");
-    const stock = await prisma.inventory.findFirst({
+    const stockRows = await prisma.inventory.findMany({
       where: { productId: product.id, locationId: location.id, status: stockStatus }
     });
+    if (stockRows.length > 1) {
+      throw new HttpError(409, "Hay varias asignaciones para esa ubicación/estado; indica inventoryId.");
+    }
+    const stock = stockRows[0];
     if (!stock) throw new HttpError(404, "Línea de inventario no encontrada para esa ubicación/estado.");
     inventoryId = stock.id;
   }
@@ -413,6 +427,8 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
       lotNumber: body.lotNumber?.trim() || null,
       unitPriceMxn: body.unitPriceMxn == null ? null : dec(body.unitPriceMxn),
       unitPriceUsd: body.unitPriceUsd == null ? null : dec(body.unitPriceUsd),
+      assignmentType: body.assignmentType,
+      projectId: body.projectId === undefined ? undefined : body.projectId,
       activity: {
         type: body.type === "IN" ? "RECEIVE" : body.type === "OUT" ? "OUTBOUND" : "ADJUSTMENT",
         subtype: body.type === "IN" ? "MANUAL_IN" : body.type === "OUT" ? "MANUAL_OUT" : "MANUAL_ADJUSTMENT",

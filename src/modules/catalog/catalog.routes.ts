@@ -6,6 +6,7 @@ import { logActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
 import { clientCustomerWhere, clientProductWhere } from "../clients/client-scope.js";
 import { getSkuContext, searchSkuProducts } from "./sku-search.service.js";
+import { ensureCanonicalProductProject } from "../inventory/inventory-assignment.js";
 
 const catalogRouter = Router();
 
@@ -141,6 +142,7 @@ catalogRouter.post("/products", requireRole(["ADMIN"]), async (req, res) => {
       warehouse: data.warehouse.trim()
     }
   });
+  await ensureCanonicalProductProject(prisma, product.id, product.customerId);
   await logActivity({
     type: "PRODUCT_CREATE",
     subtype: "MANUAL",
@@ -209,6 +211,20 @@ catalogRouter.delete("/customers/:id", requireRole(["ADMIN"]), async (req, res) 
     throw new HttpError(
       400,
       `No se puede eliminar cliente ${customer.code}: tiene ${linkedProducts} productos ligados.`
+    );
+  }
+  const linkedCatalog = await prisma.productProject.count({ where: { projectId: id } });
+  if (linkedCatalog > 0) {
+    throw new HttpError(
+      400,
+      `No se puede eliminar cliente ${customer.code}: tiene ${linkedCatalog} relaciones de catálogo.`
+    );
+  }
+  const linkedInventory = await prisma.inventory.count({ where: { projectId: id } });
+  if (linkedInventory > 0) {
+    throw new HttpError(
+      400,
+      `No se puede eliminar cliente ${customer.code}: tiene ${linkedInventory} existencias asignadas.`
     );
   }
 
@@ -310,13 +326,14 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
     if (!current) {
       preview.push({ sku, action: "CREATE" });
       if (mode === "apply") {
-        await prisma.product.create({
+        const createdProduct = await prisma.product.create({
           data: {
             sku,
             warehouse: "TULTITLAN24",
             ...payload
           }
         });
+        await ensureCanonicalProductProject(prisma, createdProduct.id, createdProduct.customerId);
         created += 1;
       }
       continue;
@@ -324,10 +341,11 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
 
     preview.push({ sku, action: "UPDATE" });
     if (mode === "apply") {
-      await prisma.product.update({
+      const updatedProduct = await prisma.product.update({
         where: { sku },
         data: payload
       });
+      await ensureCanonicalProductProject(prisma, updatedProduct.id, updatedProduct.customerId);
       updated += 1;
     }
   }

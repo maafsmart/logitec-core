@@ -26,23 +26,55 @@ export function clientCustomerWhere(auth: AuthContext): Prisma.CustomerWhereInpu
 }
 
 export function clientProductWhere(auth: AuthContext): Prisma.ProductWhereInput {
-  return isClientRole(auth) ? { customer: { clientId: scopedClientId(auth) } } : {};
+  if (!isClientRole(auth)) return {};
+  const clientId = scopedClientId(auth);
+  return {
+    OR: [
+      { customer: { clientId } },
+      { productProjects: { some: { active: true, project: { clientId } } } }
+    ]
+  };
 }
 
 export function clientInventoryWhere(auth: AuthContext): Prisma.InventoryWhereInput {
-  return isClientRole(auth) ? { product: { customer: { clientId: scopedClientId(auth) } } } : {};
+  if (!isClientRole(auth)) return {};
+  const clientId = scopedClientId(auth);
+  return {
+    assignmentType: "PROJECT",
+    project: { clientId }
+  };
 }
 
 export function clientMovementWhere(auth: AuthContext): Prisma.InventoryMovementWhereInput {
-  return isClientRole(auth) ? { product: { customer: { clientId: scopedClientId(auth) } } } : {};
+  if (!isClientRole(auth)) return {};
+  const clientId = scopedClientId(auth);
+  return {
+    OR: [
+      { toProject: { clientId } },
+      { fromProject: { clientId } },
+      {
+        AND: [
+          { fromAssignmentKey: null },
+          { toAssignmentKey: null },
+          { product: { customer: { clientId } } }
+        ]
+      }
+    ]
+  };
 }
 
 export function clientLayerWhere(auth: AuthContext): Prisma.InventoryLayerWhereInput {
-  return isClientRole(auth) ? { inventory: { product: { customer: { clientId: scopedClientId(auth) } } } } : {};
+  return isClientRole(auth) ? { inventory: clientInventoryWhere(auth) } : {};
 }
 
 export function clientSerialWhere(auth: AuthContext): Prisma.InventorySerialWhereInput {
-  return isClientRole(auth) ? { product: { customer: { clientId: scopedClientId(auth) } } } : {};
+  if (!isClientRole(auth)) return {};
+  return {
+    OR: [
+      { inventoryLayer: { inventory: clientInventoryWhere(auth) } },
+      { AND: [{ inventoryLayerId: null }, { product: clientProductWhere(auth) }] }
+    ]
+  };
 }
 
 export function clientActivityWhere(auth: AuthContext): Prisma.ActivityLogWhereInput {

@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { HttpError } from "../../shared/http-error.js";
-import { clientProductWhere } from "../clients/client-scope.js";
+import { clientInventoryWhere, clientProductWhere } from "../clients/client-scope.js";
 import type { UserRole } from "../../middlewares/auth.middleware.js";
 import { calculateInventoryValuation } from "../inventory/inventory-valuation.service.js";
 
@@ -73,6 +73,28 @@ export async function searchSkuProducts(query: string, auth: AuthContext, take =
                 }
               ]
             }
+          },
+          {
+            productProjects: {
+              some: {
+                active: true,
+                project: {
+                  OR: [
+                    { code: { contains: q, mode: "insensitive" } },
+                    { name: { contains: q, mode: "insensitive" } },
+                    {
+                      client: {
+                        OR: [
+                          { name: { contains: q, mode: "insensitive" } },
+                          { legalName: { contains: q, mode: "insensitive" } },
+                          { tradeName: { contains: q, mode: "insensitive" } }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           }
         ]
       }
@@ -120,9 +142,20 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
         }
       },
       inventories: {
+        where: clientInventoryWhere(auth),
         orderBy: [{ location: { warehouse: "asc" } }, { location: { code: "asc" } }],
         include: {
           location: { select: { id: true, code: true, warehouse: true } },
+          project: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              client: {
+                select: { id: true, name: true, legalName: true, tradeName: true, active: true }
+              }
+            }
+          },
           layers: {
             orderBy: { createdAt: "asc" },
             select: {
@@ -150,6 +183,19 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
     const reservedQty = inventory.reservedQty;
     return {
       inventoryId: inventory.id,
+      assignmentType: inventory.assignmentType,
+      assignmentKey: inventory.assignmentKey,
+      project: inventory.project
+        ? { id: inventory.project.id, code: inventory.project.code, name: inventory.project.name }
+        : null,
+      client: inventory.project?.client
+        ? {
+            id: inventory.project.client.id,
+            name: inventory.project.client.name,
+            tradeName: inventory.project.client.tradeName,
+            legalName: inventory.project.client.legalName
+          }
+        : null,
       warehouse: inventory.location.warehouse,
       locationId: inventory.location.id,
       locationCode: inventory.location.code,

@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { mutateInventoryInTransaction } from "../inventory/inventory-mutation.service.js";
+import { ensureCanonicalProductProject } from "../inventory/inventory-assignment.js";
 import { createRequisition } from "../requisitions/requisition.service.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import type { ImportContext } from "./import-mapping.js";
@@ -47,6 +48,7 @@ export async function executeImportBatch(input: {
               }
             });
             productId = created.id;
+            await ensureCanonicalProductProject(tx, created.id, projectId);
           }
           const locationId = String(n.locationId || "");
           const qty = toDecimal(n.qty) || new Prisma.Decimal(0);
@@ -116,8 +118,9 @@ export async function executeImportBatch(input: {
               lotControlled: n.lotControlled != null ? Boolean(n.lotControlled) : existing.lotControlled
             }
           });
+          await ensureCanonicalProductProject(prisma, existing.id, n.projectId ? String(n.projectId) : existing.customerId);
         } else {
-          await prisma.product.create({
+          const created = await prisma.product.create({
             data: {
               sku,
               name: String(n.name || sku),
@@ -130,6 +133,7 @@ export async function executeImportBatch(input: {
               lotControlled: Boolean(n.lotControlled)
             }
           });
+          await ensureCanonicalProductProject(prisma, created.id, created.customerId);
         }
         results.push({ sourceRow: row.sourceRow, ok: true });
       } catch (error) {

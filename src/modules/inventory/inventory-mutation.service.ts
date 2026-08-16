@@ -1,16 +1,17 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { logActivity, type LogActivityInput } from "../activity/activity-log.service.js";
+import { InventoryMutationError } from "./inventory-errors.js";
+import {
+  assignmentFromInventory,
+  inboundAssignmentFields,
+  outboundAssignmentFields,
+  resolveInboundAssignment,
+  sameAssignmentFields,
+  type InventoryAssignment
+} from "./inventory-assignment.js";
 
-export class InventoryMutationError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-    public readonly details?: unknown
-  ) {
-    super(message);
-  }
-}
+export { InventoryMutationError } from "./inventory-errors.js";
 
 type MutationType = "IN" | "OUT" | "ADJUST_SET" | "PICK" | "RELOCATE";
 
@@ -31,6 +32,8 @@ export type InventoryMutationInput = {
   unitPriceMxn?: Prisma.Decimal | null;
   unitPriceUsd?: Prisma.Decimal | null;
   scannedCode?: string | null;
+  assignmentType?: "PROJECT" | "FREE_TO_SALE";
+  projectId?: string | null;
   activity: LogActivityInput;
 };
 
@@ -83,10 +86,19 @@ async function ensureInventory(
   tx: Prisma.TransactionClient,
   productId: string,
   locationId: string,
-  status: string
+  status: string,
+  assignment: InventoryAssignment
 ): Promise<LockedInventory> {
+  const uniqueWhere = {
+    productId_locationId_status_assignmentKey: {
+      productId,
+      locationId,
+      status,
+      assignmentKey: assignment.assignmentKey
+    }
+  };
   const existing = await tx.inventory.findUnique({
-    where: { productId_locationId_status: { productId, locationId, status } },
+    where: uniqueWhere,
     include: { location: true, product: true }
   });
   if (existing) {
@@ -97,14 +109,23 @@ async function ensureInventory(
   }
   try {
     const created = await tx.inventory.create({
-      data: { productId, locationId, status, qty: 0, reservedQty: 0 },
+      data: {
+        productId,
+        locationId,
+        status,
+        qty: 0,
+        reservedQty: 0,
+        assignmentType: assignment.assignmentType,
+        projectId: assignment.projectId,
+        assignmentKey: assignment.assignmentKey
+      },
       include: { location: true, product: true }
     });
     return created;
   } catch (error) {
     if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
     const again = await tx.inventory.findUniqueOrThrow({
-      where: { productId_locationId_status: { productId, locationId, status } },
+      where: uniqueWhere,
       include: { location: true, product: true }
     });
     const locked = await lockInventory(tx, again.id);
@@ -204,7 +225,16 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
     if (!input.locationId) {
       throw new InventoryMutationError("LOCATION_REQUIRED", "La entrada requiere una ubicación explícita.");
     }
-    const inventory = await ensureInventory(tx, input.productId, input.locationId, status);
+    const product = await tx.product.findUnique({
+      where: { id: input.productId },
+      select: { id: true, customerId: true }
+    });
+    if (!product) throw new InventoryMutationError("PRODUCT_NOT_FOUND", "Producto no encontrado.");
+    const assignment = await resolveInboundAssignment(tx, product, {
+      assignmentType: input.assignmentType,
+      projectId: input.projectId
+    });
+    const inventory = await ensureInventory(tx, input.productId, input.locationId, status, assignment);
     if (inventory.productId !== input.productId) {
       throw new InventoryMutationError("INVENTORY_PRODUCT_MISMATCH", "La línea no corresponde al producto.");
     }
@@ -238,7 +268,8 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
         reference: input.reference ?? null,
         notes: input.notes ?? null,
         userId: input.userId,
-        taskId: input.taskId ?? null
+        taskId: input.taskId ?? null,
+        ...inboundAssignmentFields(assignment)
       }
     });
     await logActivity(
@@ -279,7 +310,24 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
       throw new InventoryMutationError("SAME_LOCATION", "Origen y destino deben ser distintos.");
     }
 
-    const destination = await ensureInventory(tx, input.productId, input.destinationLocationId, source.status);
+    const sourceAssignment = assignmentFromInventory(source);
+    const destination = await ensureInventory(
+      tx,
+      input.productId,
+      input.destinationLocationId,
+      source.status,
+      sourceAssignment
+    );
+    if (
+      destination.assignmentType !== sourceAssignment.assignmentType ||
+      destination.projectId !== sourceAssignment.projectId ||
+      destination.assignmentKey !== sourceAssignment.assignmentKey
+    ) {
+      throw new InventoryMutationError(
+        "ASSIGNMENT_MISMATCH",
+        "La reubicación no puede cambiar la asignación del inventario."
+      );
+    }
     await lockInventories(tx, [source.id, destination.id]);
 
     const sourceFresh = await lockInventory(tx, source.id);
@@ -329,7 +377,8 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
         reference: input.reference ?? null,
         notes: input.notes ?? null,
         userId: input.userId,
-        taskId: input.taskId ?? null
+        taskId: input.taskId ?? null,
+        ...sameAssignmentFields(sourceAssignment)
       }
     });
     await logActivity(
@@ -412,7 +461,8 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
         reference: input.reference ?? null,
         notes: input.notes ?? null,
         userId: input.userId,
-        taskId: input.taskId ?? null
+        taskId: input.taskId ?? null,
+        ...sameAssignmentFields(assignmentFromInventory(inventory))
       }
     });
     await logActivity(
@@ -452,7 +502,8 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
       reference: input.reference ?? null,
       notes: input.notes ?? null,
       userId: input.userId,
-      taskId: input.taskId ?? null
+      taskId: input.taskId ?? null,
+      ...outboundAssignmentFields(assignmentFromInventory(inventory))
     }
   });
   const scanEvent = input.scannedCode

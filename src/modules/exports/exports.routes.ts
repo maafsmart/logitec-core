@@ -32,6 +32,7 @@ exportsRouter.get("/inventory.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATO
     include: {
       product: { include: { customer: { include: { client: true } } } },
       location: true,
+      project: { include: { client: true } },
       layers: true
     },
     orderBy: { updatedAt: "desc" },
@@ -40,8 +41,10 @@ exportsRouter.get("/inventory.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATO
   const csv = toCsv(
     ["cliente", "proyecto", "sku", "producto", "ubicacion", "estado", "qty", "reservedQty", "freeQty", "lotes"],
     rows.map((r) => [
-      r.product.customer?.client?.tradeName || r.product.customer?.client?.name || "",
-      r.product.customer?.code || "",
+      r.project?.client?.tradeName || r.project?.client?.name || r.product.customer?.client?.tradeName || r.product.customer?.client?.name || "",
+      r.assignmentType === "FREE_TO_SALE"
+        ? "FREE TO SALE"
+        : r.project?.code || r.product.customer?.code || r.assignmentKey,
       r.product.sku,
       r.product.name,
       r.location.code,
@@ -195,6 +198,7 @@ exportsRouter.get("/inventory.xlsx", requireRole(["ADMIN", "SUPERVISOR", "OPERAT
     include: {
       product: { include: { customer: { include: { client: true } } } },
       location: true,
+      project: { include: { client: true } },
       layers: { include: { serials: true } }
     },
     take: 20000
@@ -220,8 +224,11 @@ exportsRouter.get("/inventory.xlsx", requireRole(["ADMIN", "SUPERVISOR", "OPERAT
   const detail: any[] = [];
   const serials: any[] = [];
   for (const inv of inventories) {
-    const client = inv.product.customer?.client?.tradeName || inv.product.customer?.client?.name || "";
-    const project = inv.product.customer?.code || "";
+    const client = inv.project?.client?.tradeName || inv.project?.client?.name || inv.product.customer?.client?.tradeName || inv.product.customer?.client?.name || "";
+    const project =
+      inv.assignmentType === "FREE_TO_SALE"
+        ? "FREE TO SALE"
+        : inv.project?.code || inv.product.customer?.code || inv.assignmentKey;
     const key = `${client}|${project}`;
     const current = summaryMap.get(key) || { client, project, qty: 0, reserved: 0, mxn: 0, usd: 0, missing: 0 };
     current.qty += Number(inv.qty);

@@ -7,6 +7,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum InventoryAssignmentType {
+  PROJECT
+  FREE_TO_SALE
+  LEGACY_UNASSIGNED
+}
+
 model User {
   id                   String               @id @default(cuid())
   email                String               @unique
@@ -72,6 +78,7 @@ model Product {
   activityLogs        ActivityLog[]
   incidents           Incident[]
   requisitionLines    RequisitionLine[]
+  productProjects     ProductProject[]
 
   @@index([customerId])
 }
@@ -107,10 +114,18 @@ model InventoryMovement {
   inventorySerialId String?
   inventoryLayerId String?
   requisitionLineId String?
+  fromAssignmentType InventoryAssignmentType?
+  fromProjectId      String?
+  fromAssignmentKey  String?
+  toAssignmentType   InventoryAssignmentType?
+  toProjectId        String?
+  toAssignmentKey    String?
   createdAt       DateTime @default(now())
   product         Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
   fromLocation    Location? @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
   toLocation      Location? @relation("MovementTo", fields: [toLocationId], references: [id], onDelete: SetNull)
+  fromProject     Customer? @relation("MovementFromProject", fields: [fromProjectId], references: [id], onDelete: SetNull)
+  toProject       Customer? @relation("MovementToProject", fields: [toProjectId], references: [id], onDelete: SetNull)
   user            User     @relation(fields: [userId], references: [id], onDelete: Restrict)
   task            Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
   inventorySerial InventorySerial? @relation(fields: [inventorySerialId], references: [id], onDelete: SetNull)
@@ -125,6 +140,10 @@ model InventoryMovement {
   @@index([inventorySerialId])
   @@index([inventoryLayerId])
   @@index([requisitionLineId])
+  @@index([fromProjectId])
+  @@index([toProjectId])
+  @@index([fromAssignmentKey])
+  @@index([toAssignmentKey])
 }
 
 model ScanEvent {
@@ -181,6 +200,10 @@ model Customer {
   products  Product[]
   activityLogs ActivityLog[]
   requisitions Requisition[]
+  inventories Inventory[] @relation("InventoryProject")
+  productProjects ProductProject[]
+  movementsFrom InventoryMovement[] @relation("MovementFromProject")
+  movementsTo   InventoryMovement[] @relation("MovementToProject")
 
   @@index([clientId])
 }
@@ -204,20 +227,40 @@ model Location {
 }
 
 model Inventory {
-  id          String    @id @default(cuid())
-  productId   String
-  locationId  String
-  qty         Decimal   @default(0) @db.Decimal(18, 4)
-  reservedQty Decimal   @default(0) @db.Decimal(18, 4)
-  status      String    @default("AVAILABLE")
-  updatedAt   DateTime  @updatedAt
-  product     Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
-  location    Location  @relation(fields: [locationId], references: [id], onDelete: Restrict)
-  layers      InventoryLayer[]
-  reservations InventoryReservation[]
+  id             String                   @id @default(cuid())
+  productId      String
+  locationId     String
+  qty            Decimal                  @default(0) @db.Decimal(18, 4)
+  reservedQty    Decimal                  @default(0) @db.Decimal(18, 4)
+  status         String                   @default("AVAILABLE")
+  assignmentType InventoryAssignmentType
+  projectId      String?
+  assignmentKey  String
+  updatedAt      DateTime                 @updatedAt
+  product        Product                  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  location       Location                 @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  project        Customer?                @relation("InventoryProject", fields: [projectId], references: [id], onDelete: Restrict)
+  layers         InventoryLayer[]
+  reservations   InventoryReservation[]
 
-  @@unique([productId, locationId, status])
+  @@unique([productId, locationId, status, assignmentKey])
   @@index([locationId, status])
+  @@index([projectId])
+  @@index([assignmentType])
+  @@index([assignmentKey])
+}
+
+model ProductProject {
+  id        String   @id @default(cuid())
+  productId String
+  projectId String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  project   Customer @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@unique([productId, projectId])
+  @@index([projectId])
 }
 
 model InventoryLayer {

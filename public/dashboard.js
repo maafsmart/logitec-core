@@ -5337,12 +5337,17 @@ function renderSkuContext(listEl, context) {
       ? "1 ubicación encontrada."
       : `${locations.length} ubicaciones: selecciona una antes de operar.`;
   const locationRows = locations
-    .map(
-      (row) =>
-        `<li>${escCell(row.locationCode)} · Cantidad ${escCell(formatQty(row.qty))} · No reservada ${escCell(
+    .map((row) => {
+      const assignmentLabel =
+        row.assignmentType === "FREE_TO_SALE"
+          ? "FREE TO SALE"
+          : row.project
+            ? `${row.project.name} (${row.project.code})`
+            : row.assignmentType || "";
+      return `<li>${escCell(row.locationCode)}${assignmentLabel ? ` · ${escCell(assignmentLabel)}` : ""} · Cantidad ${escCell(formatQty(row.qty))} · No reservada ${escCell(
           formatQty(row.unreservedQty)
-        )} · ${escCell(formatInventoryStatus(row.status))}</li>`
-    )
+        )} · ${escCell(formatInventoryStatus(row.status))}</li>`;
+    })
     .join("");
   const layerCount = Number(context.layers?.count || 0);
   const valuation = context.valuation || null;
