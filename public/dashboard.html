@@ -3672,13 +3672,19 @@
             <div class="card-panel ops-form-panel">
               <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong> · Control operativo de reubicación</p>
               <p class="module-lead" style="margin:0 0 12px">
-                Por seguridad, esta acción crea una orden de reubicación. El movimiento real de inventario se confirmará desde el flujo operativo validado.
+                Reubicación atómica: descuenta origen y acredita destino en una sola transacción, conservando lote/precio de la capa.
               </p>
-              <h4 class="secondary-panel-title">Solicitud de reubicación</h4>
+              <h4 class="secondary-panel-title">Reubicación de inventario</h4>
               <div class="form-grid">
                 <div class="field">
                   <label for="relocateSku">SKU / Código de barras</label>
-                  <input id="relocateSku" type="text" placeholder="SKU exacto del catálogo" required />
+                  <div class="product-typeahead">
+                    <input id="relocateSku" type="text" placeholder="SKU o código" autocomplete="off" required />
+                    <div id="relocateSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                  </div>
+                  <input id="relocateProductId" type="hidden" />
+                  <input id="relocateInventoryId" type="hidden" />
+                  <input id="relocateLayerId" type="hidden" />
                 </div>
                 <div class="field">
                   <label for="relocateQty">Cantidad</label>
@@ -3722,7 +3728,7 @@
                 </div>
               </div>
               <p id="relocateMessage" class="ops-message"></p>
-              <button type="button" id="relocateSubmitBtn" class="btn-primary btn-compact">Crear solicitud de reubicación</button>
+              <button type="button" id="relocateSubmitBtn" class="btn-primary btn-compact">Reubicar inventario</button>
             </div>
           </div>
           <div id="moduleBulkInbound" class="module-pane hidden">

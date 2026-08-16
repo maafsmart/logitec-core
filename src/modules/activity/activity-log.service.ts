@@ -16,7 +16,7 @@ export type LogActivityInput = {
   taskId?: string | null;
 };
 
-export async function logActivity(input: LogActivityInput): Promise<void> {
+export async function logActivity(input: LogActivityInput, tx?: Prisma.TransactionClient): Promise<void> {
   let qty: Prisma.Decimal | null = null;
   if (input.qty !== undefined && input.qty !== null) {
     qty = new Prisma.Decimal(String(input.qty));
@@ -38,5 +38,5 @@ export async function logActivity(input: LogActivityInput): Promise<void> {
   if (input.metadata !== undefined) {
     data.metadata = input.metadata;
   }
-  await prisma.activityLog.create({ data });
+  await (tx ?? prisma).activityLog.create({ data });
 }

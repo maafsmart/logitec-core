@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { logActivity } from "../activity/activity-log.service.js";
+import { InventoryMutationError, mutateInventory } from "../inventory/inventory-mutation.service.js";
 
 const pickingRouter = Router();
 
@@ -20,6 +21,7 @@ const scanSchema = z.object({
   quantity: z.coerce.number().positive().max(1_000_000).optional().default(1),
   /** Línea exacta de inventario cuando el operador elige un candidato */
   inventoryId: z.string().min(1).optional(),
+  layerId: z.string().min(1).optional(),
   taskId: z.string().optional()
 });
 
@@ -67,6 +69,7 @@ pickingRouter.post("/scan", async (req, res) => {
       customer: customerInput,
       quantity: qtyRaw,
       inventoryId: inventoryIdOpt,
+      layerId: layerIdOpt,
       taskId: taskIdOpt
     } = parsed;
 
@@ -77,6 +80,7 @@ pickingRouter.post("/scan", async (req, res) => {
     const normalizedLocation = locationInput?.trim().toUpperCase() || null;
     const projectCode = (projectInput || customerInput)?.trim() || null;
     const inventoryId = inventoryIdOpt?.trim() || null;
+    const layerId = layerIdOpt?.trim() || null;
 
     const product = await prisma.product.findFirst({
       where: {
@@ -249,121 +253,40 @@ pickingRouter.post("/scan", async (req, res) => {
       return;
     }
 
-    const after = before.minus(pickQty);
-
-    const result = await prisma.$transaction(async (tx) => {
-      // Re-leer y bloquear implícitamente vía update condicional
-      const fresh = await tx.inventory.findFirst({
-        where: {
-          id: stock.id,
-          qty: { gte: pickQty }
-        },
-        include: {
-          location: true,
-          product: {
-            select: {
-              id: true,
-              sku: true,
-              name: true,
-              customerId: true,
-              customer: { select: { id: true, code: true, name: true } }
-            }
-          }
-        }
-      });
-
-      if (!fresh) {
-        return { ok: false as const, reason: "RACE_OR_INSUFFICIENT" as const };
-      }
-
-      const qtyBefore = fresh.qty;
-      const qtyAfter = qtyBefore.minus(pickQty);
-
-      await tx.inventory.update({
-        where: { id: fresh.id },
-        data: { qty: qtyAfter }
-      });
-
-      const movement = await tx.inventoryMovement.create({
-        data: {
+    let result;
+    try {
+      result = await mutateInventory({
+        type: "PICK",
+        productId: product.id,
+        inventoryId: stock.id,
+        layerId: layerId ?? undefined,
+        qty: pickQty,
+        reference: "PICK_SCAN",
+        notes: `Picking scan ${normalizedCode} · status ${stock.status}`,
+        taskId,
+        userId: req.auth!.userId,
+        scannedCode: normalizedCode,
+        activity: {
           type: "PICK",
-          movementType: "OUT",
-          productId: product.id,
-          qty: pickQty,
-          warehouse: fresh.location.warehouse,
-          fromLocationId: fresh.location.id,
-          quantityBefore: qtyBefore,
-          quantityAfter: qtyAfter,
-          reference: "PICK_SCAN",
-          notes: `Picking scan ${normalizedCode} · status ${fresh.status}`,
+          subtype: "PICK_SUCCESS",
+          reference: normalizedCode,
           userId: req.auth!.userId,
+          customerId: product.customerId,
+          result: "OK",
           taskId
         }
       });
-
-      const scanEvent = await tx.scanEvent.create({
-        data: {
-          scannedCode: normalizedCode,
-          result: "OK",
-          userId: req.auth!.userId,
-          productId: product.id,
-          warehouse: fresh.location.warehouse,
-          location: fresh.location.code,
-          taskId
-        },
-        select: { id: true, result: true, scannedCode: true, createdAt: true }
-      });
-
-      return {
-        ok: true as const,
-        qtyBefore,
-        qtyAfter,
-        movementId: movement.id,
-        scanEvent,
-        warehouse: fresh.location.warehouse,
-        locationCode: fresh.location.code,
-        status: fresh.status,
-        projectCode: fresh.product.customer?.code || product.customer?.code || null,
-        projectName: fresh.product.customer?.name || product.customer?.name || null,
-        customerId: fresh.product.customerId || product.customerId
-      };
-    });
-
-    if (!result.ok) {
+    } catch (error) {
+      if (error instanceof InventoryMutationError) {
+        res.status(409).json({ message: error.message, code: error.code, details: error.details });
+        return;
+      }
       res.status(409).json({
         message: "No se pudo descontar: el stock cambió o es insuficiente. Revisa inventarios e intenta de nuevo.",
         code: "INSUFFICIENT_STOCK"
       });
       return;
     }
-
-    // Solo registrar PICK_SUCCESS después de descuento real en transacción.
-    await logActivity({
-      type: "PICK",
-      subtype: "PICK_SUCCESS",
-      reference: normalizedCode,
-      userId: req.auth!.userId,
-      productId: product.id,
-      customerId: result.customerId,
-      warehouse: result.warehouse,
-      location: result.locationCode,
-      qty: pickQty,
-      result: "OK",
-      metadata: {
-        scanEventId: result.scanEvent.id,
-        movementId: result.movementId,
-        inventoryId: stock.id,
-        projectCode: result.projectCode,
-        projectName: result.projectName,
-        productName: product.name,
-        status: result.status,
-        quantityBefore: result.qtyBefore.toString(),
-        quantityAfter: result.qtyAfter.toString(),
-        pickedQty: pickQty.toString(),
-        quantityMoved: pickQty.toString()
-      },
-      taskId
-    });
 
     res.json({
       message: "Picking OK: stock descontado y trazabilidad registrada.",
@@ -373,15 +296,15 @@ pickingRouter.post("/scan", async (req, res) => {
         sku: product.sku,
         name: product.name,
         barcode: product.barcode,
-        warehouse: result.warehouse,
-        projectCode: result.projectCode,
-        projectName: result.projectName
+        warehouse: stock.location.warehouse,
+        projectCode: product.customer?.code || null,
+        projectName: product.customer?.name || null
       },
-      location: result.locationCode,
-      warehouse: result.warehouse,
-      status: result.status,
-      quantityBefore: result.qtyBefore.toString(),
-      quantityAfter: result.qtyAfter.toString(),
+      location: stock.location.code,
+      warehouse: stock.location.warehouse,
+      status: stock.status,
+      quantityBefore: result.before.toString(),
+      quantityAfter: result.after.toString(),
       pickedQty: pickQty.toString(),
       scanEvent: result.scanEvent
     });

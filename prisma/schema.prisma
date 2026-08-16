@@ -99,6 +99,7 @@ model InventoryMovement {
   userId          String
   taskId          String?
   inventorySerialId String?
+  inventoryLayerId String?
   createdAt       DateTime @default(now())
   product         Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
   fromLocation    Location? @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
@@ -106,6 +107,7 @@ model InventoryMovement {
   user            User     @relation(fields: [userId], references: [id], onDelete: Restrict)
   task            Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
   inventorySerial InventorySerial? @relation(fields: [inventorySerialId], references: [id], onDelete: SetNull)
+  inventoryLayer  InventoryLayer?  @relation(fields: [inventoryLayerId], references: [id], onDelete: SetNull)
 
   @@index([productId, createdAt])
   @@index([userId])
@@ -113,6 +115,7 @@ model InventoryMovement {
   @@index([toLocationId])
   @@index([taskId])
   @@index([inventorySerialId])
+  @@index([inventoryLayerId])
 }
 
 model ScanEvent {
@@ -221,6 +224,7 @@ model InventoryLayer {
   updatedAt      DateTime  @updatedAt
   inventory      Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
   serials        InventorySerial[]
+  movements      InventoryMovement[]
 
   @@index([inventoryId])
   @@index([lotNumber])

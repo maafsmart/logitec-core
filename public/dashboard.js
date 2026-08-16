@@ -5248,11 +5248,18 @@ function renderSkuContext(listEl, context) {
         )} · ${escCell(formatInventoryStatus(row.status))}</li>`
     )
     .join("");
+  const layerCount = Number(context.layers?.count || 0);
+  const valuation = context.valuation || null;
   panel.innerHTML = `<strong>${escCell(context.product.sku)} · ${escCell(context.product.name)}</strong>
     <div>${escCell(clientName)} · ${escCell(project)}</div>
     <div>Existencia total: ${escCell(formatQty(context.inventory?.totalQty || 0))} · No reservada: ${escCell(
       formatQty(context.inventory?.totalUnreservedQty || 0)
     )}</div>
+    <div>Capas: ${escCell(String(layerCount))} · Serializadas: ${escCell(String(context.serializedQty || 0))}${
+      valuation
+        ? ` · Valor MXN ${escCell(valuation.totalValueMxn || 0)} · USD ${escCell(valuation.totalValueUsd || 0)}`
+        : ""
+    }</div>
     <div>${escCell(locationSummary)}</div>
     ${locationRows ? `<ul style="margin:4px 0 0;padding-left:18px">${locationRows}</ul>` : ""}`;
 }
@@ -5618,7 +5625,8 @@ function wireAllProductTypeaheads() {
   [
     ["inboundSku", "inboundSkuSuggestions", "inbound", "catalog"],
     ["outboundSku", "outboundSkuSuggestions", "outbound", "both"],
-    ["reqSku", "reqSkuSuggestions", "req", "catalog"]
+    ["reqSku", "reqSkuSuggestions", "req", "catalog"],
+    ["relocateSku", "relocateSkuSuggestions", "relocate", "catalog"]
   ].forEach(([inputId, listId, prefix, mode]) => {
     const input = document.getElementById(inputId);
     const listEl = document.getElementById(listId);
@@ -5631,6 +5639,22 @@ function wireAllProductTypeaheads() {
       onSelect: (item) => {
         if (prefix === "outbound" && item.kind === "stock") {
           applyStockSuggestionToOps(prefix, item);
+        } else if (prefix === "relocate") {
+          input.value = item.sku || "";
+          const productId = document.getElementById("relocateProductId");
+          if (productId) productId.value = item.productId || "";
+          const locations = item.context?.inventory?.locations || [];
+          if (locations.length === 1) {
+            const row = locations[0];
+            const inv = document.getElementById("relocateInventoryId");
+            if (inv) inv.value = row.inventoryId || "";
+            setSmartFieldValue("relocateFrom", row.locationCode || "");
+            const statusEl = document.getElementById("relocateStatus");
+            if (statusEl && row.status) statusEl.value = row.status;
+            const layers = (item.context?.layers?.preview || []).filter((l) => l.inventoryId === row.inventoryId);
+            const layerEl = document.getElementById("relocateLayerId");
+            if (layerEl) layerEl.value = layers.length === 1 ? layers[0].id : "";
+          }
         } else {
           applyCatalogSuggestionToOps(prefix, item);
         }
@@ -5957,28 +5981,25 @@ async function submitOperationalMovement(kind) {
 }
 
 /**
- * v40.1 — Reubicación segura: crea tarea operativa MOVE.
- * NO ejecuta OUT/IN ni altera stock (evita inconsistencia OUT-sin-IN).
+ * Reubicación atómica vía motor de mutaciones (origen + destino en una sola transacción).
  */
 async function submitRelocate() {
   const msgId = "relocateMessage";
   const btn = document.getElementById("relocateSubmitBtn");
   setOpsMessage(msgId, "", true);
   const sku = document.getElementById("relocateSku")?.value?.trim();
+  const productId = document.getElementById("relocateProductId")?.value?.trim();
   const qty = Number(document.getElementById("relocateQty")?.value);
-  const warehouse = readSmartFieldValue("relocateWarehouse") || "";
   const fromLoc = readSmartFieldValue("relocateFrom");
   const toLoc = readSmartFieldValue("relocateTo");
   const stockStatus = document.getElementById("relocateStatus")?.value || "AVAILABLE";
   const referenceRaw = document.getElementById("relocateReference")?.value?.trim();
   const notesExtra = document.getElementById("relocateNotes")?.value?.trim();
+  let inventoryId = document.getElementById("relocateInventoryId")?.value?.trim() || "";
+  let layerId = document.getElementById("relocateLayerId")?.value?.trim() || "";
 
   if (!sku) {
     setOpsMessage(msgId, "Indica el SKU.", false);
-    return;
-  }
-  if (!warehouse) {
-    setOpsMessage(msgId, "Indica el almacén.", false);
     return;
   }
   if (!fromLoc || !toLoc) {
@@ -5994,92 +6015,70 @@ async function submitRelocate() {
     return;
   }
 
-  const product = findProductBySku(sku) || resolveProductBySkuOrCode(sku);
-  const resolvedSku = product?.sku || sku;
-  const productName = product?.name || product?.productName || "";
-  const reference = referenceRaw || `RELOC-${Date.now()}`;
-  const descriptionParts = [
-    `Mover producto de ubicación ${fromLoc} a ubicación ${toLoc}.`,
-    notesExtra ? `Motivo: ${notesExtra}` : null,
-    `Cantidad: ${qty}. Estatus de inventario objetivo: ${formatInventoryStatus(stockStatus)}.`,
-    "Para proteger el inventario, la reubicación queda como tarea operativa pendiente de confirmación."
-  ].filter(Boolean);
-
-  const notesPayload = {
-    title: "Solicitud de reubicación",
-    description: descriptionParts.join(" "),
-    taskLabel: "Movimiento interno / Reubicación",
-    project: product?.customerCode || product?.customer?.code || product?.cliente || null,
-    lote: product?.lote || product?.lot || null,
-    sku: resolvedSku,
-    product: productName || resolvedSku,
-    warehouse,
-    fromLocation: fromLoc,
-    toLocation: toLoc,
-    location: `${fromLoc} → ${toLoc}`,
-    qty,
-    stockStatus,
-    followUp: [
-      {
-        text: "Solicitud de reubicación creada sin afectar inventario.",
-        at: new Date().toISOString(),
-        by: currentUserId || null
-      }
-    ]
-  };
-
   if (btn) btn.disabled = true;
   try {
-    const response = await authenticatedFetch("/api/tasks", {
+    if (!inventoryId && productId) {
+      const context = await loadSkuContext(productId);
+      const matches = (context?.inventory?.locations || []).filter(
+        (row) =>
+          String(row.locationCode || "").toUpperCase() === fromLoc.toUpperCase() &&
+          String(row.status || "") === stockStatus
+      );
+      if (matches.length !== 1) {
+        setOpsMessage(
+          msgId,
+          matches.length
+            ? "Hay varias líneas en origen/estatus. Selecciona el SKU desde el buscador para fijar la línea."
+            : "No hay stock en la ubicación/estatus origen indicados.",
+          false
+        );
+        return;
+      }
+      inventoryId = matches[0].inventoryId;
+      const layers = (context?.layers?.preview || []).filter((l) => l.inventoryId === inventoryId && Number(l.qty) > 0);
+      if (layers.length === 1) layerId = layers[0].id;
+      else if (layers.length > 1 && !layerId) {
+        setOpsMessage(msgId, "Hay varias capas/lotes en origen. Indica la capa antes de reubicar.", false);
+        return;
+      }
+    }
+    if (!inventoryId) {
+      setOpsMessage(msgId, "Selecciona el SKU desde el buscador para resolver la línea de inventario origen.", false);
+      return;
+    }
+
+    const body = {
+      inventoryId,
+      destinationLocation: toLoc,
+      quantity: qty,
+      reference: referenceRaw || `RELOC-${Date.now()}`,
+      notes: notesExtra || undefined
+    };
+    if (layerId) body.layerId = layerId;
+
+    const response = await authenticatedFetch("/api/inventory/relocate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "MOVE",
-        status: "PENDING",
-        warehouse,
-        priority: 50,
-        reference,
-        notes: JSON.stringify(notesPayload)
-      })
+      body: JSON.stringify(body)
     });
     if (!response) {
-      setOpsMessage(
-        msgId,
-        "No se pudo crear la solicitud. No se afectó inventario.",
-        false
-      );
+      setOpsMessage(msgId, "No se pudo reubicar. Verifica la sesión.", false);
       return;
     }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      setOpsMessage(
-        msgId,
-        (data.message || "No se pudo crear la solicitud de reubicación.") +
-          " No se afectó inventario.",
-        false
-      );
+      setOpsMessage(msgId, data.message || data.code || "No se pudo reubicar el inventario.", false);
       return;
     }
-    setOpsMessage(
-      msgId,
-      "Solicitud de reubicación creada. No se afectó inventario hasta su confirmación operativa.",
-      true
-    );
+    setOpsMessage(msgId, `Reubicación OK. Movimiento ${data.id || ""} registrado.`, true);
     const qtyEl = document.getElementById("relocateQty");
     if (qtyEl) qtyEl.value = "";
     const notesEl = document.getElementById("relocateNotes");
     if (notesEl) notesEl.value = "";
     const refEl = document.getElementById("relocateReference");
     if (refEl) refEl.value = "";
-    if (typeof loadTasks === "function") {
-      try {
-        await loadTasks();
-      } catch (_e) {
-        /* cola de tareas no abierta: no bloquear */
-      }
-    }
   } catch (_e) {
-    setOpsMessage(msgId, "Error de red. No se afectó inventario.", false);
+    setOpsMessage(msgId, "Error de red al reubicar.", false);
   } finally {
     if (btn) btn.disabled = false;
   }
