@@ -9,6 +9,7 @@ import { env } from "./config/env.js";
 import { adminRouter } from "./modules/admin/admin.routes.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { catalogRouter } from "./modules/catalog/catalog.routes.js";
+import { clientsRouter } from "./modules/clients/clients.routes.js";
 import { commentsRouter } from "./modules/comments/comments.routes.js";
 import { incidentsRouter } from "./modules/incidents/incidents.routes.js";
 import { inventoryRouter } from "./modules/inventory/inventory.routes.js";
@@ -37,6 +38,7 @@ app.get("/health", (_req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/clients", clientsRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/comments", commentsRouter);
 app.use("/api/inventory", inventoryRouter);

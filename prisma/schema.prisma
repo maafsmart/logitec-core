@@ -13,9 +13,11 @@ model User {
   passwordHash         String
   fullName             String
   role                 String
+  clientId             String?
   isActive             Boolean              @default(true)
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
+  client               Client?              @relation(fields: [clientId], references: [id], onDelete: SetNull)
   comments             Comment[]
   scanEvents           ScanEvent[]
   inventoryMovements   InventoryMovement[]
@@ -25,6 +27,8 @@ model User {
   tasksApproved        Task[]               @relation("TaskApproved")
   incidentsReported    Incident[]           @relation("IncidentReporter")
   incidentsReviewed    Incident[]           @relation("IncidentReviewer")
+
+  @@index([clientId])
 }
 
 model Comment {
@@ -127,22 +131,41 @@ model ScanEvent {
 }
 
 model Client {
-  id        String   @id @default(cuid())
-  name      String
-  email     String?  @unique
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String     @id @default(cuid())
+  // Legacy display name retained for compatibility. New records derive it from
+  // tradeName or legalName when a separate name is not supplied.
+  name           String
+  legalName      String?
+  tradeName      String?
+  rfc            String?
+  address        String?
+  city           String?
+  state          String?
+  postalCode     String?
+  phone          String?
+  alternatePhone String?
+  email          String?    @unique
+  primaryContact String?
+  notes          String?
+  active         Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  projects       Customer[]
+  users          User[]
 }
 
 model Customer {
   id        String    @id @default(cuid())
+  clientId  String?
   code      String    @unique
   name      String
   active    Boolean   @default(true)
   createdAt DateTime  @default(now())
+  client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
   products  Product[]
   activityLogs ActivityLog[]
+
+  @@index([clientId])
 }
 
 model Location {

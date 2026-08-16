@@ -22,8 +22,17 @@ const createProductSchema = z.object({
 const createCustomerSchema = z.object({
   code: z.string().min(1).max(60),
   name: z.string().min(1).max(160),
-  active: z.coerce.boolean().default(true)
+  active: z.coerce.boolean().default(true),
+  clientId: z.string().min(1).nullable().optional()
 });
+
+const projectClientSelect = {
+  id: true,
+  name: true,
+  legalName: true,
+  tradeName: true,
+  active: true
+} as const;
 
 const catalogImportSchema = z.object({
   csv: z.string().min(1),
@@ -134,24 +143,34 @@ catalogRouter.post("/products", requireRole(["ADMIN"]), async (req, res) => {
 catalogRouter.get("/customers", async (_req, res) => {
   const customers = await prisma.customer.findMany({
     orderBy: { createdAt: "desc" },
-    take: 200
+    take: 200,
+    include: { client: { select: projectClientSelect } }
   });
   res.json(customers);
 });
 
 catalogRouter.post("/customers", requireRole(["ADMIN"]), async (req, res) => {
   const data = createCustomerSchema.parse(req.body);
+  const clientId = data.clientId?.trim() || null;
+  if (clientId) {
+    const client = await prisma.client.findUnique({ where: { id: clientId }, select: { id: true } });
+    if (!client) {
+      throw new HttpError(400, "Cliente real no encontrado.");
+    }
+  }
   const customer = await prisma.customer.create({
     data: {
       code: data.code.trim().toUpperCase(),
       name: data.name.trim(),
-      active: data.active
-    }
+      active: data.active,
+      clientId
+    },
+    include: { client: { select: projectClientSelect } }
   });
   res.status(201).json(customer);
 });
 
-// Legacy compatibility for current UI label "clientes"
+// Legacy compatibility for current UI label "clientes" (Customer = proyecto).
 catalogRouter.get("/clients", async (_req, res) => {
   const customers = await prisma.customer.findMany({
     orderBy: { createdAt: "desc" },
