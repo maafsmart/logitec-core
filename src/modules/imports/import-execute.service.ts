@@ -32,23 +32,35 @@ export async function executeImportBatch(input: {
       const sku = String(n.sku || "");
       try {
         await prisma.$transaction(async (tx) => {
+          const assignmentType = String(n.assignmentType || "");
+          if (assignmentType === "UNRESOLVED") {
+            throw new Error("ASSIGNMENT_UNRESOLVED");
+          }
+          if (assignmentType !== "PROJECT" && assignmentType !== "FREE_TO_SALE") {
+            throw new Error("ASSIGNMENT_REQUIRED");
+          }
+          const projectId = assignmentType === "PROJECT" ? String(n.projectId || "") : null;
+          if (assignmentType === "PROJECT" && !projectId) {
+            throw new Error("PROJECT_REQUIRED");
+          }
           let productId = n.productId ? String(n.productId) : null;
           if (!productId) {
-            const projectId = n.projectId ? String(n.projectId) : "";
-            if (!projectId) throw new Error("NEW_SKU_PROJECT_REQUIRED");
+            if (assignmentType === "PROJECT" && !projectId) throw new Error("NEW_SKU_PROJECT_REQUIRED");
             const created = await tx.product.create({
               data: {
                 sku,
                 name: String(n.name || sku),
                 barcode: n.barcode ? String(n.barcode) : null,
                 warehouse: String(n.warehouse || "TULTITLAN24"),
-                customerId: projectId,
+                customerId: assignmentType === "PROJECT" ? projectId : null,
                 serialControlled: Boolean(n.serialControlled),
                 lotControlled: Boolean(n.lotControlled)
               }
             });
             productId = created.id;
-            await ensureCanonicalProductProject(tx, created.id, projectId);
+          }
+          if (assignmentType === "PROJECT" && projectId) {
+            await ensureCanonicalProductProject(tx, productId, projectId);
           }
           const locationId = String(n.locationId || "");
           const qty = toDecimal(n.qty) || new Prisma.Decimal(0);
@@ -66,6 +78,8 @@ export async function executeImportBatch(input: {
             reference: n.reference ? String(n.reference) : `IMPORT-${input.context}`,
             notes: n.notes ? String(n.notes) : null,
             userId: input.userId,
+            assignmentType: assignmentType as "PROJECT" | "FREE_TO_SALE",
+            projectId,
             activity: {
               type: "IMPORT",
               subtype: input.context,

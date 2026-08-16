@@ -9,6 +9,14 @@ import { buildSuggestedMapping, type CanonicalField, type ImportContext } from "
 import { parseUpload } from "./import-parse.service.js";
 import { buildInventoryReconcileDiff, validateMappedRows } from "./import-validate.service.js";
 import { executeImportBatch } from "./import-execute.service.js";
+import {
+  IMPORT_CORRECTION_FIELDS,
+  assertImportConfirmable,
+  assignmentAuditPayload,
+  buildAssignmentCorrection,
+  buildReviewGroups,
+  selectReviewTargets
+} from "./import-review.service.js";
 
 const importsRouter = Router();
 const upload = multer({
@@ -288,34 +296,27 @@ importsRouter.get("/:id/errors", requireRole(["ADMIN", "SUPERVISOR"]), async (re
 
 importsRouter.get("/:id/review", requireRole(["ADMIN"]), async (req, res) => {
   const batch = await loadBatch(z.string().min(1).parse(req.params.id));
-  const rows = batch.rows;
-  const counts = { READY: 0, WARNING: 0, BLOCKED: 0, IGNORED: 0 };
-  const groups = new Map<string, { issueCode: string; field: string; sourceValue: unknown; records: number; sourceRows: number[] }>();
-  for (const row of rows) {
-    counts[row.reviewState as keyof typeof counts] = (counts[row.reviewState as keyof typeof counts] || 0) + 1;
-    if (row.reviewState === "IGNORED") continue;
-    for (const issue of [...(Array.isArray(row.errors) ? row.errors : []), ...(Array.isArray(row.warnings) ? row.warnings : [])] as any[]) {
-      if (issue.code === "RECONCILE_PREVIEW_ONLY") continue;
-      const key = `${issue.code}|${issue.field || ""}|${JSON.stringify(issue.value ?? "")}`;
-      const group: { issueCode: string; field: string; sourceValue: unknown; records: number; sourceRows: number[] } =
-        groups.get(key) || { issueCode: issue.code, field: issue.field || "", sourceValue: issue.value, records: 0, sourceRows: [] };
-      group.records += 1;
-      group.sourceRows.push(row.sourceRow);
-      groups.set(key, group);
-    }
-  }
+  const match = {
+    sku: z.string().trim().min(1).max(80).optional().parse(req.query.sku),
+    lotNumber: z.string().trim().min(1).max(120).optional().parse(req.query.lotNumber),
+    location: z.string().trim().min(1).max(120).optional().parse(req.query.location),
+    status: z.string().trim().min(1).max(80).optional().parse(req.query.status),
+    description: z.string().trim().min(1).max(160).optional().parse(req.query.q)
+  };
+  const review = buildReviewGroups(batch.rows, match);
   res.json({
     id: batch.id,
-    counts,
+    counts: review.counts,
+    filters: match,
     globalNotices: batch.context === "INVENTORY" && asMeta(batch.metadata).inventoryMode === "RECONCILE"
       ? [{ code: "RECONCILE_PREVIEW_ONLY", message: "Modo conciliación: vista previa únicamente. No se aplicarán cambios hasta confirmación autorizada." }]
       : [],
-    groups: [...groups.values()].sort((a, b) => b.records - a.records),
-    rows: rows.slice(0, 100)
+    groups: review.groups,
+    rows: review.rows.slice(0, 200)
   });
 });
 
-const correctionFields = ["location", "project", "client", "status", "unitPriceMxn", "unitPriceUsd", "lotNumber", "reference"] as const;
+const correctionFields = IMPORT_CORRECTION_FIELDS;
 importsRouter.patch("/:id/review", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   const field = z.enum(correctionFields).parse(req.body.field);
@@ -325,30 +326,39 @@ importsRouter.patch("/:id/review", requireRole(["ADMIN"]), async (req, res) => {
   const issueCode = z.string().optional().parse(req.body.issueCode);
   const issueValue = req.body.issueValue;
   const reason = z.string().max(500).optional().parse(req.body.reason);
+  const match = z.object({
+    sku: z.string().trim().min(1).max(80).optional(),
+    lotNumber: z.string().trim().min(1).max(120).optional(),
+    location: z.string().trim().min(1).max(120).optional(),
+    status: z.string().trim().min(1).max(80).optional(),
+    description: z.string().trim().min(1).max(160).optional()
+  }).optional().parse(req.body.match);
   const batch = await loadBatch(id);
   if (["SERIAL_DUPLICATE_FILE", "SERIAL_EXISTS", "SERIAL_QTY", "IMEI_DUPLICATE_FILE", "IMEI_EXISTS"].includes(String(issueCode || ""))) {
     throw new HttpError(409, "Este conflicto de identidad requiere revisión individual.");
   }
-  let targets = batch.rows.filter((row) => sourceRows?.includes(row.sourceRow));
-  if (scope === "ALL_MATCHING") {
-    targets = batch.rows.filter((row) =>
-      [...(Array.isArray(row.errors) ? row.errors : []), ...(Array.isArray(row.warnings) ? row.warnings : [])]
-        .some((issue: any) => issue.code === issueCode && (issueValue === undefined || issue.value === issueValue))
-    );
-  }
-  if (!targets.length) throw new HttpError(400, "No hay filas seleccionadas para corregir.");
+  const targets = selectReviewTargets(batch.rows, { scope, sourceRows, issueCode, issueValue, match });
   await prisma.$transaction(targets.flatMap((row) => {
     const corrections = asMeta(row.corrections);
-    const previous = corrections[field] ?? (row.normalized as any)?.[field] ?? null;
-    const nextCorrections = { ...corrections, [field]: value };
+    const assignmentPatch = buildAssignmentCorrection(field, value);
+    const nextCorrections = { ...corrections, ...assignmentPatch };
+    const audit = assignmentAuditPayload(row, field, value);
+    const auditField = field === "assignmentType" || field === "project" ? "assignment" : field;
+    const previous = field === "assignmentType" || field === "project"
+      ? audit.original
+      : (corrections[field] ?? (row.normalized as any)?.[field] ?? null);
     return [
       prisma.importRow.update({ where: { id: row.id }, data: { corrections: nextCorrections as Prisma.InputJsonValue, reviewState: "WARNING" } }),
       prisma.importRowAudit.create({
         data: {
-          importRowId: row.id, actorId: req.auth!.userId, field,
-          original: ((row.normalized as any)?.[field] ?? null) as Prisma.InputJsonValue,
-          previous: previous as Prisma.InputJsonValue, next: value as Prisma.InputJsonValue,
-          scope, reason: reason || null
+          importRowId: row.id,
+          actorId: req.auth!.userId,
+          field: auditField,
+          original: audit.original as Prisma.InputJsonValue,
+          previous: previous as Prisma.InputJsonValue,
+          next: audit.next as Prisma.InputJsonValue,
+          scope,
+          reason: reason || null
         }
       })
     ];
@@ -380,10 +390,15 @@ importsRouter.get("/:id/normalized.csv", requireRole(["ADMIN", "SUPERVISOR"]), a
     "imei",
     "unitPriceMxn",
     "unitPriceUsd",
-    "project",
+    "sourceCustomer",
+    "assignmentType",
+    "projectId",
+    "projectCode",
+    "projectName",
     "client",
     "reference",
-    "action"
+    "action",
+    "reviewState"
   ];
   const lines = [headers.join(",")];
   for (const row of batch.rows) {
@@ -400,10 +415,15 @@ importsRouter.get("/:id/normalized.csv", requireRole(["ADMIN", "SUPERVISOR"]), a
         n.imei || "",
         n.unitPriceMxn ?? "",
         n.unitPriceUsd ?? "",
-        n.projectCode || n.project || "",
+        n.sourceCustomer ?? n.project ?? "",
+        n.assignmentType || "",
+        n.projectId || "",
+        n.projectCode || "",
+        n.projectName || (n.assignmentType === "UNRESOLVED" ? "PENDIENTE DE ASIGNACIÓN" : n.assignmentType === "FREE_TO_SALE" ? "FREE TO SALE" : ""),
         n.clientName || n.client || "",
         n.reference || "",
-        row.action || ""
+        row.action || "",
+        row.reviewState || ""
       ]
         .map((v) => {
           const s = String(v ?? "");
@@ -431,6 +451,7 @@ importsRouter.post("/:id/confirm", requireRole(["ADMIN"]), async (req, res) => {
   if (!["READY", "VALIDATED"].includes(batch.status)) {
     throw new HttpError(409, "La importación no está lista para confirmar.");
   }
+  assertImportConfirmable(batch.rows);
   const blockedRows = batch.rows.filter((row) => row.reviewState === "BLOCKED").length;
   if (batch.invalidRows > 0 || blockedRows > 0) {
     throw new HttpError(409, `Existen ${blockedRows || batch.invalidRows} registros pendientes de corrección.`);

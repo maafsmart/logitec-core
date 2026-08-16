@@ -7509,16 +7509,35 @@ async function loadImportReview() {
       <span class="project-chip">Ignorados: ${counts.IGNORED || 0}</span>
     </div>
     <div class="table-wrap"><table class="excel-table"><thead><tr><th>Problema</th><th>Valor fuente</th><th>Registros</th><th>Acción</th></tr></thead><tbody>
-      ${groups.map((g, index) => `<tr><td>${escCell(g.issueCode)} · ${escCell(g.field || "fila")}</td><td>${escCell(String(g.sourceValue ?? "—"))}</td><td>${g.records}</td><td><button class="btn-secondary btn-compact" data-review-group="${index}">Corregir todos</button></td></tr>`).join("")}
+      ${groups.map((g, index) => `<tr><td>${escCell(g.issueCode)} · ${escCell(g.field || "fila")}</td><td>${escCell(String(g.sourceValue ?? "—"))}</td><td>${g.records}</td><td>${
+        g.issueCode === "ASSIGNMENT_UNRESOLVED"
+          ? `<button class="btn-secondary btn-compact" data-review-group="${index}" data-review-assign="project">Asignar proyecto</button> <button class="btn-secondary btn-compact" data-review-group="${index}" data-review-assign="fts">FREE TO SALE</button>`
+          : `<button class="btn-secondary btn-compact" data-review-group="${index}">Corregir todos</button>`
+      }</td></tr>${
+        Array.isArray(g.subgroups) && g.subgroups.length
+          ? g.subgroups.slice(0, 12).map((sub, subIndex) => `<tr><td colspan="2" style="padding-left:18px">${escCell(sub.sku || "—")} · lote ${escCell(sub.lotNumber || "—")} · ${escCell(sub.location || "—")} · ${escCell(sub.status || "—")}</td><td>${sub.records}</td><td><button class="btn-secondary btn-compact" data-review-subgroup="${index}:${subIndex}">Asignar subconjunto</button></td></tr>`).join("")
+          : ""
+      }`).join("")}
     </tbody></table></div>
-    <div class="table-wrap" style="margin-top:10px"><table class="excel-table"><thead><tr><th>Fila Excel</th><th>SKU</th><th>Ubicación</th><th>Status</th><th>Problemas</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>
-      ${rows.map((r) => `<tr><td>${Number(r.sourceRow || 0) + 2}</td><td>${escCell(r.normalized?.sku || r.data?.sku || "—")}</td><td>${escCell(r.normalized?.location || "—")}</td><td>${escCell(r.normalized?.status || "—")}</td><td>${escCell([...(r.errors || []), ...(r.warnings || [])].map((x) => x.code).join(", ") || "—")}</td><td>${escCell(r.reviewState)}</td><td><button class="btn-secondary btn-compact" data-review-row="${r.sourceRow}">Ver / corregir</button></td></tr>`).join("")}
+    <div class="table-wrap" style="margin-top:10px"><table class="excel-table"><thead><tr><th>Fila Excel</th><th>SKU</th><th>Asignación</th><th>Ubicación</th><th>Status</th><th>Problemas</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>
+      ${rows.map((r) => `<tr><td>${Number(r.sourceRow || 0) + 2}</td><td>${escCell(r.normalized?.sku || r.data?.sku || "—")}</td><td>${escCell(r.normalized?.assignmentType === "FREE_TO_SALE" ? "FREE TO SALE" : r.normalized?.assignmentType === "UNRESOLVED" ? "PENDIENTE" : (r.normalized?.projectCode || r.normalized?.projectName || r.normalized?.assignmentType || "—"))}</td><td>${escCell(r.normalized?.location || "—")}</td><td>${escCell(r.normalized?.status || "—")}</td><td>${escCell([...(r.errors || []), ...(r.warnings || [])].map((x) => x.code).join(", ") || "—")}</td><td>${escCell(r.reviewState)}</td><td><button class="btn-secondary btn-compact" data-review-row="${r.sourceRow}">Ver / corregir</button></td></tr>`).join("")}
     </tbody></table></div>`;
   box.querySelectorAll("[data-review-group]").forEach((button) => button.addEventListener("click", async () => {
     const group = groups[Number(button.getAttribute("data-review-group"))];
     if (!group) return;
-    const field = group.field || "location";
-    if (!["location", "project", "client", "status", "unitPriceMxn", "unitPriceUsd", "lotNumber", "reference"].includes(field)) {
+    const assign = button.getAttribute("data-review-assign");
+    if (assign === "fts") {
+      const result = await authenticatedFetch(`/api/imports/${currentImportId}/review`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ field: "assignmentType", value: "FREE_TO_SALE", scope: "ALL_MATCHING", issueCode: group.issueCode, issueValue: group.sourceValue, reason: "BULK_FREE_TO_SALE" })
+      });
+      if (!result?.ok) return window.alert("No se pudo guardar la corrección.");
+      await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      await loadImportReview();
+      return;
+    }
+    const field = assign === "project" ? "project" : (group.field || "location");
+    if (!["location", "project", "client", "status", "unitPriceMxn", "unitPriceUsd", "lotNumber", "reference", "assignmentType"].includes(field)) {
       return window.alert("Este problema requiere revisión individual.");
     }
     const value = window.prompt(`Nuevo valor para ${field} (${group.records} filas):`, "");
@@ -7526,6 +7545,28 @@ async function loadImportReview() {
     const result = await authenticatedFetch(`/api/imports/${currentImportId}/review`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ field, value, scope: "ALL_MATCHING", issueCode: group.issueCode, issueValue: group.sourceValue, reason: "BULK_REVIEW_QUEUE" })
+    });
+    if (!result?.ok) return window.alert("No se pudo guardar la corrección.");
+    await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    await loadImportReview();
+  }));
+  box.querySelectorAll("[data-review-subgroup]").forEach((button) => button.addEventListener("click", async () => {
+    const [groupIndex, subIndex] = String(button.getAttribute("data-review-subgroup") || "").split(":").map(Number);
+    const group = groups[groupIndex];
+    const sub = group?.subgroups?.[subIndex];
+    if (!group || !sub) return;
+    const value = window.prompt(`Asignar proyecto a ${sub.records} filas de ${sub.sku} (o escribe FREE TO SALE):`, "");
+    if (value == null || !value.trim()) return;
+    const isFts = value.trim().toUpperCase() === "FREE TO SALE";
+    const result = await authenticatedFetch(`/api/imports/${currentImportId}/review`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        field: isFts ? "assignmentType" : "project",
+        value: isFts ? "FREE_TO_SALE" : value.trim(),
+        scope: "SELECTED",
+        sourceRows: sub.sourceRows,
+        reason: "SUBSET_ASSIGNMENT"
+      })
     });
     if (!result?.ok) return window.alert("No se pudo guardar la corrección.");
     await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });

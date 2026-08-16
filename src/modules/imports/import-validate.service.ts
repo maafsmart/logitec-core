@@ -20,6 +20,13 @@ function asText(value: unknown): string {
   return String(value).trim();
 }
 
+function normalizeLabel(value: unknown): string {
+  return asText(value).replace(/\s+/g, " ").toUpperCase();
+}
+
+export const FREE_TO_SALE_LABEL = "FREE TO SALE";
+export type ImportAssignmentType = "PROJECT" | "FREE_TO_SALE" | "UNRESOLVED";
+
 const SERIAL_PLACEHOLDERS = new Set(["N/A"]);
 
 function asRealSerial(value: unknown): string {
@@ -81,7 +88,15 @@ export async function validateMappedRows(
   const statuses = await prisma.inventoryStatusDefinition.findMany({ select: { code: true } });
   const statusSet = new Set(statuses.map((s) => s.code.toUpperCase()));
   const products = await prisma.product.findMany({
-    select: { id: true, sku: true, customerId: true, serialControlled: true, lotControlled: true, active: true }
+    select: {
+      id: true,
+      sku: true,
+      customerId: true,
+      serialControlled: true,
+      lotControlled: true,
+      active: true,
+      productProjects: { where: { active: true }, select: { projectId: true } }
+    }
   });
   const productBySku = new Map(products.map((p) => [p.sku.toUpperCase(), p]));
   const locations = await prisma.location.findMany({ select: { id: true, code: true, active: true } });
@@ -92,7 +107,7 @@ export async function validateMappedRows(
   const projectByCode = new Map(projects.map((p) => [p.code.toUpperCase(), p]));
   const projectsByName = new Map<string, (typeof projects)[number][]>();
   for (const project of projects) {
-    const key = project.name.trim().toUpperCase();
+    const key = normalizeLabel(project.name);
     projectsByName.set(key, [...(projectsByName.get(key) || []), project]);
   }
   const clients = await prisma.client.findMany({ select: { id: true, name: true, tradeName: true, legalName: true } });
@@ -104,13 +119,19 @@ export async function validateMappedRows(
   const fileImeis = new Set<string>();
 
   const validated = rows.map((raw, idx) => {
+    const mappedFromFile = applyMapping(raw, mapping);
     const mapped = {
-      ...applyMapping(raw, mapping),
+      ...mappedFromFile,
       ...(options.correctionsBySourceRow?.get(idx + 1) || {})
     };
     const errors: Issue[] = [];
     const warnings: Issue[] = [];
     const normalized: Record<string, unknown> = { ...mapped };
+    const isInventoryImport = context === "INVENTORY" || context === "INBOUND";
+    const sourceCustomer = asText(mappedFromFile.project);
+    if (isInventoryImport) {
+      normalized.sourceCustomer = sourceCustomer;
+    }
 
     for (const required of fields.required) {
       if (!asText(mapped[required])) {
@@ -186,9 +207,11 @@ export async function validateMappedRows(
         }
       } else {
         normalized.productId = product.id;
-        normalized.projectId = product.customerId;
         normalized.serialControlled = product.serialControlled;
         normalized.lotControlled = product.lotControlled;
+        if (!isInventoryImport) {
+          normalized.projectId = product.customerId;
+        }
         if (context === "PRODUCTS") normalized.action = "UPDATE";
       }
     }
@@ -214,7 +237,7 @@ export async function validateMappedRows(
 
     const status = asText(mapped.status).toUpperCase();
     normalized.status = status;
-    if ((context === "INVENTORY" || context === "INBOUND") && !status) {
+    if (isInventoryImport && !status) {
       errors.push({
         field: "status",
         value: mapped.status,
@@ -222,7 +245,7 @@ export async function validateMappedRows(
         message: "Estado requerido: no se asignará AVAILABLE automáticamente.",
         severity: "ERROR"
       });
-    } else if ((context === "INVENTORY" || context === "INBOUND") && !statusSet.has(status)) {
+    } else if (isInventoryImport && !statusSet.has(status)) {
       warnings.push({
         field: "status",
         value: status,
@@ -232,12 +255,77 @@ export async function validateMappedRows(
       });
     }
 
-    const isInventoryImport = context === "INVENTORY" || context === "INBOUND";
-    const projectCode = asText(mapped.project).toUpperCase();
-    if (projectCode) {
-      const nameMatches = projectsByName.get(projectCode) || [];
-      const project = projectByCode.get(projectCode) || (nameMatches.length === 1 ? nameMatches[0] : undefined);
-      if (!matchedProduct && isInventoryImport && nameMatches.length > 1 && !projectByCode.has(projectCode)) {
+    const projectCode = asText(mapped.project);
+    const projectNorm = normalizeLabel(mapped.project);
+    const correctedAssignment = normalizeLabel(mapped.assignmentType);
+
+    if (isInventoryImport) {
+      if (correctedAssignment === "FREE_TO_SALE" || projectNorm === FREE_TO_SALE_LABEL) {
+        normalized.assignmentType = "FREE_TO_SALE";
+        normalized.projectId = null;
+        normalized.projectCode = null;
+        normalized.projectName = FREE_TO_SALE_LABEL;
+      } else if (!projectNorm) {
+        normalized.assignmentType = "UNRESOLVED";
+        normalized.projectId = null;
+        normalized.projectCode = null;
+        normalized.projectName = null;
+        errors.push({
+          field: "project",
+          value: sourceCustomer,
+          code: "ASSIGNMENT_UNRESOLVED",
+          message: "CUSTOMER vacío: asignación pendiente de revisión. No se confirmará como inventario.",
+          severity: "ERROR"
+        });
+      } else {
+        const nameMatches = projectsByName.get(projectNorm) || [];
+        const project =
+          projectByCode.get(projectNorm) ||
+          projects.find((item) => item.id === asText(mapped.project)) ||
+          (nameMatches.length === 1 ? nameMatches[0] : undefined);
+        if (!project && nameMatches.length > 1) {
+          normalized.assignmentType = "UNRESOLVED";
+          errors.push({
+            field: "project",
+            value: projectCode,
+            code: "PROJECT_AMBIGUOUS",
+            message: "Proyecto ambiguo; no se creará automáticamente.",
+            severity: "ERROR"
+          });
+        } else if (!project) {
+          normalized.assignmentType = "UNRESOLVED";
+          errors.push({
+            field: "project",
+            value: projectCode,
+            code: "PROJECT_NOT_FOUND",
+            message: "Proyecto no encontrado. No se creará automáticamente desde el texto fuente.",
+            severity: "ERROR"
+          });
+        } else {
+          normalized.assignmentType = "PROJECT";
+          normalized.projectId = project.id;
+          normalized.projectCode = project.code;
+          normalized.projectName = project.name;
+          normalized.clientId = project.clientId;
+          normalized.clientName = project.client?.tradeName || project.client?.name || null;
+          if (matchedProduct) {
+            const linked = matchedProduct.productProjects.some((link) => link.projectId === project.id);
+            if (!linked) {
+              warnings.push({
+                field: "project",
+                value: project.code,
+                code: "PRODUCT_PROJECT_LINK_REQUIRED",
+                message: "El SKU no tiene relación de catálogo con este proyecto; se creará al confirmar.",
+                severity: "WARNING"
+              });
+            }
+          }
+        }
+      }
+    } else if (projectNorm) {
+      const nameMatches = projectsByName.get(projectNorm) || [];
+      const project = projectByCode.get(projectNorm) || (nameMatches.length === 1 ? nameMatches[0] : undefined);
+      if (!matchedProduct && nameMatches.length > 1 && !projectByCode.has(projectNorm)) {
         errors.push({
           field: "project",
           value: projectCode,
@@ -259,40 +347,15 @@ export async function validateMappedRows(
           });
           normalized.action = "CREATE";
         } else {
-          if (!matchedProduct && isInventoryImport) {
-            errors.push({
-              field: "project",
-              value: projectCode,
-              code: "NEW_SKU_PROJECT_REQUIRED",
-              message: "SKU nuevo sin proyecto resuelto; no puede ejecutarse.",
-              severity: "ERROR"
-            });
-          } else {
-            warnings.push({ field: "project", value: projectCode, code: "PROJECT_UNRESOLVED", message: "Proyecto no resuelto; se conservará el proyecto canónico del producto.", severity: "WARNING" });
-          }
+          warnings.push({ field: "project", value: projectCode, code: "PROJECT_UNRESOLVED", message: "Proyecto no resuelto.", severity: "WARNING" });
         }
       } else {
-        if (matchedProduct?.customerId && matchedProduct.customerId !== project.id && (context === "INVENTORY" || context === "INBOUND")) {
-          errors.push({
-            field: "project",
-            value: projectCode,
-            code: "PRODUCT_PROJECT_CONFLICT",
-            message: "El proyecto fuente contradice el proyecto formal del producto.",
-            severity: "ERROR"
-          });
-        }
         normalized.projectId = project.id;
         normalized.projectCode = project.code;
+        normalized.projectName = project.name;
         normalized.clientId = project.clientId;
         normalized.clientName = project.client?.tradeName || project.client?.name || null;
       }
-    } else if (!matchedProduct && isInventoryImport) {
-      errors.push({
-        field: "project",
-        code: "NEW_SKU_PROJECT_REQUIRED",
-        message: "SKU nuevo requiere un proyecto resuelto antes de ejecutar.",
-        severity: "ERROR"
-      });
     }
 
     const clientName = asText(mapped.client);
@@ -407,13 +470,19 @@ export async function buildInventoryReconcileDiff(
   const current = await prisma.inventory.findMany({
     include: {
       product: { select: { sku: true, customer: { select: { code: true } } } },
+      project: { select: { code: true, name: true } },
       location: { select: { code: true } },
       layers: { select: { lotNumber: true, qty: true } }
     }
   });
   const currentMap = new Map<string, number>();
+  const assignmentLabel = (inv: (typeof current)[number]) => {
+    if (inv.assignmentType === "FREE_TO_SALE") return FREE_TO_SALE_LABEL;
+    if (inv.assignmentType === "LEGACY_UNASSIGNED") return "LEGACY_UNASSIGNED";
+    return inv.project?.code || inv.product.customer?.code || "";
+  };
   for (const inv of current) {
-    const project = inv.product.customer?.code || "";
+    const project = assignmentLabel(inv);
     const key = `${project}|${inv.product.sku}|${inv.location.code}|${inv.status}|`;
     currentMap.set(key, Number(inv.qty));
     for (const layer of inv.layers) {
@@ -422,6 +491,16 @@ export async function buildInventoryReconcileDiff(
     }
   }
   const fileMap = new Map<string, number>();
+  const pendingAssignments: Array<{
+    assignment: string;
+    sku: string;
+    location: string;
+    status: string;
+    lot: string | null;
+    file: number;
+    sourceRows: number;
+  }> = [];
+  const pendingMap = new Map<string, { assignment: string; sku: string; location: string; status: string; lot: string | null; file: number; sourceRows: number }>();
   const requiredLocationMap = new Map<string, { location: string; records: number; fileQty: number }>();
   for (const row of rows) {
     const missingLocation = row.errors.some((issue) => issue.code === "SOURCE_LOCATION_NOT_IN_MASTER");
@@ -433,27 +512,61 @@ export async function buildInventoryReconcileDiff(
     entry.fileQty += Number(row.normalized.qty || 0);
     requiredLocationMap.set(location, entry);
   }
-  for (const row of rows.filter((r) => r.errors.length === 0)) {
-    const project = String(row.normalized.projectCode || "");
+  for (const row of rows) {
+    const assignmentType = String(row.normalized.assignmentType || "");
     const sku = String(row.normalized.sku || "");
     const location = String(row.normalized.location || "");
     const status = String(row.normalized.status || "AVAILABLE");
     const lot = String(row.normalized.lotNumber || "");
+    if (assignmentType === "UNRESOLVED" || row.errors.some((issue) => issue.code === "ASSIGNMENT_UNRESOLVED")) {
+      const key = `PENDIENTE DE ASIGNACIÓN|${sku}|${location}|${status}|${lot}`;
+      const entry = pendingMap.get(key) || {
+        assignment: "PENDIENTE DE ASIGNACIÓN",
+        sku,
+        location,
+        status,
+        lot: lot || null,
+        file: 0,
+        sourceRows: 0
+      };
+      entry.file += Number(row.normalized.qty || 0);
+      entry.sourceRows += 1;
+      pendingMap.set(key, entry);
+      continue;
+    }
+    if (row.errors.length) continue;
+    const project =
+      assignmentType === "FREE_TO_SALE"
+        ? FREE_TO_SALE_LABEL
+        : String(row.normalized.projectCode || row.normalized.projectName || "");
     const key = `${project}|${sku}|${location}|${status}|${lot}`;
     fileMap.set(key, (fileMap.get(key) || 0) + Number(row.normalized.qty || 0));
   }
+  pendingAssignments.push(...pendingMap.values());
   const keys = new Set([...currentMap.keys(), ...fileMap.keys()]);
   const diffs = [...keys]
     .map((key) => {
       const [project, sku, location, status, lot] = key.split("|");
       const actual = currentMap.get(key) || 0;
       const file = fileMap.get(key) || 0;
-      return { project: project || null, sku, location, status, lot: lot || null, actual, file, delta: file - actual };
+      const assignment = project === FREE_TO_SALE_LABEL ? FREE_TO_SALE_LABEL : project || null;
+      return {
+        assignment,
+        project: project === FREE_TO_SALE_LABEL ? FREE_TO_SALE_LABEL : project || null,
+        sku,
+        location,
+        status,
+        lot: lot || null,
+        actual,
+        file,
+        delta: file - actual
+      };
     })
     .filter((d) => d.delta !== 0)
     .slice(0, 500);
   return {
     differences: diffs,
+    pendingAssignments: pendingAssignments.slice(0, 500),
     requiredNewLocations: [...requiredLocationMap.values()].sort(
       (a, b) => b.records - a.records || a.location.localeCompare(b.location)
     )
