@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
-import { mutateInventory } from "../inventory/inventory-mutation.service.js";
+import { mutateInventoryInTransaction } from "../inventory/inventory-mutation.service.js";
 import { createRequisition } from "../requisitions/requisition.service.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import type { ImportContext } from "./import-mapping.js";
@@ -29,56 +29,61 @@ export async function executeImportBatch(input: {
     for (const row of valid) {
       const n = row.normalized;
       const sku = String(n.sku || "");
-      let productId = n.productId ? String(n.productId) : null;
-      if (!productId) {
-        const created = await prisma.product.create({
-          data: {
-            sku,
-            name: String(n.name || sku),
-            barcode: n.barcode ? String(n.barcode) : null,
-            warehouse: String(n.warehouse || "TULTITLAN24"),
-            customerId: n.projectId ? String(n.projectId) : null,
-            serialControlled: Boolean(n.serialControlled),
-            lotControlled: Boolean(n.lotControlled)
-          }
-        });
-        productId = created.id;
-      }
-      const locationId = String(n.locationId || "");
-      const qty = toDecimal(n.qty) || new Prisma.Decimal(0);
-      const status = String(n.status || "AVAILABLE");
       try {
-        const result = await mutateInventory({
-          type: "IN",
-          productId,
-          locationId,
-          status,
-          qty,
-          lotNumber: n.lotNumber ? String(n.lotNumber) : null,
-          unitPriceMxn: toDecimal(n.unitPriceMxn),
-          unitPriceUsd: toDecimal(n.unitPriceUsd),
-          reference: n.reference ? String(n.reference) : `IMPORT-${input.context}`,
-          notes: n.notes ? String(n.notes) : null,
-          userId: input.userId,
-          activity: {
-            type: "IMPORT",
-            subtype: input.context,
-            reference: sku,
-            userId: input.userId,
-            result: "OK"
+        await prisma.$transaction(async (tx) => {
+          let productId = n.productId ? String(n.productId) : null;
+          if (!productId) {
+            const projectId = n.projectId ? String(n.projectId) : "";
+            if (!projectId) throw new Error("NEW_SKU_PROJECT_REQUIRED");
+            const created = await tx.product.create({
+              data: {
+                sku,
+                name: String(n.name || sku),
+                barcode: n.barcode ? String(n.barcode) : null,
+                warehouse: String(n.warehouse || "TULTITLAN24"),
+                customerId: projectId,
+                serialControlled: Boolean(n.serialControlled),
+                lotControlled: Boolean(n.lotControlled)
+              }
+            });
+            productId = created.id;
           }
-        });
-        if (n.serialNumber) {
-          await prisma.inventorySerial.create({
-            data: {
-              productId,
-              inventoryLayerId: result.layer.id,
-              serialNumber: String(n.serialNumber),
-              imei: n.imei ? String(n.imei) : null,
-              receivedAt: new Date()
+          const locationId = String(n.locationId || "");
+          const qty = toDecimal(n.qty) || new Prisma.Decimal(0);
+          const status = String(n.status || "");
+          if (!status) throw new Error("STATUS_REQUIRED");
+          const result = await mutateInventoryInTransaction(tx, {
+            type: "IN",
+            productId,
+            locationId,
+            status,
+            qty,
+            lotNumber: n.lotNumber ? String(n.lotNumber) : null,
+            unitPriceMxn: toDecimal(n.unitPriceMxn),
+            unitPriceUsd: toDecimal(n.unitPriceUsd),
+            reference: n.reference ? String(n.reference) : `IMPORT-${input.context}`,
+            notes: n.notes ? String(n.notes) : null,
+            userId: input.userId,
+            activity: {
+              type: "IMPORT",
+              subtype: input.context,
+              reference: sku,
+              userId: input.userId,
+              result: "OK"
             }
           });
-        }
+          if (n.serialNumber) {
+            await tx.inventorySerial.create({
+              data: {
+                productId,
+                inventoryLayerId: result.layer.id,
+                serialNumber: String(n.serialNumber),
+                imei: n.imei ? String(n.imei) : null,
+                receivedAt: new Date()
+              }
+            });
+          }
+        }, { maxWait: 5_000, timeout: 15_000 });
         results.push({ sourceRow: row.sourceRow, ok: true });
       } catch (error) {
         results.push({

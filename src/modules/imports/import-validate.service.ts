@@ -90,7 +90,11 @@ export async function validateMappedRows(
     select: { id: true, code: true, name: true, clientId: true, client: { select: { id: true, name: true, tradeName: true } } }
   });
   const projectByCode = new Map(projects.map((p) => [p.code.toUpperCase(), p]));
-  const projectByName = new Map(projects.map((p) => [p.name.trim().toUpperCase(), p]));
+  const projectsByName = new Map<string, (typeof projects)[number][]>();
+  for (const project of projects) {
+    const key = project.name.trim().toUpperCase();
+    projectsByName.set(key, [...(projectsByName.get(key) || []), project]);
+  }
   const clients = await prisma.client.findMany({ select: { id: true, name: true, tradeName: true, legalName: true } });
   const existingSerials = await prisma.inventorySerial.findMany({ select: { serialNumber: true, imei: true, productId: true } });
   const serialSet = new Set(existingSerials.map((s) => s.serialNumber.toUpperCase()));
@@ -208,9 +212,17 @@ export async function validateMappedRows(
       }
     }
 
-    const status = asText(mapped.status).toUpperCase() || "AVAILABLE";
+    const status = asText(mapped.status).toUpperCase();
     normalized.status = status;
-    if ((context === "INVENTORY" || context === "INBOUND") && !statusSet.has(status)) {
+    if ((context === "INVENTORY" || context === "INBOUND") && !status) {
+      errors.push({
+        field: "status",
+        value: mapped.status,
+        code: "STATUS_REQUIRED",
+        message: "Estado requerido: no se asignará AVAILABLE automáticamente.",
+        severity: "ERROR"
+      });
+    } else if ((context === "INVENTORY" || context === "INBOUND") && !statusSet.has(status)) {
       warnings.push({
         field: "status",
         value: status,
@@ -220,9 +232,20 @@ export async function validateMappedRows(
       });
     }
 
+    const isInventoryImport = context === "INVENTORY" || context === "INBOUND";
     const projectCode = asText(mapped.project).toUpperCase();
     if (projectCode) {
-      const project = projectByCode.get(projectCode) || projectByName.get(projectCode);
+      const nameMatches = projectsByName.get(projectCode) || [];
+      const project = projectByCode.get(projectCode) || (nameMatches.length === 1 ? nameMatches[0] : undefined);
+      if (!matchedProduct && isInventoryImport && nameMatches.length > 1 && !projectByCode.has(projectCode)) {
+        errors.push({
+          field: "project",
+          value: projectCode,
+          code: "NEW_SKU_PROJECT_REQUIRED",
+          message: "SKU nuevo con proyecto ambiguo; no puede ejecutarse.",
+          severity: "ERROR"
+        });
+      }
       if (!project) {
         if (context === "REQUISITIONS" || context === "PRODUCTS") {
           errors.push({ field: "project", value: projectCode, code: "PROJECT_NOT_FOUND", message: "Proyecto no encontrado.", severity: "ERROR" });
@@ -236,11 +259,11 @@ export async function validateMappedRows(
           });
           normalized.action = "CREATE";
         } else {
-          if (!matchedProduct && (context === "INVENTORY" || context === "INBOUND")) {
+          if (!matchedProduct && isInventoryImport) {
             errors.push({
               field: "project",
               value: projectCode,
-              code: "NEW_SKU_PROJECT_UNRESOLVED",
+              code: "NEW_SKU_PROJECT_REQUIRED",
               message: "SKU nuevo sin proyecto resuelto; no puede ejecutarse.",
               severity: "ERROR"
             });
@@ -263,6 +286,13 @@ export async function validateMappedRows(
         normalized.clientId = project.clientId;
         normalized.clientName = project.client?.tradeName || project.client?.name || null;
       }
+    } else if (!matchedProduct && isInventoryImport) {
+      errors.push({
+        field: "project",
+        code: "NEW_SKU_PROJECT_REQUIRED",
+        message: "SKU nuevo requiere un proyecto resuelto antes de ejecutar.",
+        severity: "ERROR"
+      });
     }
 
     const clientName = asText(mapped.client);

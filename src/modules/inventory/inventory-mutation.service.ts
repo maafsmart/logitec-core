@@ -495,6 +495,10 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
   };
 }
 
+export async function mutateInventoryInTransaction(tx: Prisma.TransactionClient, input: InventoryMutationInput) {
+  return runMutation(tx, input);
+}
+
 export async function mutateInventory(input: InventoryMutationInput) {
-  return prisma.$transaction((tx) => runMutation(tx, input), { maxWait: 5_000, timeout: 15_000 });
+  return prisma.$transaction((tx) => mutateInventoryInTransaction(tx, input), { maxWait: 5_000, timeout: 15_000 });
 }
