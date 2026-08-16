@@ -3368,19 +3368,19 @@
           <div id="moduleReports" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Reportes y exportaciones</h3>
-              <p class="module-lead">Exporta inventario, catálogo, movimientos y auditoría a CSV para análisis externo. Usa filtros en Inventario o Catálogo antes de exportar resultados filtrados.</p>
+              <p class="module-lead">Exporta inventario, catálogo, movimientos y requisiciones. Las exportaciones de servidor respetan filtros y alcance por rol.</p>
             </div>
             <div class="card-panel">
               <h4 class="secondary-panel-title">Inventario</h4>
               <div class="page-toolbar">
-                <button type="button" id="reportsExportStock" class="btn-secondary">Inventario completo CSV</button>
-                <button type="button" id="reportsExportStockFiltered" class="btn-secondary">Inventario filtrado CSV</button>
+                <button type="button" id="reportsExportStock" class="btn-secondary">Inventario CSV</button>
+                <button type="button" id="reportsExportStockXlsx" class="btn-secondary">Inventario Excel</button>
                 <button type="button" id="reportsExportMovements" class="btn-secondary">Movimientos CSV</button>
+                <button type="button" id="reportsExportRequisitions" class="btn-secondary">Requisiciones CSV</button>
               </div>
               <h4 class="secondary-panel-title">Catálogo y auditoría</h4>
               <div class="page-toolbar">
                 <button type="button" id="reportsExportProducts" class="btn-secondary">Catálogo CSV</button>
-                <button type="button" id="reportsExportProductsFiltered" class="btn-secondary">Catálogo filtrado CSV</button>
                 <button type="button" id="reportsExportTrace" class="btn-secondary">Auditoría CSV</button>
               </div>
             </div>
@@ -3798,6 +3798,58 @@
                 <li><strong>Seguridad de acceso</strong> — cada sesión usa tu usuario y rol asignados.</li>
                 <li><strong>Preferencias operativas</strong> — atajos y módulos visibles según tu rol.</li>
               </ul>
+            </div>
+            <div class="card-panel" id="importWizardPanel">
+              <h4 class="secondary-panel-title">Importar datos</h4>
+              <p class="module-hint">Flujo: Archivo → Hoja → Mapeo → Validación → Revisión → Confirmar. Subir un archivo no modifica inventario hasta confirmar.</p>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="importContext">Contexto</label>
+                  <select id="importContext">
+                    <option value="INVENTORY">Inventario físico / stock</option>
+                    <option value="INBOUND">Entradas masivas</option>
+                    <option value="REQUISITIONS">Requisiciones</option>
+                    <option value="PRODUCTS">Catálogo de productos</option>
+                    <option value="CLIENTS_PROJECTS">Clientes / proyectos</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="importInventoryMode">Modo inventario</label>
+                  <select id="importInventoryMode">
+                    <option value="APPEND">APPEND / recepción</option>
+                    <option value="RECONCILE">RECONCILE / conciliación (solo preview)</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="importPriceCurrency">Precio genérico →</label>
+                  <select id="importPriceCurrency">
+                    <option value="">No aplicar</option>
+                    <option value="MXN">MXN</option>
+                    <option value="USD">USD</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="importFile">Archivo XLSX/CSV</label>
+                  <input id="importFile" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                </div>
+              </div>
+              <div class="page-toolbar" style="margin-top:10px">
+                <button type="button" id="importUploadBtn" class="btn-primary btn-compact">1. Subir archivo</button>
+                <button type="button" id="importMapBtn" class="btn-secondary btn-compact">3. Aplicar mapeo</button>
+                <button type="button" id="importValidateBtn" class="btn-secondary btn-compact">4. Validar</button>
+                <button type="button" id="importReviewBtn" class="btn-secondary btn-compact">5. Bandeja de revisión</button>
+                <button type="button" id="importNormalizedBtn" class="btn-secondary btn-compact">CSV normalizado</button>
+                <button type="button" id="importConfirmBtn" class="btn-success btn-compact">6. Confirmar</button>
+              </div>
+              <div class="field" style="margin-top:10px">
+                <label for="importSheetSelect">2. Hoja</label>
+                <select id="importSheetSelect"></select>
+              </div>
+              <div id="importMappingBox" class="card-panel" style="margin-top:10px;max-height:220px;overflow:auto"></div>
+              <p id="importStatus" class="operational-table-meta" style="margin-top:10px"></p>
+              <div id="importPreviewBox" style="overflow:auto;max-height:320px"></div>
+              <div id="importReviewQueueBox" style="margin-top:12px"></div>
+              <div id="importHistoryBox" style="margin-top:12px"></div>
             </div>
           </div>
 

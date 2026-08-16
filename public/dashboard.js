@@ -3488,16 +3488,16 @@ function wireModals() {
     });
   }
   const rStock = document.getElementById("reportsExportStock");
-  const rStockF = document.getElementById("reportsExportStockFiltered");
+  const rStockX = document.getElementById("reportsExportStockXlsx");
   const rMov = document.getElementById("reportsExportMovements");
+  const rReq = document.getElementById("reportsExportRequisitions");
   const rProd = document.getElementById("reportsExportProducts");
-  const rProdF = document.getElementById("reportsExportProductsFiltered");
   const rTrace = document.getElementById("reportsExportTrace");
-  if (rStock) rStock.addEventListener("click", () => void exportStockCsv());
-  if (rStockF) rStockF.addEventListener("click", () => void exportStockCsvFiltered());
-  if (rMov) rMov.addEventListener("click", () => void exportMovementsCsv());
-  if (rProd) rProd.addEventListener("click", () => void exportProductsCsv());
-  if (rProdF) rProdF.addEventListener("click", () => void exportProductsCsvFiltered());
+  if (rStock) rStock.addEventListener("click", () => void downloadExport("/api/exports/inventory.csv", "inventory.csv"));
+  if (rStockX) rStockX.addEventListener("click", () => void downloadExport("/api/exports/inventory.xlsx", "inventory.xlsx"));
+  if (rMov) rMov.addEventListener("click", () => void downloadExport("/api/exports/movements.csv", "movements.csv"));
+  if (rReq) rReq.addEventListener("click", () => void downloadExport("/api/exports/requisitions.csv", "requisitions.csv"));
+  if (rProd) rProd.addEventListener("click", () => void downloadExport("/api/exports/products.csv", "products.csv"));
   if (rTrace) rTrace.addEventListener("click", () => void exportTraceabilityCsv());
 }
 
@@ -6764,17 +6764,19 @@ function applyRoleNavigation(role) {
   const configUsersBtn = document.getElementById("configUsersBtn");
   if (configUsersBtn) configUsersBtn.style.display = role === "ADMIN" ? "" : "none";
   const rStock = document.getElementById("reportsExportStock");
-  const rStockF = document.getElementById("reportsExportStockFiltered");
+  const rStockX = document.getElementById("reportsExportStockXlsx");
   const rMov = document.getElementById("reportsExportMovements");
+  const rReq = document.getElementById("reportsExportRequisitions");
   const rProd = document.getElementById("reportsExportProducts");
-  const rProdF = document.getElementById("reportsExportProductsFiltered");
   const rTrace = document.getElementById("reportsExportTrace");
   if (rStock) rStock.style.display = canExportInventory ? "inline-block" : "none";
-  if (rStockF) rStockF.style.display = canExportInventory ? "inline-block" : "none";
+  if (rStockX) rStockX.style.display = canExportInventory ? "inline-block" : "none";
   if (rMov) rMov.style.display = canExportInventory ? "inline-block" : "none";
+  if (rReq) rReq.style.display = role === "ADMIN" || role === "SUPERVISOR" || role === "OPERATOR" ? "inline-block" : "none";
   if (rProd) rProd.style.display = canExportProducts ? "inline-block" : "none";
-  if (rProdF) rProdF.style.display = canExportProducts ? "inline-block" : "none";
   if (rTrace) rTrace.style.display = canExportTrace ? "inline-block" : "none";
+  const importWizardPanel = document.getElementById("importWizardPanel");
+  if (importWizardPanel) importWizardPanel.style.display = role === "ADMIN" ? "" : "none";
   const exportStockFilteredBtn = document.getElementById("exportStockFilteredBtn");
   const exportProductsFilteredBtn = document.getElementById("exportProductsFilteredBtn");
   if (exportStockFilteredBtn) exportStockFilteredBtn.style.display = canExportInventory ? "inline-block" : "none";
@@ -7435,6 +7437,226 @@ if (clientsAdminList) {
 }
 
 logoutBtn?.addEventListener("click", forceLogout);
+
+let currentImportId = null;
+let currentImportMapping = {};
+
+async function downloadExport(url, filename) {
+  const response = await authenticatedFetch(url);
+  if (!response?.ok) {
+    window.alert("No se pudo exportar.");
+    return;
+  }
+  const blob = await response.blob();
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 500);
+}
+
+function setImportStatus(text) {
+  const el = document.getElementById("importStatus");
+  if (el) el.textContent = text || "";
+}
+
+function renderImportMapping(headers, mapping) {
+  const box = document.getElementById("importMappingBox");
+  if (!box) return;
+  currentImportMapping = { ...mapping };
+  const fields = [
+    "", "sku", "barcode", "name", "description", "qty", "location", "status", "lotNumber", "serialNumber", "imei",
+    "unitPriceMxn", "unitPriceUsd", "receivedAt", "reference", "notes", "client", "project", "unit",
+    "serialControlled", "lotControlled", "warehouse", "priority", "requisitionNumber", "legalName", "tradeName", "rfc", "email", "phone"
+  ];
+  box.innerHTML = `<table class="excel-table"><thead><tr><th>Columna archivo</th><th>Campo LOGITEC</th></tr></thead><tbody>${
+    (headers || []).map((h) => {
+      const selected = mapping?.[h] || "";
+      return `<tr><td>${escCell(h)}</td><td><select data-map-header="${escCell(h)}">${fields.map((f) => `<option value="${f}" ${f === selected ? "selected" : ""}>${f || "— ignorar —"}</option>`).join("")}</select></td></tr>`;
+    }).join("")
+  }</tbody></table>`;
+  box.querySelectorAll("select[data-map-header]").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const header = sel.getAttribute("data-map-header");
+      currentImportMapping[header] = sel.value || null;
+    });
+  });
+}
+
+async function loadImportReview() {
+  if (!currentImportId) return;
+  const response = await authenticatedFetch(`/api/imports/${currentImportId}/review`);
+  const box = document.getElementById("importReviewQueueBox");
+  if (!response?.ok || !box) return;
+  const data = await response.json();
+  const counts = data.counts || {};
+  const groups = Array.isArray(data.groups) ? data.groups : [];
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  box.innerHTML = `
+    <h4 class="secondary-panel-title">Bandeja de revisión</h4>
+    ${(data.globalNotices || []).map((n) => `<p class="operational-table-meta">${escCell(n.message)}</p>`).join("")}
+    <div class="page-toolbar">
+      <span class="project-chip">Listos: ${counts.READY || 0}</span>
+      <span class="project-chip">Advertencias: ${counts.WARNING || 0}</span>
+      <span class="project-chip">Bloqueados: ${counts.BLOCKED || 0}</span>
+      <span class="project-chip">Ignorados: ${counts.IGNORED || 0}</span>
+    </div>
+    <div class="table-wrap"><table class="excel-table"><thead><tr><th>Problema</th><th>Valor fuente</th><th>Registros</th><th>Acción</th></tr></thead><tbody>
+      ${groups.map((g, index) => `<tr><td>${escCell(g.issueCode)} · ${escCell(g.field || "fila")}</td><td>${escCell(String(g.sourceValue ?? "—"))}</td><td>${g.records}</td><td><button class="btn-secondary btn-compact" data-review-group="${index}">Corregir todos</button></td></tr>`).join("")}
+    </tbody></table></div>
+    <div class="table-wrap" style="margin-top:10px"><table class="excel-table"><thead><tr><th>Fila Excel</th><th>SKU</th><th>Ubicación</th><th>Status</th><th>Problemas</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>
+      ${rows.map((r) => `<tr><td>${Number(r.sourceRow || 0) + 2}</td><td>${escCell(r.normalized?.sku || r.data?.sku || "—")}</td><td>${escCell(r.normalized?.location || "—")}</td><td>${escCell(r.normalized?.status || "—")}</td><td>${escCell([...(r.errors || []), ...(r.warnings || [])].map((x) => x.code).join(", ") || "—")}</td><td>${escCell(r.reviewState)}</td><td><button class="btn-secondary btn-compact" data-review-row="${r.sourceRow}">Ver / corregir</button></td></tr>`).join("")}
+    </tbody></table></div>`;
+  box.querySelectorAll("[data-review-group]").forEach((button) => button.addEventListener("click", async () => {
+    const group = groups[Number(button.getAttribute("data-review-group"))];
+    if (!group) return;
+    const field = group.field || "location";
+    if (!["location", "project", "client", "status", "unitPriceMxn", "unitPriceUsd", "lotNumber", "reference"].includes(field)) {
+      return window.alert("Este problema requiere revisión individual.");
+    }
+    const value = window.prompt(`Nuevo valor para ${field} (${group.records} filas):`, "");
+    if (value == null) return;
+    const result = await authenticatedFetch(`/api/imports/${currentImportId}/review`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field, value, scope: "ALL_MATCHING", issueCode: group.issueCode, issueValue: group.sourceValue, reason: "BULK_REVIEW_QUEUE" })
+    });
+    if (!result?.ok) return window.alert("No se pudo guardar la corrección.");
+    await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    await loadImportReview();
+  }));
+  box.querySelectorAll("[data-review-row]").forEach((button) => button.addEventListener("click", () => {
+    const row = rows.find((item) => String(item.sourceRow) === button.getAttribute("data-review-row"));
+    if (!row) return;
+    window.alert(`Fila Excel ${Number(row.sourceRow) + 2}\nOriginal: ${JSON.stringify(row.data)}\nCorregido: ${JSON.stringify(row.corrections || {})}\nProblemas: ${JSON.stringify([...(row.errors || []), ...(row.warnings || [])])}`);
+  }));
+}
+
+async function refreshImportHistory() {
+  const box = document.getElementById("importHistoryBox");
+  if (!box) return;
+  const response = await authenticatedFetch("/api/imports");
+  if (!response?.ok) {
+    box.textContent = "No se pudo cargar historial.";
+    return;
+  }
+  const rows = await response.json();
+  box.innerHTML = `<h4 class="secondary-panel-title">Historial de importación</h4><div class="table-wrap"><table class="excel-table"><thead><tr><th>Fecha</th><th>Archivo</th><th>Contexto</th><th>Hoja</th><th>Filas</th><th>Válidas</th><th>Errores</th><th>Warnings</th><th>Status</th><th>Usuario</th></tr></thead><tbody>${
+    (Array.isArray(rows) ? rows : []).slice(0, 30).map((r) => `<tr><td>${escCell(formatMexicoCityDateTime(r.createdAt))}</td><td>${escCell(r.originalFileName)}</td><td>${escCell(r.context)}</td><td>${escCell(r.sheetName || "—")}</td><td>${r.totalRows}</td><td>${r.validRows}</td><td>${r.invalidRows}</td><td>${r.warningRows}</td><td>${escCell(r.status)}</td><td>${escCell(r.createdBy?.fullName || "—")}</td></tr>`).join("")
+  }</tbody></table></div>`;
+}
+
+document.getElementById("importUploadBtn")?.addEventListener("click", async () => {
+  const file = document.getElementById("importFile")?.files?.[0];
+  if (!file) return window.alert("Selecciona un archivo.");
+  const body = new FormData();
+  body.append("file", file);
+  body.append("context", document.getElementById("importContext")?.value || "INVENTORY");
+  body.append("inventoryMode", document.getElementById("importInventoryMode")?.value || "APPEND");
+  const priceCurrency = document.getElementById("importPriceCurrency")?.value;
+  if (priceCurrency) body.append("priceCurrency", priceCurrency);
+  setImportStatus("Subiendo archivo…");
+  const token = localStorage.getItem("token");
+  const response = await fetch("/api/imports/upload", {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    setImportStatus(data.message || "Error al subir.");
+    return;
+  }
+  currentImportId = data.id;
+  const sheets = data.metadata?.sheets || [];
+  const select = document.getElementById("importSheetSelect");
+  if (select) {
+    select.innerHTML = sheets.map((s) => `<option value="${escCell(s.name)}">${escCell(s.name)} (${s.totalDataRows} filas)</option>`).join("");
+  }
+  const headers = sheets[0]?.headers || [];
+  const mappingRes = await authenticatedFetch(`/api/imports/${currentImportId}/mapping`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  const mapped = mappingRes?.ok ? await mappingRes.json() : { suggested: {} };
+  renderImportMapping(headers, mapped.suggested || mapped.mapping || {});
+  setImportStatus(`Archivo cargado. ID ${data.id}. Hoja: ${data.sheetName || "—"}. Filas: ${data.totalRows}. Status: ${data.status}.`);
+  await refreshImportHistory();
+});
+
+document.getElementById("importSheetSelect")?.addEventListener("change", async (e) => {
+  if (!currentImportId) return;
+  const sheetName = e.target.value;
+  const response = await authenticatedFetch(`/api/imports/${currentImportId}/select-sheet`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sheetName })
+  });
+  if (!response?.ok) return;
+  const batch = await response.json();
+  const sheet = (batch.metadata?.sheets || []).find((s) => s.name === sheetName);
+  renderImportMapping(sheet?.headers || [], {});
+  setImportStatus(`Hoja seleccionada: ${sheetName}.`);
+});
+
+document.getElementById("importMapBtn")?.addEventListener("click", async () => {
+  if (!currentImportId) return;
+  const response = await authenticatedFetch(`/api/imports/${currentImportId}/mapping`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mapping: currentImportMapping })
+  });
+  if (!response?.ok) {
+    setImportStatus("No se pudo guardar el mapeo.");
+    return;
+  }
+  setImportStatus("Mapeo guardado.");
+});
+
+document.getElementById("importValidateBtn")?.addEventListener("click", async () => {
+  if (!currentImportId) return;
+  setImportStatus("Validando archivo completo…");
+  const response = await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const data = await response.json();
+  if (!response.ok) {
+    setImportStatus(data.message || "Validación fallida.");
+    return;
+  }
+  const preview = document.getElementById("importPreviewBox");
+  if (preview) {
+    preview.innerHTML = `<table class="excel-table"><thead><tr><th>Fila</th><th>Acción</th><th>Errores</th><th>Warnings</th><th>Normalizado</th></tr></thead><tbody>${
+      (data.preview || []).map((r) => `<tr><td>${r.sourceRow}</td><td>${escCell(r.action)}</td><td>${escCell((r.errors || []).map((e) => e.code).join(", ") || "—")}</td><td>${escCell((r.warnings || []).map((w) => w.code).join(", ") || "—")}</td><td>${escCell(JSON.stringify(r.normalized || {}))}</td></tr>`).join("")
+    }</tbody></table>`;
+  }
+  const val = data.summary?.valuation || {};
+  setImportStatus(`Validado. Total ${data.summary.totalRows}. Válidas ${data.summary.validRows}. Errores ${data.summary.invalidRows}. Warnings ${data.summary.warningRows}. Valor MXN ${val.mxn || 0} / USD ${val.usd || 0}. Sin precio: ${val.missingPriceQty || 0}. Status: ${data.batch.status}.`);
+  await loadImportReview();
+  await refreshImportHistory();
+});
+
+document.getElementById("importReviewBtn")?.addEventListener("click", () => void loadImportReview());
+
+document.getElementById("importNormalizedBtn")?.addEventListener("click", async () => {
+  if (!currentImportId) return;
+  await downloadExport(`/api/imports/${currentImportId}/normalized.csv`, `import_${currentImportId}_normalized.csv`);
+});
+
+document.getElementById("importConfirmBtn")?.addEventListener("click", async () => {
+  if (!currentImportId) return;
+  if (!window.confirm("¿Confirmar importación? Esto escribirá datos. No uses el archivo real de Hugo aquí.")) return;
+  setImportStatus("Confirmando…");
+  const response = await authenticatedFetch(`/api/imports/${currentImportId}/confirm`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const data = await response.json();
+  if (!response.ok) {
+    setImportStatus(data.message || "Confirmación rechazada.");
+    return;
+  }
+  setImportStatus(`Importación ${data.batch.status}. Fallidas: ${data.results?.filter((r) => !r.ok).length || 0}.`);
+  await refreshImportHistory();
+});
+
 createUserForm.addEventListener("submit", createUser);
 changePasswordForm.addEventListener("submit", changePassword);
 createCustomerForm.addEventListener("submit", createCustomer);

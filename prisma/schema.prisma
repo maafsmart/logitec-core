@@ -29,6 +29,8 @@ model User {
   incidentsReviewed    Incident[]           @relation("IncidentReviewer")
   requisitionsCreated  Requisition[]        @relation("RequisitionCreatedBy")
   reservationsCreated  InventoryReservation[]
+  importBatches        ImportBatch[]
+  importRowAudits      ImportRowAudit[]
 
   @@index([clientId])
 }
@@ -325,6 +327,69 @@ model InventoryStatusDefinition {
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model ImportBatch {
+  id               String      @id @default(cuid())
+  context          String
+  originalFileName String
+  fileType         String
+  sheetName        String?
+  status           String      @default("UPLOADED")
+  totalRows        Int         @default(0)
+  validRows        Int         @default(0)
+  invalidRows      Int         @default(0)
+  warningRows      Int         @default(0)
+  createdById      String
+  createdAt        DateTime    @default(now())
+  confirmedAt      DateTime?
+  completedAt      DateTime?
+  metadata         Json?
+  createdBy        User        @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  rows             ImportRow[]
+
+  @@index([createdById, createdAt])
+  @@index([status, createdAt])
+}
+
+model ImportRow {
+  id            String      @id @default(cuid())
+  importBatchId String
+  sourceRow     Int
+  data          Json
+  corrections   Json?
+  normalized    Json?
+  errors        Json?
+  warnings      Json?
+  action        String?
+  reviewState   String      @default("READY")
+  ignoredAt     DateTime?
+  ignoredById   String?
+  validatedAt   DateTime?
+  importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  audits        ImportRowAudit[]
+
+  @@unique([importBatchId, sourceRow])
+  @@index([importBatchId])
+  @@index([importBatchId, reviewState])
+}
+
+model ImportRowAudit {
+  id          String    @id @default(cuid())
+  importRowId String
+  actorId     String
+  field       String
+  original    Json?
+  previous    Json?
+  next        Json?
+  scope       String
+  reason      String?
+  createdAt   DateTime  @default(now())
+  importRow   ImportRow @relation(fields: [importRowId], references: [id], onDelete: Cascade)
+  actor       User      @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([importRowId, createdAt])
+  @@index([actorId, createdAt])
 }
 
 model ActivityLog {
