@@ -2478,8 +2478,8 @@
                   <span class="module-btn-desc">Registro y seguimiento de excepciones</span>
                 </button>
                 <button class="module-btn" data-module="traceability" id="btnTraceability" type="button">
-                  <span class="module-btn-label">Trazabilidad / Auditoría</span>
-                  <span class="module-btn-desc">Historial de operaciones</span>
+                  <span class="module-btn-label">Movimientos</span>
+                  <span class="module-btn-desc">Historial físico de inventario</span>
                 </button>
                 <button class="module-btn" data-module="reports" id="btnReports" type="button">
                   <span class="module-btn-label">Reportes y exportaciones</span>
@@ -2508,7 +2508,7 @@
           <div id="moduleControlCenter" class="module-pane hidden">
             <header class="cc-hero">
               <h2 class="cc-title" id="ccModuleTitle">Centro de Control — AVIAT</h2>
-              <p class="cc-tagline">Control operativo de almacén, inventario y trazabilidad</p>
+              <p class="cc-tagline">Control operativo de almacén, inventario y movimientos</p>
             </header>
             <div class="aviat-context-bar">
               <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
@@ -2585,8 +2585,8 @@
                 <span class="pipeline-connector">→</span>
                 <div class="pipeline-step">
                   <span class="step-num">6</span>
-                  <span class="step-name">Trazabilidad</span>
-                  <span class="step-desc">Auditoría y reportes</span>
+                  <span class="step-name">Movimientos</span>
+                  <span class="step-desc">Historial físico y reportes</span>
                 </div>
               </div>
             </section>
@@ -2597,7 +2597,7 @@
                 <button type="button" class="btn-quick" data-goto-module="requisitions">Crear requisición</button>
                 <button type="button" class="btn-quick" data-goto-module="picking">Preparar picking</button>
                 <button type="button" class="btn-quick" data-goto-module="outbound">Registrar salida</button>
-                <button type="button" class="btn-quick" data-goto-module="traceability">Consultar trazabilidad</button>
+                <button type="button" class="btn-quick" data-goto-module="traceability">Consultar movimientos</button>
                 <button type="button" class="btn-quick" data-goto-module="incidents">Reportar incidencia</button>
               </div>
             </section>
@@ -2685,19 +2685,19 @@
           </div>
           <div id="moduleTraceability" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Trazabilidad / Auditoría</h3>
-              <p class="module-lead">Consulta el historial de movimientos, importaciones, picking y operaciones. Útil para supervisión y auditoría.</p>
+              <h3>Movimientos</h3>
+              <p class="module-lead">Historial físico consolidado de inventario. La hora se presenta en Ciudad de México.</p>
             </div>
             <div class="aviat-context-bar">
-              <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
+              <span>Cliente: <strong data-aviat-primary-label>AVIAT</strong></span>
               <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
             </div>
             <p id="aviatScopeTrace" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
             <div class="card-panel trace-query-panel">
             <div class="filter-strip">
               <div class="field compact">
-                <label for="traceWh">Almacén</label>
-                <input id="traceWh" type="text" placeholder="Ej. TULTITLAN24" />
+                <label for="traceWh">Ubicación</label>
+                <input id="traceWh" type="text" placeholder="Origen o destino" />
               </div>
               <div class="field compact">
                 <label for="traceUserId">Usuario</label>
@@ -2705,19 +2705,19 @@
               </div>
               <div class="field compact">
                 <label for="traceType">Tipo</label>
-                <input id="traceType" type="text" placeholder="IMPORT, PICK…" />
+                <input id="traceType" type="text" placeholder="IN, OUT, PICK, RELOCATE…" />
               </div>
               <div class="field compact">
                 <label for="traceSku">SKU</label>
                 <input id="traceSku" type="text" />
               </div>
               <div class="field compact">
-                <label for="traceCustomer">Código proyecto</label>
-                <input id="traceCustomer" type="text" placeholder="Código" />
+                <label for="traceCustomer">Requisición</label>
+                <input id="traceCustomer" type="text" placeholder="REQ-…" />
               </div>
               <div class="field compact">
-                <label for="traceCliente">Proyecto</label>
-                <input id="traceCliente" type="text" placeholder="Nombre proyecto" />
+                <label for="traceCliente">Buscar</label>
+                <input id="traceCliente" type="text" placeholder="SKU, producto, lote, serie o referencia" />
               </div>
               <div class="field compact">
                 <label for="traceFrom">Desde</label>
@@ -2727,8 +2727,7 @@
                 <label for="traceTo">Hasta</label>
                 <input id="traceTo" type="date" />
               </div>
-              <button type="button" id="traceLoadBtn" class="btn-primary btn-compact">Consultar</button>
-              <button type="button" id="exportTraceBtn" class="btn-secondary btn-compact">Exportar trazabilidad CSV</button>
+              <button type="button" id="traceLoadBtn" class="btn-primary btn-compact">Consultar movimientos</button>
             </div>
             </div>
             <div class="card-panel trace-results-panel">
@@ -2741,6 +2740,7 @@
               <button type="button" class="btn-secondary btn-compact" data-reset-grid="traceability">Restablecer columnas</button>
             </div>
             <div id="traceList" style="overflow: auto; max-width: 100%"></div>
+            <div style="padding:12px"><button type="button" id="movementMoreBtn" class="btn-secondary btn-compact hidden">Cargar más</button></div>
             </div>
           </div>
           <div id="moduleTasks" class="module-pane hidden">
@@ -3032,7 +3032,7 @@
                 Salida automática
               </div>
               <div class="picking-step" data-step="trace">
-                <strong>4. Trazabilidad</strong>
+                <strong>4. Movimientos</strong>
                 Evento registrado
               </div>
             </div>
@@ -3368,7 +3368,7 @@
           <div id="moduleReports" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Reportes y exportaciones</h3>
-              <p class="module-lead">Exporta inventario, catálogo, movimientos y trazabilidad a CSV para análisis externo. Usa filtros en Inventario o Catálogo antes de exportar resultados filtrados.</p>
+              <p class="module-lead">Exporta inventario, catálogo, movimientos y auditoría a CSV para análisis externo. Usa filtros en Inventario o Catálogo antes de exportar resultados filtrados.</p>
             </div>
             <div class="card-panel">
               <h4 class="secondary-panel-title">Inventario</h4>
@@ -3377,11 +3377,11 @@
                 <button type="button" id="reportsExportStockFiltered" class="btn-secondary">Inventario filtrado CSV</button>
                 <button type="button" id="reportsExportMovements" class="btn-secondary">Movimientos CSV</button>
               </div>
-              <h4 class="secondary-panel-title">Catálogo y trazabilidad</h4>
+              <h4 class="secondary-panel-title">Catálogo y auditoría</h4>
               <div class="page-toolbar">
                 <button type="button" id="reportsExportProducts" class="btn-secondary">Catálogo CSV</button>
                 <button type="button" id="reportsExportProductsFiltered" class="btn-secondary">Catálogo filtrado CSV</button>
-                <button type="button" id="reportsExportTrace" class="btn-secondary">Trazabilidad CSV</button>
+                <button type="button" id="reportsExportTrace" class="btn-secondary">Auditoría CSV</button>
               </div>
             </div>
           </div>

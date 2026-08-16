@@ -12,6 +12,7 @@ import {
   clientSerialWhere,
   isClientRole
 } from "../clients/client-scope.js";
+import { parseMexicoCityDateFilter } from "../../shared/mexico-city-date.js";
 import { calculateInventoryValuation } from "./inventory-valuation.service.js";
 import { InventoryMutationError, mutateInventory } from "./inventory-mutation.service.js";
 
@@ -188,30 +189,185 @@ inventoryRouter.post("/locations", requireRole(["ADMIN"]), async (req, res) => {
 });
 
 inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
-  const rawLimit = req.query.limit;
-  let take = 200;
-  if (rawLimit === "all") {
-    take = 10000;
-  } else if (rawLimit != null) {
-    const parsedLimit = Number(rawLimit);
-    if (!Number.isNaN(parsedLimit) && parsedLimit > 0) {
-      take = Math.min(parsedLimit, 10000);
-    }
+  const query = z
+    .object({
+      q: z.string().trim().min(1).max(160).optional(),
+      sku: z.string().trim().min(1).max(80).optional(),
+      productId: z.string().min(1).optional(),
+      clientId: z.string().min(1).optional(),
+      projectId: z.string().min(1).optional(),
+      movementType: z.string().trim().min(1).max(40).optional(),
+      userId: z.string().min(1).optional(),
+      from: z.string().trim().min(1).max(40).optional(),
+      to: z.string().trim().min(1).max(40).optional(),
+      requisition: z.string().trim().min(1).max(120).optional(),
+      location: z.string().trim().min(1).max(120).optional(),
+      status: z.string().trim().min(1).max(80).optional(),
+      cursor: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(50)
+    })
+    .parse(req.query);
+  const dateFilter: Prisma.DateTimeFilter = {};
+  if (query.from) {
+    const date = parseMexicoCityDateFilter(query.from, "start");
+    if (!date) throw new HttpError(400, "Fecha 'from' inválida. Usa YYYY-MM-DD o ISO-8601.");
+    dateFilter.gte = date;
   }
-
+  if (query.to) {
+    const date = parseMexicoCityDateFilter(query.to, "end");
+    if (!date) throw new HttpError(400, "Fecha 'to' inválida. Usa YYYY-MM-DD o ISO-8601.");
+    dateFilter.lte = date;
+  }
+  const conditions: Prisma.InventoryMovementWhereInput[] = [
+    clientMovementWhere(req.auth!),
+    ...(Object.keys(dateFilter).length ? [{ createdAt: dateFilter }] : []),
+    ...(query.sku ? [{ product: { sku: { equals: query.sku, mode: "insensitive" as const } } }] : []),
+    ...(query.productId ? [{ productId: query.productId }] : []),
+    ...(query.clientId ? [{ product: { customer: { clientId: query.clientId } } }] : []),
+    ...(query.projectId ? [{ product: { customerId: query.projectId } }] : []),
+    ...(query.movementType
+      ? [{ movementType: { equals: query.movementType, mode: "insensitive" as const } }]
+      : []),
+    ...(query.userId ? [{ userId: query.userId }] : []),
+    ...(query.requisition
+      ? [
+          {
+            requisitionLine: {
+              requisition: {
+                OR: [
+                  { id: query.requisition },
+                  { number: { contains: query.requisition, mode: "insensitive" as const } }
+                ]
+              }
+            }
+          }
+        ]
+      : []),
+    ...(query.location
+      ? [
+          {
+            OR: [
+              { fromLocation: { code: { contains: query.location, mode: "insensitive" as const } } },
+              { toLocation: { code: { contains: query.location, mode: "insensitive" as const } } }
+            ]
+          }
+        ]
+      : []),
+    ...(query.status ? [{ stockStatus: { equals: query.status, mode: "insensitive" as const } }] : []),
+    ...(query.q
+      ? [
+          {
+            OR: [
+              { product: { sku: { contains: query.q, mode: "insensitive" as const } } },
+              { product: { name: { contains: query.q, mode: "insensitive" as const } } },
+              { product: { description: { contains: query.q, mode: "insensitive" as const } } },
+              { reference: { contains: query.q, mode: "insensitive" as const } },
+              { requisitionLine: { requisition: { number: { contains: query.q, mode: "insensitive" as const } } } },
+              { inventoryLayer: { lotNumber: { contains: query.q, mode: "insensitive" as const } } },
+              { inventorySerial: { serialNumber: { contains: query.q, mode: "insensitive" as const } } },
+              { inventorySerial: { imei: { contains: query.q, mode: "insensitive" as const } } }
+            ]
+          }
+        ]
+      : [])
+  ];
+  const where: Prisma.InventoryMovementWhereInput = { AND: conditions };
   const rows = await prisma.inventoryMovement.findMany({
-    where: clientMovementWhere(req.auth!),
-    orderBy: { createdAt: "desc" },
-    take,
+    where,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: query.limit + 1,
+    ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     include: {
-      product: { select: { sku: true, name: true, customer: { select: { code: true, name: true } } } },
-      user: { select: { fullName: true, email: true } },
-      fromLocation: { select: { code: true } },
-      toLocation: { select: { code: true } }
+      product: {
+        select: {
+          id: true,
+          sku: true,
+          barcode: true,
+          name: true,
+          description: true,
+          customer: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              client: { select: { id: true, name: true, legalName: true, tradeName: true } }
+            }
+          }
+        }
+      },
+      user: { select: { id: true, fullName: true, email: true } },
+      fromLocation: { select: { id: true, code: true, warehouse: true } },
+      toLocation: { select: { id: true, code: true, warehouse: true } },
+      inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true, unitPriceMxn: true, unitPriceUsd: true } },
+      inventorySerial: { select: { id: true, serialNumber: true, imei: true } },
+      task: { select: { id: true, type: true, reference: true } },
+      requisitionLine: {
+        select: {
+          id: true,
+          requisition: {
+            select: {
+              id: true,
+              number: true,
+              status: true,
+              project: { select: { id: true, code: true, name: true } }
+            }
+          }
+        }
+      }
     }
   });
-
-  res.json(rows);
+  const next = rows.length > query.limit ? rows.pop() : undefined;
+  const statuses = await prisma.inventoryStatusDefinition.findMany({
+    where: { code: { in: [...new Set(rows.map((row) => row.stockStatus).filter((code): code is string => Boolean(code)))] } },
+    select: { code: true, label: true }
+  });
+  const statusLabels = new Map(statuses.map((status) => [status.code, status.label]));
+  res.json({
+    items: rows.map((row) => {
+      const requisition = row.requisitionLine?.requisition ?? null;
+      const project = requisition?.project ?? row.product.customer ?? null;
+      return {
+        id: row.id,
+        createdAt: row.createdAt,
+        client: row.product.customer?.client ?? null,
+        project,
+        product: {
+          id: row.product.id,
+          sku: row.product.sku,
+          barcode: row.product.barcode,
+          name: row.product.name,
+          description: row.product.description
+        },
+        movement: {
+          type: row.type,
+          movementType: row.movementType,
+          signedQty:
+            row.movementType === "RELOCATE"
+              ? null
+              : row.movementType === "ADJUST_SET"
+                ? row.quantityAfter.minus(row.quantityBefore).toString()
+                : row.movementType === "IN"
+                  ? row.qty.toString()
+                  : row.qty.negated().toString(),
+          quantityBefore: row.quantityBefore,
+          quantityAfter: row.quantityAfter,
+          stockStatus: row.stockStatus,
+          stockStatusLabel: row.stockStatus ? statusLabels.get(row.stockStatus) ?? null : null
+        },
+        fromLocation: row.fromLocation,
+        toLocation: row.toLocation,
+        layer: row.inventoryLayer,
+        serial: row.inventorySerial,
+        user: row.user,
+        requisition,
+        requisitionLine: row.requisitionLine ? { id: row.requisitionLine.id } : null,
+        task: row.task,
+        reference: row.reference,
+        notes: row.notes
+      };
+    }),
+    nextCursor: next?.id ?? null
+  });
 });
 
 inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {

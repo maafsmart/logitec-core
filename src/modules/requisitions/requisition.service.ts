@@ -734,6 +734,7 @@ export async function consumeReservationPick(input: {
         productId: reservation.requisitionLine.productId,
         type: "PICK",
         movementType: "OUT",
+        stockStatus: reservation.inventory.status,
         qty: input.qty,
         warehouse: reservation.inventory.location.warehouse,
         fromLocationId: reservation.inventory.locationId,

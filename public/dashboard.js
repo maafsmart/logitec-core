@@ -123,6 +123,8 @@ const demoResetExecuteBtn = document.getElementById("demoResetExecuteBtn");
 const DEMO_RESET_CONFIRM_TEXT = "REINICIAR LOGITEC";
 
 let currentRole = null;
+let movementsNextCursor = null;
+let movementsRows = [];
 let currentUserId = null;
 let catalogApplyCompleted = false;
 let stockRowsCache = [];
@@ -1335,7 +1337,7 @@ function openInventoryDetail(row) {
     },
     {
       id: "trace",
-      label: "Ver trazabilidad",
+      label: "Ver movimientos",
       className: "btn-secondary",
       onClick: () => {
         const traceSku = document.getElementById("traceSku");
@@ -1384,7 +1386,7 @@ function openCatalogDetail(product) {
     },
     {
       id: "trace",
-      label: "Ver trazabilidad",
+      label: "Ver movimientos",
       className: "btn-secondary",
       onClick: () => {
         const traceSku = document.getElementById("traceSku");
@@ -3118,58 +3120,50 @@ const CLIENTS_COLUMNS = [
   { label: "Estado", sortKey: (r) => (r.products > 0 ? "Activo" : "Sin catálogo") }
 ];
 
+function formatMexicoCityDateTime(value) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("es-MX", {
+    timeZone: "America/Mexico_City",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).format(new Date(value));
+}
+
+function movementQuantity(row) {
+  if (row?.movement?.movementType === "RELOCATE") return "Traslado";
+  const qty = row?.movement?.signedQty;
+  if (qty == null) return "—";
+  const n = Number(qty);
+  return `${n > 0 ? "+" : ""}${formatQty(qty)}`;
+}
+
+function movementLocation(row) {
+  const from = row?.fromLocation?.code;
+  const to = row?.toLocation?.code;
+  if (from && to) return `${from} → ${to}`;
+  if (from) return `${from} →`;
+  if (to) return `→ ${to}`;
+  return "—";
+}
+
 const TRACE_COLUMNS = [
-  { label: "Fecha", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatDateShort(r.createdAt), title: (r) => formatDateShort(r.createdAt) },
-  { label: "Proyecto", sortKey: (r) => getAviatProjectDisplayFromRow(r), render: (r) => renderCellWithClamp(getAviatProjectDisplayFromRow(r), "cell-truncate", 22), title: (r) => getAviatProjectDisplayFromRow(r) },
-  { label: "Lote", sortKey: (r) => extractLoteFromRow(r), render: (r) => renderCellEllipsis(extractLoteFromRow(r)), title: (r) => extractLoteFromRow(r) },
-  { label: "Tipo", sortKey: (r) => r.type || r.subtype || "", render: (r) => statusBadge(r.subtype || r.type) },
-  { label: "SKU / Código", sortKey: (r) => r.product?.sku || "", render: (r) => escCell(formatSkuBarcode(r.product)), title: (r) => r.product?.sku || "" },
-  { label: "Producto", sortKey: (r) => r.product?.name || "", render: (r) => renderCellWithClamp(r.product?.name || "—", "cell-truncate", 28), title: (r) => r.product?.name || "" },
-  {
-    label: "Antes",
-    align: "right",
-    sortKey: (r) => Number(activityMetaQty(r, "before")) || 0,
-    sortType: "number",
-    render: (r) => formatQty(activityMetaQty(r, "before")),
-    title: (r) => `Saldo anterior: ${formatQty(activityMetaQty(r, "before"))}`
-  },
-  {
-    label: "Movimiento",
-    align: "right",
-    sortKey: (r) => Number(activityMovedQty(r)) || 0,
-    sortType: "number",
-    render: (r) => formatQty(activityMovedQty(r)),
-    title: (r) => `Cantidad del movimiento: ${formatQty(activityMovedQty(r))}`
-  },
-  {
-    label: "Después",
-    align: "right",
-    sortKey: (r) => Number(activityMetaQty(r, "after")) || 0,
-    sortType: "number",
-    render: (r) => formatQty(activityMetaQty(r, "after")),
-    title: (r) => `Saldo posterior: ${formatQty(activityMetaQty(r, "after"))}`
-  },
-  { label: "Ubicación", sortKey: (r) => r.location || r.warehouse || "", render: (r) => renderCellWithClamp(r.location || r.warehouse, "cell-truncate", 22), title: (r) => r.location || r.warehouse || "" },
-  { label: "Usuario", sortKey: (r) => r.user?.fullName || "", render: (r) => renderCellWithClamp(r.user?.fullName || "—", "cell-truncate", 20), title: (r) => r.user?.fullName || "" },
-  { label: "Referencia", sortKey: (r) => r.reference || "", render: (r) => renderCellWithClamp(r.reference, "cell-truncate", 24), title: (r) => r.reference || "" }
+  { label: "Fecha / hora", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatMexicoCityDateTime(r.createdAt) },
+  { label: "Cliente", sortKey: (r) => r.client?.tradeName || r.client?.name || "", render: (r) => renderCellWithClamp(r.client?.tradeName || r.client?.name || "—", "cell-truncate", 18) },
+  { label: "Proyecto", sortKey: (r) => r.project?.code || r.project?.name || "", render: (r) => renderCellWithClamp(r.project?.code || r.project?.name || "—", "cell-truncate", 16) },
+  { label: "SKU", sortKey: (r) => r.product?.sku || "", render: (r) => `<strong class="cell-nowrap">${escCell(r.product?.sku || "—")}</strong>` },
+  { label: "Descripción", sortKey: (r) => r.product?.name || "", render: (r) => renderCellWithClamp(r.product?.name || "—", "cell-truncate", 25) },
+  { label: "Tipo", sortKey: (r) => r.movement?.movementType || "", render: (r) => statusBadge(r.movement?.movementType || r.movement?.type || "—") },
+  { label: "Movimiento", align: "right", sortKey: (r) => Number(r.movement?.signedQty) || 0, sortType: "number", render: movementQuantity },
+  { label: "Antes", align: "right", sortKey: (r) => Number(r.movement?.quantityBefore) || 0, sortType: "number", render: (r) => formatQty(r.movement?.quantityBefore) },
+  { label: "Después", align: "right", sortKey: (r) => Number(r.movement?.quantityAfter) || 0, sortType: "number", render: (r) => formatQty(r.movement?.quantityAfter) },
+  { label: "Ubicación", sortKey: movementLocation, render: (r) => renderCellWithClamp(movementLocation(r), "cell-truncate", 24) },
+  { label: "Usuario", sortKey: (r) => r.user?.fullName || "", render: (r) => renderCellWithClamp(r.user?.fullName || "—", "cell-truncate", 18) },
+  { label: "Referencia", sortKey: (r) => r.requisition?.number || r.reference || "", render: (r) => renderCellWithClamp(r.requisition?.number || r.reference || "—", "cell-truncate", 20) }
 ];
-
-/** Cantidad de saldo en metadata de actividad (antes/después del movimiento). */
-function activityMetaQty(row, which) {
-  const meta = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
-  if (which === "before") {
-    return meta.quantityBefore ?? meta.qtyBefore ?? meta.before ?? null;
-  }
-  return meta.quantityAfter ?? meta.qtyAfter ?? meta.after ?? null;
-}
-
-/** Cantidad movida/pickeada en el evento. */
-function activityMovedQty(row) {
-  const meta = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
-  if (meta.pickedQty != null) return meta.pickedQty;
-  if (meta.quantityMoved != null) return meta.quantityMoved;
-  return row?.qty ?? null;
-}
 
 const TASK_COLUMNS = [
   {
@@ -4591,6 +4585,29 @@ function buildTraceabilityParams() {
   return params;
 }
 
+function buildMovementsParams(cursor = null) {
+  const params = new URLSearchParams();
+  const location = document.getElementById("traceWh")?.value?.trim();
+  const userId = document.getElementById("traceUserId")?.value?.trim();
+  const movementType = document.getElementById("traceType")?.value?.trim();
+  const sku = document.getElementById("traceSku")?.value?.trim();
+  const requisition = document.getElementById("traceCustomer")?.value?.trim();
+  const q = document.getElementById("traceCliente")?.value?.trim();
+  const from = document.getElementById("traceFrom")?.value?.trim();
+  const to = document.getElementById("traceTo")?.value?.trim();
+  if (location) params.set("location", location);
+  if (userId) params.set("userId", userId);
+  if (movementType) params.set("movementType", movementType);
+  if (sku) params.set("sku", sku);
+  if (requisition) params.set("requisition", requisition);
+  if (q) params.set("q", q);
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  if (cursor) params.set("cursor", cursor);
+  params.set("limit", "50");
+  return params;
+}
+
 const STOCK_EXPORT_COLUMNS = [
   { label: "proyecto", value: (r) => getAviatProjectDisplayFromRow(r) },
   { label: "lote", value: (r) => extractLoteFromRow(r) },
@@ -4814,38 +4831,78 @@ function escCell(s) {
     .replace(/"/g, "&quot;");
 }
 
-async function loadTraceability() {
+function openMovementDetail(row) {
+  const relocation = row.movement?.movementType === "RELOCATE";
+  const requisition = row.requisition;
+  openDetailDrawer("Detalle de movimiento", [
+    { label: "Movimiento", value: row.movement?.movementType || row.movement?.type },
+    { label: "Fecha / hora (Ciudad de México)", value: formatMexicoCityDateTime(row.createdAt) },
+    { label: "Cliente", value: row.client?.tradeName || row.client?.legalName || row.client?.name },
+    { label: "Proyecto", value: row.project ? `${row.project.code} — ${row.project.name}` : "—" },
+    { label: "SKU", value: row.product?.sku },
+    { label: "Descripción", value: row.product?.name },
+    { label: "Cantidad", value: movementQuantity(row) },
+    { label: relocation ? "Saldo origen antes" : "Antes", value: formatQty(row.movement?.quantityBefore) },
+    { label: relocation ? "Saldo origen después" : "Después", value: formatQty(row.movement?.quantityAfter) },
+    { label: "Almacén", value: row.toLocation?.warehouse || row.fromLocation?.warehouse },
+    { label: "Origen", value: row.fromLocation?.code },
+    { label: "Destino", value: row.toLocation?.code },
+    { label: "Estado", value: row.movement?.stockStatusLabel || formatInventoryStatus(row.movement?.stockStatus) },
+    { label: "Lote", value: row.layer?.lotNumber },
+    { label: "Serie", value: row.serial?.serialNumber },
+    { label: "IMEI", value: row.serial?.imei },
+    { label: "Usuario", value: row.user?.fullName || row.user?.email },
+    { label: "Referencia", value: row.reference },
+    { label: "Requisición", value: requisition?.number },
+    { label: "Task", value: row.task ? `${row.task.type} — ${row.task.reference || "—"}` : "—" },
+    { label: "Notas", value: row.notes }
+  ], requisition ? [{
+    id: "open-requisition",
+    label: "Abrir requisición",
+    className: "btn-primary",
+    onClick: () => {
+      closeDetailDrawer();
+      activateModule("requisitions");
+    }
+  }] : []);
+}
+
+async function loadTraceability(append = false) {
   if (!traceList) return;
-  if (traceMessage) traceMessage.textContent = "Consultando trazabilidad…";
-  const params = buildTraceabilityParams();
-  params.set("limit", "200");
+  if (traceMessage) traceMessage.textContent = append ? "Cargando más movimientos…" : "Consultando movimientos…";
+  const params = buildMovementsParams(append ? movementsNextCursor : null);
   try {
-    const response = await authenticatedFetch(`/api/traceability/activity?${params.toString()}`);
+    const response = await authenticatedFetch(`/api/inventory/movements?${params.toString()}`);
     if (!response) return;
     if (!response.ok) {
-      if (traceMessage) traceMessage.textContent = "No se pudo cargar trazabilidad.";
+      if (traceMessage) traceMessage.textContent = "No se pudieron cargar los movimientos.";
       traceList.innerHTML = "";
       return;
     }
-    const rows = await response.json();
+    const payload = await response.json();
+    const rows = Array.isArray(payload?.items) ? payload.items : [];
+    movementsRows = append ? [...movementsRows, ...rows] : rows;
+    movementsNextCursor = payload?.nextCursor || null;
     updateAviatHeaderUi();
-    if (traceMessage) traceMessage.textContent = `${Array.isArray(rows) ? rows.length : 0} registros. ${getAviatScopeSummaryText()}`;
-    const scopedRows = filterRowsByAviatProject(Array.isArray(rows) ? rows : []);
-    if (!scopedRows.length) {
+    if (traceMessage) traceMessage.textContent = `${movementsRows.length} movimientos cargados. Hora: America/Mexico_City.`;
+    const more = document.getElementById("movementMoreBtn");
+    if (more) more.classList.toggle("hidden", !movementsNextCursor);
+    if (!movementsRows.length) {
       traceList.innerHTML = "";
       renderExcelTable(traceList, {
         gridId: "traceability",
         columns: TRACE_COLUMNS,
         rows: [],
-        emptyMessage: "Sin registros operativos aún"
+        emptyMessage: "Sin movimientos con los filtros indicados."
       });
       return;
     }
     renderExcelTable(traceList, {
       gridId: "traceability",
       columns: TRACE_COLUMNS,
-      rows: scopedRows,
-      emptyMessage: "Sin registros operativos aún"
+      rows: movementsRows,
+      emptyMessage: "Sin movimientos con los filtros indicados.",
+      onRowSelect: openMovementDetail
     });
   } catch (_e) {
     if (traceMessage) traceMessage.textContent = "Error de red.";
@@ -7407,6 +7464,9 @@ if (inventoryImportFile) {
   });
 }
 if (traceLoadBtn) traceLoadBtn.addEventListener("click", () => void loadTraceability());
+document.getElementById("movementMoreBtn")?.addEventListener("click", () => {
+  if (movementsNextCursor) void loadTraceability(true);
+});
 if (taskCreateBtn) taskCreateBtn.addEventListener("click", () => void createTaskClick());
 if (incidentCreateBtn) incidentCreateBtn.addEventListener("click", () => void createIncidentClick());
 if (exportStockBtn) exportStockBtn.addEventListener("click", () => void exportStockCsv());

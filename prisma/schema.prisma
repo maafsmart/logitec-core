@@ -94,6 +94,7 @@ model InventoryMovement {
   qty             Decimal  @default(0) @db.Decimal(18, 4)
   fromLocationId  String?
   toLocationId    String?
+  stockStatus     String?
   movementType    String
   quantityBefore  Decimal  @db.Decimal(18, 4)
   quantityAfter   Decimal  @db.Decimal(18, 4)

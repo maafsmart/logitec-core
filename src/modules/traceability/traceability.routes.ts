@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { clientActivityWhere } from "../clients/client-scope.js";
+import { parseMexicoCityDateFilter } from "../../shared/mexico-city-date.js";
 
 const traceabilityRouter = Router();
 
@@ -46,23 +47,14 @@ traceabilityRouter.get("/activity", async (req, res) => {
   if (q.from?.trim() || q.to?.trim()) {
     where.createdAt = {};
     if (q.from?.trim()) {
-      // date-only (YYYY-MM-DD) → inicio del día local del servidor
       const fromRaw = q.from.trim();
-      const d = /^\d{4}-\d{2}-\d{2}$/.test(fromRaw)
-        ? new Date(`${fromRaw}T00:00:00`)
-        : new Date(fromRaw);
-      if (!Number.isNaN(d.getTime())) where.createdAt.gte = d;
+      const d = parseMexicoCityDateFilter(fromRaw, "start");
+      if (d) where.createdAt.gte = d;
     }
     if (q.to?.trim()) {
-      // date-only → fin del día (evita excluir eventos del mismo día)
       const toRaw = q.to.trim();
-      let d: Date;
-      if (/^\d{4}-\d{2}-\d{2}$/.test(toRaw)) {
-        d = new Date(`${toRaw}T23:59:59.999`);
-      } else {
-        d = new Date(toRaw);
-      }
-      if (!Number.isNaN(d.getTime())) where.createdAt.lte = d;
+      const d = parseMexicoCityDateFilter(toRaw, "end");
+      if (d) where.createdAt.lte = d;
     }
   }
   const scope = clientActivityWhere(req.auth!);
