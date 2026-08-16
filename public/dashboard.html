@@ -3204,6 +3204,54 @@
               <p id="inventoryTableCount" class="operational-table-meta">Mostrando 0 de 0 saldos</p>
               <div id="inventoryList">Cargando...</div>
             </div>
+            <div id="assignmentTransferPanel" class="card-panel ops-form-panel hidden">
+              <h4 class="secondary-panel-title">Reasignar stock</h4>
+              <p class="module-hint" style="margin:0 0 12px">
+                Las piezas permanecen en la misma ubicación y estatus. Solo cambia la asignación de proyecto / FREE TO SALE.
+              </p>
+              <div class="form-grid">
+                <div class="field"><label>SKU</label><input id="assignSku" type="text" readonly /></div>
+                <div class="field"><label>Ubicación</label><input id="assignLocation" type="text" readonly /></div>
+                <div class="field"><label>Status</label><input id="assignStatus" type="text" readonly /></div>
+                <div class="field"><label>Asignación actual</label><input id="assignCurrent" type="text" readonly /></div>
+                <div class="field"><label>Cantidad total</label><input id="assignQtyTotal" type="text" readonly /></div>
+                <div class="field"><label>Reservada</label><input id="assignQtyReserved" type="text" readonly /></div>
+                <div class="field"><label>Disponible para reasignar</label><input id="assignQtyFree" type="text" readonly /></div>
+                <div class="field">
+                  <label for="assignDestType">Destino</label>
+                  <select id="assignDestType">
+                    <option value="PROJECT">Proyecto</option>
+                    <option value="FREE_TO_SALE">FREE TO SALE</option>
+                  </select>
+                </div>
+                <div class="field" id="assignDestProjectField">
+                  <label for="assignDestProject">Proyecto destino</label>
+                  <select id="assignDestProject"><option value="">— Seleccionar proyecto —</option></select>
+                </div>
+                <div class="field">
+                  <label for="assignQty">Cantidad</label>
+                  <input id="assignQty" type="number" step="0.0001" min="0.0001" />
+                </div>
+                <div class="field">
+                  <label for="assignLayer">Capa</label>
+                  <select id="assignLayer"><option value="">Automática si hay una sola</option></select>
+                </div>
+                <div class="field">
+                  <label for="assignReference">Referencia</label>
+                  <input id="assignReference" type="text" maxlength="120" />
+                </div>
+                <div class="field full">
+                  <label for="assignNotes">Notas</label>
+                  <input id="assignNotes" type="text" maxlength="500" />
+                </div>
+              </div>
+              <p id="assignPreview" class="module-hint" style="margin:12px 0"></p>
+              <p id="assignMessage" class="ops-message"></p>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button type="button" id="assignConfirmBtn" class="btn-primary btn-compact">Confirmar reasignación</button>
+                <button type="button" id="assignCancelBtn" class="btn-secondary btn-compact">Cancelar</button>
+              </div>
+            </div>
             <div id="movementsPanel" class="movements-panel card-panel secondary-panel">
               <h4 class="secondary-panel-title">Movimientos de inventario</h4>
               <div class="grid-toolbar" data-grid-toolbar="movements">

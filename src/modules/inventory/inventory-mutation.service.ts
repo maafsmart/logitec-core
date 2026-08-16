@@ -68,7 +68,7 @@ function layerCandidate(layer: {
   };
 }
 
-async function lockInventory(tx: Prisma.TransactionClient, inventoryId: string) {
+export async function lockInventory(tx: Prisma.TransactionClient, inventoryId: string) {
   await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Inventory" WHERE "id" = ${inventoryId} FOR UPDATE`);
   return tx.inventory.findUnique({
     where: { id: inventoryId },
@@ -76,14 +76,14 @@ async function lockInventory(tx: Prisma.TransactionClient, inventoryId: string) 
   });
 }
 
-async function lockInventories(tx: Prisma.TransactionClient, inventoryIds: string[]) {
+export async function lockInventories(tx: Prisma.TransactionClient, inventoryIds: string[]) {
   const ids = [...new Set(inventoryIds)].sort();
   for (const id of ids) {
     await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Inventory" WHERE "id" = ${id} FOR UPDATE`);
   }
 }
 
-async function ensureInventory(
+export async function ensureInventory(
   tx: Prisma.TransactionClient,
   productId: string,
   locationId: string,
@@ -167,7 +167,7 @@ async function selectLayer(
   return layers[0]!;
 }
 
-async function decrementLayerAndParent(
+export async function decrementLayerAndParent(
   tx: Prisma.TransactionClient,
   inventoryId: string,
   layerId: string,
@@ -198,7 +198,7 @@ async function decrementLayerAndParent(
   return { layer: layerRows[0]!, inventory: inventoryRows[0]! };
 }
 
-async function incrementParent(tx: Prisma.TransactionClient, inventoryId: string, delta: Prisma.Decimal) {
+export async function incrementParent(tx: Prisma.TransactionClient, inventoryId: string, delta: Prisma.Decimal) {
   const rows = await tx.$queryRaw<Array<{ id: string; qty: Prisma.Decimal }>>`
     UPDATE "Inventory"
     SET qty = qty + ${delta}, "updatedAt" = NOW()

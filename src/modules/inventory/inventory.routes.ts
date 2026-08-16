@@ -15,6 +15,10 @@ import {
 import { parseMexicoCityDateFilter } from "../../shared/mexico-city-date.js";
 import { calculateInventoryValuation } from "./inventory-valuation.service.js";
 import { InventoryMutationError, mutateInventory } from "./inventory-mutation.service.js";
+import {
+  assertCanTransferAssignment,
+  transferAssignment
+} from "./inventory-assignment-transfer.service.js";
 
 const inventoryRouter = Router();
 
@@ -308,6 +312,8 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
       user: { select: { id: true, fullName: true, email: true } },
       fromLocation: { select: { id: true, code: true, warehouse: true } },
       toLocation: { select: { id: true, code: true, warehouse: true } },
+      fromProject: { select: { id: true, code: true, name: true } },
+      toProject: { select: { id: true, code: true, name: true } },
       inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true, unitPriceMxn: true, unitPriceUsd: true } },
       inventorySerial: { select: { id: true, serialNumber: true, imei: true } },
       task: { select: { id: true, type: true, reference: true } },
@@ -339,6 +345,7 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
       return {
         id: row.id,
         createdAt: row.createdAt,
+        qty: row.qty.toString(),
         client: row.product.customer?.client ?? null,
         project,
         product: {
@@ -352,7 +359,7 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
           type: row.type,
           movementType: row.movementType,
           signedQty:
-            row.movementType === "RELOCATE"
+            row.movementType === "RELOCATE" || row.movementType === "ASSIGNMENT_TRANSFER"
               ? null
               : row.movementType === "ADJUST_SET"
                 ? row.quantityAfter.minus(row.quantityBefore).toString()
@@ -362,8 +369,16 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
           quantityBefore: row.quantityBefore,
           quantityAfter: row.quantityAfter,
           stockStatus: row.stockStatus,
-          stockStatusLabel: row.stockStatus ? statusLabels.get(row.stockStatus) ?? null : null
+          stockStatusLabel: row.stockStatus ? statusLabels.get(row.stockStatus) ?? null : null,
+          fromAssignmentType: row.fromAssignmentType,
+          fromProjectId: row.fromProjectId,
+          fromAssignmentKey: row.fromAssignmentKey,
+          toAssignmentType: row.toAssignmentType,
+          toProjectId: row.toProjectId,
+          toAssignmentKey: row.toAssignmentKey
         },
+        fromProject: row.fromProject,
+        toProject: row.toProject,
         fromLocation: row.fromLocation,
         toLocation: row.toLocation,
         layer: row.inventoryLayer,
@@ -461,6 +476,25 @@ const relocateSchema = z.object({
   taskId: z.string().optional()
 });
 
+const assignmentTransferSchema = z
+  .object({
+    sourceInventoryId: z.string().min(1),
+    sourceLayerId: z.string().min(1).optional(),
+    qty: z.coerce.number().positive(),
+    destinationAssignmentType: z.enum(["PROJECT", "FREE_TO_SALE"]),
+    destinationProjectId: z.string().min(1).nullable().optional(),
+    reference: z.string().max(120).optional(),
+    notes: z.string().max(500).optional()
+  })
+  .superRefine((data, ctx) => {
+    if (data.destinationAssignmentType === "PROJECT" && !data.destinationProjectId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "La reasignación PROJECT requiere destinationProjectId." });
+    }
+    if (data.destinationAssignmentType === "FREE_TO_SALE" && data.destinationProjectId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "FREE TO SALE no admite destinationProjectId." });
+    }
+  });
+
 inventoryRouter.post("/relocate", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
   const body = relocateSchema.parse(req.body);
   const source = await prisma.inventory.findUnique({
@@ -500,6 +534,47 @@ inventoryRouter.post("/relocate", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"
   } catch (error) {
     if (error instanceof InventoryMutationError) {
       const status = ["AMBIGUOUS_LAYER", "INSUFFICIENT_STOCK", "SERIAL_SELECTION_REQUIRED"].includes(error.code)
+        ? 409
+        : 400;
+      res.status(status).json({ code: error.code, message: error.message, details: error.details });
+      return;
+    }
+    throw error;
+  }
+});
+
+inventoryRouter.post("/assignment-transfer", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
+  assertCanTransferAssignment(req.auth!.role);
+  const body = assignmentTransferSchema.parse(req.body);
+  try {
+    const result = await transferAssignment({
+      sourceInventoryId: body.sourceInventoryId,
+      sourceLayerId: body.sourceLayerId,
+      qty: dec(body.qty),
+      destinationAssignmentType: body.destinationAssignmentType,
+      destinationProjectId: body.destinationProjectId ?? null,
+      userId: req.auth!.userId,
+      reference: body.reference?.trim() || null,
+      notes: body.notes?.trim() || null
+    });
+    res.status(201).json({
+      source: result.source,
+      destination: result.destination,
+      transferredQty: result.transferredQty,
+      movementId: result.movementId,
+      totalBefore: result.totalBefore,
+      totalAfter: result.totalAfter
+    });
+  } catch (error) {
+    if (error instanceof InventoryMutationError) {
+      const status = [
+        "INSUFFICIENT_UNRESERVED_FOR_TRANSFER",
+        "INSUFFICIENT_LAYER_UNRESERVED",
+        "LAYER_SELECTION_REQUIRED",
+        "SERIAL_SELECTION_REQUIRED",
+        "SAME_ASSIGNMENT",
+        "INSUFFICIENT_STOCK"
+      ].includes(error.code)
         ? 409
         : 400;
       res.status(status).json({ code: error.code, message: error.message, details: error.details });

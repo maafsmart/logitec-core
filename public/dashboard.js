@@ -216,20 +216,23 @@ function normalizeProjectCode(value) {
 }
 
 function getAviatProjectFromRow(row) {
+  if (row?.assignmentType === "FREE_TO_SALE" || row?.assignmentKey === "FREE_TO_SALE") {
+    return { code: "FREE_TO_SALE", name: "FREE TO SALE" };
+  }
   const code =
+    row?.project?.code ||
     row?.product?.customer?.code ||
     row?.customer?.code ||
     (typeof row?.customer === "string" ? row.customer : "") ||
-    row?.project?.code ||
     (typeof row?.project === "string" ? row.project : "") ||
     row?.codigo_proyecto ||
     row?.code ||
     parseRequisitionNotes(row?.notes)?.customerCode ||
     "";
   const name =
+    row?.project?.name ||
     row?.product?.customer?.name ||
     row?.customer?.name ||
-    row?.project?.name ||
     row?.customerName ||
     row?.proyecto ||
     row?.name ||
@@ -1288,19 +1291,24 @@ function applyOperationalPrefillToForm(prefix) {
   sessionStorage.removeItem("logitec_ops_prefill");
 }
 
+function canReassignStock() {
+  return currentRole === "ADMIN" || currentRole === "SUPERVISOR";
+}
+
+function inventoryAssignmentLabel(row) {
+  if (row?.assignmentType === "FREE_TO_SALE" || row?.assignmentKey === "FREE_TO_SALE") return "FREE TO SALE";
+  if (row?.project?.name) {
+    return row.project.code ? `${row.project.name} (${row.project.code})` : row.project.name;
+  }
+  return getAviatProjectDisplayFromRow(row);
+}
+
 function openInventoryDetail(row) {
   const p = row.product || {};
-  openDetailDrawer("Detalle de inventario", [
-    { label: "Cliente principal", value: PRIMARY_CLIENT_AVIAT_NAME },
-    { label: "Proyecto", value: getAviatProjectDisplayFromRow(row) },
-    { label: "Lote", value: extractLoteFromRow(row) },
-    { label: "SKU / Código de barras", value: formatSkuBarcode(p) },
-    { label: "Producto", value: p.name },
-    { label: "Almacén", value: row.location?.warehouse },
-    { label: "Ubicación", value: row.location?.code },
-    { label: "Estatus", value: formatInventoryStatus(row.status) },
-    { label: "Cantidad", value: formatQty(row.qty) }
-  ], [
+  const reserved = Number(row.reservedQty || 0);
+  const total = Number(row.qty || 0);
+  const free = total - reserved;
+  const actions = [
     {
       id: "inbound",
       label: "Registrar entrada",
@@ -1359,7 +1367,219 @@ function openInventoryDetail(row) {
         activateModule("incidents");
       }
     }
-  ]);
+  ];
+  if (canReassignStock()) {
+    actions.unshift({
+      id: "reassign",
+      label: "Reasignar stock",
+      className: "btn-primary",
+      onClick: () => {
+        closeDetailDrawer();
+        void openAssignmentTransferPanel(row);
+      }
+    });
+  }
+  openDetailDrawer("Detalle de inventario", [
+    { label: "Cliente principal", value: PRIMARY_CLIENT_AVIAT_NAME },
+    { label: "Asignación actual", value: inventoryAssignmentLabel(row) },
+    { label: "Proyecto", value: getAviatProjectDisplayFromRow(row) },
+    { label: "Lote", value: extractLoteFromRow(row) },
+    { label: "SKU / Código de barras", value: formatSkuBarcode(p) },
+    { label: "Producto", value: p.name },
+    { label: "Almacén", value: row.location?.warehouse },
+    { label: "Ubicación", value: row.location?.code },
+    { label: "Estatus", value: formatInventoryStatus(row.status) },
+    { label: "Cantidad", value: formatQty(row.qty) },
+    { label: "Reservada", value: formatQty(row.reservedQty) },
+    { label: "Disponible para reasignar", value: formatQty(free) }
+  ], actions);
+}
+
+let assignmentTransferSource = null;
+
+function setAssignMessage(text, ok) {
+  const el = document.getElementById("assignMessage");
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("ok", Boolean(ok));
+  el.classList.toggle("error", Boolean(text) && !ok);
+}
+
+function updateAssignPreview() {
+  const preview = document.getElementById("assignPreview");
+  if (!preview || !assignmentTransferSource) return;
+  const destType = document.getElementById("assignDestType")?.value;
+  const destSel = document.getElementById("assignDestProject");
+  const destName =
+    destType === "FREE_TO_SALE"
+      ? "FREE TO SALE"
+      : destSel?.selectedOptions?.[0]?.textContent || "—";
+  const qty = document.getElementById("assignQty")?.value || "—";
+  const from = inventoryAssignmentLabel(assignmentTransferSource);
+  preview.textContent = `${from} → ${destName}\n${qty} piezas\n${assignmentTransferSource.location?.code || "—"}\n${formatInventoryStatus(
+    assignmentTransferSource.status
+  )}`;
+}
+
+async function openAssignmentTransferPanel(row) {
+  if (!canReassignStock()) return;
+  assignmentTransferSource = row;
+  const panel = document.getElementById("assignmentTransferPanel");
+  if (!panel) return;
+  panel.classList.remove("hidden");
+  document.getElementById("assignSku").value = row.product?.sku || "";
+  document.getElementById("assignLocation").value = row.location?.code || "";
+  document.getElementById("assignStatus").value = formatInventoryStatus(row.status);
+  document.getElementById("assignCurrent").value = inventoryAssignmentLabel(row);
+  document.getElementById("assignQtyTotal").value = formatQty(row.qty);
+  document.getElementById("assignQtyReserved").value = formatQty(row.reservedQty);
+  const free = Number(row.qty || 0) - Number(row.reservedQty || 0);
+  document.getElementById("assignQtyFree").value = formatQty(free);
+  document.getElementById("assignQty").value = "";
+  document.getElementById("assignReference").value = "";
+  document.getElementById("assignNotes").value = "";
+  document.getElementById("assignDestType").value = "PROJECT";
+  const projectField = document.getElementById("assignDestProjectField");
+  if (projectField) projectField.classList.remove("hidden");
+  setAssignMessage("", true);
+  const destSel = document.getElementById("assignDestProject");
+  if (destSel) {
+    const response = await authenticatedFetch("/api/catalog/customers");
+    const projects = response?.ok ? await response.json() : [];
+    destSel.innerHTML =
+      '<option value="">— Seleccionar proyecto —</option>' +
+      (Array.isArray(projects) ? projects : [])
+        .map((p) => `<option value="${escCell(p.id)}">${escCell(p.name)} (${escCell(p.code)})</option>`)
+        .join("");
+  }
+  const layerSel = document.getElementById("assignLayer");
+  if (layerSel && row.id) {
+    const layersRes = await authenticatedFetch(`/api/inventory/stock/${encodeURIComponent(row.id)}/layers`);
+    const layers = layersRes?.ok ? await layersRes.json() : [];
+    const transferable = (Array.isArray(layers) ? layers : []).filter(
+      (layer) => Number(layer.qty || 0) - Number(layer.reservedQty || 0) > 0
+    );
+    layerSel.innerHTML =
+      transferable.length > 1
+        ? '<option value="">— Seleccionar capa —</option>'
+        : '<option value="">Automática si hay una sola</option>';
+    transferable.forEach((layer) => {
+      const freeQty = Number(layer.qty || 0) - Number(layer.reservedQty || 0);
+      const opt = document.createElement("option");
+      opt.value = layer.id;
+      opt.textContent = `${layer.lotNumber || "sin lote"} · libre ${formatQty(freeQty)}`;
+      layerSel.appendChild(opt);
+    });
+    if (transferable.length === 1) layerSel.value = transferable[0].id;
+  }
+  updateAssignPreview();
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function closeAssignmentTransferPanel() {
+  assignmentTransferSource = null;
+  const panel = document.getElementById("assignmentTransferPanel");
+  if (panel) panel.classList.add("hidden");
+}
+
+async function confirmAssignmentTransfer() {
+  if (!canReassignStock()) {
+    setAssignMessage("No autorizado.", false);
+    return;
+  }
+  if (!assignmentTransferSource?.id) {
+    setAssignMessage("Selecciona una línea de inventario.", false);
+    return;
+  }
+  const destType = document.getElementById("assignDestType")?.value;
+  const destProjectId = document.getElementById("assignDestProject")?.value || "";
+  const qty = Number(document.getElementById("assignQty")?.value);
+  const free = Number(assignmentTransferSource.qty || 0) - Number(assignmentTransferSource.reservedQty || 0);
+  if (!Number.isFinite(qty) || qty <= 0) {
+    setAssignMessage("Indica una cantidad mayor a 0.", false);
+    return;
+  }
+  if (qty > free) {
+    setAssignMessage("No se puede reasignar más que el saldo no reservado.", false);
+    return;
+  }
+  if (destType === "PROJECT" && !destProjectId) {
+    setAssignMessage("Selecciona un proyecto destino.", false);
+    return;
+  }
+  const sourceIsFts =
+    assignmentTransferSource.assignmentType === "FREE_TO_SALE" ||
+    assignmentTransferSource.assignmentKey === "FREE_TO_SALE";
+  const sameAssignment =
+    (destType === "FREE_TO_SALE" && sourceIsFts) ||
+    (destType === "PROJECT" && destProjectId && assignmentTransferSource.projectId === destProjectId);
+  if (sameAssignment) {
+    setAssignMessage("Origen y destino tienen la misma asignación.", false);
+    return;
+  }
+  const from = inventoryAssignmentLabel(assignmentTransferSource);
+  const destSel = document.getElementById("assignDestProject");
+  const destName = destType === "FREE_TO_SALE" ? "FREE TO SALE" : destSel?.selectedOptions?.[0]?.textContent || "—";
+  const summary = `${from} → ${destName}\n${qty} piezas\n${assignmentTransferSource.location?.code || "—"}\n${formatInventoryStatus(
+    assignmentTransferSource.status
+  )}`;
+  if (!window.confirm(`Confirmar reasignación:\n${summary}`)) return;
+  const layerId = document.getElementById("assignLayer")?.value || "";
+  const body = {
+    sourceInventoryId: assignmentTransferSource.id,
+    qty,
+    destinationAssignmentType: destType,
+    reference: document.getElementById("assignReference")?.value?.trim() || undefined,
+    notes: document.getElementById("assignNotes")?.value?.trim() || undefined
+  };
+  if (destType === "PROJECT") body.destinationProjectId = destProjectId;
+  if (layerId) body.sourceLayerId = layerId;
+  const response = await authenticatedFetch("/api/inventory/assignment-transfer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await response?.json().catch(() => ({}));
+  if (!response?.ok) {
+    setAssignMessage(data.message || data.code || "No se pudo reasignar.", false);
+    return;
+  }
+  setAssignMessage(
+    `Reasignación OK. ${data.transferredQty} piezas. Total ${data.totalBefore} → ${data.totalAfter}.`,
+    true
+  );
+  await loadStockStrip();
+  await loadInventoryMovements();
+}
+
+function wireAssignmentTransferPanel() {
+  const destType = document.getElementById("assignDestType");
+  if (destType && destType.dataset.wired !== "1") {
+    destType.dataset.wired = "1";
+    destType.addEventListener("change", () => {
+      const field = document.getElementById("assignDestProjectField");
+      if (field) field.classList.toggle("hidden", destType.value === "FREE_TO_SALE");
+      updateAssignPreview();
+    });
+  }
+  ["assignQty", "assignDestProject"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el && el.dataset.previewWired !== "1") {
+      el.dataset.previewWired = "1";
+      el.addEventListener("input", updateAssignPreview);
+      el.addEventListener("change", updateAssignPreview);
+    }
+  });
+  const confirmBtn = document.getElementById("assignConfirmBtn");
+  if (confirmBtn && confirmBtn.dataset.wired !== "1") {
+    confirmBtn.dataset.wired = "1";
+    confirmBtn.addEventListener("click", () => void confirmAssignmentTransfer());
+  }
+  const cancelBtn = document.getElementById("assignCancelBtn");
+  if (cancelBtn && cancelBtn.dataset.wired !== "1") {
+    cancelBtn.dataset.wired = "1";
+    cancelBtn.addEventListener("click", closeAssignmentTransferPanel);
+  }
 }
 
 function openCatalogDetail(product) {
@@ -3141,11 +3361,40 @@ function formatMexicoCityDateTime(value) {
 }
 
 function movementQuantity(row) {
-  if (row?.movement?.movementType === "RELOCATE") return "Traslado";
+  const type = row?.movement?.movementType || row?.movementType;
+  if (type === "RELOCATE") return "Traslado";
+  if (type === "ASSIGNMENT_TRANSFER") return "Reasignación";
   const qty = row?.movement?.signedQty;
   if (qty == null) return "—";
   const n = Number(qty);
   return `${n > 0 ? "+" : ""}${formatQty(qty)}`;
+}
+
+function formatMovementTypeLabel(type) {
+  const raw = String(type || "").toUpperCase();
+  if (raw === "ASSIGNMENT_TRANSFER") return "Reasignación";
+  if (raw === "RELOCATE") return "Traslado";
+  if (raw === "IN" || raw === "INBOUND") return "Entrada";
+  if (raw === "OUT" || raw === "OUTBOUND" || raw === "PICK") return raw === "PICK" ? "Picking" : "Salida";
+  return type || "—";
+}
+
+function formatTransferAssignment(row) {
+  const from =
+    row?.fromAssignmentLabel ||
+    (row?.movement?.fromAssignmentType === "FREE_TO_SALE" || row?.movement?.fromAssignmentKey === "FREE_TO_SALE"
+      ? "FREE TO SALE"
+      : row?.fromProject
+        ? `${row.fromProject.name} (${row.fromProject.code})`
+        : row?.movement?.fromAssignmentKey || "—");
+  const to =
+    row?.toAssignmentLabel ||
+    (row?.movement?.toAssignmentType === "FREE_TO_SALE" || row?.movement?.toAssignmentKey === "FREE_TO_SALE"
+      ? "FREE TO SALE"
+      : row?.toProject
+        ? `${row.toProject.name} (${row.toProject.code})`
+        : row?.movement?.toAssignmentKey || "—");
+  return `${from} → ${to}`;
 }
 
 function movementLocation(row) {
@@ -3160,10 +3409,10 @@ function movementLocation(row) {
 const TRACE_COLUMNS = [
   { label: "Fecha / hora", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatMexicoCityDateTime(r.createdAt) },
   { label: "Cliente", sortKey: (r) => r.client?.tradeName || r.client?.name || "", render: (r) => renderCellWithClamp(r.client?.tradeName || r.client?.name || "—", "cell-truncate", 18) },
-  { label: "Proyecto", sortKey: (r) => r.project?.code || r.project?.name || "", render: (r) => renderCellWithClamp(r.project?.code || r.project?.name || "—", "cell-truncate", 16) },
+  { label: "Proyecto", sortKey: (r) => (r.movement?.movementType === "ASSIGNMENT_TRANSFER" ? formatTransferAssignment(r) : r.project?.code || r.project?.name || ""), render: (r) => renderCellWithClamp(r.movement?.movementType === "ASSIGNMENT_TRANSFER" ? formatTransferAssignment(r) : r.project?.code || r.project?.name || "—", "cell-truncate", 22) },
   { label: "SKU", sortKey: (r) => r.product?.sku || "", render: (r) => `<strong class="cell-nowrap">${escCell(r.product?.sku || "—")}</strong>` },
   { label: "Descripción", sortKey: (r) => r.product?.name || "", render: (r) => renderCellWithClamp(r.product?.name || "—", "cell-truncate", 25) },
-  { label: "Tipo", sortKey: (r) => r.movement?.movementType || "", render: (r) => statusBadge(r.movement?.movementType || r.movement?.type || "—") },
+  { label: "Tipo", sortKey: (r) => r.movement?.movementType || "", render: (r) => statusBadge(formatMovementTypeLabel(r.movement?.movementType || r.movement?.type || "—")) },
   { label: "Movimiento", align: "right", sortKey: (r) => Number(r.movement?.signedQty) || 0, sortType: "number", render: movementQuantity },
   { label: "Antes", align: "right", sortKey: (r) => Number(r.movement?.quantityBefore) || 0, sortType: "number", render: (r) => formatQty(r.movement?.quantityBefore) },
   { label: "Después", align: "right", sortKey: (r) => Number(r.movement?.quantityAfter) || 0, sortType: "number", render: (r) => formatQty(r.movement?.quantityAfter) },
@@ -3311,9 +3560,38 @@ function reqPickingStatusBadge(status) {
 
 const MOVEMENT_COLUMNS = [
   { label: "Fecha", sortKey: (m) => m.createdAt, sortType: "date", render: (m) => formatDateShort(m.createdAt) },
-  { label: "Proyecto", sortKey: (m) => getAviatProjectDisplayFromRow(m), render: (m) => renderCellWithClamp(getAviatProjectDisplayFromRow(m), "cell-truncate", 22), title: (m) => getAviatProjectDisplayFromRow(m) },
+  {
+    label: "Proyecto",
+    sortKey: (m) =>
+      m.movement?.movementType === "ASSIGNMENT_TRANSFER" || m.movementType === "ASSIGNMENT_TRANSFER"
+        ? formatTransferAssignment(m)
+        : getAviatProjectDisplayFromRow(m),
+    render: (m) =>
+      renderCellWithClamp(
+        m.movement?.movementType === "ASSIGNMENT_TRANSFER" || m.movementType === "ASSIGNMENT_TRANSFER"
+          ? formatTransferAssignment(m)
+          : getAviatProjectDisplayFromRow(m),
+        "cell-truncate",
+        28
+      ),
+    title: (m) =>
+      m.movement?.movementType === "ASSIGNMENT_TRANSFER" || m.movementType === "ASSIGNMENT_TRANSFER"
+        ? formatTransferAssignment(m)
+        : getAviatProjectDisplayFromRow(m)
+  },
   { label: "Lote", sortKey: (m) => extractLoteFromRow(m), render: (m) => renderCellEllipsis(extractLoteFromRow(m)), title: (m) => extractLoteFromRow(m) },
-  { label: "Tipo", sortKey: (m) => m.movementType || "", render: (m) => statusBadge(m.movementType) },
+  {
+    label: "Tipo",
+    sortKey: (m) => m.movement?.movementType || m.movementType || "",
+    render: (m) => statusBadge(formatMovementTypeLabel(m.movement?.movementType || m.movementType))
+  },
+  {
+    label: "Cantidad",
+    align: "right",
+    sortKey: (m) => Number(m.qty) || 0,
+    sortType: "number",
+    render: (m) => formatQty(m.qty)
+  },
   { label: "SKU / Código", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(formatSkuBarcode(m.product)), title: (m) => m.product?.sku || "" },
   { label: "Producto", sortKey: (m) => m.product?.name || "", render: (m) => renderCellWithClamp(m.product?.name, "cell-truncate", 28), title: (m) => m.product?.name || "" },
   { label: "Antes", align: "right", sortKey: (m) => Number(m.quantityBefore) || 0, sortType: "number", render: (m) => formatQty(m.quantityBefore) },
@@ -3494,6 +3772,7 @@ function wireModals() {
       if (open) void loadInventoryMovements();
     });
   }
+  wireAssignmentTransferPanel();
   const rStock = document.getElementById("reportsExportStock");
   const rStockX = document.getElementById("reportsExportStockXlsx");
   const rMov = document.getElementById("reportsExportMovements");
@@ -4840,20 +5119,22 @@ function escCell(s) {
 
 function openMovementDetail(row) {
   const relocation = row.movement?.movementType === "RELOCATE";
+  const transfer = row.movement?.movementType === "ASSIGNMENT_TRANSFER";
   const requisition = row.requisition;
   openDetailDrawer("Detalle de movimiento", [
-    { label: "Movimiento", value: row.movement?.movementType || row.movement?.type },
+    { label: "Movimiento", value: formatMovementTypeLabel(row.movement?.movementType || row.movement?.type) },
     { label: "Fecha / hora (Ciudad de México)", value: formatMexicoCityDateTime(row.createdAt) },
     { label: "Cliente", value: row.client?.tradeName || row.client?.legalName || row.client?.name },
-    { label: "Proyecto", value: row.project ? `${row.project.code} — ${row.project.name}` : "—" },
+    { label: "Proyecto", value: transfer ? formatTransferAssignment(row) : row.project ? `${row.project.code} — ${row.project.name}` : "—" },
     { label: "SKU", value: row.product?.sku },
     { label: "Descripción", value: row.product?.name },
-    { label: "Cantidad", value: movementQuantity(row) },
+    { label: "Cantidad", value: transfer ? formatQty(row.qty) : movementQuantity(row) },
     { label: relocation ? "Saldo origen antes" : "Antes", value: formatQty(row.movement?.quantityBefore) },
     { label: relocation ? "Saldo origen después" : "Después", value: formatQty(row.movement?.quantityAfter) },
     { label: "Almacén", value: row.toLocation?.warehouse || row.fromLocation?.warehouse },
-    { label: "Origen", value: row.fromLocation?.code },
-    { label: "Destino", value: row.toLocation?.code },
+    { label: "Origen", value: transfer ? formatTransferAssignment(row).split(" → ")[0] : row.fromLocation?.code },
+    { label: "Destino", value: transfer ? formatTransferAssignment(row).split(" → ")[1] : row.toLocation?.code },
+    { label: "Ubicación", value: row.toLocation?.code || row.fromLocation?.code },
     { label: "Estado", value: row.movement?.stockStatusLabel || formatInventoryStatus(row.movement?.stockStatus) },
     { label: "Lote", value: row.layer?.lotNumber },
     { label: "Serie", value: row.serial?.serialNumber },
@@ -6777,6 +7058,11 @@ async function deleteCustomerById(customerId) {
 
 function applyRoleNavigation(role) {
   const allowed = roleModules[role] || [];
+  const transferPanel = document.getElementById("assignmentTransferPanel");
+  if (transferPanel && role !== "ADMIN" && role !== "SUPERVISOR") {
+    transferPanel.classList.add("hidden");
+    assignmentTransferSource = null;
+  }
   moduleButtons.forEach((btn) => {
     const enabled = allowed.includes(btn.dataset.module);
     btn.disabled = !enabled;
