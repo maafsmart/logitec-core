@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
 import { clientCustomerWhere, clientProductWhere } from "../clients/client-scope.js";
+import { getSkuContext, searchSkuProducts } from "./sku-search.service.js";
 
 const catalogRouter = Router();
 
@@ -89,6 +90,17 @@ function normalizeCustomerCode(nameOrCode: string): string {
 }
 
 catalogRouter.use(requireAuth);
+
+catalogRouter.get("/products/search", async (req, res) => {
+  const query = z.string().trim().min(1).max(160).parse(req.query.q);
+  const limit = z.coerce.number().int().min(1).max(50).optional().parse(req.query.limit) ?? 30;
+  res.json(await searchSkuProducts(query, req.auth!, limit));
+});
+
+catalogRouter.get("/products/:id/context", async (req, res) => {
+  const id = z.string().min(1).parse(req.params.id);
+  res.json(await getSkuContext(id, req.auth!));
+});
 
 catalogRouter.get("/products", async (req, res) => {
   const products = await prisma.product.findMany({

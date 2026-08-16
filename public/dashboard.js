@@ -5188,96 +5188,73 @@ function matchesSkuFlexible(sku, query) {
   return inventorySearchMatchScore(sku, query) > 0;
 }
 
-/**
- * Sugerencias de catálogo y/o líneas de inventario para typeahead.
- * @param {string} query
- * @param {{ mode?: "catalog"|"stock"|"both", customerCode?: string, max?: number }} [opts]
- */
-function searchProductSuggestions(query, opts = {}) {
+async function searchSkuSuggestions(query, opts = {}) {
   const q = String(query || "").trim();
   if (q.length < PRODUCT_TYPEAHEAD_MIN_CHARS) return [];
-  const mode = opts.mode || "both";
-  const customerCode = String(opts.customerCode || "").trim();
-  const customerUpper = customerCode.toUpperCase();
-  const max = opts.max || PRODUCT_TYPEAHEAD_MAX;
-  /** @type {any[]} */
-  const items = [];
+  const response = await authenticatedFetch(
+    `/api/catalog/products/search?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(opts.max || PRODUCT_TYPEAHEAD_MAX)}`
+  );
+  if (!response?.ok) return [];
+  const customerCode = String(opts.customerCode || "").trim().toUpperCase();
+  const rows = await response.json().catch(() => []);
+  return (Array.isArray(rows) ? rows : [])
+    .filter((product) => !customerCode || String(product.customer?.code || "").toUpperCase() === customerCode)
+    .map((product) => ({
+      kind: "catalog",
+      key: `catalog:${product.id}`,
+      productId: product.id,
+      sku: product.sku,
+      barcode: product.barcode || "",
+      productName: product.name || "",
+      projectCode: product.customer?.code || "",
+      projectName: product.customer?.name || product.customer?.code || "",
+      clientName: product.customer?.client?.tradeName || product.customer?.client?.legalName || product.customer?.client?.name || "",
+      warehouse: "",
+      location: "",
+      status: "",
+      qty: null,
+      inventoryId: "",
+      product
+    }));
+}
 
-  const scoreProductFields = (p) => {
-    let score = 0;
-    score = Math.max(score, inventorySearchMatchScore(p?.sku, q) * 3);
-    score = Math.max(score, inventorySearchMatchScore(p?.barcode, q) * 2.6);
-    score = Math.max(score, inventorySearchMatchScore(p?.name, q) * 2);
-    score = Math.max(score, inventorySearchMatchScore(p?.customer?.code, q) * 1.6);
-    score = Math.max(score, inventorySearchMatchScore(p?.customer?.name, q) * 1.5);
-    return score;
-  };
+async function loadSkuContext(productId) {
+  const response = await authenticatedFetch(`/api/catalog/products/${encodeURIComponent(productId)}/context`);
+  if (!response?.ok) return null;
+  return response.json().catch(() => null);
+}
 
-  if (mode === "catalog" || mode === "both") {
-    for (const p of Array.isArray(productsCache) ? productsCache : []) {
-      if (!p?.sku) continue;
-      if (customerCode && String(p.customer?.code || "").toUpperCase() !== customerUpper) continue;
-      const score = scoreProductFields(p);
-      if (score <= 0) continue;
-      items.push({
-        kind: "catalog",
-        score,
-        key: `cat:${p.sku}:${p.customer?.code || ""}`,
-        sku: p.sku,
-        barcode: p.barcode || "",
-        productName: p.name || "",
-        projectCode: p.customer?.code || "",
-        projectName: p.customer?.name || p.customer?.code || "",
-        warehouse: p.defaultWarehouse || p.warehouse || "",
-        location: "",
-        status: "",
-        qty: null,
-        inventoryId: "",
-        product: p
-      });
-    }
+function renderSkuContext(listEl, context) {
+  if (!listEl || !context?.product) return;
+  let panel = listEl.parentElement?.querySelector(".sku-context-summary");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.className = "sku-context-summary operational-table-meta";
+    listEl.insertAdjacentElement("afterend", panel);
   }
-
-  if (mode === "stock" || mode === "both") {
-    for (const row of Array.isArray(stockRowsCache) ? stockRowsCache : []) {
-      const p = row?.product || {};
-      if (!p.sku) continue;
-      const project = getAviatProjectFromRow(row);
-      if (customerCode && String(project.code || p.customer?.code || "").toUpperCase() !== customerUpper) continue;
-      let score = scoreProductFields(p);
-      score = Math.max(score, inventorySearchMatchScore(project.code, q) * 1.6);
-      score = Math.max(score, inventorySearchMatchScore(project.name, q) * 1.5);
-      score = Math.max(score, inventorySearchMatchScore(row.location?.code, q) * 1.2);
-      score = Math.max(score, inventorySearchMatchScore(row.status, q) * 0.8);
-      score = Math.max(score, inventorySearchMatchScore(formatInventoryStatus(row.status), q) * 0.8);
-      if (score <= 0) continue;
-      items.push({
-        kind: "stock",
-        score: score + 4,
-        key: `stock:${row.id || `${p.sku}:${row.location?.code}:${row.status}`}`,
-        sku: p.sku,
-        barcode: p.barcode || "",
-        productName: p.name || "",
-        projectCode: project.code || p.customer?.code || "",
-        projectName: project.name || p.customer?.name || "",
-        warehouse: row.location?.warehouse || p.defaultWarehouse || p.warehouse || "",
-        location: row.location?.code || "",
-        status: row.status || "",
-        qty: row.qty,
-        inventoryId: row.id || "",
-        product: p,
-        stockRow: row
-      });
-    }
-  }
-
-  items.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    const skuCmp = String(a.sku || "").localeCompare(String(b.sku || ""), "es");
-    if (skuCmp) return skuCmp;
-    return String(a.location || "").localeCompare(String(b.location || ""), "es");
-  });
-  return items.slice(0, max);
+  const locations = Array.isArray(context.inventory?.locations) ? context.inventory.locations : [];
+  const clientName = context.client?.tradeName || context.client?.legalName || context.client?.name || "—";
+  const project = context.project ? `${context.project.name} (${context.project.code})` : "—";
+  const locationSummary = !locations.length
+    ? "Sin existencia / ubicación."
+    : locations.length === 1
+      ? "1 ubicación encontrada."
+      : `${locations.length} ubicaciones: selecciona una antes de operar.`;
+  const locationRows = locations
+    .map(
+      (row) =>
+        `<li>${escCell(row.locationCode)} · Cantidad ${escCell(formatQty(row.qty))} · No reservada ${escCell(
+          formatQty(row.unreservedQty)
+        )} · ${escCell(formatInventoryStatus(row.status))}</li>`
+    )
+    .join("");
+  panel.innerHTML = `<strong>${escCell(context.product.sku)} · ${escCell(context.product.name)}</strong>
+    <div>${escCell(clientName)} · ${escCell(project)}</div>
+    <div>Existencia total: ${escCell(formatQty(context.inventory?.totalQty || 0))} · No reservada: ${escCell(
+      formatQty(context.inventory?.totalUnreservedQty || 0)
+    )}</div>
+    <div>${escCell(locationSummary)}</div>
+    ${locationRows ? `<ul style="margin:4px 0 0;padding-left:18px">${locationRows}</ul>` : ""}`;
 }
 
 function setSelectValueFlexible(selectId, value, { allowCreate = false, labelFn = null } = {}) {
@@ -5411,21 +5388,25 @@ function wireProductTypeahead(cfg) {
 
   const pick = (item) => {
     close();
-    cfg.onSelect(item);
+    void loadSkuContext(item.productId).then((context) => {
+      if (context) renderSkuContext(listEl, context);
+      cfg.onSelect({ ...item, context });
+    });
   };
 
-  const refresh = () => {
+  const refresh = async () => {
     const q = input.value.trim();
     if (q.length < minChars) {
       close();
       return;
     }
     const customerCode = typeof cfg.getCustomerCode === "function" ? cfg.getCustomerCode() : "";
-    state.items = searchProductSuggestions(q, {
-      mode: cfg.mode || "both",
+    const searchValue = q;
+    state.items = await searchSkuSuggestions(q, {
       customerCode: customerCode || "",
       max: PRODUCT_TYPEAHEAD_MAX
     });
+    if (input.value.trim() !== searchValue) return;
     state.active = state.items.length ? 0 : -1;
     showProductTypeaheadList(listEl, state.items, state.active, pick);
   };
@@ -5595,6 +5576,41 @@ function wireAllProductTypeaheads() {
         if (!box?.dataset?.inventoryId) return;
         delete box.dataset.inventoryId;
         clearPickCandidates();
+      });
+    }
+  }
+
+  const incidentSku = document.getElementById("incidentProductSku");
+  if (incidentSku instanceof HTMLInputElement) {
+    let incidentList = document.getElementById("incidentSkuSuggestions");
+    if (!incidentList) {
+      incidentList = document.createElement("div");
+      incidentList.id = "incidentSkuSuggestions";
+      incidentList.className = "product-typeahead-list hidden";
+      incidentList.setAttribute("role", "listbox");
+      incidentList.hidden = true;
+      incidentSku.insertAdjacentElement("afterend", incidentList);
+    }
+    let incidentProductId = document.getElementById("incidentProductId");
+    if (!incidentProductId) {
+      incidentProductId = document.createElement("input");
+      incidentProductId.id = "incidentProductId";
+      incidentProductId.type = "hidden";
+      incidentSku.insertAdjacentElement("afterend", incidentProductId);
+    }
+    wireProductTypeahead({
+      input: incidentSku,
+      listEl: incidentList,
+      mode: "catalog",
+      onSelect: (item) => {
+        incidentSku.value = item.sku || "";
+        incidentProductId.value = item.productId || "";
+      }
+    });
+    if (incidentSku.dataset.skuContextClear !== "1") {
+      incidentSku.dataset.skuContextClear = "1";
+      incidentSku.addEventListener("input", () => {
+        incidentProductId.value = "";
       });
     }
   }
