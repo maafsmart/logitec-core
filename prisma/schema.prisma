@@ -64,6 +64,7 @@ model Product {
   inventoryStocks     InventoryStock[]     // legacy compatibility
   inventoryMovements  InventoryMovement[]
   inventories         Inventory[]
+  inventorySerials    InventorySerial[]
   activityLogs        ActivityLog[]
   incidents           Incident[]
 
@@ -97,18 +98,21 @@ model InventoryMovement {
   notes           String?
   userId          String
   taskId          String?
+  inventorySerialId String?
   createdAt       DateTime @default(now())
   product         Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
   fromLocation    Location? @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
   toLocation      Location? @relation("MovementTo", fields: [toLocationId], references: [id], onDelete: SetNull)
   user            User     @relation(fields: [userId], references: [id], onDelete: Restrict)
   task            Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  inventorySerial InventorySerial? @relation(fields: [inventorySerialId], references: [id], onDelete: SetNull)
 
   @@index([productId, createdAt])
   @@index([userId])
   @@index([fromLocationId])
   @@index([toLocationId])
   @@index([taskId])
+  @@index([inventorySerialId])
 }
 
 model ScanEvent {
@@ -196,9 +200,58 @@ model Inventory {
   updatedAt   DateTime  @updatedAt
   product     Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
   location    Location  @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  layers      InventoryLayer[]
 
   @@unique([productId, locationId, status])
   @@index([locationId, status])
+}
+
+model InventoryLayer {
+  id             String    @id @default(cuid())
+  inventoryId    String
+  lotNumber      String?
+  qty            Decimal   @default(0) @db.Decimal(18, 4)
+  reservedQty    Decimal   @default(0) @db.Decimal(18, 4)
+  receivedAt     DateTime?
+  unitPriceMxn   Decimal?  @db.Decimal(18, 4)
+  unitPriceUsd   Decimal?  @db.Decimal(18, 4)
+  sourceReference String?
+  sourceType     String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  inventory      Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  serials        InventorySerial[]
+
+  @@index([inventoryId])
+  @@index([lotNumber])
+}
+
+model InventorySerial {
+  id               String          @id @default(cuid())
+  productId        String
+  inventoryLayerId String?
+  serialNumber     String
+  imei             String?         @unique
+  receivedAt       DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  product          Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  inventoryLayer   InventoryLayer? @relation(fields: [inventoryLayerId], references: [id], onDelete: SetNull)
+  movements        InventoryMovement[]
+
+  @@unique([productId, serialNumber])
+  @@index([inventoryLayerId])
+}
+
+model InventoryStatusDefinition {
+  code        String   @id
+  label       String
+  active      Boolean  @default(true)
+  pickable    Boolean?
+  description String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model ActivityLog {

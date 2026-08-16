@@ -5,7 +5,15 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
-import { clientInventoryWhere, clientMovementWhere, isClientRole } from "../clients/client-scope.js";
+import {
+  clientInventoryWhere,
+  clientLayerWhere,
+  clientMovementWhere,
+  clientProductWhere,
+  clientSerialWhere,
+  isClientRole
+} from "../clients/client-scope.js";
+import { calculateInventoryValuation } from "./inventory-valuation.service.js";
 
 const inventoryRouter = Router();
 
@@ -91,6 +99,88 @@ async function resolveOrCreateLocation(
 }
 
 inventoryRouter.use(requireAuth);
+
+inventoryRouter.get("/statuses", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (_req, res) => {
+  res.json(await prisma.inventoryStatusDefinition.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }));
+});
+
+inventoryRouter.get("/stock/:inventoryId/layers", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const inventoryId = z.string().min(1).parse(req.params.inventoryId);
+  const inventory = await prisma.inventory.findFirst({
+    where: { AND: [{ id: inventoryId }, clientInventoryWhere(req.auth!)] },
+    include: { layers: { orderBy: { createdAt: "asc" } } }
+  });
+  if (!inventory) throw new HttpError(404, "Línea de inventario no encontrada.");
+  res.json(inventory.layers);
+});
+
+inventoryRouter.get("/products/:productId/layers", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const productId = z.string().min(1).parse(req.params.productId);
+  const product = await prisma.product.findFirst({
+    where: { AND: [{ id: productId }, clientProductWhere(req.auth!)] },
+    select: { id: true }
+  });
+  if (!product) throw new HttpError(404, "Producto no encontrado.");
+  res.json(
+    await prisma.inventoryLayer.findMany({
+      where: { AND: [{ inventory: { productId } }, clientLayerWhere(req.auth!)] },
+      orderBy: { createdAt: "asc" }
+    })
+  );
+});
+
+inventoryRouter.get("/products/:productId/valuation", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const productId = z.string().min(1).parse(req.params.productId);
+  const layers = await prisma.inventoryLayer.findMany({
+    where: { AND: [{ inventory: { productId } }, clientLayerWhere(req.auth!)] },
+    select: { qty: true, unitPriceMxn: true, unitPriceUsd: true }
+  });
+  const product = await prisma.product.findFirst({
+    where: { AND: [{ id: productId }, clientProductWhere(req.auth!)] },
+    select: { id: true }
+  });
+  if (!product) throw new HttpError(404, "Producto no encontrado.");
+  res.json(calculateInventoryValuation(layers));
+});
+
+inventoryRouter.get("/products/:productId/serials", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const productId = z.string().min(1).parse(req.params.productId);
+  const query = z.object({
+    cursor: z.string().min(1).optional(),
+    q: z.string().trim().min(1).max(120).optional(),
+    layerId: z.string().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(50)
+  }).parse(req.query);
+  const product = await prisma.product.findFirst({
+    where: { AND: [{ id: productId }, clientProductWhere(req.auth!)] },
+    select: { id: true }
+  });
+  if (!product) throw new HttpError(404, "Producto no encontrado.");
+  const serialWhere: Prisma.InventorySerialWhereInput = {
+    AND: [
+      { productId, ...(query.layerId ? { inventoryLayerId: query.layerId } : {}) },
+      clientSerialWhere(req.auth!),
+      ...(query.q
+        ? [
+            {
+              OR: [
+                { serialNumber: { contains: query.q, mode: "insensitive" as const } },
+                { imei: { contains: query.q, mode: "insensitive" as const } }
+              ]
+            }
+          ]
+        : [])
+    ]
+  };
+  const rows = await prisma.inventorySerial.findMany({
+    where: serialWhere,
+    orderBy: { id: "asc" },
+    take: query.limit + 1,
+    ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {})
+  });
+  const next = rows.length > query.limit ? rows.pop() : undefined;
+  res.json({ items: rows, nextCursor: next?.id ?? null });
+});
 
 inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   const rows = await prisma.inventory.findMany({

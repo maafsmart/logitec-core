@@ -37,6 +37,14 @@ export function clientMovementWhere(auth: AuthContext): Prisma.InventoryMovement
   return isClientRole(auth) ? { product: { customer: { clientId: scopedClientId(auth) } } } : {};
 }
 
+export function clientLayerWhere(auth: AuthContext): Prisma.InventoryLayerWhereInput {
+  return isClientRole(auth) ? { inventory: { product: { customer: { clientId: scopedClientId(auth) } } } } : {};
+}
+
+export function clientSerialWhere(auth: AuthContext): Prisma.InventorySerialWhereInput {
+  return isClientRole(auth) ? { product: { customer: { clientId: scopedClientId(auth) } } } : {};
+}
+
 export function clientActivityWhere(auth: AuthContext): Prisma.ActivityLogWhereInput {
   if (!isClientRole(auth)) return {};
   const clientId = scopedClientId(auth);

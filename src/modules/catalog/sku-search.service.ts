@@ -3,6 +3,7 @@ import { prisma } from "../../db/prisma.js";
 import { HttpError } from "../../shared/http-error.js";
 import { clientProductWhere } from "../clients/client-scope.js";
 import type { UserRole } from "../../middlewares/auth.middleware.js";
+import { calculateInventoryValuation } from "../inventory/inventory-valuation.service.js";
 
 type AuthContext = {
   role: UserRole;
@@ -120,7 +121,23 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
       },
       inventories: {
         orderBy: [{ location: { warehouse: "asc" } }, { location: { code: "asc" } }],
-        include: { location: { select: { id: true, code: true, warehouse: true } } }
+        include: {
+          location: { select: { id: true, code: true, warehouse: true } },
+          layers: {
+            orderBy: { createdAt: "asc" },
+            select: {
+              id: true,
+              lotNumber: true,
+              qty: true,
+              reservedQty: true,
+              receivedAt: true,
+              unitPriceMxn: true,
+              unitPriceUsd: true,
+              sourceReference: true,
+              sourceType: true
+            }
+          }
+        }
       }
     }
   });
@@ -146,6 +163,24 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
   const totalReservedQty = product.inventories.reduce(
     (total, inventory) => total.plus(inventory.reservedQty),
     new Prisma.Decimal(0)
+  );
+  const layers = product.inventories.flatMap((inventory) =>
+    inventory.layers.map((layer) => ({
+      id: layer.id,
+      inventoryId: inventory.id,
+      lotNumber: layer.lotNumber,
+      qty: layer.qty.toString(),
+      reservedQty: layer.reservedQty.toString(),
+      receivedAt: layer.receivedAt,
+      unitPriceMxn: layer.unitPriceMxn?.toString() ?? null,
+      unitPriceUsd: layer.unitPriceUsd?.toString() ?? null,
+      sourceReference: layer.sourceReference,
+      sourceType: layer.sourceType
+    }))
+  );
+  const serialCount = await prisma.inventorySerial.count({ where: { productId: product.id } });
+  const valuation = calculateInventoryValuation(
+    product.inventories.flatMap((inventory) => inventory.layers)
   );
 
   return {
@@ -175,6 +210,12 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
       totalReservedQty: totalReservedQty.toString(),
       totalUnreservedQty: totalQty.minus(totalReservedQty).toString(),
       locations
-    }
+    },
+    layers: {
+      count: layers.length,
+      preview: layers.slice(0, 100)
+    },
+    serializedQty: serialCount.toString(),
+    valuation
   };
 }
