@@ -6,16 +6,15 @@ import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { InventoryMutationError, mutateInventory } from "../inventory/inventory-mutation.service.js";
 import { RequisitionError, consumeReservationPick } from "../requisitions/requisition.service.js";
+import { assertActiveInventoryStatus } from "../inventory/inventory-status.js";
 
 const pickingRouter = Router();
-
-const stockStatuses = ["AVAILABLE", "OPERATIONS", "HOLD", "BLOCKED", "QUARANTINE"] as const;
 
 const scanSchema = z.object({
   code: z.string().min(1).max(120),
   warehouse: z.string().min(1).max(80).optional(),
   location: z.string().min(1).max(120).optional(),
-  status: z.enum(stockStatuses).optional(),
+  status: z.string().trim().max(80).optional(),
   /** Código de proyecto (Customer.code) */
   project: z.string().min(1).max(80).optional(),
   customer: z.string().min(1).max(80).optional(),
@@ -103,6 +102,9 @@ pickingRouter.post("/scan", async (req, res) => {
     const layerId = layerIdOpt?.trim() || null;
     const reservationId = reservationIdOpt?.trim() || null;
     const requisitionLineId = requisitionLineIdOpt?.trim() || null;
+    const statusFilter = statusInput?.trim()
+      ? await assertActiveInventoryStatus(statusInput)
+      : null;
 
     if (reservationId || requisitionLineId) {
       try {
@@ -222,7 +224,7 @@ pickingRouter.post("/scan", async (req, res) => {
     const stockWhere: Prisma.InventoryWhereInput = {
       productId: product.id,
       qty: { gt: new Prisma.Decimal(0) },
-      ...(statusInput ? { status: statusInput } : {}),
+      ...(statusFilter ? { status: statusFilter } : {}),
       ...(inventoryId ? { id: inventoryId } : {}),
       ...(!inventoryId && projectCode
         ? {
@@ -289,7 +291,7 @@ pickingRouter.post("/scan", async (req, res) => {
           filters: {
             warehouse: normalizedWarehouse,
             location: normalizedLocation,
-            status: statusInput || null,
+            status: statusFilter,
             project: projectCode,
             inventoryId
           }

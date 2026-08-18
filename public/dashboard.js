@@ -1833,23 +1833,27 @@ function wireGridToolbars() {
   });
 }
 
-/** Etiquetas visibles de estatus de inventario (el valor API permanece en inglés). */
-const INVENTORY_STATUS_LABELS_ES = {
-  AVAILABLE: "Disponible",
-  OPERATIONS: "Operaciones",
-  HOLD: "Retenido",
-  BLOCKED: "Bloqueado",
-  QUARANTINE: "Cuarentena"
-};
+let inventoryStatusCatalog = [];
 
-/**
- * Traduce códigos de estatus de inventario a español para UI.
- * No modifica el valor usado en API/BD.
- */
+function inventoryStatusRecord(code) {
+  const upper = String(code || "").trim().toUpperCase();
+  if (!upper) return null;
+  return inventoryStatusCatalog.find((row) => String(row.code || "").toUpperCase() === upper) || null;
+}
+
+function activeInventoryStatuses() {
+  return inventoryStatusCatalog.filter((row) => row && row.active === true);
+}
+
+function pickableInventoryStatuses() {
+  return activeInventoryStatuses().filter((row) => row.pickable !== false);
+}
+
 function formatInventoryStatus(status) {
   if (status == null || status === "") return "—";
-  const upper = String(status).trim().toUpperCase();
-  return INVENTORY_STATUS_LABELS_ES[upper] || String(status);
+  const found = inventoryStatusRecord(status);
+  if (found) return found.label || found.code || String(status);
+  return String(status);
 }
 
 function inventoryStatusSearchBlob(status) {
@@ -1859,19 +1863,10 @@ function inventoryStatusSearchBlob(status) {
 
 function inventoryStatusBadge(value) {
   const raw = value == null || value === "" ? "—" : String(value);
-  const upper = raw.toUpperCase();
-  const inventoryTones = {
-    AVAILABLE: "available",
-    OPERATIONS: "operations",
-    HOLD: "hold",
-    BLOCKED: "blocked",
-    QUARANTINE: "quarantine"
-  };
-  if (inventoryTones[upper]) {
-    const label = formatInventoryStatus(upper);
-    return `<span class="badge status-badge ${inventoryTones[upper]}" title="${escCell(upper)}">${escCell(label)}</span>`;
-  }
-  return statusBadge(raw);
+  const found = inventoryStatusRecord(raw);
+  const label = found ? found.label || found.code : raw;
+  const title = found ? found.code : raw;
+  return `<span class="badge status-badge" title="${escCell(String(title))}">${escCell(String(label))}</span>`;
 }
 
 function renderCellWithClamp(value, className = "", maxLen = 32) {
@@ -1884,17 +1879,9 @@ function renderCellWithClamp(value, className = "", maxLen = 32) {
 
 function statusBadge(value) {
   const raw = value == null || value === "" ? "—" : String(value);
-  const upper = raw.toUpperCase();
-  const inventoryTones = {
-    AVAILABLE: "available",
-    OPERATIONS: "operations",
-    HOLD: "hold",
-    BLOCKED: "blocked",
-    QUARANTINE: "quarantine"
-  };
-  if (inventoryTones[upper]) {
-    const label = formatInventoryStatus(upper);
-    return `<span class="badge ${inventoryTones[upper]}" title="${escCell(upper)}">${escCell(label)}</span>`;
+  const found = inventoryStatusRecord(raw);
+  if (found) {
+    return inventoryStatusBadge(found.code);
   }
   const tone =
     raw.includes("COMPLETED") || raw.includes("RESOLVED") || raw === "OK"
@@ -4497,18 +4484,18 @@ function truncateText(value, max) {
   return `${text.slice(0, Math.max(0, max - 3))}...`;
 }
 
-const LOGITEC_KNOWN_STATUSES = new Set(["AVAILABLE", "OPERATIONS", "HOLD", "BLOCKED", "QUARANTINE"]);
-
 function normalizeInventoryStatus(raw) {
-  const original = String(raw || "").trim();
-  if (!original || /^n\/a$/i.test(original)) {
-    return { status: "AVAILABLE", recognized: false, original: original || "N/A" };
+  const original = String(raw ?? "").trim();
+  const normalized = original.toUpperCase().replace(/\s+/g, " ");
+  if (!normalized) {
+    return { status: "", recognized: false, original };
   }
-  const normalized = original.toUpperCase();
-  if (LOGITEC_KNOWN_STATUSES.has(normalized)) {
-    return { status: normalized, recognized: true, original };
-  }
-  return { status: "AVAILABLE", recognized: false, original };
+  const found = inventoryStatusRecord(normalized);
+  return {
+    status: found?.code || normalized,
+    recognized: Boolean(found),
+    original
+  };
 }
 
 function buildGroupedInventoryReference(group) {
@@ -5488,8 +5475,48 @@ function getKnownUsers() {
   return Array.isArray(assigneesCache) ? assigneesCache.slice() : [];
 }
 
-function getKnownStatuses() {
-  return ["AVAILABLE", "OPERATIONS", "HOLD", "BLOCKED", "QUARANTINE"];
+function fillInventoryStatusSelect(selectId, { includeEmpty = false, emptyLabel = "— Seleccionar —", pickableOnly = false, preferred = "" } = {}) {
+  const sel = document.getElementById(selectId);
+  if (!(sel instanceof HTMLSelectElement)) return;
+  const prev = sel.value;
+  const rows = pickableOnly ? pickableInventoryStatuses() : activeInventoryStatuses();
+  const opts = [];
+  if (includeEmpty) opts.push(`<option value="">${escCell(emptyLabel)}</option>`);
+  for (const row of rows) {
+    const code = String(row.code || "");
+    if (!code) continue;
+    opts.push(`<option value="${escCell(code)}">${escCell(row.label || code)}</option>`);
+  }
+  sel.innerHTML = opts.join("");
+  const values = rows.map((row) => String(row.code || ""));
+  if (prev && (prev === "" ? includeEmpty : values.includes(prev))) {
+    sel.value = prev;
+  } else if (preferred && values.includes(preferred)) {
+    sel.value = preferred;
+  } else if (!includeEmpty && values.length) {
+    sel.value = values[0];
+  }
+}
+
+function fillInventoryStatusSelects() {
+  const preferred = activeInventoryStatuses().some((row) => row.code === "AVAILABLE") ? "AVAILABLE" : "";
+  fillInventoryStatusSelect("inboundStatus", { preferred });
+  fillInventoryStatusSelect("outboundStatus", { preferred });
+  fillInventoryStatusSelect("relocateStatus", { includeEmpty: false, preferred });
+  fillInventoryStatusSelect("moveStatus", { preferred });
+  fillInventoryStatusSelect("pickStatus", {
+    includeEmpty: true,
+    emptyLabel: "— Cualquiera (solo si hay una línea) —",
+    pickableOnly: true
+  });
+}
+
+async function loadInventoryStatusCatalog() {
+  const response = await authenticatedFetch("/api/inventory/statuses");
+  const rows = response?.ok ? await response.json() : [];
+  inventoryStatusCatalog = Array.isArray(rows) ? rows : [];
+  fillInventoryStatusSelects();
+  return inventoryStatusCatalog;
 }
 
 const SMART_OTHER = "__OTHER__";
@@ -6335,6 +6362,7 @@ function populateOperationalSelects() {
   fillCustomerSelect("inboundCustomer", "inboundCliente");
   fillCustomerSelect("outboundCustomer", "outboundCliente");
   fillCustomerSelect("reqCustomer", "reqCliente");
+  fillInventoryStatusSelects();
   fillSkuSelect("inboundSku", document.getElementById("inboundCustomer")?.value || "", "inboundProduct");
   fillSkuSelect("outboundSku", document.getElementById("outboundCustomer")?.value || "", "outboundProduct");
   fillSkuSelect("reqSku", document.getElementById("reqCustomer")?.value || "", null);
@@ -7465,6 +7493,7 @@ async function runImport() {
 }
 
 async function loadCatalogData() {
+  await loadInventoryStatusCatalog();
   await loadProductsRows();
   const clientsResponse = await authenticatedFetch("/api/catalog/clients");
   clientsCache = clientsResponse?.ok ? await clientsResponse.json() : [];

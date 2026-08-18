@@ -19,18 +19,18 @@ import {
   assertCanTransferAssignment,
   transferAssignment
 } from "./inventory-assignment-transfer.service.js";
+import { assertActiveInventoryStatus } from "./inventory-status.js";
 
 const inventoryRouter = Router();
 
 const movementTypes = ["IN", "OUT", "ADJUST_SET"] as const;
-const stockStatuses = ["AVAILABLE", "OPERATIONS", "HOLD", "BLOCKED", "QUARANTINE"] as const;
 
 const createMovementSchema = z
   .object({
     sku: z.string().min(1).max(80),
     warehouse: z.string().min(1).max(80).optional(),
     location: z.string().min(1).max(120).optional(),
-    status: z.enum(stockStatuses).optional().default("AVAILABLE"),
+    status: z.string().trim().max(80).optional(),
     type: z.enum(movementTypes),
     quantity: z.coerce.number(),
     reference: z.string().max(120).optional(),
@@ -397,7 +397,7 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
 
 inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
   const body = createMovementSchema.parse(req.body);
-  const stockStatus = body.status || "AVAILABLE";
+  const stockStatus = await assertActiveInventoryStatus(body.status || "AVAILABLE");
   const qtyIn = dec(body.quantity);
   const product = await prisma.product.findFirst({ where: { sku: body.sku.trim(), active: true } });
   if (!product) throw new HttpError(404, `Producto no encontrado o inactivo: ${body.sku}`);
