@@ -64,6 +64,33 @@ inventoryRouter.get("/statuses", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR",
   res.json(await prisma.inventoryStatusDefinition.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }));
 });
 
+inventoryRouter.get("/summary", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const inventoryWhere = clientInventoryWhere(req.auth!);
+  const movementWhere = clientMovementWhere(req.auth!);
+  const [cubes, qtyAgg, productIds, locationIds, projectIds, movements, products] = await Promise.all([
+    prisma.inventory.count({ where: inventoryWhere }),
+    prisma.inventory.aggregate({ where: inventoryWhere, _sum: { qty: true } }),
+    prisma.inventory.findMany({ where: inventoryWhere, distinct: ["productId"], select: { productId: true } }),
+    prisma.inventory.findMany({ where: inventoryWhere, distinct: ["locationId"], select: { locationId: true } }),
+    prisma.inventory.findMany({
+      where: { AND: [inventoryWhere, { projectId: { not: null } }] },
+      distinct: ["projectId"],
+      select: { projectId: true }
+    }),
+    prisma.inventoryMovement.count({ where: movementWhere }),
+    prisma.product.count({ where: clientProductWhere(req.auth!) })
+  ]);
+  res.json({
+    cubes,
+    qty: qtyAgg._sum.qty?.toString() ?? "0",
+    distinctInventoryProducts: productIds.length,
+    locations: locationIds.length,
+    projects: projectIds.length,
+    movements,
+    products
+  });
+});
+
 inventoryRouter.get("/stock/:inventoryId/layers", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   const inventoryId = z.string().min(1).parse(req.params.inventoryId);
   const inventory = await prisma.inventory.findFirst({
@@ -286,7 +313,8 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
       : [])
   ];
   const where: Prisma.InventoryMovementWhereInput = { AND: conditions };
-  const rows = await prisma.inventoryMovement.findMany({
+  const [rows, total] = await Promise.all([
+    prisma.inventoryMovement.findMany({
     where,
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: query.limit + 1,
@@ -331,7 +359,9 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
         }
       }
     }
-  });
+  }),
+    prisma.inventoryMovement.count({ where })
+  ]);
   const next = rows.length > query.limit ? rows.pop() : undefined;
   const statuses = await prisma.inventoryStatusDefinition.findMany({
     where: { code: { in: [...new Set(rows.map((row) => row.stockStatus).filter((code): code is string => Boolean(code)))] } },
@@ -391,7 +421,8 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
         notes: row.notes
       };
     }),
-    nextCursor: next?.id ?? null
+    nextCursor: next?.id ?? null,
+    total
   });
 });
 

@@ -142,6 +142,7 @@ let stockRowsCache = [];
 let productsCache = [];
 let movementsCountCache = 0;
 let movementsRowsCache = [];
+let inventoryKpiCache = null;
 let pendingConflictsCache = 0;
 
 let clientsCache = [];
@@ -3192,6 +3193,7 @@ function countStockConflicts(rows) {
 
 function updateInventorySummary(rows) {
   const list = Array.isArray(rows) ? rows : [];
+  const kpi = inventoryKpiCache;
   const products = new Set(list.map((r) => r.product?.sku).filter(Boolean));
   const customers = new Set(
     list.map((r) => r.product?.customer?.code || r.product?.customer?.name).filter(Boolean)
@@ -3203,13 +3205,20 @@ function updateInventorySummary(rows) {
   const elLocations = document.getElementById("sumLocations");
   const elMovements = document.getElementById("sumMovements");
   const elConflicts = document.getElementById("sumConflicts");
-  if (elProducts) elProducts.textContent = String(products.size);
-  if (elCustomers) elCustomers.textContent = String(customers.size);
-  if (elLocations) elLocations.textContent = String(locations.size);
-  if (elMovements) elMovements.textContent = String(movementsCountCache);
+  if (elProducts) {
+    elProducts.textContent = String(
+      productsCache.length || kpi?.products || products.size
+    );
+  }
+  if (elCustomers) elCustomers.textContent = String(kpi?.projects || customers.size);
+  if (elLocations) elLocations.textContent = String(kpi?.locations || locations.size);
+  if (elMovements) elMovements.textContent = String(kpi?.movements ?? movementsCountCache);
   if (elConflicts) elConflicts.textContent = String(pendingConflictsCache);
   const elStockTotal = document.getElementById("sumStockTotal");
-  if (elStockTotal) elStockTotal.textContent = list.length ? formatQty(sumStockQty(list)) : "0";
+  if (elStockTotal) {
+    const qty = kpi?.qty != null ? Number(kpi.qty) : list.length ? sumStockQty(list) : 0;
+    elStockTotal.textContent = qty ? formatQty(qty) : "0";
+  }
   updateControlCenterKpis();
 }
 
@@ -3257,10 +3266,11 @@ function sumStockQty(rows) {
 function updateControlCenterKpis() {
   const list = filterRowsByAviatProject(Array.isArray(stockRowsCache) ? stockRowsCache : []);
   const scopedProducts = filterRowsByAviatProject(productsCache);
+  const kpi = inventoryKpiCache;
   const productCount =
     scopedProducts.length > 0
       ? scopedProducts.length
-      : new Set(list.map((r) => r.product?.sku).filter(Boolean)).size;
+      : Number(kpi?.products || 0) || new Set(list.map((r) => r.product?.sku).filter(Boolean)).size;
   const projects = new Set();
   list.forEach((r) => {
     const code = getAviatProjectFromRow(r).code;
@@ -3270,16 +3280,24 @@ function updateControlCenterKpis() {
     if (p.code) projects.add(p.code);
   });
   const locations = new Set(list.map((r) => r.location?.code).filter(Boolean));
-  const stockTotal = sumStockQty(list);
+  const stockTotal = kpi?.qty != null ? Number(kpi.qty) : sumStockQty(list);
+  const movementTotal = kpi?.movements ?? movementsCountCache;
   const setKpi = (id, val) => {
     const el = document.getElementById(id);
     if (el) el.textContent = val;
   };
-  setKpi("ccKpiProducts", productCount > 0 ? String(productCount) : list.length ? String(new Set(list.map((r) => r.product?.sku).filter(Boolean)).size) : "0");
-  setKpi("ccKpiCustomers", projects.size ? String(projects.size) : "0");
-  setKpi("ccKpiLocations", locations.size ? String(locations.size) : "0");
-  setKpi("ccKpiStock", list.length ? formatQty(stockTotal) : "0");
-  setKpi("ccKpiMovements", String(filterRowsByAviatProject(movementsRowsCache).length || movementsCountCache));
+  setKpi(
+    "ccKpiProducts",
+    productCount > 0
+      ? String(productCount)
+      : list.length
+        ? String(new Set(list.map((r) => r.product?.sku).filter(Boolean)).size)
+        : "0"
+  );
+  setKpi("ccKpiCustomers", String(kpi?.projects || projects.size || 0));
+  setKpi("ccKpiLocations", String(kpi?.locations || locations.size || 0));
+  setKpi("ccKpiStock", stockTotal ? formatQty(stockTotal) : "0");
+  setKpi("ccKpiMovements", String(movementTotal || 0));
   setKpi("ccKpiConflicts", String(countStockConflicts(list)));
 }
 
@@ -4969,7 +4987,7 @@ async function exportMovementsCsv() {
     window.alert("No se pudo exportar movimientos.");
     return;
   }
-  const rows = filterRowsByAviatProject(await response.json());
+  const rows = filterRowsByAviatProject(unwrapMovementPayload(await response.json()).items);
   if (!Array.isArray(rows) || rows.length === 0) {
     window.alert("No hay movimientos para exportar.");
     return;
@@ -5331,10 +5349,29 @@ async function createIncidentClick() {
   }
 }
 
+function unwrapMovementPayload(payload) {
+  if (Array.isArray(payload)) return { items: payload, total: payload.length };
+  const items = payload && Array.isArray(payload.items) ? payload.items : [];
+  const total = Number(payload?.total);
+  return { items, total: Number.isFinite(total) ? total : items.length };
+}
+
+async function loadInventoryKpis() {
+  const response = await authenticatedFetch("/api/inventory/summary");
+  if (!response?.ok) {
+    inventoryKpiCache = null;
+    return null;
+  }
+  const data = await response.json();
+  inventoryKpiCache = data && typeof data === "object" ? data : null;
+  return inventoryKpiCache;
+}
+
 async function loadStockStrip() {
   if (!inventoryList && !ccInventoryList) return;
   if (currentRole !== "ADMIN" && currentRole !== "OPERATOR" && currentRole !== "SUPERVISOR") {
     stockRowsCache = [];
+    inventoryKpiCache = null;
     updateInventorySummary([]);
     updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
     if (inventoryList) {
@@ -5351,7 +5388,10 @@ async function loadStockStrip() {
     applyControlCenterFilters();
     return;
   }
-  const response = await authenticatedFetch("/api/inventory/stock");
+  const [response, summary] = await Promise.all([
+    authenticatedFetch("/api/inventory/stock"),
+    loadInventoryKpis()
+  ]);
   if (!response?.ok) {
     stockRowsCache = [];
     updateInventorySummary([]);
@@ -5410,10 +5450,14 @@ async function loadInventoryMovements() {
     inventoryMovementsList.textContent = "No se pudo cargar movimientos.";
     return;
   }
-  const rows = await response.json();
-  movementsCountCache = Array.isArray(rows) ? rows.length : 0;
-  movementsRowsCache = Array.isArray(rows) ? rows : [];
-  const scopedRows = filterRowsByAviatProject(rows);
+  const payload = await response.json();
+  const unwrapped = unwrapMovementPayload(payload);
+  movementsRowsCache = unwrapped.items;
+  movementsCountCache = unwrapped.total;
+  if (inventoryKpiCache && inventoryKpiCache.movements == null) {
+    inventoryKpiCache.movements = unwrapped.total;
+  }
+  const scopedRows = filterRowsByAviatProject(movementsRowsCache);
   updateInventorySummary(filterRowsByAviatProject(stockRowsCache));
   if (!Array.isArray(scopedRows) || scopedRows.length === 0) {
     renderExcelTable(inventoryMovementsList, {
@@ -6600,11 +6644,11 @@ function renderMovementOpsTable(containerId, rows, gridId, emptyMsg) {
 
 async function loadInboundList() {
   if (!movementsRowsCache.length) {
-    const response = await authenticatedFetch("/api/inventory/movements?limit=500");
+    const response = await authenticatedFetch("/api/inventory/movements?limit=100");
     if (response?.ok) {
-      const rows = await response.json();
-      movementsRowsCache = Array.isArray(rows) ? rows : [];
-      movementsCountCache = movementsRowsCache.length;
+      const unwrapped = unwrapMovementPayload(await response.json());
+      movementsRowsCache = unwrapped.items;
+      if (!inventoryKpiCache) movementsCountCache = unwrapped.total;
     }
   }
   const inbound = filterRowsByAviatProject(
@@ -6617,11 +6661,11 @@ async function loadInboundList() {
 
 async function loadOutboundList() {
   if (!movementsRowsCache.length) {
-    const response = await authenticatedFetch("/api/inventory/movements?limit=500");
+    const response = await authenticatedFetch("/api/inventory/movements?limit=100");
     if (response?.ok) {
-      const rows = await response.json();
-      movementsRowsCache = Array.isArray(rows) ? rows : [];
-      movementsCountCache = movementsRowsCache.length;
+      const unwrapped = unwrapMovementPayload(await response.json());
+      movementsRowsCache = unwrapped.items;
+      if (!inventoryKpiCache) movementsCountCache = unwrapped.total;
     }
   }
   const outbound = filterRowsByAviatProject(
