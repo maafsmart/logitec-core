@@ -8,7 +8,7 @@ import { HttpError } from "../../shared/http-error.js";
 import { buildSuggestedMapping, type CanonicalField, type ImportContext } from "./import-mapping.js";
 import { parseUpload } from "./import-parse.service.js";
 import { buildInventoryReconcileDiff, validateMappedRows } from "./import-validate.service.js";
-import { executeImportBatch } from "./import-execute.service.js";
+import { executeImportBatch, ImportExecuteError } from "./import-execute.service.js";
 import {
   IMPORT_CORRECTION_FIELDS,
   assertImportConfirmable,
@@ -520,34 +520,48 @@ importsRouter.post("/:id/confirm", requireRole(["ADMIN"]), async (req, res) => {
     }
     throw new HttpError(409, "RECONCILE bloqueado en este cambio. Solo preview/diff autorizado.");
   }
-  if (!["READY", "VALIDATED"].includes(batch.status)) {
-    throw new HttpError(409, "La importación no está lista para confirmar.");
-  }
   assertImportConfirmable(batch.rows);
   const blockedRows = batch.rows.filter((row) => row.reviewState === "BLOCKED").length;
   if (batch.invalidRows > 0 || blockedRows > 0) {
     throw new HttpError(409, `Existen ${blockedRows || batch.invalidRows} registros pendientes de corrección.`);
   }
-  await prisma.importBatch.update({
-    where: { id },
+  const claimed = await prisma.importBatch.updateMany({
+    where: { id, status: { in: ["READY", "VALIDATED"] } },
     data: { status: "PROCESSING", confirmedAt: new Date() }
   });
+  if (claimed.count !== 1) {
+    throw new HttpError(409, "La importación ya está en proceso o no está lista para confirmar.");
+  }
   try {
     const execRows = batch.rows
       .filter((r) => r.reviewState !== "IGNORED")
       .map((r) => ({
-      sourceRow: r.sourceRow,
-      normalized: asMeta(r.normalized),
-      errors: (r.errors as unknown[]) || [],
-      action: r.action
-    }));
+        sourceRow: r.sourceRow,
+        normalized: asMeta(r.normalized),
+        errors: (r.errors as unknown[]) || [],
+        action: r.action
+      }));
+    const isInventory = batch.context === "INVENTORY" || batch.context === "INBOUND";
     const results = await executeImportBatch({
       context: batch.context as ImportContext,
       rows: execRows,
       userId: req.auth!.userId,
-      inventoryMode: meta.inventoryMode
+      inventoryMode: meta.inventoryMode,
+      batchId: id,
+      metadata: meta
     });
     const failed = results.filter((r) => !r.ok);
+    if (failed.length && isInventory) {
+      throw new ImportExecuteError(failed[0]?.message || "IMPORT_ROW_FAILED", failed[0]?.sourceRow);
+    }
+    if (isInventory) {
+      const updated = await prisma.importBatch.findUnique({ where: { id } });
+      if (!updated || updated.status !== "COMPLETED" || !updated.completedAt) {
+        throw new ImportExecuteError("IMPORT_BATCH_NOT_COMPLETED");
+      }
+      res.json({ batch: updated, results });
+      return;
+    }
     const updated = await prisma.importBatch.update({
       where: { id },
       data: {
@@ -558,14 +572,40 @@ importsRouter.post("/:id/confirm", requireRole(["ADMIN"]), async (req, res) => {
     });
     res.json({ batch: updated, results });
   } catch (error) {
+    const isInventory = batch.context === "INVENTORY" || batch.context === "INBOUND";
     await prisma.importBatch.update({
       where: { id },
-      data: {
-        status: "FAILED",
-        completedAt: new Date(),
-        metadata: { ...meta, executionError: error instanceof Error ? error.message : "FAILED" } as Prisma.InputJsonValue
-      }
+      data: isInventory
+        ? {
+            status: "READY",
+            confirmedAt: null,
+            completedAt: null,
+            metadata: {
+              ...meta,
+              lastFailedAttempt: {
+                at: new Date().toISOString(),
+                sourceRow: error instanceof ImportExecuteError ? error.sourceRow : null,
+                error: error instanceof Error ? error.message : "IMPORT_FAILED"
+              }
+            } as Prisma.InputJsonValue
+          }
+        : {
+            status: "FAILED",
+            completedAt: new Date(),
+            metadata: {
+              ...meta,
+              executionError: error instanceof Error ? error.message : "FAILED"
+            } as Prisma.InputJsonValue
+          }
     });
+    if (isInventory) {
+      throw new HttpError(
+        409,
+        error instanceof Error
+          ? `No se pudo confirmar. La importación no escribió inventario y sigue disponible para reintentar. ${error.message}`
+          : "No se pudo confirmar. La importación sigue disponible para reintentar."
+      );
+    }
     throw error;
   }
 });

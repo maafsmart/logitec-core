@@ -103,7 +103,6 @@ export async function ensureInventory(
     include: { location: true, product: true }
   });
   if (existing) {
-    await lockInventory(tx, existing.id);
     const locked = await lockInventory(tx, existing.id);
     if (!locked) throw new InventoryMutationError("INVENTORY_NOT_FOUND", "Línea de inventario no encontrada.");
     return locked;

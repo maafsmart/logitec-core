@@ -1,11 +1,12 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
-import { mutateInventoryInTransaction } from "../inventory/inventory-mutation.service.js";
 import { ensureCanonicalProductProject } from "../inventory/inventory-assignment.js";
 import { createRequisition } from "../requisitions/requisition.service.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import type { ImportContext } from "./import-mapping.js";
-import { toDecimal } from "./import-validate.service.js";
+import { executeInventoryImportBulk, ImportExecuteError } from "./import-execute-bulk.service.js";
+
+export { ImportExecuteError };
 
 type ExecRow = {
   sourceRow: number;
@@ -14,102 +15,44 @@ type ExecRow = {
   action?: string | null;
 };
 
+export function inventoryImportTransactionOptions(rowCount: number): { maxWait: number; timeout: number } {
+  const perRowMs = 150;
+  return {
+    maxWait: 10_000,
+    timeout: Math.max(30_000, Math.min(180_000, rowCount * perRowMs))
+  };
+}
+
+function asMetaRecord(value: Record<string, unknown> | undefined): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
+}
+
 export async function executeImportBatch(input: {
   context: ImportContext;
   rows: ExecRow[];
   userId: string;
   inventoryMode?: "APPEND" | "RECONCILE";
+  batchId?: string;
+  metadata?: Record<string, unknown>;
 }) {
   if (input.inventoryMode === "RECONCILE") {
     throw new Error("RECONCILE_CONFIRM_BLOCKED");
   }
   const valid = input.rows.filter((r) => !Array.isArray(r.errors) || r.errors.length === 0);
-  const results: Array<{ sourceRow: number; ok: boolean; message?: string }> = [];
+  const results: Array<{ sourceRow: number; ok: boolean; message?: string; productId?: string }> = [];
 
   if (input.context === "INVENTORY" || input.context === "INBOUND") {
-    for (const row of valid) {
-      const n = row.normalized;
-      const sku = String(n.sku || "");
-      try {
-        await prisma.$transaction(async (tx) => {
-          const assignmentType = String(n.assignmentType || "");
-          if (assignmentType === "UNRESOLVED") {
-            throw new Error("ASSIGNMENT_UNRESOLVED");
-          }
-          if (assignmentType !== "PROJECT" && assignmentType !== "FREE_TO_SALE") {
-            throw new Error("ASSIGNMENT_REQUIRED");
-          }
-          const projectId = assignmentType === "PROJECT" ? String(n.projectId || "") : null;
-          if (assignmentType === "PROJECT" && !projectId) {
-            throw new Error("PROJECT_REQUIRED");
-          }
-          let productId = n.productId ? String(n.productId) : null;
-          if (!productId) {
-            if (assignmentType === "PROJECT" && !projectId) throw new Error("NEW_SKU_PROJECT_REQUIRED");
-            const created = await tx.product.create({
-              data: {
-                sku,
-                name: String(n.name || sku),
-                barcode: n.barcode ? String(n.barcode) : null,
-                warehouse: String(n.warehouse || "TULTITLAN24"),
-                customerId: assignmentType === "PROJECT" ? projectId : null,
-                serialControlled: Boolean(n.serialControlled),
-                lotControlled: Boolean(n.lotControlled)
-              }
-            });
-            productId = created.id;
-          }
-          if (assignmentType === "PROJECT" && projectId) {
-            await ensureCanonicalProductProject(tx, productId, projectId);
-          }
-          const locationId = String(n.locationId || "");
-          const qty = toDecimal(n.qty) || new Prisma.Decimal(0);
-          const status = String(n.status || "");
-          if (!status) throw new Error("STATUS_REQUIRED");
-          const result = await mutateInventoryInTransaction(tx, {
-            type: "IN",
-            productId,
-            locationId,
-            status,
-            qty,
-            lotNumber: n.lotNumber ? String(n.lotNumber) : null,
-            unitPriceMxn: toDecimal(n.unitPriceMxn),
-            unitPriceUsd: toDecimal(n.unitPriceUsd),
-            reference: n.reference ? String(n.reference) : `IMPORT-${input.context}`,
-            notes: n.notes ? String(n.notes) : null,
-            userId: input.userId,
-            assignmentType: assignmentType as "PROJECT" | "FREE_TO_SALE",
-            projectId,
-            activity: {
-              type: "IMPORT",
-              subtype: input.context,
-              reference: sku,
-              userId: input.userId,
-              result: "OK"
-            }
-          });
-          if (n.serialNumber) {
-            await tx.inventorySerial.create({
-              data: {
-                productId,
-                inventoryLayerId: result.layer.id,
-                serialNumber: String(n.serialNumber),
-                imei: n.imei ? String(n.imei) : null,
-                receivedAt: new Date()
-              }
-            });
-          }
-        }, { maxWait: 5_000, timeout: 15_000 });
-        results.push({ sourceRow: row.sourceRow, ok: true });
-      } catch (error) {
-        results.push({
-          sourceRow: row.sourceRow,
-          ok: false,
-          message: error instanceof Error ? error.message : "IMPORT_ROW_FAILED"
-        });
-      }
-    }
-    return results;
+    const batchId = input.batchId;
+    if (!batchId) throw new ImportExecuteError("IMPORT_BATCH_ID_REQUIRED");
+    const sourceMeta = asMetaRecord(input.metadata);
+    return executeInventoryImportBulk({
+      context: input.context,
+      rows: valid,
+      userId: input.userId,
+      batchId,
+      metadata: sourceMeta,
+      txOptions: inventoryImportTransactionOptions(valid.length)
+    });
   }
 
   if (input.context === "PRODUCTS") {
