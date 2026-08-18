@@ -574,7 +574,7 @@
         font-size: 0.88rem;
         transition: background 0.12s ease, box-shadow 0.12s ease;
       }
-      button:hover {
+      button:hover:not(:disabled) {
         background: var(--accent-dark);
       }
       .btn-primary { background: var(--accent); color: #fff; }
@@ -586,7 +586,7 @@
         color: var(--accent);
         border: 1px solid var(--accent);
       }
-      .btn-secondary:hover { background: var(--accent-soft); }
+      .btn-secondary:hover:not(:disabled) { background: var(--accent-soft); }
       .btn-compact { padding: 6px 12px; font-size: 0.8rem; }
       .module-btn:disabled {
         opacity: 0.45;
@@ -1247,6 +1247,156 @@
         margin: 10px 0 0;
         color: #f5d76e;
         font-weight: 700;
+      }
+      .import-stepper {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(110px, 1fr));
+        gap: 8px;
+        list-style: none;
+        margin: 14px 0 16px;
+        padding: 0;
+      }
+      .import-step {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-height: 92px;
+        padding: 10px 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+      }
+      .import-step-num {
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: var(--muted);
+        letter-spacing: 0.04em;
+      }
+      .import-step-title {
+        font-size: 0.86rem;
+        font-weight: 700;
+        color: var(--accent-dark);
+      }
+      .import-step-state {
+        font-size: 0.75rem;
+        font-weight: 700;
+      }
+      .import-step-detail {
+        font-size: 0.72rem;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+      .import-step.is-pending .import-step-state { color: var(--muted); }
+      .import-step.is-current {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px var(--accent-soft);
+      }
+      .import-step.is-current .import-step-state { color: var(--accent); }
+      .import-step.is-busy {
+        border-color: var(--info);
+        background: #f0f9ff;
+      }
+      .import-step.is-busy .import-step-state { color: var(--info); }
+      .import-step.is-done {
+        border-color: #86efac;
+        background: #f0fdf4;
+      }
+      .import-step.is-done .import-step-state { color: var(--ok); }
+      .import-step.is-warn {
+        border-color: #fbbf24;
+        background: #fffbeb;
+      }
+      .import-step.is-warn .import-step-state { color: var(--warn); }
+      .import-step.is-locked {
+        opacity: 0.55;
+        background: #f8fafc;
+      }
+      .import-step.is-locked .import-step-state { color: var(--muted); }
+      .import-step-body {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+      }
+      .import-step-body h5 {
+        margin: 0 0 8px;
+        font-size: 0.92rem;
+        color: var(--accent-dark);
+      }
+      .import-busy-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 10px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #e0f2fe;
+        color: #075985;
+        font-weight: 700;
+      }
+      .import-busy-banner.hidden { display: none; }
+      .import-spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(15, 76, 129, 0.2);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: lab-reset-spin 0.7s linear infinite;
+        vertical-align: -2px;
+        margin-right: 6px;
+      }
+      .import-status-line.error { color: var(--error); font-weight: 700; }
+      .import-confirm-hint {
+        margin: 8px 0 10px;
+        font-size: 0.85rem;
+        color: var(--muted);
+        min-height: 1.2em;
+      }
+      .btn-confirm-locked {
+        background: #dbe3ee;
+        color: #64748b;
+        border: 1px solid #c5d0de;
+        cursor: not-allowed;
+      }
+      #importWizardPanel button:disabled,
+      #importWizardPanel button[disabled] {
+        background: #dbe3ee !important;
+        color: #64748b !important;
+        border: 1px solid #c5d0de !important;
+        cursor: not-allowed !important;
+        box-shadow: none !important;
+        opacity: 1;
+        pointer-events: none;
+      }
+      #importWizardPanel button:disabled:hover,
+      #importWizardPanel button[disabled]:hover {
+        background: #dbe3ee !important;
+        color: #64748b !important;
+      }
+      #importWizardPanel select:disabled {
+        background: #e8eef5;
+        color: #64748b;
+        cursor: not-allowed;
+        border-color: #c5d0de;
+      }
+      #importWizardPanel .import-step-body.is-step-locked {
+        background: #f4f7fb;
+        border-radius: 10px;
+        padding: 12px;
+      }
+      #importWizardPanel .import-step-body.is-step-locked h5 {
+        color: #64748b;
+      }
+      .import-summary-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 8px 0;
+      }
+      @media (max-width: 980px) {
+        .import-stepper {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
       }
       .import-processing {
         color: #9fd0ff;
@@ -3876,54 +4026,135 @@
             </div>
             <div class="card-panel" id="importWizardPanel">
               <h4 class="secondary-panel-title">Importar datos</h4>
-              <p class="module-hint">Flujo: Archivo → Hoja → Mapeo → Validación → Revisión → Confirmar. Subir un archivo no modifica inventario hasta confirmar.</p>
-              <div class="form-grid">
-                <div class="field">
-                  <label for="importContext">Contexto</label>
-                  <select id="importContext">
-                    <option value="INVENTORY">Inventario físico / stock</option>
-                    <option value="INBOUND">Entradas masivas</option>
-                    <option value="REQUISITIONS">Requisiciones</option>
-                    <option value="PRODUCTS">Catálogo de productos</option>
-                    <option value="CLIENTS_PROJECTS">Clientes / proyectos</option>
+              <p class="module-hint">Secuencia: Archivo → Hoja → Mapeo → Validación → Revisión → Confirmación. Subir un archivo no modifica inventario hasta confirmar.</p>
+              <ol class="import-stepper" id="importStepper" aria-label="Pasos de importación">
+                <li class="import-step is-current" data-import-step="file">
+                  <span class="import-step-num">1</span>
+                  <span class="import-step-title">Archivo</span>
+                  <span class="import-step-state" id="importStepState-file">Pendiente</span>
+                  <span class="import-step-detail" id="importStepDetail-file">Selecciona el archivo a cargar.</span>
+                </li>
+                <li class="import-step is-locked" data-import-step="sheet">
+                  <span class="import-step-num">2</span>
+                  <span class="import-step-title">Hoja</span>
+                  <span class="import-step-state" id="importStepState-sheet">Bloqueado</span>
+                  <span class="import-step-detail" id="importStepDetail-sheet">Espera a que el archivo esté cargado.</span>
+                </li>
+                <li class="import-step is-locked" data-import-step="mapping">
+                  <span class="import-step-num">3</span>
+                  <span class="import-step-title">Mapeo</span>
+                  <span class="import-step-state" id="importStepState-mapping">Bloqueado</span>
+                  <span class="import-step-detail" id="importStepDetail-mapping">Requiere una hoja seleccionada.</span>
+                </li>
+                <li class="import-step is-locked" data-import-step="validate">
+                  <span class="import-step-num">4</span>
+                  <span class="import-step-title">Validación</span>
+                  <span class="import-step-state" id="importStepState-validate">Bloqueado</span>
+                  <span class="import-step-detail" id="importStepDetail-validate">Requiere mapeo aplicado.</span>
+                </li>
+                <li class="import-step is-locked" data-import-step="review">
+                  <span class="import-step-num">5</span>
+                  <span class="import-step-title">Revisión</span>
+                  <span class="import-step-state" id="importStepState-review">Bloqueado</span>
+                  <span class="import-step-detail" id="importStepDetail-review">Requiere validación previa.</span>
+                </li>
+                <li class="import-step is-locked" data-import-step="confirm">
+                  <span class="import-step-num">6</span>
+                  <span class="import-step-title">Confirmación</span>
+                  <span class="import-step-state" id="importStepState-confirm">Bloqueado</span>
+                  <span class="import-step-detail" id="importStepDetail-confirm">No disponible todavía.</span>
+                </li>
+              </ol>
+              <div id="importBusyBanner" class="import-busy-banner hidden" role="status" aria-live="polite"></div>
+              <p id="importStatus" class="operational-table-meta import-status-line"></p>
+
+              <section class="import-step-body" data-step-body="file" aria-label="Paso 1 Archivo">
+                <h5>1. Archivo</h5>
+                <div class="form-grid">
+                  <div class="field">
+                    <label for="importContext">Contexto</label>
+                    <select id="importContext">
+                      <option value="INVENTORY">Inventario físico / stock</option>
+                      <option value="INBOUND">Entradas masivas</option>
+                      <option value="REQUISITIONS">Requisiciones</option>
+                      <option value="PRODUCTS">Catálogo de productos</option>
+                      <option value="CLIENTS_PROJECTS">Clientes / proyectos</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="importInventoryMode">Modo inventario</label>
+                    <select id="importInventoryMode">
+                      <option value="APPEND">APPEND / recepción</option>
+                      <option value="RECONCILE">RECONCILE / conciliación (solo preview)</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="importPriceCurrency">Precio genérico →</label>
+                    <select id="importPriceCurrency">
+                      <option value="">No aplicar</option>
+                      <option value="MXN">MXN</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="importFile">Archivo XLSX/CSV</label>
+                    <input id="importFile" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                  </div>
+                </div>
+                <div class="page-toolbar" style="margin-top:10px">
+                  <button type="button" id="importUploadBtn" class="btn-primary btn-compact">Subir archivo</button>
+                </div>
+                <p id="importFileMeta" class="assignee-hint"></p>
+              </section>
+
+              <section class="import-step-body" data-step-body="sheet" aria-label="Paso 2 Hoja">
+                <h5>2. Hoja</h5>
+                <div class="field" style="max-width:420px">
+                  <label for="importSheetSelect">Hoja del archivo</label>
+                  <select id="importSheetSelect" disabled>
+                    <option value="">Carga un archivo primero</option>
                   </select>
                 </div>
-                <div class="field">
-                  <label for="importInventoryMode">Modo inventario</label>
-                  <select id="importInventoryMode">
-                    <option value="APPEND">APPEND / recepción</option>
-                    <option value="RECONCILE">RECONCILE / conciliación (solo preview)</option>
-                  </select>
+                <p id="importSheetMeta" class="assignee-hint">Bloqueado hasta cargar un archivo.</p>
+              </section>
+
+              <section class="import-step-body" data-step-body="mapping" aria-label="Paso 3 Mapeo">
+                <h5>3. Mapeo</h5>
+                <div id="importMappingBox" class="card-panel" style="margin-top:6px;max-height:220px;overflow:auto"></div>
+                <div class="page-toolbar" style="margin-top:10px">
+                  <button type="button" id="importMapBtn" class="btn-secondary btn-compact" disabled>Aplicar mapeo</button>
                 </div>
-                <div class="field">
-                  <label for="importPriceCurrency">Precio genérico →</label>
-                  <select id="importPriceCurrency">
-                    <option value="">No aplicar</option>
-                    <option value="MXN">MXN</option>
-                    <option value="USD">USD</option>
-                  </select>
+                <p id="importMapHint" class="assignee-hint">Bloqueado hasta seleccionar una hoja.</p>
+              </section>
+
+              <section class="import-step-body" data-step-body="validate" aria-label="Paso 4 Validación">
+                <h5>4. Validación</h5>
+                <div class="page-toolbar">
+                  <button type="button" id="importValidateBtn" class="btn-secondary btn-compact" disabled>Validar</button>
                 </div>
-                <div class="field">
-                  <label for="importFile">Archivo XLSX/CSV</label>
-                  <input id="importFile" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <p id="importValidateHint" class="assignee-hint">Bloqueado hasta aplicar el mapeo.</p>
+                <div id="importValidateSummary" class="import-summary-chips"></div>
+                <div id="importPreviewBox" style="overflow:auto;max-height:320px"></div>
+              </section>
+
+              <section class="import-step-body" data-step-body="review" aria-label="Paso 5 Revisión">
+                <h5>5. Revisión</h5>
+                <div class="page-toolbar">
+                  <button type="button" id="importReviewBtn" class="btn-secondary btn-compact" disabled>Actualizar revisión</button>
                 </div>
-              </div>
-              <div class="page-toolbar" style="margin-top:10px">
-                <button type="button" id="importUploadBtn" class="btn-primary btn-compact">1. Subir archivo</button>
-                <button type="button" id="importMapBtn" class="btn-secondary btn-compact">3. Aplicar mapeo</button>
-                <button type="button" id="importValidateBtn" class="btn-secondary btn-compact">4. Validar</button>
-                <button type="button" id="importReviewBtn" class="btn-secondary btn-compact">5. Bandeja de revisión</button>
-                <button type="button" id="importNormalizedBtn" class="btn-secondary btn-compact">CSV normalizado</button>
-                <button type="button" id="importConfirmBtn" class="btn-success btn-compact">6. Confirmar</button>
-              </div>
-              <div class="field" style="margin-top:10px">
-                <label for="importSheetSelect">2. Hoja</label>
-                <select id="importSheetSelect"></select>
-              </div>
-              <div id="importMappingBox" class="card-panel" style="margin-top:10px;max-height:220px;overflow:auto"></div>
-              <p id="importStatus" class="operational-table-meta" style="margin-top:10px"></p>
-              <div id="importPreviewBox" style="overflow:auto;max-height:320px"></div>
-              <div id="importReviewQueueBox" style="margin-top:12px"></div>
+                <p id="importReviewHint" class="assignee-hint">Bloqueado hasta validar el archivo.</p>
+                <div id="importReviewQueueBox" style="margin-top:12px"></div>
+              </section>
+
+              <section class="import-step-body" data-step-body="confirm" aria-label="Paso 6 Confirmación">
+                <h5>6. Confirmación</h5>
+                <p id="importConfirmHint" class="import-confirm-hint">🔒 Confirmar está bloqueado hasta completar los pasos anteriores.</p>
+                <div class="page-toolbar">
+                  <button type="button" id="importConfirmBtn" class="btn-compact btn-confirm-locked" disabled>🔒 Confirmar</button>
+                  <button type="button" id="importNormalizedBtn" class="btn-secondary btn-compact" disabled>CSV normalizado</button>
+                </div>
+              </section>
+
               <div id="importHistoryBox" style="margin-top:12px"></div>
             </div>
           </div>
@@ -4080,6 +4311,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=45"></script>
+    <script src="/dashboard.js?v=47"></script>
   </body>
 </html>

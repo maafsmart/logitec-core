@@ -8386,6 +8386,312 @@ logoutBtn?.addEventListener("click", forceLogout);
 
 let currentImportId = null;
 let currentImportMapping = {};
+const importUi = {
+  busy: false,
+  busyLabel: "",
+  fileName: "",
+  sheetName: "",
+  sheetRows: 0,
+  mappingApplied: false,
+  mappingDirty: false,
+  appliedMappingJson: "",
+  validated: false,
+  confirmed: false,
+  totalRows: 0,
+  validRows: 0,
+  warningRows: 0,
+  blocked: 0,
+  unresolved: 0,
+  error: ""
+};
+
+function formatImportCount(n) {
+  return Number(n || 0).toLocaleString("es-MX");
+}
+
+function resetImportDownstream(fromStep) {
+  if (fromStep <= 3) {
+    importUi.mappingApplied = false;
+    importUi.mappingDirty = false;
+    importUi.appliedMappingJson = "";
+  }
+  if (fromStep <= 4) {
+    importUi.validated = false;
+    importUi.totalRows = 0;
+    importUi.validRows = 0;
+    importUi.warningRows = 0;
+    importUi.blocked = 0;
+    importUi.unresolved = 0;
+    const preview = document.getElementById("importPreviewBox");
+    const summary = document.getElementById("importValidateSummary");
+    if (preview) preview.innerHTML = "";
+    if (summary) summary.innerHTML = "";
+  }
+  if (fromStep <= 5) {
+    const review = document.getElementById("importReviewQueueBox");
+    if (review) review.innerHTML = "";
+  }
+  importUi.confirmed = false;
+}
+
+function getImportConfirmBlockReason() {
+  if (importUi.busy) return "Hay una operación en curso.";
+  if (!currentImportId || !importUi.fileName) return "Sube un archivo primero.";
+  if (!importUi.sheetName) return "Selecciona una hoja.";
+  if (!importUi.mappingApplied) return "Aplica el mapeo antes de confirmar.";
+  if (importUi.mappingDirty) return "Hay cambios de mapeo pendientes de aplicar.";
+  if (!importUi.validated) return "Valida el archivo antes de confirmar.";
+  if (importUi.blocked > 0) return `Hay ${formatImportCount(importUi.blocked)} registros bloqueados por revisar.`;
+  if (importUi.unresolved > 0) {
+    return `Hay ${formatImportCount(importUi.unresolved)} asignaciones sin resolver.`;
+  }
+  if (document.getElementById("importInventoryMode")?.value === "RECONCILE") {
+    return "RECONCILE solo permite preview; no se puede confirmar.";
+  }
+  return "";
+}
+
+function setImportStep(step, kind, stateText, detailText) {
+  const el = document.querySelector(`[data-import-step="${step}"]`);
+  const stateEl = document.getElementById(`importStepState-${step}`);
+  const detailEl = document.getElementById(`importStepDetail-${step}`);
+  if (el) {
+    el.classList.remove("is-pending", "is-current", "is-busy", "is-done", "is-warn", "is-locked");
+    el.classList.add(`is-${kind}`);
+  }
+  if (stateEl) stateEl.textContent = stateText;
+  if (detailEl && detailText != null) detailEl.textContent = detailText;
+}
+
+function setImportButton(id, { disabled, label, html, locked, reason }) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.disabled = Boolean(disabled);
+  btn.setAttribute("aria-disabled", disabled ? "true" : "false");
+  btn.title = disabled && reason ? reason : "";
+  if (html) btn.innerHTML = html;
+  else if (label) btn.textContent = label;
+  if (id === "importConfirmBtn") {
+    btn.classList.remove("btn-success", "btn-confirm-locked", "btn-secondary");
+    btn.classList.add(locked || disabled ? "btn-confirm-locked" : "btn-success");
+  }
+}
+
+function syncImportWizardUi() {
+  const busy = importUi.busy;
+  const banner = document.getElementById("importBusyBanner");
+  if (banner) {
+    banner.classList.toggle("hidden", !busy);
+    banner.innerHTML = busy
+      ? `<span class="import-spinner"></span><span>${escCell(importUi.busyLabel || "Procesando…")}</span>`
+      : "";
+  }
+  const status = document.getElementById("importStatus");
+  if (status) {
+    status.classList.toggle("error", Boolean(importUi.error) && !busy);
+    if (importUi.error && !busy) status.textContent = importUi.error;
+  }
+  const fileInput = document.getElementById("importFile");
+  if (fileInput) fileInput.disabled = busy;
+  const mappingBox = document.getElementById("importMappingBox");
+  if (mappingBox) mappingBox.style.pointerEvents = busy || !importUi.sheetName ? "none" : "";
+
+  const fileReady = Boolean(currentImportId && importUi.fileName);
+  const sheetReady = fileReady && Boolean(importUi.sheetName);
+  const mappingReady = sheetReady && importUi.mappingApplied && !importUi.mappingDirty;
+  const confirmReason = getImportConfirmBlockReason();
+  const confirmable = !confirmReason;
+  const sheetLockReason = "Bloqueado hasta cargar un archivo.";
+  const mapLockReason = "Bloqueado hasta seleccionar una hoja.";
+  const validateLockReason = "Bloqueado hasta aplicar el mapeo.";
+  const reviewLockReason = "Bloqueado hasta validar el archivo.";
+  const csvLockReason = "Bloqueado hasta validar el archivo.";
+  const sheetSelect = document.getElementById("importSheetSelect");
+  if (sheetSelect) {
+    sheetSelect.disabled = busy || !currentImportId;
+    sheetSelect.title = currentImportId ? "" : sheetLockReason;
+  }
+
+  document.querySelector('[data-step-body="file"]')?.classList.toggle("is-step-locked", false);
+  document.querySelector('[data-step-body="sheet"]')?.classList.toggle("is-step-locked", !fileReady);
+  document.querySelector('[data-step-body="mapping"]')?.classList.toggle("is-step-locked", !sheetReady);
+  document.querySelector('[data-step-body="validate"]')?.classList.toggle("is-step-locked", !mappingReady);
+  document.querySelector('[data-step-body="review"]')?.classList.toggle("is-step-locked", !importUi.validated);
+  document.querySelector('[data-step-body="confirm"]')?.classList.toggle("is-step-locked", !confirmable && !importUi.confirmed);
+
+  if (busy && importUi.busyLabel.toLowerCase().includes("subiendo")) {
+    setImportStep("file", "busy", "En curso", importUi.fileName || "Cargando archivo…");
+    setImportButton("importUploadBtn", {
+      disabled: true,
+      html: '<span class="import-spinner"></span>Subiendo archivo…'
+    });
+  } else if (fileReady) {
+    setImportStep("file", "done", "Completado", `✓ Archivo cargado: ${importUi.fileName}`);
+    setImportButton("importUploadBtn", { disabled: busy, label: "Subir archivo" });
+  } else {
+    setImportStep("file", "current", "Pendiente", "Selecciona el archivo a cargar.");
+    setImportButton("importUploadBtn", { disabled: busy, label: "Subir archivo" });
+  }
+  const fileMeta = document.getElementById("importFileMeta");
+  if (fileMeta) fileMeta.textContent = fileReady ? `✓ Archivo cargado: ${importUi.fileName}` : "";
+
+  if (!fileReady) {
+    setImportStep("sheet", "locked", "Bloqueado", "Espera a que el archivo esté cargado.");
+  } else if (busy && importUi.busyLabel.toLowerCase().includes("hoja")) {
+    setImportStep("sheet", "busy", "En curso", "Seleccionando hoja…");
+  } else if (sheetReady) {
+    setImportStep(
+      "sheet",
+      "done",
+      "Completado",
+      `✓ Hoja seleccionada: ${importUi.sheetName} — ${formatImportCount(importUi.sheetRows)} filas`
+    );
+  } else {
+    setImportStep("sheet", "current", "Pendiente", "Elige la hoja a importar.");
+  }
+  const sheetMeta = document.getElementById("importSheetMeta");
+  if (sheetMeta) {
+    sheetMeta.textContent = !fileReady
+      ? "Bloqueado hasta cargar un archivo."
+      : sheetReady
+        ? `✓ Hoja seleccionada: ${importUi.sheetName} — ${formatImportCount(importUi.sheetRows)} filas`
+        : "Selecciona la hoja activa.";
+  }
+
+  if (!sheetReady) {
+    setImportStep("mapping", "locked", "Bloqueado", "Requiere una hoja seleccionada.");
+    setImportButton("importMapBtn", { disabled: true, label: "Aplicar mapeo", reason: mapLockReason });
+  } else if (busy && importUi.busyLabel.toLowerCase().includes("mapeo")) {
+    setImportStep("mapping", "busy", "En curso", "Aplicando mapeo…");
+    setImportButton("importMapBtn", {
+      disabled: true,
+      html: '<span class="import-spinner"></span>Aplicando mapeo…'
+    });
+  } else if (importUi.mappingDirty || !importUi.mappingApplied) {
+    setImportStep("mapping", "current", "Pendiente", "Hay cambios pendientes de aplicar.");
+    setImportButton("importMapBtn", { disabled: busy, label: "Aplicar mapeo" });
+  } else {
+    setImportStep("mapping", "done", "Completado", "✓ Mapeo aplicado");
+    setImportButton("importMapBtn", { disabled: busy, label: "Aplicar mapeo" });
+  }
+
+  if (!mappingReady) {
+    setImportStep("validate", "locked", "Bloqueado", "Requiere mapeo aplicado.");
+    setImportButton("importValidateBtn", { disabled: true, label: "Validar", reason: validateLockReason });
+  } else if (busy && importUi.busyLabel.toLowerCase().includes("validando")) {
+    setImportStep(
+      "validate",
+      "busy",
+      "En curso",
+      `Validando ${formatImportCount(importUi.sheetRows)} filas…`
+    );
+    setImportButton("importValidateBtn", {
+      disabled: true,
+      html: `<span class="import-spinner"></span>Validando ${formatImportCount(importUi.sheetRows)} filas…`
+    });
+  } else if (importUi.validated) {
+    setImportStep(
+      "validate",
+      "done",
+      "Completado",
+      `✓ Validado · Total ${formatImportCount(importUi.totalRows)} · Listas ${formatImportCount(importUi.validRows)} · Advertencias ${formatImportCount(importUi.warningRows)} · Bloqueadas ${formatImportCount(importUi.blocked)}`
+    );
+    setImportButton("importValidateBtn", { disabled: busy, label: "Validar" });
+  } else {
+    setImportStep("validate", "current", "Pendiente", "Ejecuta la validación del archivo.");
+    setImportButton("importValidateBtn", { disabled: busy, label: "Validar" });
+  }
+
+  if (!importUi.validated) {
+    setImportStep("review", "locked", "Bloqueado", "Requiere validación previa.");
+    setImportButton("importReviewBtn", { disabled: true, label: "Actualizar revisión", reason: reviewLockReason });
+  } else if (busy && /correcci|revisi/i.test(importUi.busyLabel)) {
+    setImportStep("review", "busy", "En curso", importUi.busyLabel);
+    setImportButton("importReviewBtn", {
+      disabled: true,
+      html: '<span class="import-spinner"></span>Procesando revisión…'
+    });
+  } else if (importUi.blocked > 0 || importUi.unresolved > 0) {
+    setImportStep(
+      "review",
+      "warn",
+      "Requiere revisión",
+      `⚠ Revisión requerida — ${formatImportCount(importUi.blocked)} bloqueados`
+    );
+    setImportButton("importReviewBtn", { disabled: busy, label: "Actualizar revisión" });
+  } else {
+    setImportStep("review", "done", "Completado", "✓ Sin bloqueos pendientes");
+    setImportButton("importReviewBtn", { disabled: busy, label: "Actualizar revisión" });
+  }
+
+  const hint = document.getElementById("importConfirmHint");
+  if (busy && importUi.busyLabel.toLowerCase().includes("confirm")) {
+    setImportStep("confirm", "busy", "En curso", "Confirmando importación…");
+    setImportButton("importConfirmBtn", {
+      disabled: true,
+      locked: true,
+      html: '<span class="import-spinner"></span>Confirmando…'
+    });
+    if (hint) hint.textContent = "Confirmando importación. No cierres esta pantalla.";
+  } else if (importUi.confirmed) {
+    setImportStep("confirm", "done", "Completado", "✓ Importación confirmada");
+    setImportButton("importConfirmBtn", { disabled: true, locked: true, label: "✓ Confirmado" });
+    if (hint) hint.textContent = "La importación ya fue confirmada.";
+  } else if (confirmable) {
+    setImportStep("confirm", "current", "Pendiente", "Listo para confirmar. Esta acción escribe datos.");
+    setImportButton("importConfirmBtn", { disabled: busy, locked: false, label: "Confirmar importación" });
+    if (hint) hint.textContent = "El archivo ya puede confirmarse. El servidor volverá a verificar bloqueos y asignaciones.";
+  } else {
+    setImportStep("confirm", "locked", "Bloqueado", `🔒 Confirmar. ${confirmReason}`);
+    setImportButton("importConfirmBtn", { disabled: true, locked: true, label: "🔒 Confirmar", reason: confirmReason });
+    if (hint) hint.textContent = `🔒 Confirmar. ${confirmReason}`;
+  }
+  setImportButton("importNormalizedBtn", {
+    disabled: busy || !importUi.validated,
+    label: "CSV normalizado",
+    reason: busy || !importUi.validated ? csvLockReason : ""
+  });
+  const mapHint = document.getElementById("importMapHint");
+  if (mapHint) mapHint.textContent = sheetReady ? (importUi.mappingDirty || !importUi.mappingApplied ? "Hay cambios pendientes de aplicar." : "✓ Mapeo aplicado") : mapLockReason;
+  const validateHint = document.getElementById("importValidateHint");
+  if (validateHint) {
+    validateHint.textContent = mappingReady
+      ? (importUi.validated ? "✓ Validado" : "Listo para validar.")
+      : validateLockReason;
+  }
+  const reviewHint = document.getElementById("importReviewHint");
+  if (reviewHint) {
+    reviewHint.textContent = importUi.validated
+      ? (importUi.blocked > 0 || importUi.unresolved > 0
+        ? `⚠ Revisión requerida — ${formatImportCount(importUi.blocked)} bloqueados`
+        : "✓ Sin bloqueos pendientes")
+      : reviewLockReason;
+  }
+  document.querySelectorAll("#importReviewQueueBox button").forEach((btn) => {
+    btn.disabled = busy;
+  });
+}
+
+async function withImportLock(label, fn) {
+  if (importUi.busy) return { skipped: true };
+  importUi.busy = true;
+  importUi.busyLabel = label;
+  importUi.error = "";
+  syncImportWizardUi();
+  try {
+    await fn();
+    return { ok: true };
+  } catch (error) {
+    console.error("[import]", error);
+    importUi.error = error instanceof Error ? error.message : "Error en el importador.";
+    setImportStatus(importUi.error, true);
+    return { ok: false };
+  } finally {
+    importUi.busy = false;
+    importUi.busyLabel = "";
+    syncImportWizardUi();
+  }
+}
 
 async function downloadExport(url, filename) {
   const response = await authenticatedFetch(url);
@@ -8403,9 +8709,13 @@ async function downloadExport(url, filename) {
   setTimeout(() => URL.revokeObjectURL(link.href), 500);
 }
 
-function setImportStatus(text) {
+function setImportStatus(text, isError) {
   const el = document.getElementById("importStatus");
-  if (el) el.textContent = text || "";
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("error", Boolean(isError));
+  if (isError) importUi.error = text || "";
+  else if (!importUi.busy) importUi.error = "";
 }
 
 function renderImportMapping(headers, mapping) {
@@ -8427,6 +8737,10 @@ function renderImportMapping(headers, mapping) {
     sel.addEventListener("change", () => {
       const header = sel.getAttribute("data-map-header");
       currentImportMapping[header] = sel.value || null;
+      importUi.mappingDirty =
+        !importUi.appliedMappingJson || JSON.stringify(currentImportMapping) !== importUi.appliedMappingJson;
+      resetImportDownstream(4);
+      syncImportWizardUi();
     });
   });
 }
@@ -8440,6 +8754,15 @@ async function loadImportReview() {
   const counts = data.counts || {};
   const groups = Array.isArray(data.groups) ? data.groups : [];
   const rows = Array.isArray(data.rows) ? data.rows : [];
+  importUi.blocked = Number(counts.BLOCKED || 0);
+  importUi.unresolved = rows.filter(
+    (r) => r?.reviewState !== "IGNORED" && r?.normalized?.assignmentType === "UNRESOLVED"
+  ).length;
+  if (!importUi.totalRows && Number(counts.READY || 0) + Number(counts.WARNING || 0) + Number(counts.BLOCKED || 0)) {
+    importUi.validRows = Number(counts.READY || 0);
+    importUi.warningRows = Number(counts.WARNING || 0);
+  }
+  syncImportWizardUi();
   box.innerHTML = `
     <h4 class="secondary-panel-title">Bandeja de revisión</h4>
     ${(data.globalNotices || []).map((n) => `<p class="operational-table-meta">${escCell(n.message)}</p>`).join("")}
@@ -8463,35 +8786,44 @@ async function loadImportReview() {
     <div class="table-wrap" style="margin-top:10px"><table class="excel-table"><thead><tr><th>Fila Excel</th><th>SKU</th><th>Asignación</th><th>Ubicación</th><th>Status</th><th>Problemas</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>
       ${rows.map((r) => `<tr><td>${Number(r.sourceRow || 0) + 2}</td><td>${escCell(r.normalized?.sku || r.data?.sku || "—")}</td><td>${escCell(r.normalized?.assignmentType === "FREE_TO_SALE" ? "FREE TO SALE" : r.normalized?.assignmentType === "UNRESOLVED" ? "PENDIENTE" : (r.normalized?.projectCode || r.normalized?.projectName || r.normalized?.assignmentType || "—"))}</td><td>${escCell(r.normalized?.location || "—")}</td><td>${escCell(r.normalized?.status || "—")}</td><td>${escCell([...(r.errors || []), ...(r.warnings || [])].map((x) => x.code).join(", ") || "—")}</td><td>${escCell(r.reviewState)}</td><td><button class="btn-secondary btn-compact" data-review-row="${r.sourceRow}">Ver / corregir</button></td></tr>`).join("")}
     </tbody></table></div>`;
-  box.querySelectorAll("[data-review-group]").forEach((button) => button.addEventListener("click", async () => {
+  box.querySelectorAll("[data-review-group]").forEach((button) => button.addEventListener("click", () => {
+    if (importUi.busy) return;
     const group = groups[Number(button.getAttribute("data-review-group"))];
     if (!group) return;
     const assign = button.getAttribute("data-review-assign");
+    let payload = null;
     if (assign === "fts") {
+      payload = { field: "assignmentType", value: "FREE_TO_SALE", scope: "ALL_MATCHING", issueCode: group.issueCode, issueValue: group.sourceValue, reason: "BULK_FREE_TO_SALE" };
+    } else {
+      const field = assign === "project" ? "project" : (group.field || "location");
+      if (!["location", "project", "client", "status", "unitPriceMxn", "unitPriceUsd", "lotNumber", "reference", "assignmentType"].includes(field)) {
+        window.alert("Este problema requiere revisión individual.");
+        return;
+      }
+      const value = window.prompt(`Nuevo valor para ${field} (${group.records} filas):`, "");
+      if (value == null) return;
+      payload = { field, value, scope: "ALL_MATCHING", issueCode: group.issueCode, issueValue: group.sourceValue, reason: "BULK_REVIEW_QUEUE" };
+    }
+    void withImportLock("Aplicando corrección…", async () => {
       const result = await authenticatedFetch(`/api/imports/${currentImportId}/review`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ field: "assignmentType", value: "FREE_TO_SALE", scope: "ALL_MATCHING", issueCode: group.issueCode, issueValue: group.sourceValue, reason: "BULK_FREE_TO_SALE" })
+        body: JSON.stringify(payload)
       });
-      if (!result?.ok) return window.alert("No se pudo guardar la corrección.");
-      await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      if (!result?.ok) {
+        const err = await result?.json().catch(() => ({}));
+        throw new Error(err.message || "No se pudo guardar la corrección.");
+      }
+      const validated = await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      if (validated && !validated.ok) {
+        const err = await validated.json().catch(() => ({}));
+        throw new Error(err.message || "No se pudo revalidar después de la corrección.");
+      }
       await loadImportReview();
-      return;
-    }
-    const field = assign === "project" ? "project" : (group.field || "location");
-    if (!["location", "project", "client", "status", "unitPriceMxn", "unitPriceUsd", "lotNumber", "reference", "assignmentType"].includes(field)) {
-      return window.alert("Este problema requiere revisión individual.");
-    }
-    const value = window.prompt(`Nuevo valor para ${field} (${group.records} filas):`, "");
-    if (value == null) return;
-    const result = await authenticatedFetch(`/api/imports/${currentImportId}/review`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ field, value, scope: "ALL_MATCHING", issueCode: group.issueCode, issueValue: group.sourceValue, reason: "BULK_REVIEW_QUEUE" })
+      setImportStatus("Corrección aplicada.");
     });
-    if (!result?.ok) return window.alert("No se pudo guardar la corrección.");
-    await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-    await loadImportReview();
   }));
-  box.querySelectorAll("[data-review-subgroup]").forEach((button) => button.addEventListener("click", async () => {
+  box.querySelectorAll("[data-review-subgroup]").forEach((button) => button.addEventListener("click", () => {
+    if (importUi.busy) return;
     const [groupIndex, subIndex] = String(button.getAttribute("data-review-subgroup") || "").split(":").map(Number);
     const group = groups[groupIndex];
     const sub = group?.subgroups?.[subIndex];
@@ -8499,19 +8831,29 @@ async function loadImportReview() {
     const value = window.prompt(`Asignar proyecto a ${sub.records} filas de ${sub.sku} (o escribe FREE TO SALE):`, "");
     if (value == null || !value.trim()) return;
     const isFts = value.trim().toUpperCase() === "FREE TO SALE";
-    const result = await authenticatedFetch(`/api/imports/${currentImportId}/review`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        field: isFts ? "assignmentType" : "project",
-        value: isFts ? "FREE_TO_SALE" : value.trim(),
-        scope: "SELECTED",
-        sourceRows: sub.sourceRows,
-        reason: "SUBSET_ASSIGNMENT"
-      })
+    void withImportLock("Aplicando corrección…", async () => {
+      const result = await authenticatedFetch(`/api/imports/${currentImportId}/review`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          field: isFts ? "assignmentType" : "project",
+          value: isFts ? "FREE_TO_SALE" : value.trim(),
+          scope: "SELECTED",
+          sourceRows: sub.sourceRows,
+          reason: "SUBSET_ASSIGNMENT"
+        })
+      });
+      if (!result?.ok) {
+        const err = await result?.json().catch(() => ({}));
+        throw new Error(err.message || "No se pudo guardar la corrección.");
+      }
+      const validated = await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      if (validated && !validated.ok) {
+        const err = await validated.json().catch(() => ({}));
+        throw new Error(err.message || "No se pudo revalidar después de la corrección.");
+      }
+      await loadImportReview();
+      setImportStatus("Corrección aplicada.");
     });
-    if (!result?.ok) return window.alert("No se pudo guardar la corrección.");
-    await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-    await loadImportReview();
   }));
   box.querySelectorAll("[data-review-row]").forEach((button) => button.addEventListener("click", () => {
     const row = rows.find((item) => String(item.sourceRow) === button.getAttribute("data-review-row"));
@@ -8534,115 +8876,194 @@ async function refreshImportHistory() {
   }</tbody></table></div>`;
 }
 
-document.getElementById("importUploadBtn")?.addEventListener("click", async () => {
+document.getElementById("importUploadBtn")?.addEventListener("click", () => {
   const file = document.getElementById("importFile")?.files?.[0];
-  if (!file) return window.alert("Selecciona un archivo.");
-  const body = new FormData();
-  body.append("file", file);
-  body.append("context", document.getElementById("importContext")?.value || "INVENTORY");
-  body.append("inventoryMode", document.getElementById("importInventoryMode")?.value || "APPEND");
-  const priceCurrency = document.getElementById("importPriceCurrency")?.value;
-  if (priceCurrency) body.append("priceCurrency", priceCurrency);
-  setImportStatus("Subiendo archivo…");
-  const token = localStorage.getItem("token");
-  const response = await fetch("/api/imports/upload", {
-    method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    body
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    setImportStatus(data.message || "Error al subir.");
+  if (!file) {
+    setImportStatus("Selecciona un archivo.", true);
     return;
   }
-  currentImportId = data.id;
-  const sheets = data.metadata?.sheets || [];
-  const select = document.getElementById("importSheetSelect");
-  if (select) {
-    select.innerHTML = sheets.map((s) => `<option value="${escCell(s.name)}">${escCell(s.name)} (${s.totalDataRows} filas)</option>`).join("");
-  }
-  const headers = sheets[0]?.headers || [];
-  const mappingRes = await authenticatedFetch(`/api/imports/${currentImportId}/mapping`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({})
+  void withImportLock("Subiendo archivo…", async () => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("context", document.getElementById("importContext")?.value || "INVENTORY");
+    body.append("inventoryMode", document.getElementById("importInventoryMode")?.value || "APPEND");
+    const priceCurrency = document.getElementById("importPriceCurrency")?.value;
+    if (priceCurrency) body.append("priceCurrency", priceCurrency);
+    const authToken = localStorage.getItem("token");
+    const response = await fetch("/api/imports/upload", {
+      method: "POST",
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      body
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || "Error al subir.");
+    currentImportId = data.id;
+    importUi.fileName = file.name;
+    importUi.confirmed = false;
+    resetImportDownstream(3);
+    const sheets = data.metadata?.sheets || [];
+    const select = document.getElementById("importSheetSelect");
+    if (select) {
+      select.innerHTML = sheets.length
+        ? sheets.map((s) => `<option value="${escCell(s.name)}">${escCell(s.name)} (${formatImportCount(s.totalDataRows)} filas)</option>`).join("")
+        : '<option value="">Sin hojas</option>';
+    }
+    const activeSheet = sheets.find((s) => s.name === data.sheetName) || sheets[0];
+    importUi.sheetName = activeSheet?.name || data.sheetName || "";
+    importUi.sheetRows = Number(activeSheet?.totalDataRows || data.totalRows || 0);
+    if (select && importUi.sheetName) select.value = importUi.sheetName;
+    const headers = activeSheet?.headers || [];
+    const mappingRes = await authenticatedFetch(`/api/imports/${currentImportId}/mapping`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    const mapped = mappingRes?.ok ? await mappingRes.json() : { suggested: {} };
+    renderImportMapping(headers, mapped.suggested || mapped.mapping || {});
+    importUi.mappingApplied = false;
+    importUi.mappingDirty = true;
+    importUi.appliedMappingJson = "";
+    setImportStatus(`✓ Archivo cargado: ${file.name}`);
+    await refreshImportHistory();
   });
-  const mapped = mappingRes?.ok ? await mappingRes.json() : { suggested: {} };
-  renderImportMapping(headers, mapped.suggested || mapped.mapping || {});
-  setImportStatus(`Archivo cargado. ID ${data.id}. Hoja: ${data.sheetName || "—"}. Filas: ${data.totalRows}. Status: ${data.status}.`);
-  await refreshImportHistory();
 });
 
-document.getElementById("importSheetSelect")?.addEventListener("change", async (e) => {
-  if (!currentImportId) return;
+document.getElementById("importSheetSelect")?.addEventListener("change", (e) => {
+  if (!currentImportId || importUi.busy) return;
   const sheetName = e.target.value;
-  const response = await authenticatedFetch(`/api/imports/${currentImportId}/select-sheet`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sheetName })
+  if (!sheetName) return;
+  void withImportLock("Seleccionando hoja…", async () => {
+    const response = await authenticatedFetch(`/api/imports/${currentImportId}/select-sheet`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sheetName })
+    });
+    if (!response?.ok) {
+      const err = await response?.json().catch(() => ({}));
+      throw new Error(err.message || "No se pudo seleccionar la hoja.");
+    }
+    const batch = await response.json();
+    const sheet = (batch.metadata?.sheets || []).find((s) => s.name === sheetName);
+    importUi.sheetName = sheetName;
+    importUi.sheetRows = Number(sheet?.totalDataRows || batch.totalRows || 0);
+    resetImportDownstream(3);
+    const mappingRes = await authenticatedFetch(`/api/imports/${currentImportId}/mapping`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    const mapped = mappingRes?.ok ? await mappingRes.json() : { suggested: {} };
+    renderImportMapping(sheet?.headers || [], mapped.suggested || mapped.mapping || {});
+    importUi.mappingApplied = false;
+    importUi.mappingDirty = true;
+    setImportStatus(`✓ Hoja seleccionada: ${sheetName} — ${formatImportCount(importUi.sheetRows)} filas`);
   });
-  if (!response?.ok) return;
-  const batch = await response.json();
-  const sheet = (batch.metadata?.sheets || []).find((s) => s.name === sheetName);
-  renderImportMapping(sheet?.headers || [], {});
-  setImportStatus(`Hoja seleccionada: ${sheetName}.`);
 });
 
-document.getElementById("importMapBtn")?.addEventListener("click", async () => {
+document.getElementById("importMapBtn")?.addEventListener("click", () => {
   if (!currentImportId) return;
-  const response = await authenticatedFetch(`/api/imports/${currentImportId}/mapping`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mapping: currentImportMapping })
+  void withImportLock("Aplicando mapeo…", async () => {
+    const response = await authenticatedFetch(`/api/imports/${currentImportId}/mapping`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mapping: currentImportMapping })
+    });
+    if (!response?.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || "No se pudo guardar el mapeo.");
+    }
+    importUi.mappingApplied = true;
+    importUi.mappingDirty = false;
+    importUi.appliedMappingJson = JSON.stringify(currentImportMapping);
+    resetImportDownstream(4);
+    setImportStatus("✓ Mapeo aplicado");
   });
-  if (!response?.ok) {
-    setImportStatus("No se pudo guardar el mapeo.");
+});
+
+document.getElementById("importValidateBtn")?.addEventListener("click", () => {
+  if (!currentImportId) return;
+  void withImportLock(`Validando ${formatImportCount(importUi.sheetRows)} filas…`, async () => {
+    const response = await authenticatedFetch(`/api/imports/${currentImportId}/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || "Validación fallida.");
+    const preview = document.getElementById("importPreviewBox");
+    if (preview) {
+      preview.innerHTML = `<table class="excel-table"><thead><tr><th>Fila</th><th>Acción</th><th>Errores</th><th>Warnings</th><th>Normalizado</th></tr></thead><tbody>${
+        (data.preview || []).map((r) => `<tr><td>${r.sourceRow}</td><td>${escCell(r.action)}</td><td>${escCell((r.errors || []).map((e) => e.code).join(", ") || "—")}</td><td>${escCell((r.warnings || []).map((w) => w.code).join(", ") || "—")}</td><td>${escCell(JSON.stringify(r.normalized || {}))}</td></tr>`).join("")
+      }</tbody></table>`;
+    }
+    importUi.validated = true;
+    importUi.confirmed = false;
+    importUi.totalRows = Number(data.summary?.totalRows || 0);
+    importUi.validRows = Number(data.summary?.validRows || 0);
+    importUi.warningRows = Number(data.summary?.warningRows || 0);
+    importUi.blocked = Number(data.summary?.invalidRows || 0);
+    const summary = document.getElementById("importValidateSummary");
+    if (summary) {
+      summary.innerHTML =
+        `<span class="project-chip">Total: ${formatImportCount(importUi.totalRows)}</span>` +
+        `<span class="project-chip">Listas: ${formatImportCount(importUi.validRows)}</span>` +
+        `<span class="project-chip">Advertencias: ${formatImportCount(importUi.warningRows)}</span>` +
+        `<span class="project-chip">Bloqueadas: ${formatImportCount(importUi.blocked)}</span>`;
+    }
+    const val = data.summary?.valuation || {};
+    setImportStatus(
+      `✓ Validado. Total ${formatImportCount(importUi.totalRows)}. Listas ${formatImportCount(importUi.validRows)}. Advertencias ${formatImportCount(importUi.warningRows)}. Bloqueadas ${formatImportCount(importUi.blocked)}. Valor MXN ${val.mxn || 0} / USD ${val.usd || 0}.`
+    );
+    await loadImportReview();
+    await refreshImportHistory();
+  });
+});
+
+document.getElementById("importReviewBtn")?.addEventListener("click", () => {
+  if (!currentImportId) return;
+  void withImportLock("Cargando revisión…", async () => {
+    await loadImportReview();
+    setImportStatus(
+      importUi.blocked > 0
+        ? `⚠ Revisión requerida — ${formatImportCount(importUi.blocked)} bloqueados`
+        : "✓ Sin bloqueos pendientes"
+    );
+  });
+});
+
+document.getElementById("importNormalizedBtn")?.addEventListener("click", () => {
+  if (!currentImportId || importUi.busy) return;
+  void withImportLock("Exportando CSV…", async () => {
+    await downloadExport(`/api/imports/${currentImportId}/normalized.csv`, `import_${currentImportId}_normalized.csv`);
+  });
+});
+
+document.getElementById("importConfirmBtn")?.addEventListener("click", () => {
+  if (!currentImportId || importUi.busy) return;
+  const reason = getImportConfirmBlockReason();
+  if (reason) {
+    setImportStatus(`🔒 Confirmar. ${reason}`, true);
+    syncImportWizardUi();
     return;
   }
-  setImportStatus("Mapeo guardado.");
+  void withImportLock("Confirmando importación…", async () => {
+    const ok = window.confirm("¿Confirmar importación? Esto escribirá datos. No uses el archivo real de Hugo aquí.");
+    if (!ok) return;
+    const response = await authenticatedFetch(`/api/imports/${currentImportId}/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || "Confirmación rechazada.");
+    importUi.confirmed = true;
+    setImportStatus(`✓ Importación ${data.batch?.status || "COMPLETED"}. Fallidas: ${data.results?.filter((r) => !r.ok).length || 0}.`);
+    await refreshImportHistory();
+  });
 });
 
-document.getElementById("importValidateBtn")?.addEventListener("click", async () => {
-  if (!currentImportId) return;
-  setImportStatus("Validando archivo completo…");
-  const response = await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-  const data = await response.json();
-  if (!response.ok) {
-    setImportStatus(data.message || "Validación fallida.");
-    return;
-  }
-  const preview = document.getElementById("importPreviewBox");
-  if (preview) {
-    preview.innerHTML = `<table class="excel-table"><thead><tr><th>Fila</th><th>Acción</th><th>Errores</th><th>Warnings</th><th>Normalizado</th></tr></thead><tbody>${
-      (data.preview || []).map((r) => `<tr><td>${r.sourceRow}</td><td>${escCell(r.action)}</td><td>${escCell((r.errors || []).map((e) => e.code).join(", ") || "—")}</td><td>${escCell((r.warnings || []).map((w) => w.code).join(", ") || "—")}</td><td>${escCell(JSON.stringify(r.normalized || {}))}</td></tr>`).join("")
-    }</tbody></table>`;
-  }
-  const val = data.summary?.valuation || {};
-  setImportStatus(`Validado. Total ${data.summary.totalRows}. Válidas ${data.summary.validRows}. Errores ${data.summary.invalidRows}. Warnings ${data.summary.warningRows}. Valor MXN ${val.mxn || 0} / USD ${val.usd || 0}. Sin precio: ${val.missingPriceQty || 0}. Status: ${data.batch.status}.`);
-  await loadImportReview();
-  await refreshImportHistory();
-});
-
-document.getElementById("importReviewBtn")?.addEventListener("click", () => void loadImportReview());
-
-document.getElementById("importNormalizedBtn")?.addEventListener("click", async () => {
-  if (!currentImportId) return;
-  await downloadExport(`/api/imports/${currentImportId}/normalized.csv`, `import_${currentImportId}_normalized.csv`);
-});
-
-document.getElementById("importConfirmBtn")?.addEventListener("click", async () => {
-  if (!currentImportId) return;
-  if (!window.confirm("¿Confirmar importación? Esto escribirá datos. No uses el archivo real de Hugo aquí.")) return;
-  setImportStatus("Confirmando…");
-  const response = await authenticatedFetch(`/api/imports/${currentImportId}/confirm`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-  const data = await response.json();
-  if (!response.ok) {
-    setImportStatus(data.message || "Confirmación rechazada.");
-    return;
-  }
-  setImportStatus(`Importación ${data.batch.status}. Fallidas: ${data.results?.filter((r) => !r.ok).length || 0}.`);
-  await refreshImportHistory();
-});
+document.getElementById("importInventoryMode")?.addEventListener("change", () => syncImportWizardUi());
+syncImportWizardUi();
 
 createUserForm.addEventListener("submit", createUser);
 changePasswordForm.addEventListener("submit", changePassword);
