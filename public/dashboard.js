@@ -113,14 +113,25 @@ const exportStockBtn = document.getElementById("exportStockBtn");
 const exportMovementsBtn = document.getElementById("exportMovementsBtn");
 const exportTraceBtn = document.getElementById("exportTraceBtn");
 const exportProductsBtn = document.getElementById("exportProductsBtn");
-const demoAdminZone = document.getElementById("demoAdminZone");
-const demoResetOpenBtn = document.getElementById("demoResetOpenBtn");
-const demoResetPanel = document.getElementById("demoResetPanel");
-const demoResetConfirmInput = document.getElementById("demoResetConfirmInput");
-const demoResetStatus = document.getElementById("demoResetStatus");
-const demoResetCancelBtn = document.getElementById("demoResetCancelBtn");
-const demoResetExecuteBtn = document.getElementById("demoResetExecuteBtn");
-const DEMO_RESET_CONFIRM_TEXT = "REINICIAR LOGITEC";
+const labResetSection = document.getElementById("labResetSection");
+const labResetOpenBtn = document.getElementById("labResetOpenBtn");
+const labResetModal = document.getElementById("labResetModal");
+const labResetAck = document.getElementById("labResetAck");
+const labResetConfirmBtn = document.getElementById("labResetConfirmBtn");
+const labResetCancelBtn = document.getElementById("labResetCancelBtn");
+const labResetCloseX = document.getElementById("labResetCloseX");
+const labResetCounts = document.getElementById("labResetCounts");
+const labResetPreviewStatus = document.getElementById("labResetPreviewStatus");
+const labResetPreviewBlock = document.getElementById("labResetPreviewBlock");
+const labResetResultBlock = document.getElementById("labResetResultBlock");
+const labResetBeforeCounts = document.getElementById("labResetBeforeCounts");
+const labResetAfterCounts = document.getElementById("labResetAfterCounts");
+const labResetSnapshot = document.getElementById("labResetSnapshot");
+const labResetBusyStatus = document.getElementById("labResetBusyStatus");
+const labResetError = document.getElementById("labResetError");
+let labResetBusy = false;
+let labResetAvailable = false;
+let labResetCompleted = false;
 
 let currentRole = null;
 let movementsNextCursor = null;
@@ -7600,68 +7611,183 @@ function applyRoleNavigation(role) {
   const exportProductsFilteredBtn = document.getElementById("exportProductsFilteredBtn");
   if (exportStockFilteredBtn) exportStockFilteredBtn.style.display = canExportInventory ? "inline-block" : "none";
   if (exportProductsFilteredBtn) exportProductsFilteredBtn.style.display = canExportProducts ? "inline-block" : "none";
-  if (demoAdminZone) demoAdminZone.classList.toggle("hidden", role !== "ADMIN");
-  if (role !== "ADMIN") closeDemoResetPanel();
+  if (labResetSection && role !== "ADMIN") {
+    labResetSection.classList.add("hidden");
+    labResetAvailable = false;
+  }
 }
 
-function openDemoResetPanel() {
-  if (!demoResetPanel) return;
-  demoResetPanel.classList.remove("hidden");
-  if (demoResetConfirmInput) demoResetConfirmInput.value = "";
-  if (demoResetStatus) demoResetStatus.textContent = "";
+const LAB_RESET_COUNT_LABELS = [
+  ["inventory", "Inventario"],
+  ["inventoryQty", "Cantidad total"],
+  ["movements", "Movimientos"],
+  ["imports", "Importaciones"],
+  ["requisitions", "Requisiciones"],
+  ["reservations", "Reservas"]
+];
+
+function renderLabResetCounts(target, counts) {
+  if (!target) return;
+  const source = counts || {};
+  target.innerHTML = LAB_RESET_COUNT_LABELS.map(([key, label]) => {
+    const value = source[key] == null || source[key] === "" ? "—" : source[key];
+    return `<div class="lab-reset-count"><span>${label}</span><strong>${escCell(value)}</strong></div>`;
+  }).join("");
 }
 
-function closeDemoResetPanel() {
-  if (!demoResetPanel) return;
-  demoResetPanel.classList.add("hidden");
-  if (demoResetConfirmInput) demoResetConfirmInput.value = "";
-  if (demoResetStatus) demoResetStatus.textContent = "";
+function setLabResetError(message) {
+  if (labResetError) labResetError.textContent = message || "";
 }
 
-async function refreshDemoModules() {
-  await Promise.all([
-    loadCatalogData(),
-    loadStockStrip(),
-    loadInventoryMovements(),
-    loadTraceability(),
-    loadScanEvents()
-  ]);
+function syncLabResetConfirmEnabled() {
+  if (!labResetConfirmBtn) return;
+  const ready = Boolean(labResetAck?.checked) && !labResetBusy && !labResetCompleted;
+  labResetConfirmBtn.disabled = !ready;
+  if (!labResetBusy && !labResetCompleted) labResetConfirmBtn.textContent = "Sí, reiniciar laboratorio";
 }
 
-async function runDemoReset() {
-  const typed = demoResetConfirmInput?.value?.trim() || "";
-  if (typed !== DEMO_RESET_CONFIRM_TEXT) {
-    if (demoResetStatus) demoResetStatus.textContent = "Confirmación incorrecta. Escribe exactamente REINICIAR LOGITEC.";
+function setLabResetBusy(busy) {
+  labResetBusy = busy;
+  if (labResetOpenBtn) labResetOpenBtn.disabled = busy;
+  if (labResetAck) labResetAck.disabled = busy;
+  if (labResetCancelBtn) labResetCancelBtn.disabled = busy;
+  if (labResetCloseX) labResetCloseX.disabled = busy;
+  if (labResetBusyStatus) labResetBusyStatus.classList.toggle("hidden", !busy);
+  if (busy && labResetConfirmBtn) {
+    labResetConfirmBtn.disabled = true;
+    labResetConfirmBtn.innerHTML = '<span class="lab-reset-spinner"></span>Reiniciando laboratorio…';
+  } else {
+    syncLabResetConfirmEnabled();
+  }
+}
+
+function resetLabResetModalState() {
+  labResetCompleted = false;
+  if (labResetPreviewBlock) labResetPreviewBlock.classList.remove("hidden");
+  if (labResetResultBlock) labResetResultBlock.classList.add("hidden");
+  if (labResetAck) labResetAck.checked = false;
+  if (labResetCounts) labResetCounts.innerHTML = "";
+  if (labResetPreviewStatus) labResetPreviewStatus.textContent = "Cargando resumen…";
+  if (labResetSnapshot) labResetSnapshot.textContent = "";
+  setLabResetError("");
+  setLabResetBusy(false);
+}
+
+function closeLabResetModal() {
+  if (labResetBusy) return;
+  closeModal("labResetModal");
+}
+
+async function initLabResetAvailability() {
+  if (!labResetSection) return;
+  if (currentRole !== "ADMIN") {
+    labResetAvailable = false;
+    labResetSection.classList.add("hidden");
     return;
   }
-
-  if (demoResetStatus) demoResetStatus.textContent = "Reiniciando datos operativos...";
-  if (demoResetExecuteBtn) demoResetExecuteBtn.disabled = true;
-  if (demoResetCancelBtn) demoResetCancelBtn.disabled = true;
-
   try {
-    const response = await authenticatedFetch("/api/admin/demo-reset", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirmation: DEMO_RESET_CONFIRM_TEXT })
-    });
-    if (!response) {
-      if (demoResetStatus) demoResetStatus.textContent = "Sesión expirada. Vuelve a iniciar sesión.";
+    const response = await authenticatedFetch("/api/admin/lab-reset");
+    if (!response || response.status === 404 || !response.ok) {
+      labResetAvailable = false;
+      labResetSection.classList.add("hidden");
       return;
     }
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (demoResetStatus) demoResetStatus.textContent = data.message || "No se pudo reiniciar los datos operativos.";
+    labResetAvailable = data.available === true;
+    labResetSection.classList.toggle("hidden", !labResetAvailable);
+  } catch (_error) {
+    labResetAvailable = false;
+    labResetSection.classList.add("hidden");
+  }
+}
+
+async function openLabResetModal() {
+  if (!labResetAvailable || currentRole !== "ADMIN" || labResetBusy) return;
+  resetLabResetModalState();
+  openModal("labResetModal");
+  try {
+    const response = await authenticatedFetch("/api/admin/lab-reset");
+    if (!response) {
+      setLabResetError("Sesión expirada. Vuelve a iniciar sesión.");
       return;
     }
-    if (demoResetStatus) demoResetStatus.textContent = data.message || "Datos operativos reiniciados.";
-    closeDemoResetPanel();
-    await refreshDemoModules();
+    if (response.status === 404 || !response.ok) {
+      const data = await response.json().catch(() => ({}));
+      labResetAvailable = false;
+      if (labResetSection) labResetSection.classList.add("hidden");
+      setLabResetError(data.message || "El reinicio de laboratorio no está disponible.");
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    renderLabResetCounts(labResetCounts, data.counts);
+    if (labResetPreviewStatus) {
+      labResetPreviewStatus.textContent = "Resumen actual del entorno DEV. Nada se ha eliminado todavía.";
+    }
   } catch (_error) {
-    if (demoResetStatus) demoResetStatus.textContent = "Error de red al reiniciar datos operativos.";
-  } finally {
-    if (demoResetExecuteBtn) demoResetExecuteBtn.disabled = false;
-    if (demoResetCancelBtn) demoResetCancelBtn.disabled = false;
+    setLabResetError("No se pudo cargar el resumen previo.");
+  }
+}
+
+async function refreshAfterLabReset() {
+  await Promise.all([
+    typeof loadCatalogData === "function" ? loadCatalogData().catch(() => {}) : Promise.resolve(),
+    typeof loadStockStrip === "function" ? loadStockStrip().catch(() => {}) : Promise.resolve(),
+    typeof loadInventoryMovements === "function" ? loadInventoryMovements().catch(() => {}) : Promise.resolve(),
+    typeof loadTraceability === "function" ? loadTraceability().catch(() => {}) : Promise.resolve(),
+    typeof loadScanEvents === "function" ? loadScanEvents().catch(() => {}) : Promise.resolve(),
+    typeof loadRequisitionsList === "function" ? loadRequisitionsList().catch(() => {}) : Promise.resolve(),
+    typeof loadTasks === "function" ? loadTasks().catch(() => {}) : Promise.resolve(),
+    typeof loadIncidents === "function" ? loadIncidents().catch(() => {}) : Promise.resolve(),
+    typeof loadInboundList === "function" ? loadInboundList().catch(() => {}) : Promise.resolve(),
+    typeof loadOutboundList === "function" ? loadOutboundList().catch(() => {}) : Promise.resolve()
+  ]);
+}
+
+async function runLabReset() {
+  if (labResetBusy) return;
+  if (!labResetAck?.checked) {
+    setLabResetError("Marca la casilla para confirmar que entiendes el alcance.");
+    return;
+  }
+  setLabResetError("");
+  setLabResetBusy(true);
+  try {
+    const response = await authenticatedFetch("/api/admin/lab-reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmed: true })
+    });
+    if (!response) {
+      setLabResetError("Sesión expirada. Vuelve a iniciar sesión.");
+      setLabResetBusy(false);
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok !== true) {
+      console.error("[lab-reset]", data);
+      setLabResetError(data.message || "No se pudo reiniciar el laboratorio.");
+      setLabResetBusy(false);
+      return;
+    }
+    if (labResetPreviewBlock) labResetPreviewBlock.classList.add("hidden");
+    if (labResetResultBlock) labResetResultBlock.classList.remove("hidden");
+    renderLabResetCounts(labResetBeforeCounts, data.before);
+    renderLabResetCounts(labResetAfterCounts, data.after);
+    if (labResetSnapshot) {
+      const snapshotId = data.snapshot?.path || data.snapshot?.id || "—";
+      labResetSnapshot.textContent = `Snapshot creado: ${snapshotId}`;
+    }
+    labResetCompleted = true;
+    setLabResetBusy(false);
+    if (labResetConfirmBtn) {
+      labResetConfirmBtn.disabled = true;
+      labResetConfirmBtn.textContent = "Laboratorio reiniciado";
+    }
+    await refreshAfterLabReset();
+  } catch (error) {
+    console.error("[lab-reset]", error);
+    setLabResetError("Error de red al reiniciar el laboratorio.");
+    setLabResetBusy(false);
   }
 }
 
@@ -8154,6 +8280,7 @@ async function validateSession() {
     currentRole = user.role || "CLIENT";
     currentUserId = user.id || null;
     applyRoleNavigation(currentRole);
+    void initLabResetAvailability();
 
     if (statusBox) statusBox.innerHTML = '<span class="ok">Sistema operativo</span>';
     const displayName = user.fullName || user.email || "Usuario";
@@ -8555,9 +8682,17 @@ if (exportStockBtn) exportStockBtn.addEventListener("click", () => void exportSt
 if (exportMovementsBtn) exportMovementsBtn.addEventListener("click", () => void exportMovementsCsv());
 if (exportTraceBtn) exportTraceBtn.addEventListener("click", () => void exportTraceabilityCsv());
 if (exportProductsBtn) exportProductsBtn.addEventListener("click", () => void exportProductsCsv());
-if (demoResetOpenBtn) demoResetOpenBtn.addEventListener("click", openDemoResetPanel);
-if (demoResetCancelBtn) demoResetCancelBtn.addEventListener("click", closeDemoResetPanel);
-if (demoResetExecuteBtn) demoResetExecuteBtn.addEventListener("click", () => void runDemoReset());
+if (labResetOpenBtn) labResetOpenBtn.addEventListener("click", () => void openLabResetModal());
+if (labResetCancelBtn) labResetCancelBtn.addEventListener("click", closeLabResetModal);
+if (labResetCloseX) labResetCloseX.addEventListener("click", closeLabResetModal);
+if (labResetAck) labResetAck.addEventListener("change", syncLabResetConfirmEnabled);
+if (labResetConfirmBtn) labResetConfirmBtn.addEventListener("click", () => void runLabReset());
+if (labResetModal && labResetModal.dataset.modalWired !== "1") {
+  labResetModal.dataset.modalWired = "1";
+  labResetModal.addEventListener("click", (event) => {
+    if (event.target === labResetModal) closeLabResetModal();
+  });
+}
 if (taskList) {
   taskList.addEventListener("click", (event) => {
     const target = event.target;

@@ -7,13 +7,8 @@ import {
   OperationalResetError,
   assertDestructiveAuthorization,
   assertSafeOperationalResetEnv,
-  createOperationalSnapshot,
-  deleteOperationalData,
-  gitSha,
-  measureOperationalCounts,
-  newSnapshotDir,
-  tryOptionalPgDump,
-  verifyOperationalSnapshot
+  runOperationalReset,
+  type OperationalCounts
 } from "./lib.js";
 
 dotenv.config();
@@ -25,7 +20,7 @@ function parseArgs(argv: string[]) {
   return { execute, confirm };
 }
 
-function printCounts(label: string, counts: Awaited<ReturnType<typeof measureOperationalCounts>>) {
+function printCounts(label: string, counts: OperationalCounts) {
   console.log(`\n${label}`);
   console.log(
     JSON.stringify(
@@ -115,8 +110,8 @@ async function main() {
     )
   );
 
-  const before = await measureOperationalCounts(prisma);
-  printCounts("ANTES", before);
+  const result = await runOperationalReset(prisma, { execute: args.execute });
+  printCounts("ANTES", result.before);
 
   if (!args.execute) {
     console.log("\nDRY RUN: cero escrituras. Para ejecutar mañana:");
@@ -124,23 +119,13 @@ async function main() {
     return;
   }
 
-  const snapshotDir = newSnapshotDir();
-  const snapshot = await createOperationalSnapshot(prisma, snapshotDir, {
-    gitSha: gitSha(),
-    environment: process.env.DATABASE_ENVIRONMENT || process.env.NODE_ENV || "development",
-    counts: before
-  });
-  const liveAfterSnapshot = await measureOperationalCounts(prisma);
-  verifyOperationalSnapshot(snapshot.snapshotDir, before, liveAfterSnapshot);
-  const pgDump = tryOptionalPgDump(snapshot.snapshotDir, process.env.DATABASE_URL || "");
-
   console.log("\nSNAPSHOT");
   console.log(
     JSON.stringify(
       {
-        path: snapshot.snapshotDir,
-        manifest: snapshot.manifestPath,
-        pgDump: pgDump || "omitido (pg_dump ausente o pooler)",
+        path: result.snapshotDir,
+        manifest: result.snapshotManifest,
+        pgDump: result.pgDump || "omitido (pg_dump ausente o pooler)",
         result: "PASS"
       },
       null,
@@ -148,42 +133,26 @@ async function main() {
     )
   );
 
-  await prisma.$transaction((tx) => deleteOperationalData(tx), { maxWait: 10_000, timeout: 180_000 });
-
-  const after = await measureOperationalCounts(prisma);
+  const after = result.after;
+  if (!after) {
+    throw new OperationalResetError("RESET DEV FAIL: sin conteos posteriores.", "RESET_VERIFY");
+  }
   printCounts("DESPUÉS", after);
   console.log("\nMAESTROS");
   console.log(
     JSON.stringify(
       {
-        users: { before: before.users, after: after.users },
-        clients: { before: before.clients, after: after.clients },
-        projects: { before: before.projects, after: after.projects },
-        products: { before: before.products, after: after.products },
-        productProjects: { before: before.productProjects, after: after.productProjects },
-        locations: { before: before.locations, after: after.locations }
+        users: { before: result.before.users, after: after.users },
+        clients: { before: result.before.clients, after: after.clients },
+        projects: { before: result.before.projects, after: after.projects },
+        products: { before: result.before.products, after: after.products },
+        productProjects: { before: result.before.productProjects, after: after.productProjects },
+        locations: { before: result.before.locations, after: after.locations }
       },
       null,
       2
     )
   );
-
-  const mastersOk =
-    before.users === after.users &&
-    before.clients === after.clients &&
-    before.projects === after.projects &&
-    before.products === after.products &&
-    before.productProjects === after.productProjects &&
-    before.locations === after.locations;
-  const inventoryClear =
-    after.inventoryRows === 0 &&
-    after.inventoryQty === "0" &&
-    after.layerQty === "0" &&
-    after.inventoryReserved === "0" &&
-    after.layerReserved === "0";
-  if (!mastersOk || !inventoryClear) {
-    throw new OperationalResetError("RESET DEV FAIL: maestros o inventario no quedaron como se esperaba.", "RESET_VERIFY");
-  }
   console.log("\nResultado: RESET DEV PASS");
 }
 

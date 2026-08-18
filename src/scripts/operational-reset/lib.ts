@@ -439,6 +439,157 @@ export function gitSha(): string {
   }
 }
 
+export const PRODUCTION_RESET_GUARD_CODES = [
+  "GUARD_NODE_ENV",
+  "GUARD_DATABASE_ENVIRONMENT",
+  "GUARD_PROD_DATABASE"
+] as const;
+
+export function isProductionResetGuard(code: string): boolean {
+  return (PRODUCTION_RESET_GUARD_CODES as readonly string[]).includes(code);
+}
+
+export type LabResetUiCounts = {
+  inventory: number;
+  inventoryQty: string;
+  movements: number;
+  imports: number;
+  requisitions: number;
+  reservations: number;
+  serials: number;
+  scanEvents: number;
+};
+
+export type LabResetMasterCounts = {
+  users: number;
+  clients: number;
+  projects: number;
+  products: number;
+  productProjects: number;
+  locations: number;
+  incidents: number;
+};
+
+export function toLabResetUiCounts(counts: OperationalCounts): LabResetUiCounts {
+  return {
+    inventory: counts.inventoryRows,
+    inventoryQty: counts.inventoryQty,
+    movements: counts.inventoryMovements,
+    imports: counts.importBatches,
+    requisitions: counts.requisitions,
+    reservations: counts.inventoryReservations,
+    serials: counts.inventorySerials,
+    scanEvents: counts.scanEvents
+  };
+}
+
+export function toLabResetMasterCounts(counts: OperationalCounts): LabResetMasterCounts {
+  return {
+    users: counts.users,
+    clients: counts.clients,
+    projects: counts.projects,
+    products: counts.products,
+    productProjects: counts.productProjects,
+    locations: counts.locations,
+    incidents: counts.incidents
+  };
+}
+
+export function assertMastersPreserved(before: OperationalCounts, after: OperationalCounts): void {
+  const ok =
+    before.users === after.users &&
+    before.clients === after.clients &&
+    before.projects === after.projects &&
+    before.products === after.products &&
+    before.productProjects === after.productProjects &&
+    before.locations === after.locations &&
+    before.incidents === after.incidents &&
+    before.comments === after.comments;
+  if (!ok) {
+    throw new OperationalResetError(
+      "RESET DEV FAIL: maestros o inventario no quedaron como se esperaba.",
+      "RESET_VERIFY"
+    );
+  }
+}
+
+export function assertOperationalDataCleared(after: OperationalCounts): void {
+  const inventoryClear =
+    after.inventoryRows === 0 &&
+    after.inventoryQty === "0" &&
+    after.layerQty === "0" &&
+    after.inventoryReserved === "0" &&
+    after.layerReserved === "0";
+  const operationalClear =
+    after.inventoryStock === 0 &&
+    after.inventoryLayerRows === 0 &&
+    after.inventorySerials === 0 &&
+    after.inventoryReservations === 0 &&
+    after.inventoryMovements === 0 &&
+    after.requisitions === 0 &&
+    after.requisitionLines === 0 &&
+    after.scanEvents === 0 &&
+    after.importBatches === 0 &&
+    after.importRows === 0 &&
+    after.importRowAudits === 0 &&
+    after.pickTasks === 0 &&
+    after.activityOperational === 0;
+  if (!inventoryClear || !operationalClear) {
+    throw new OperationalResetError(
+      "RESET DEV FAIL: maestros o inventario no quedaron como se esperaba.",
+      "RESET_VERIFY"
+    );
+  }
+}
+
+export type OperationalResetRunResult = {
+  before: OperationalCounts;
+  after: OperationalCounts | null;
+  snapshotDir: string | null;
+  snapshotManifest: string | null;
+  pgDump: string | null;
+};
+
+export async function runOperationalReset(
+  db: PrismaClient,
+  options: { execute: boolean }
+): Promise<OperationalResetRunResult> {
+  const before = await measureOperationalCounts(db);
+  if (!options.execute) {
+    return {
+      before,
+      after: null,
+      snapshotDir: null,
+      snapshotManifest: null,
+      pgDump: null
+    };
+  }
+
+  const snapshotDir = newSnapshotDir();
+  const snapshot = await createOperationalSnapshot(db, snapshotDir, {
+    gitSha: gitSha(),
+    environment: process.env.DATABASE_ENVIRONMENT || process.env.NODE_ENV || "development",
+    counts: before
+  });
+  const liveAfterSnapshot = await measureOperationalCounts(db);
+  verifyOperationalSnapshot(snapshot.snapshotDir, before, liveAfterSnapshot);
+  const pgDump = tryOptionalPgDump(snapshot.snapshotDir, process.env.DATABASE_URL || "");
+
+  await db.$transaction((tx) => deleteOperationalData(tx), { maxWait: 10_000, timeout: 180_000 });
+
+  const after = await measureOperationalCounts(db);
+  assertMastersPreserved(before, after);
+  assertOperationalDataCleared(after);
+
+  return {
+    before,
+    after,
+    snapshotDir: snapshot.snapshotDir,
+    snapshotManifest: snapshot.manifestPath,
+    pgDump
+  };
+}
+
 export function tryOptionalPgDump(snapshotDir: string, databaseUrl: string): string | null {
   try {
     execFileSync("pg_dump", ["--version"], { stdio: "ignore" });

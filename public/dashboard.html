@@ -1168,23 +1168,6 @@
       .file-status.error {
         color: var(--error);
       }
-      .demo-admin-zone {
-        margin-top: 28px;
-        padding: 18px;
-        border: 1px solid rgba(198, 40, 40, 0.45);
-        border-radius: 12px;
-        background: rgba(198, 40, 40, 0.08);
-      }
-      .demo-admin-zone h4 {
-        margin: 0 0 10px;
-        color: #ffb4b4;
-      }
-      .demo-admin-warning {
-        margin: 0 0 14px;
-        color: #ffd6d6;
-        font-size: 0.9rem;
-        line-height: 1.45;
-      }
       .btn-danger {
         padding: 10px 16px;
         border: 0;
@@ -1198,19 +1181,72 @@
         opacity: 0.65;
         cursor: not-allowed;
       }
-      .demo-reset-panel {
-        margin-top: 14px;
-        padding-top: 14px;
-        border-top: 1px solid rgba(198, 40, 40, 0.35);
+      .lab-reset-card {
+        border: 1px dashed #c9a227;
+        background: linear-gradient(180deg, rgba(201, 162, 39, 0.12) 0%, rgba(15, 24, 48, 0.4) 100%);
       }
-      .demo-reset-panel input {
-        width: 100%;
-        margin: 10px 0 12px;
-        padding: 10px;
-        border-radius: 8px;
-        border: 1px solid #8b3a3a;
-        background: #1a0f14;
-        color: #fff;
+      .lab-reset-card .secondary-panel-title {
+        color: #f5d76e;
+      }
+      .lab-reset-counts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 8px;
+        margin: 12px 0;
+      }
+      .lab-reset-count {
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: rgba(15, 24, 48, 0.55);
+      }
+      .lab-reset-count span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .lab-reset-count strong {
+        font-size: 1.15rem;
+      }
+      .lab-reset-compare {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin: 12px 0;
+      }
+      .lab-reset-check {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        margin: 14px 0;
+        font-weight: 600;
+      }
+      .lab-reset-check input {
+        margin-top: 3px;
+      }
+      .lab-reset-spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: lab-reset-spin 0.7s linear infinite;
+        vertical-align: -2px;
+        margin-right: 8px;
+      }
+      @keyframes lab-reset-spin {
+        to { transform: rotate(360deg); }
+      }
+      .lab-reset-busy {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 10px 0 0;
+        color: #f5d76e;
+        font-weight: 700;
       }
       .import-processing {
         color: #9fd0ff;
@@ -2997,24 +3033,6 @@
               <p id="changePasswordError" class="inline-error"></p>
               <button id="changePasswordBtn" type="submit" class="btn-primary btn-compact">Actualizar contraseña</button>
             </form>
-            <div id="demoAdminZone" class="demo-admin-zone hidden">
-              <h4>Zona de administración del sistema</h4>
-              <p class="demo-admin-warning">
-                Esta acción elimina catálogo, inventario, movimientos y registros operativos. No elimina usuarios ni accesos.
-              </p>
-              <button type="button" id="demoResetOpenBtn" class="btn-danger">Reiniciar datos operativos</button>
-              <div id="demoResetPanel" class="demo-reset-panel hidden">
-                <p class="subtitle" style="margin: 0">
-                  Para confirmar, escribe exactamente: <strong>REINICIAR LOGITEC</strong>
-                </p>
-                <input id="demoResetConfirmInput" type="text" placeholder="REINICIAR LOGITEC" autocomplete="off" />
-                <p id="demoResetStatus" class="subtitle" style="min-height: 1.2em"></p>
-                <div class="import-actions">
-                  <button type="button" id="demoResetCancelBtn">Cancelar</button>
-                  <button type="button" id="demoResetExecuteBtn" class="btn-danger">Confirmar reinicio</button>
-                </div>
-              </div>
-            </div>
           </div>
           <div id="modulePicking" class="module-pane hidden picking-panel">
             <div class="module-screen-header module-header-band">
@@ -3850,6 +3868,12 @@
                 <li><strong>Preferencias operativas</strong> — atajos y módulos visibles según tu rol.</li>
               </ul>
             </div>
+            <div class="card-panel lab-reset-card hidden" id="labResetSection">
+              <h4 class="secondary-panel-title">🧪 LABORATORIO / ENTORNO DEV</h4>
+              <p class="module-lead">Reinicia únicamente los datos operativos de este entorno de desarrollo. Usuarios, clientes, proyectos, productos y ubicaciones se conservan.</p>
+              <button type="button" id="labResetOpenBtn" class="btn-danger">Reiniciar laboratorio</button>
+              <p class="assignee-hint" style="margin-top:10px">Visible solo en DEV/QA y para administradores. No opera contra producción.</p>
+            </div>
             <div class="card-panel" id="importWizardPanel">
               <h4 class="secondary-panel-title">Importar datos</h4>
               <p class="module-hint">Flujo: Archivo → Hoja → Mapeo → Validación → Revisión → Confirmar. Subir un archivo no modifica inventario hasta confirmar.</p>
@@ -3954,6 +3978,47 @@
       </div>
     </div>
 
+    <div id="labResetModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-labelledby="labResetTitle" aria-modal="true">
+        <div class="modal-header">
+          <h3 id="labResetTitle">Reiniciar laboratorio</h3>
+          <button type="button" class="modal-close" id="labResetCloseX" aria-label="Cerrar">×</button>
+        </div>
+        <div id="labResetPreviewBlock">
+          <p class="module-lead">Esta acción eliminará únicamente los datos operativos del laboratorio. Los maestros se conservarán.</p>
+          <div id="labResetCounts" class="lab-reset-counts"></div>
+          <p id="labResetPreviewStatus" class="ops-message"></p>
+          <label class="lab-reset-check" for="labResetAck">
+            <input id="labResetAck" type="checkbox" />
+            <span>Entiendo que se eliminarán los datos operativos de DEV</span>
+          </label>
+        </div>
+        <div id="labResetResultBlock" class="hidden">
+          <p id="labResetSuccessTitle" class="ops-message ok">✓ Laboratorio reiniciado correctamente</p>
+          <div class="lab-reset-compare">
+            <div>
+              <h4 class="secondary-panel-title">ANTES</h4>
+              <div id="labResetBeforeCounts" class="lab-reset-counts"></div>
+            </div>
+            <div>
+              <h4 class="secondary-panel-title">DESPUÉS</h4>
+              <div id="labResetAfterCounts" class="lab-reset-counts"></div>
+            </div>
+          </div>
+          <p id="labResetSnapshot" class="assignee-hint"></p>
+        </div>
+        <p id="labResetBusyStatus" class="lab-reset-busy hidden" role="status" aria-live="polite">
+          <span class="lab-reset-spinner"></span>
+          <span>Reiniciando laboratorio… esto puede tardar varios segundos.</span>
+        </p>
+        <p id="labResetError" class="ops-message error"></p>
+        <div class="import-actions" style="margin-top:12px">
+          <button type="button" id="labResetCancelBtn" class="btn-secondary">Cancelar</button>
+          <button type="button" id="labResetConfirmBtn" class="btn-danger" disabled>Sí, reiniciar laboratorio</button>
+        </div>
+      </div>
+    </div>
+
     <div id="catalogImportModal" class="modal-overlay" aria-hidden="true">
       <div class="modal-panel" role="dialog" aria-labelledby="catalogImportTitle">
         <div class="modal-header">
@@ -4015,6 +4080,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=43"></script>
+    <script src="/dashboard.js?v=45"></script>
   </body>
 </html>
