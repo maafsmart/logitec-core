@@ -31,11 +31,39 @@ function asMeta(value: Prisma.JsonValue | null | undefined): Record<string, any>
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, any>) : {};
 }
 
-function rowIssues(row: ReviewRow): any[] {
+function rowIssues(row: { errors?: Prisma.JsonValue | null; warnings?: Prisma.JsonValue | null }): any[] {
   return [
     ...(Array.isArray(row.errors) ? row.errors : []),
     ...(Array.isArray(row.warnings) ? row.warnings : [])
   ];
+}
+
+export function normalizeImportLocationCode(value: unknown): string {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+export function collectMissingLocations(
+  rows: Array<{
+    sourceRow: number;
+    reviewState: string;
+    errors?: Prisma.JsonValue | null;
+    warnings?: Prisma.JsonValue | null;
+  }>
+): Array<{ code: string; records: number; sourceRows: number[] }> {
+  const grouped = new Map<string, { code: string; records: number; sourceRows: number[] }>();
+  for (const row of rows) {
+    if (row.reviewState === "IGNORED") continue;
+    for (const issue of rowIssues(row)) {
+      if (issue.code !== "SOURCE_LOCATION_NOT_IN_MASTER") continue;
+      const code = normalizeImportLocationCode(issue.value);
+      if (!code) continue;
+      const entry = grouped.get(code) || { code, records: 0, sourceRows: [] };
+      entry.records += 1;
+      entry.sourceRows.push(row.sourceRow);
+      grouped.set(code, entry);
+    }
+  }
+  return [...grouped.values()].sort((a, b) => b.records - a.records || a.code.localeCompare(b.code));
 }
 
 export type ReviewMatchFilters = {

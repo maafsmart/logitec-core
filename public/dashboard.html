@@ -1346,8 +1346,24 @@
         font-size: 0.8rem;
         color: var(--muted);
       }
-      .import-sync-line.is-ok { color: var(--ok); }
-      .import-sync-line.is-error { color: var(--error); font-weight: 700; }
+      .import-missing-box {
+        margin: 12px 0;
+        padding: 12px;
+        border: 1px solid #fbbf24;
+        background: #fffbeb;
+        border-radius: 10px;
+      }
+      .import-missing-box h4 {
+        margin: 0 0 8px;
+        color: #92400e;
+      }
+      #importMissingLocList {
+        margin: 8px 0 12px;
+        max-height: 180px;
+        overflow: auto;
+        font-size: 0.85rem;
+        color: #78350f;
+      }
       .import-busy-banner {
         display: flex;
         align-items: center;
@@ -4285,6 +4301,30 @@
       </div>
     </div>
 
+    <div id="importMissingLocModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-labelledby="importMissingLocTitle" aria-modal="true">
+        <div class="modal-header">
+          <h3 id="importMissingLocTitle">Dar de alta ubicaciones faltantes</h3>
+          <button type="button" class="modal-close" id="importMissingLocCloseX" aria-label="Cerrar">×</button>
+        </div>
+        <p id="importMissingLocLead" class="module-lead"></p>
+        <div id="importMissingLocList"></div>
+        <p id="importMissingLocBusy" class="lab-reset-busy hidden" role="status" aria-live="polite">
+          <span class="lab-reset-spinner"></span>
+          <span>Creando ubicaciones…</span>
+        </p>
+        <p id="importMissingLocError" class="ops-message error"></p>
+        <label class="lab-reset-check" for="importMissingLocAck">
+          <input id="importMissingLocAck" type="checkbox" />
+          <span>Confirmo que estas ubicaciones existen físicamente</span>
+        </label>
+        <div class="import-actions" style="margin-top:12px">
+          <button type="button" id="importMissingLocCancelBtn" class="btn-secondary">Cancelar</button>
+          <button type="button" id="importMissingLocConfirmBtn" class="btn-primary" disabled>Crear ubicaciones y revalidar</button>
+        </div>
+      </div>
+    </div>
+
     <div id="catalogImportModal" class="modal-overlay" aria-hidden="true">
       <div class="modal-panel" role="dialog" aria-labelledby="catalogImportTitle">
         <div class="modal-header">
@@ -4346,6 +4386,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=48"></script>
+    <script src="/dashboard.js?v=49"></script>
   </body>
 </html>

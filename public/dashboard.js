@@ -8393,6 +8393,7 @@ let currentImportMapping = {};
 let importResumeDismissedId = null;
 let importResumeActive = null;
 let importHydrating = false;
+let importMissingLocations = [];
 const IMPORT_BATCH_HINT_KEY = "logitec.import.lastBatchId";
 const importUi = {
   busy: false,
@@ -8527,6 +8528,7 @@ function resetImportWizardLocalState() {
   if (summary) summary.innerHTML = "";
   const review = document.getElementById("importReviewQueueBox");
   if (review) review.innerHTML = "";
+  importMissingLocations = [];
 }
 
 function resetImportDownstream(fromStep) {
@@ -8873,6 +8875,125 @@ function renderImportMapping(headers, mapping) {
   });
 }
 
+function resolveImportMissingLocations(data, groups) {
+  const fromState = Array.isArray(data?.missingLocations) ? data.missingLocations : [];
+  if (fromState.length) {
+    return fromState
+      .map((item) => ({
+        code: String(item.code || "").trim().toUpperCase(),
+        records: Number(item.records || 0)
+      }))
+      .filter((item) => item.code);
+  }
+  const grouped = new Map();
+  (Array.isArray(groups) ? groups : []).forEach((group) => {
+    if (group.issueCode !== "SOURCE_LOCATION_NOT_IN_MASTER") return;
+    const code = String(group.sourceValue || "").trim().toUpperCase();
+    if (!code) return;
+    grouped.set(code, (grouped.get(code) || 0) + Number(group.records || 0));
+  });
+  return [...grouped.entries()]
+    .map(([code, records]) => ({ code, records }))
+    .sort((a, b) => b.records - a.records || a.code.localeCompare(b.code));
+}
+
+function syncImportMissingLocConfirmEnabled() {
+  const ack = document.getElementById("importMissingLocAck");
+  const btn = document.getElementById("importMissingLocConfirmBtn");
+  if (!btn) return;
+  btn.disabled = importUi.busy || !ack?.checked || !importMissingLocations.length;
+}
+
+function closeImportMissingLocModal(force) {
+  if (importUi.busy && !force) return;
+  const modal = document.getElementById("importMissingLocModal");
+  if (!modal) return;
+  modal.classList.remove("open");
+  modal.setAttribute("aria-hidden", "true");
+  const ack = document.getElementById("importMissingLocAck");
+  if (ack) ack.checked = false;
+  const err = document.getElementById("importMissingLocError");
+  if (err) err.textContent = "";
+  document.getElementById("importMissingLocBusy")?.classList.add("hidden");
+  syncImportMissingLocConfirmEnabled();
+}
+
+function openImportMissingLocModal() {
+  if (importUi.busy || !importMissingLocations.length) return;
+  const modal = document.getElementById("importMissingLocModal");
+  const lead = document.getElementById("importMissingLocLead");
+  const list = document.getElementById("importMissingLocList");
+  const err = document.getElementById("importMissingLocError");
+  const ack = document.getElementById("importMissingLocAck");
+  if (!modal || !lead || !list) return;
+  const codes = importMissingLocations.length;
+  const records = importMissingLocations.reduce((sum, item) => sum + Number(item.records || 0), 0);
+  lead.textContent = `Se crearán ${formatImportCount(codes)} ubicaciones nuevas en el catálogo maestro. Esto permitirá validar ${formatImportCount(records)} registros del archivo.`;
+  list.innerHTML = `<ul>${importMissingLocations.map((item) => `<li><strong>${escCell(item.code)}</strong> — ${formatImportCount(item.records)} registros</li>`).join("")}</ul>`;
+  if (err) err.textContent = "";
+  if (ack) ack.checked = false;
+  document.getElementById("importMissingLocBusy")?.classList.add("hidden");
+  modal.classList.add("open");
+  modal.setAttribute("aria-hidden", "false");
+  syncImportMissingLocConfirmEnabled();
+}
+
+async function createImportMissingLocationsAndRevalidate() {
+  if (importUi.busy || !currentImportId || !importMissingLocations.length) return;
+  const ack = document.getElementById("importMissingLocAck");
+  if (!ack?.checked) return;
+  void withImportLock("Creando ubicaciones…", async () => {
+    const confirmBtn = document.getElementById("importMissingLocConfirmBtn");
+    const cancelBtn = document.getElementById("importMissingLocCancelBtn");
+    const closeX = document.getElementById("importMissingLocCloseX");
+    const busyEl = document.getElementById("importMissingLocBusy");
+    const err = document.getElementById("importMissingLocError");
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "Creando ubicaciones…";
+    }
+    if (cancelBtn) cancelBtn.disabled = true;
+    if (closeX) closeX.disabled = true;
+    if (busyEl) busyEl.classList.remove("hidden");
+    if (err) err.textContent = "";
+    try {
+      const created = await authenticatedFetch(`/api/imports/${currentImportId}/review/missing-locations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmPhysical: true })
+      });
+      if (!created?.ok) {
+        const body = await created?.json().catch(() => ({}));
+        throw new Error(body.message || "No se pudieron crear las ubicaciones.");
+      }
+      const createdBody = await created.json();
+      const validated = await authenticatedFetch(`/api/imports/${currentImportId}/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}"
+      });
+      if (validated && !validated.ok) {
+        const body = await validated.json().catch(() => ({}));
+        throw new Error(body.message || "Las ubicaciones se crearon, pero no se pudo revalidar.");
+      }
+      await hydrateImportFromServer(currentImportId);
+      setImportStatus(
+        `✓ Ubicaciones sincronizadas. Creadas: ${formatImportCount((createdBody.created || []).length)}. Bloqueados: ${formatImportCount(importUi.blocked)}. Sin asignar: ${formatImportCount(importUi.unresolved)}.`
+      );
+      closeImportMissingLocModal(true);
+    } catch (error) {
+      if (err) err.textContent = error instanceof Error ? error.message : "No se pudieron crear las ubicaciones.";
+      throw error;
+    } finally {
+      if (busyEl) busyEl.classList.add("hidden");
+      if (confirmBtn) confirmBtn.textContent = "Crear ubicaciones y revalidar";
+      if (cancelBtn) cancelBtn.disabled = false;
+      if (closeX) closeX.disabled = false;
+      syncImportMissingLocConfirmEnabled();
+    }
+  });
+}
+
 function applyImportCountsFromServer(state) {
   const counts = state.counts || {};
   importUi.totalRows = Number(state.totalRows || 0);
@@ -9076,6 +9197,20 @@ function renderImportReviewFromState(data) {
   const counts = data.counts || {};
   const groups = Array.isArray(data.groups) ? data.groups : [];
   const rows = Array.isArray(data.rows) ? data.rows : [];
+  importMissingLocations = resolveImportMissingLocations(data, groups);
+  const missingRecords = importMissingLocations.reduce((sum, item) => sum + Number(item.records || 0), 0);
+  const missingBox = importMissingLocations.length
+    ? `<div class="import-missing-box">
+        <h4>Ubicaciones nuevas detectadas: ${formatImportCount(importMissingLocations.length)}</h4>
+        <p class="module-lead">Registros afectados: ${formatImportCount(missingRecords)}. Los códigos fuente se conservarán exactamente.</p>
+        <div class="table-wrap"><table class="excel-table"><thead><tr><th>Ubicación</th><th>Registros afectados</th><th>Estado</th></tr></thead><tbody>
+          ${importMissingLocations.map((item) => `<tr><td>${escCell(item.code)}</td><td>${formatImportCount(item.records)}</td><td>No existe en maestro</td></tr>`).join("")}
+        </tbody></table></div>
+        <div class="page-toolbar" style="margin-top:10px">
+          <button type="button" id="importMissingLocOpenBtn" class="btn-primary btn-compact">Dar de alta ubicaciones faltantes</button>
+        </div>
+      </div>`
+    : "";
   box.innerHTML = `
     <h4 class="secondary-panel-title">Bandeja de revisión</h4>
     ${(data.globalNotices || []).map((n) => `<p class="operational-table-meta">${escCell(n.message)}</p>`).join("")}
@@ -9086,9 +9221,12 @@ function renderImportReviewFromState(data) {
       <span class="project-chip">Ignorados: ${formatImportCount(counts.IGNORED)}</span>
       <span class="project-chip">Sin asignar: ${formatImportCount(data.unresolvedCount)}</span>
     </div>
+    ${missingBox}
     <div class="table-wrap"><table class="excel-table"><thead><tr><th>Problema</th><th>Valor fuente</th><th>Registros</th><th>Acción</th></tr></thead><tbody>
       ${groups.map((g, index) => `<tr><td>${escCell(g.issueCode)} · ${escCell(g.field || "fila")}</td><td>${escCell(String(g.sourceValue ?? "—"))}</td><td>${g.records}</td><td>${
-        g.issueCode === "ASSIGNMENT_UNRESOLVED"
+        g.issueCode === "SOURCE_LOCATION_NOT_IN_MASTER"
+          ? "Dar de alta el código fuente"
+          : g.issueCode === "ASSIGNMENT_UNRESOLVED"
           ? `<button class="btn-secondary btn-compact" data-review-group="${index}" data-review-assign="project">Asignar proyecto</button> <button class="btn-secondary btn-compact" data-review-group="${index}" data-review-assign="fts">FREE TO SALE</button>`
           : `<button class="btn-secondary btn-compact" data-review-group="${index}">Corregir todos</button>`
       }</td></tr>${
@@ -9142,6 +9280,10 @@ function renderImportReviewFromState(data) {
     if (!row) return;
     window.alert(`Fila Excel ${Number(row.sourceRow) + 2}\nOriginal: ${JSON.stringify(row.data)}\nCorregido: ${JSON.stringify(row.corrections || {})}\nProblemas: ${JSON.stringify([...(row.errors || []), ...(row.warnings || [])])}`);
   }));
+  document.getElementById("importMissingLocOpenBtn")?.addEventListener("click", () => {
+    if (importUi.busy) return;
+    openImportMissingLocModal();
+  });
 }
 
 async function loadImportReview() {
@@ -9413,6 +9555,21 @@ if (labResetModal && labResetModal.dataset.modalWired !== "1") {
   labResetModal.dataset.modalWired = "1";
   labResetModal.addEventListener("click", (event) => {
     if (event.target === labResetModal) closeLabResetModal();
+  });
+}
+const importMissingLocModal = document.getElementById("importMissingLocModal");
+document.getElementById("importMissingLocOpenBtn")?.addEventListener("click", () => openImportMissingLocModal());
+document.getElementById("importMissingLocCancelBtn")?.addEventListener("click", () => closeImportMissingLocModal());
+document.getElementById("importMissingLocCloseX")?.addEventListener("click", () => closeImportMissingLocModal());
+document.getElementById("importMissingLocAck")?.addEventListener("change", syncImportMissingLocConfirmEnabled);
+document.getElementById("importMissingLocConfirmBtn")?.addEventListener("click", () => {
+  if (importUi.busy) return;
+  void createImportMissingLocationsAndRevalidate();
+});
+if (importMissingLocModal && importMissingLocModal.dataset.modalWired !== "1") {
+  importMissingLocModal.dataset.modalWired = "1";
+  importMissingLocModal.addEventListener("click", (event) => {
+    if (event.target === importMissingLocModal) closeImportMissingLocModal();
   });
 }
 if (taskList) {

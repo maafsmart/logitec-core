@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { HttpError } from "../../shared/http-error.js";
-import { assertImportConfirmable, buildReviewGroups } from "./import-review.service.js";
+import { assertImportConfirmable, buildReviewGroups, collectMissingLocations } from "./import-review.service.js";
 
 export const RESUMABLE_IMPORT_STATUSES = ["UPLOADED", "MAPPED", "VALIDATED", "READY", "PROCESSING"] as const;
 
@@ -183,7 +183,19 @@ export function buildImportResumePayload(
     assignmentTypeCorrected,
     confirmable: confirm.confirmable,
     confirmableReason: confirm.reason,
-    validated: ["VALIDATED", "READY", "PROCESSING", "COMPLETED"].includes(batch.status) || batch.rows.length > 0
+    validated: ["VALIDATED", "READY", "PROCESSING", "COMPLETED"].includes(batch.status) || batch.rows.length > 0,
+    missingLocations: collectMissingLocations(
+      batch.rows.map((row) => ({
+        id: String(row.id || ""),
+        sourceRow: Number(row.sourceRow || 0),
+        reviewState: row.reviewState,
+        data: row.data ?? {},
+        corrections: row.corrections ?? null,
+        normalized: row.normalized ?? null,
+        errors: row.errors ?? null,
+        warnings: row.warnings ?? null
+      }))
+    ).map((item) => ({ code: item.code, records: item.records }))
   };
   if (options.includeReview) {
     const review = buildReviewGroups(

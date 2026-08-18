@@ -15,6 +15,7 @@ import {
   assignmentAuditPayload,
   buildAssignmentCorrection,
   buildReviewGroups,
+  collectMissingLocations,
   selectReviewTargets
 } from "./import-review.service.js";
 import {
@@ -24,6 +25,7 @@ import {
   importConfirmability,
   latestTimestamp
 } from "./import-resume.service.js";
+import { createMissingImportLocations } from "./import-missing-locations.service.js";
 
 const importsRouter = Router();
 const upload = multer({
@@ -370,6 +372,7 @@ importsRouter.get("/:id/review", requireRole(["ADMIN"]), async (req, res) => {
       ? [{ code: "RECONCILE_PREVIEW_ONLY", message: "Modo conciliación: vista previa únicamente. No se aplicarán cambios hasta confirmación autorizada." }]
       : [],
     groups: review.groups,
+    missingLocations: collectMissingLocations(batch.rows).map((item) => ({ code: item.code, records: item.records })),
     rows: review.rows.slice(0, 200)
   });
 });
@@ -422,6 +425,17 @@ importsRouter.patch("/:id/review", requireRole(["ADMIN"]), async (req, res) => {
     ];
   }));
   res.json({ corrected: targets.length, sourceRows: targets.map((row) => row.sourceRow), revalidateRequired: true });
+});
+
+importsRouter.post("/:id/review/missing-locations", requireRole(["ADMIN"]), async (req, res) => {
+  const id = z.string().min(1).parse(req.params.id);
+  const confirmPhysical = z.literal(true).parse(req.body.confirmPhysical);
+  const result = await createMissingImportLocations({
+    batchId: id,
+    userId: req.auth!.userId,
+    confirmPhysical
+  });
+  res.json(result);
 });
 
 importsRouter.post("/:id/review/ignore", requireRole(["ADMIN"]), async (req, res) => {
