@@ -840,6 +840,10 @@ function navigateTo(sectionId, moduleName) {
   if (showProjects) renderProjectsModule();
   if (showWarehouses) renderWarehousesModule();
   if (showLocations) renderLocationsModule();
+  if (showConfig && currentRole === "ADMIN") {
+    void refreshImportHistory();
+    void probeResumableImport();
+  }
   if (showTraceability) void loadTraceability();
   if (showTasks) {
     wireTasksModuleUi();
@@ -8386,6 +8390,10 @@ logoutBtn?.addEventListener("click", forceLogout);
 
 let currentImportId = null;
 let currentImportMapping = {};
+let importResumeDismissedId = null;
+let importResumeActive = null;
+let importHydrating = false;
+const IMPORT_BATCH_HINT_KEY = "logitec.import.lastBatchId";
 const importUi = {
   busy: false,
   busyLabel: "",
@@ -8402,11 +8410,123 @@ const importUi = {
   warningRows: 0,
   blocked: 0,
   unresolved: 0,
+  ready: 0,
+  ignored: 0,
+  corrections: 0,
+  batchStatus: "",
+  confirmable: false,
+  confirmableReason: "",
+  lastSyncAt: null,
+  syncOk: false,
   error: ""
 };
 
 function formatImportCount(n) {
   return Number(n || 0).toLocaleString("es-MX");
+}
+
+function formatImportClock(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("es-MX", {
+    timeZone: "America/Mexico_City",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).format(date);
+}
+
+function importStatusLabel(status) {
+  const labels = {
+    UPLOADED: "Cargado",
+    MAPPED: "Mapeado",
+    VALIDATED: "Validado",
+    READY: "Listo",
+    PROCESSING: "Confirmando",
+    COMPLETED: "Completado",
+    FAILED: "Fallido"
+  };
+  return labels[status] || status || "—";
+}
+
+function rememberImportBatchId(id) {
+  try {
+    if (id) localStorage.setItem(IMPORT_BATCH_HINT_KEY, id);
+  } catch (_error) {
+    /* pista opcional */
+  }
+}
+
+function setImportSyncState(kind, extra) {
+  const el = document.getElementById("importSyncLine");
+  const time = formatImportClock();
+  importUi.lastSyncAt = new Date();
+  if (!el) return;
+  if (kind === "error") {
+    importUi.syncOk = false;
+    el.className = "import-sync-line is-error";
+    el.textContent = `Última sincronización: ${time} · ${extra || "No se pudo sincronizar el estado"}`;
+    return;
+  }
+  importUi.syncOk = true;
+  el.className = "import-sync-line is-ok";
+  el.textContent = extra
+    ? `Última sincronización: ${time} · ${extra}`
+    : `Última sincronización: ${time}`;
+}
+
+function hideImportResumeBanner() {
+  document.getElementById("importResumeBanner")?.classList.add("hidden");
+}
+
+function showImportResumeBanner(active) {
+  const banner = document.getElementById("importResumeBanner");
+  const meta = document.getElementById("importResumeMeta");
+  if (!banner || !meta || !active) return;
+  const last = active.lastUpdated || active.createdAt;
+  meta.innerHTML =
+    `<div><strong>Archivo:</strong> ${escCell(active.originalFileName || "—")}</div>` +
+    `<div><strong>Hoja:</strong> ${escCell(active.sheetName || "—")}</div>` +
+    `<div><strong>Estado:</strong> ${escCell(importStatusLabel(active.status))}</div>` +
+    `<div><strong>Filas:</strong> ${formatImportCount(active.totalRows || active.sheetRows || 0)}</div>` +
+    `<div><strong>Última actualización:</strong> ${escCell(formatMexicoCityDateTime(last))}</div>`;
+  banner.classList.remove("hidden");
+}
+
+function resetImportWizardLocalState() {
+  currentImportId = null;
+  currentImportMapping = {};
+  importUi.fileName = "";
+  importUi.sheetName = "";
+  importUi.sheetRows = 0;
+  importUi.mappingApplied = false;
+  importUi.mappingDirty = false;
+  importUi.appliedMappingJson = "";
+  importUi.validated = false;
+  importUi.confirmed = false;
+  importUi.totalRows = 0;
+  importUi.validRows = 0;
+  importUi.warningRows = 0;
+  importUi.blocked = 0;
+  importUi.unresolved = 0;
+  importUi.ready = 0;
+  importUi.ignored = 0;
+  importUi.corrections = 0;
+  importUi.batchStatus = "";
+  importUi.confirmable = false;
+  importUi.confirmableReason = "";
+  importUi.error = "";
+  const select = document.getElementById("importSheetSelect");
+  if (select) select.innerHTML = '<option value="">Carga un archivo primero</option>';
+  const mappingBox = document.getElementById("importMappingBox");
+  if (mappingBox) mappingBox.innerHTML = "";
+  const preview = document.getElementById("importPreviewBox");
+  if (preview) preview.innerHTML = "";
+  const summary = document.getElementById("importValidateSummary");
+  if (summary) summary.innerHTML = "";
+  const review = document.getElementById("importReviewQueueBox");
+  if (review) review.innerHTML = "";
 }
 
 function resetImportDownstream(fromStep) {
@@ -8436,6 +8556,8 @@ function resetImportDownstream(fromStep) {
 
 function getImportConfirmBlockReason() {
   if (importUi.busy) return "Hay una operación en curso.";
+  if (importUi.batchStatus === "PROCESSING") return "La importación está en proceso de confirmación.";
+  if (importUi.batchStatus === "COMPLETED") return "La importación ya fue confirmada.";
   if (!currentImportId || !importUi.fileName) return "Sube un archivo primero.";
   if (!importUi.sheetName) return "Selecciona una hoja.";
   if (!importUi.mappingApplied) return "Aplica el mapeo antes de confirmar.";
@@ -8448,6 +8570,7 @@ function getImportConfirmBlockReason() {
   if (document.getElementById("importInventoryMode")?.value === "RECONCILE") {
     return "RECONCILE solo permite preview; no se puede confirmar.";
   }
+  if (importUi.confirmableReason && importUi.confirmable === false) return importUi.confirmableReason;
   return "";
 }
 
@@ -8616,7 +8739,9 @@ function syncImportWizardUi() {
       "review",
       "warn",
       "Requiere revisión",
-      `⚠ Revisión requerida — ${formatImportCount(importUi.blocked)} bloqueados`
+      `⚠ Revisión requerida — ${formatImportCount(importUi.blocked)} bloqueados${
+        importUi.unresolved ? ` · ${formatImportCount(importUi.unresolved)} sin asignar` : ""
+      }`
     );
     setImportButton("importReviewBtn", { disabled: busy, label: "Actualizar revisión" });
   } else {
@@ -8663,7 +8788,9 @@ function syncImportWizardUi() {
   if (reviewHint) {
     reviewHint.textContent = importUi.validated
       ? (importUi.blocked > 0 || importUi.unresolved > 0
-        ? `⚠ Revisión requerida — ${formatImportCount(importUi.blocked)} bloqueados`
+        ? `⚠ Revisión requerida — ${formatImportCount(importUi.blocked)} bloqueados${
+          importUi.unresolved ? ` · ${formatImportCount(importUi.unresolved)} sin asignar` : ""
+        }`
         : "✓ Sin bloqueos pendientes")
       : reviewLockReason;
   }
@@ -8735,6 +8862,7 @@ function renderImportMapping(headers, mapping) {
   }</tbody></table>`;
   box.querySelectorAll("select[data-map-header]").forEach((sel) => {
     sel.addEventListener("change", () => {
+      if (importHydrating) return;
       const header = sel.getAttribute("data-map-header");
       currentImportMapping[header] = sel.value || null;
       importUi.mappingDirty =
@@ -8745,32 +8873,218 @@ function renderImportMapping(headers, mapping) {
   });
 }
 
-async function loadImportReview() {
-  if (!currentImportId) return;
-  const response = await authenticatedFetch(`/api/imports/${currentImportId}/review`);
+function applyImportCountsFromServer(state) {
+  const counts = state.counts || {};
+  importUi.totalRows = Number(state.totalRows || 0);
+  importUi.validRows = Number(state.validRows || 0);
+  importUi.warningRows = Number(state.warningRows || 0);
+  importUi.blocked = Number(counts.BLOCKED ?? state.invalidRows ?? 0);
+  importUi.unresolved = Number(state.unresolvedCount || 0);
+  importUi.ready = Number(counts.READY || 0);
+  importUi.ignored = Number(counts.IGNORED || 0);
+  importUi.corrections = Number(state.correctionsCount || 0);
+  importUi.confirmable = Boolean(state.confirmable);
+  importUi.confirmableReason = state.confirmableReason || "";
+  importUi.batchStatus = state.status || "";
+  importUi.validated = Boolean(state.validated) || ["VALIDATED", "READY", "PROCESSING", "COMPLETED"].includes(state.status);
+  importUi.confirmed = state.status === "COMPLETED";
+}
+
+function renderImportValidateSummary() {
+  const summary = document.getElementById("importValidateSummary");
+  if (!summary) return;
+  if (!importUi.validated) {
+    summary.innerHTML = "";
+    return;
+  }
+  summary.innerHTML =
+    `<span class="project-chip">Total: ${formatImportCount(importUi.totalRows)}</span>` +
+    `<span class="project-chip">Listas: ${formatImportCount(importUi.validRows)}</span>` +
+    `<span class="project-chip">Advertencias: ${formatImportCount(importUi.warningRows)}</span>` +
+    `<span class="project-chip">Bloqueadas: ${formatImportCount(importUi.blocked)}</span>` +
+    (importUi.unresolved
+      ? `<span class="project-chip">Sin asignar: ${formatImportCount(importUi.unresolved)}</span>`
+      : "");
+}
+
+function renderImportPreviewRows(previewRows) {
+  const preview = document.getElementById("importPreviewBox");
+  if (!preview) return;
+  const rows = Array.isArray(previewRows) ? previewRows : [];
+  if (!rows.length) {
+    preview.innerHTML = importUi.validated ? "<p class='assignee-hint'>Sin vista previa de filas validadas.</p>" : "";
+    return;
+  }
+  preview.innerHTML = `<table class="excel-table"><thead><tr><th>Fila</th><th>Acción</th><th>Errores</th><th>Warnings</th><th>Normalizado</th></tr></thead><tbody>${
+    rows.map((r) => `<tr><td>${r.sourceRow}</td><td>${escCell(r.action || "—")}</td><td>${escCell((r.errors || []).map((e) => e.code).join(", ") || "—")}</td><td>${escCell((r.warnings || []).map((w) => w.code).join(", ") || "—")}</td><td>${escCell(JSON.stringify(r.normalized || {}))}</td></tr>`).join("")
+  }</tbody></table>`;
+}
+
+function applyImportServerState(state) {
+  if (!state?.id) return;
+  importHydrating = true;
+  try {
+    currentImportId = state.id;
+    importUi.fileName = state.originalFileName || "";
+    importUi.sheetName = state.sheetName || state.selectedSheet || "";
+    importUi.sheetRows = Number(state.sheetRows || state.totalRows || 0);
+    applyImportCountsFromServer(state);
+    const contextEl = document.getElementById("importContext");
+    if (contextEl && state.context) contextEl.value = state.context;
+    const modeEl = document.getElementById("importInventoryMode");
+    if (modeEl && state.inventoryMode) modeEl.value = state.inventoryMode;
+    const currencyEl = document.getElementById("importPriceCurrency");
+    if (currencyEl) currencyEl.value = state.priceCurrency || "";
+    const sheets = Array.isArray(state.sheets) ? state.sheets : [];
+    const select = document.getElementById("importSheetSelect");
+    if (select) {
+      select.innerHTML = sheets.length
+        ? sheets.map((s) => `<option value="${escCell(s.name)}">${escCell(s.name)} (${formatImportCount(s.totalDataRows)} filas)</option>`).join("")
+        : '<option value="">Sin hojas</option>';
+      if (importUi.sheetName) select.value = importUi.sheetName;
+    }
+    const selected = sheets.find((s) => s.name === importUi.sheetName) || sheets[0];
+    const mapping = state.mapping && typeof state.mapping === "object" ? state.mapping : {};
+    renderImportMapping(selected?.headers || Object.keys(mapping), mapping);
+    importUi.mappingApplied = Boolean(state.hasMapping) && ["MAPPED", "VALIDATED", "READY", "PROCESSING", "COMPLETED"].includes(state.status);
+    importUi.appliedMappingJson = importUi.mappingApplied ? JSON.stringify(currentImportMapping) : "";
+    importUi.mappingDirty = false;
+    renderImportValidateSummary();
+    renderImportPreviewRows(state.previewRows);
+    if (importUi.validated) renderImportReviewFromState(state);
+    else {
+      const review = document.getElementById("importReviewQueueBox");
+      if (review) review.innerHTML = "";
+    }
+    rememberImportBatchId(state.id);
+  } finally {
+    importHydrating = false;
+  }
+  syncImportWizardUi();
+}
+
+async function hydrateImportFromServer(id) {
+  if (!id) return null;
+  const response = await authenticatedFetch(`/api/imports/${id}/state`);
+  if (!response?.ok) {
+    const err = await response?.json().catch(() => ({}));
+    setImportSyncState("error", "No se pudo sincronizar el estado");
+    throw new Error(err.message || "No se pudo sincronizar el estado");
+  }
+  const state = await response.json();
+  applyImportServerState(state);
+  setImportSyncState("ok", "✓ Estado sincronizado con servidor");
+  return state;
+}
+
+async function probeResumableImport() {
+  if (currentRole !== "ADMIN" || importUi.busy) return;
+  try {
+    const response = await authenticatedFetch("/api/imports/active");
+    if (!response?.ok) {
+      setImportSyncState("error", "No se pudo sincronizar el estado");
+      return;
+    }
+    const data = await response.json();
+    const active = data.available ? data.import : null;
+    importResumeActive = active;
+    setImportSyncState("ok");
+    const alreadyOpen = Boolean(active && currentImportId === active.id);
+    const dismissed = Boolean(active && importResumeDismissedId === active.id);
+    if (active && !alreadyOpen && !dismissed) showImportResumeBanner(active);
+    else hideImportResumeBanner();
+  } catch (_error) {
+    setImportSyncState("error", "No se pudo sincronizar el estado");
+  }
+}
+
+async function continueResumableImport() {
+  const id = importResumeActive?.id;
+  if (!id) return;
+  void withImportLock("Reconstruyendo importación…", async () => {
+    await hydrateImportFromServer(id);
+    importResumeDismissedId = null;
+    hideImportResumeBanner();
+    setImportStatus(
+      importUi.blocked > 0 || importUi.unresolved > 0
+        ? `✓ Importación reanudada. Bloqueados: ${formatImportCount(importUi.blocked)}. Sin asignar: ${formatImportCount(importUi.unresolved)}.`
+        : "✓ Importación reanudada. Estado sincronizado con servidor."
+    );
+  });
+}
+
+function discardResumableImportUi() {
+  importResumeDismissedId = importResumeActive?.id || null;
+  hideImportResumeBanner();
+  if (importUi.busy) return;
+  resetImportWizardLocalState();
+  syncImportWizardUi();
+  setImportStatus("Interfaz lista para una nueva importación. Los datos del servidor no se borraron.");
+}
+
+async function applyImportReviewCorrection(payload, successLabel) {
+  const previous = {
+    blocked: importUi.blocked,
+    unresolved: importUi.unresolved,
+    validRows: importUi.validRows,
+    warningRows: importUi.warningRows,
+    totalRows: importUi.totalRows
+  };
+  const result = await authenticatedFetch(`/api/imports/${currentImportId}/review`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!result?.ok) {
+    const err = await result?.json().catch(() => ({}));
+    importUi.blocked = previous.blocked;
+    importUi.unresolved = previous.unresolved;
+    importUi.validRows = previous.validRows;
+    importUi.warningRows = previous.warningRows;
+    importUi.totalRows = previous.totalRows;
+    syncImportWizardUi();
+    throw new Error(err.message || "No se pudo guardar la corrección.");
+  }
+  const validated = await authenticatedFetch(`/api/imports/${currentImportId}/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}"
+  });
+  if (validated && !validated.ok) {
+    const err = await validated.json().catch(() => ({}));
+    try {
+      await hydrateImportFromServer(currentImportId);
+    } catch (_syncError) {
+      importUi.blocked = previous.blocked;
+      importUi.unresolved = previous.unresolved;
+      importUi.validRows = previous.validRows;
+      importUi.warningRows = previous.warningRows;
+      importUi.totalRows = previous.totalRows;
+      syncImportWizardUi();
+    }
+    throw new Error(err.message || "No se pudo revalidar después de la corrección.");
+  }
+  await hydrateImportFromServer(currentImportId);
+  setImportStatus(
+    `${successLabel || "✓ Corrección aplicada."} Bloqueados: ${formatImportCount(importUi.blocked)}. Sin asignar: ${formatImportCount(importUi.unresolved)}.`
+  );
+}
+
+function renderImportReviewFromState(data) {
   const box = document.getElementById("importReviewQueueBox");
-  if (!response?.ok || !box) return;
-  const data = await response.json();
+  if (!box) return;
   const counts = data.counts || {};
   const groups = Array.isArray(data.groups) ? data.groups : [];
   const rows = Array.isArray(data.rows) ? data.rows : [];
-  importUi.blocked = Number(counts.BLOCKED || 0);
-  importUi.unresolved = rows.filter(
-    (r) => r?.reviewState !== "IGNORED" && r?.normalized?.assignmentType === "UNRESOLVED"
-  ).length;
-  if (!importUi.totalRows && Number(counts.READY || 0) + Number(counts.WARNING || 0) + Number(counts.BLOCKED || 0)) {
-    importUi.validRows = Number(counts.READY || 0);
-    importUi.warningRows = Number(counts.WARNING || 0);
-  }
-  syncImportWizardUi();
   box.innerHTML = `
     <h4 class="secondary-panel-title">Bandeja de revisión</h4>
     ${(data.globalNotices || []).map((n) => `<p class="operational-table-meta">${escCell(n.message)}</p>`).join("")}
     <div class="page-toolbar">
-      <span class="project-chip">Listos: ${counts.READY || 0}</span>
-      <span class="project-chip">Advertencias: ${counts.WARNING || 0}</span>
-      <span class="project-chip">Bloqueados: ${counts.BLOCKED || 0}</span>
-      <span class="project-chip">Ignorados: ${counts.IGNORED || 0}</span>
+      <span class="project-chip">Listos: ${formatImportCount(counts.READY)}</span>
+      <span class="project-chip">Advertencias: ${formatImportCount(counts.WARNING)}</span>
+      <span class="project-chip">Bloqueados: ${formatImportCount(counts.BLOCKED)}</span>
+      <span class="project-chip">Ignorados: ${formatImportCount(counts.IGNORED)}</span>
+      <span class="project-chip">Sin asignar: ${formatImportCount(data.unresolvedCount)}</span>
     </div>
     <div class="table-wrap"><table class="excel-table"><thead><tr><th>Problema</th><th>Valor fuente</th><th>Registros</th><th>Acción</th></tr></thead><tbody>
       ${groups.map((g, index) => `<tr><td>${escCell(g.issueCode)} · ${escCell(g.field || "fila")}</td><td>${escCell(String(g.sourceValue ?? "—"))}</td><td>${g.records}</td><td>${
@@ -8804,23 +9118,7 @@ async function loadImportReview() {
       if (value == null) return;
       payload = { field, value, scope: "ALL_MATCHING", issueCode: group.issueCode, issueValue: group.sourceValue, reason: "BULK_REVIEW_QUEUE" };
     }
-    void withImportLock("Aplicando corrección…", async () => {
-      const result = await authenticatedFetch(`/api/imports/${currentImportId}/review`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (!result?.ok) {
-        const err = await result?.json().catch(() => ({}));
-        throw new Error(err.message || "No se pudo guardar la corrección.");
-      }
-      const validated = await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-      if (validated && !validated.ok) {
-        const err = await validated.json().catch(() => ({}));
-        throw new Error(err.message || "No se pudo revalidar después de la corrección.");
-      }
-      await loadImportReview();
-      setImportStatus("Corrección aplicada.");
-    });
+    void withImportLock("Aplicando corrección…", () => applyImportReviewCorrection(payload, "✓ Corrección aplicada."));
   }));
   box.querySelectorAll("[data-review-subgroup]").forEach((button) => button.addEventListener("click", () => {
     if (importUi.busy) return;
@@ -8831,35 +9129,24 @@ async function loadImportReview() {
     const value = window.prompt(`Asignar proyecto a ${sub.records} filas de ${sub.sku} (o escribe FREE TO SALE):`, "");
     if (value == null || !value.trim()) return;
     const isFts = value.trim().toUpperCase() === "FREE TO SALE";
-    void withImportLock("Aplicando corrección…", async () => {
-      const result = await authenticatedFetch(`/api/imports/${currentImportId}/review`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          field: isFts ? "assignmentType" : "project",
-          value: isFts ? "FREE_TO_SALE" : value.trim(),
-          scope: "SELECTED",
-          sourceRows: sub.sourceRows,
-          reason: "SUBSET_ASSIGNMENT"
-        })
-      });
-      if (!result?.ok) {
-        const err = await result?.json().catch(() => ({}));
-        throw new Error(err.message || "No se pudo guardar la corrección.");
-      }
-      const validated = await authenticatedFetch(`/api/imports/${currentImportId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-      if (validated && !validated.ok) {
-        const err = await validated.json().catch(() => ({}));
-        throw new Error(err.message || "No se pudo revalidar después de la corrección.");
-      }
-      await loadImportReview();
-      setImportStatus("Corrección aplicada.");
-    });
+    void withImportLock("Aplicando corrección…", () => applyImportReviewCorrection({
+      field: isFts ? "assignmentType" : "project",
+      value: isFts ? "FREE_TO_SALE" : value.trim(),
+      scope: "SELECTED",
+      sourceRows: sub.sourceRows,
+      reason: "SUBSET_ASSIGNMENT"
+    }, "✓ Corrección aplicada."));
   }));
   box.querySelectorAll("[data-review-row]").forEach((button) => button.addEventListener("click", () => {
     const row = rows.find((item) => String(item.sourceRow) === button.getAttribute("data-review-row"));
     if (!row) return;
     window.alert(`Fila Excel ${Number(row.sourceRow) + 2}\nOriginal: ${JSON.stringify(row.data)}\nCorregido: ${JSON.stringify(row.corrections || {})}\nProblemas: ${JSON.stringify([...(row.errors || []), ...(row.warnings || [])])}`);
   }));
+}
+
+async function loadImportReview() {
+  if (!currentImportId) return;
+  await hydrateImportFromServer(currentImportId);
 }
 
 async function refreshImportHistory() {
@@ -8898,8 +9185,11 @@ document.getElementById("importUploadBtn")?.addEventListener("click", () => {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || "Error al subir.");
     currentImportId = data.id;
+    rememberImportBatchId(data.id);
     importUi.fileName = file.name;
     importUi.confirmed = false;
+    importUi.batchStatus = data.status || "UPLOADED";
+    hideImportResumeBanner();
     resetImportDownstream(3);
     const sheets = data.metadata?.sheets || [];
     const select = document.getElementById("importSheetSelect");
@@ -8924,12 +9214,13 @@ document.getElementById("importUploadBtn")?.addEventListener("click", () => {
     importUi.mappingDirty = true;
     importUi.appliedMappingJson = "";
     setImportStatus(`✓ Archivo cargado: ${file.name}`);
+    setImportSyncState("ok", "✓ Estado sincronizado con servidor");
     await refreshImportHistory();
   });
 });
 
 document.getElementById("importSheetSelect")?.addEventListener("change", (e) => {
-  if (!currentImportId || importUi.busy) return;
+  if (importHydrating || !currentImportId || importUi.busy) return;
   const sheetName = e.target.value;
   if (!sheetName) return;
   void withImportLock("Seleccionando hoja…", async () => {
@@ -8946,6 +9237,7 @@ document.getElementById("importSheetSelect")?.addEventListener("change", (e) => 
     const sheet = (batch.metadata?.sheets || []).find((s) => s.name === sheetName);
     importUi.sheetName = sheetName;
     importUi.sheetRows = Number(sheet?.totalDataRows || batch.totalRows || 0);
+    importUi.batchStatus = batch.status || "UPLOADED";
     resetImportDownstream(3);
     const mappingRes = await authenticatedFetch(`/api/imports/${currentImportId}/mapping`, {
       method: "POST",
@@ -8975,8 +9267,10 @@ document.getElementById("importMapBtn")?.addEventListener("click", () => {
     importUi.mappingApplied = true;
     importUi.mappingDirty = false;
     importUi.appliedMappingJson = JSON.stringify(currentImportMapping);
+    importUi.batchStatus = "MAPPED";
     resetImportDownstream(4);
     setImportStatus("✓ Mapeo aplicado");
+    setImportSyncState("ok", "✓ Estado sincronizado con servidor");
   });
 });
 
@@ -8990,31 +9284,24 @@ document.getElementById("importValidateBtn")?.addEventListener("click", () => {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || "Validación fallida.");
-    const preview = document.getElementById("importPreviewBox");
-    if (preview) {
-      preview.innerHTML = `<table class="excel-table"><thead><tr><th>Fila</th><th>Acción</th><th>Errores</th><th>Warnings</th><th>Normalizado</th></tr></thead><tbody>${
-        (data.preview || []).map((r) => `<tr><td>${r.sourceRow}</td><td>${escCell(r.action)}</td><td>${escCell((r.errors || []).map((e) => e.code).join(", ") || "—")}</td><td>${escCell((r.warnings || []).map((w) => w.code).join(", ") || "—")}</td><td>${escCell(JSON.stringify(r.normalized || {}))}</td></tr>`).join("")
-      }</tbody></table>`;
-    }
-    importUi.validated = true;
-    importUi.confirmed = false;
-    importUi.totalRows = Number(data.summary?.totalRows || 0);
-    importUi.validRows = Number(data.summary?.validRows || 0);
-    importUi.warningRows = Number(data.summary?.warningRows || 0);
-    importUi.blocked = Number(data.summary?.invalidRows || 0);
-    const summary = document.getElementById("importValidateSummary");
-    if (summary) {
-      summary.innerHTML =
-        `<span class="project-chip">Total: ${formatImportCount(importUi.totalRows)}</span>` +
-        `<span class="project-chip">Listas: ${formatImportCount(importUi.validRows)}</span>` +
-        `<span class="project-chip">Advertencias: ${formatImportCount(importUi.warningRows)}</span>` +
-        `<span class="project-chip">Bloqueadas: ${formatImportCount(importUi.blocked)}</span>`;
+    try {
+      await hydrateImportFromServer(currentImportId);
+    } catch (syncError) {
+      importUi.validated = true;
+      importUi.confirmed = false;
+      importUi.totalRows = Number(data.summary?.totalRows || 0);
+      importUi.validRows = Number(data.summary?.validRows || 0);
+      importUi.warningRows = Number(data.summary?.warningRows || 0);
+      importUi.blocked = Number(data.summary?.invalidRows || 0);
+      renderImportPreviewRows(data.preview);
+      renderImportValidateSummary();
+      setImportSyncState("error", "No se pudo sincronizar el estado");
+      throw syncError;
     }
     const val = data.summary?.valuation || {};
     setImportStatus(
       `✓ Validado. Total ${formatImportCount(importUi.totalRows)}. Listas ${formatImportCount(importUi.validRows)}. Advertencias ${formatImportCount(importUi.warningRows)}. Bloqueadas ${formatImportCount(importUi.blocked)}. Valor MXN ${val.mxn || 0} / USD ${val.usd || 0}.`
     );
-    await loadImportReview();
     await refreshImportHistory();
   });
 });
@@ -9024,8 +9311,10 @@ document.getElementById("importReviewBtn")?.addEventListener("click", () => {
   void withImportLock("Cargando revisión…", async () => {
     await loadImportReview();
     setImportStatus(
-      importUi.blocked > 0
-        ? `⚠ Revisión requerida — ${formatImportCount(importUi.blocked)} bloqueados`
+      importUi.blocked > 0 || importUi.unresolved > 0
+        ? `⚠ Revisión requerida — ${formatImportCount(importUi.blocked)} bloqueados${
+          importUi.unresolved ? ` · ${formatImportCount(importUi.unresolved)} sin asignar` : ""
+        }`
         : "✓ Sin bloqueos pendientes"
     );
   });
@@ -9057,12 +9346,24 @@ document.getElementById("importConfirmBtn")?.addEventListener("click", () => {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || "Confirmación rechazada.");
     importUi.confirmed = true;
+    importUi.batchStatus = data.batch?.status || "COMPLETED";
+    setImportSyncState("ok", "✓ Estado sincronizado con servidor");
     setImportStatus(`✓ Importación ${data.batch?.status || "COMPLETED"}. Fallidas: ${data.results?.filter((r) => !r.ok).length || 0}.`);
+    hideImportResumeBanner();
+    importResumeActive = null;
     await refreshImportHistory();
   });
 });
 
 document.getElementById("importInventoryMode")?.addEventListener("change", () => syncImportWizardUi());
+document.getElementById("importResumeContinueBtn")?.addEventListener("click", () => {
+  if (importUi.busy) return;
+  continueResumableImport();
+});
+document.getElementById("importResumeDiscardBtn")?.addEventListener("click", () => {
+  if (importUi.busy) return;
+  discardResumableImportUi();
+});
 syncImportWizardUi();
 
 createUserForm.addEventListener("submit", createUser);

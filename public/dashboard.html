@@ -1322,6 +1322,32 @@
         font-size: 0.92rem;
         color: var(--accent-dark);
       }
+      .import-resume-banner {
+        margin: 0 0 14px;
+        padding: 12px 14px;
+        border: 1px solid #fbbf24;
+        background: #fffbeb;
+        border-radius: 10px;
+      }
+      .import-resume-banner.hidden { display: none; }
+      .import-resume-banner h5 {
+        margin: 0 0 8px;
+        color: #92400e;
+        font-size: 0.95rem;
+      }
+      .import-resume-meta {
+        margin: 0 0 10px;
+        font-size: 0.84rem;
+        color: #78350f;
+        line-height: 1.45;
+      }
+      .import-sync-line {
+        margin: 0 0 10px;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      .import-sync-line.is-ok { color: var(--ok); }
+      .import-sync-line.is-error { color: var(--error); font-weight: 700; }
       .import-busy-banner {
         display: flex;
         align-items: center;
@@ -4027,6 +4053,14 @@
             <div class="card-panel" id="importWizardPanel">
               <h4 class="secondary-panel-title">Importar datos</h4>
               <p class="module-hint">Secuencia: Archivo → Hoja → Mapeo → Validación → Revisión → Confirmación. Subir un archivo no modifica inventario hasta confirmar.</p>
+              <div id="importResumeBanner" class="import-resume-banner hidden" role="status" aria-live="polite">
+                <h5>Importación en curso</h5>
+                <div id="importResumeMeta" class="import-resume-meta"></div>
+                <div class="page-toolbar">
+                  <button type="button" id="importResumeContinueBtn" class="btn-primary btn-compact">Continuar importación</button>
+                  <button type="button" id="importResumeDiscardBtn" class="btn-secondary btn-compact">Descartar de la interfaz / iniciar nueva</button>
+                </div>
+              </div>
               <ol class="import-stepper" id="importStepper" aria-label="Pasos de importación">
                 <li class="import-step is-current" data-import-step="file">
                   <span class="import-step-num">1</span>
@@ -4066,6 +4100,7 @@
                 </li>
               </ol>
               <div id="importBusyBanner" class="import-busy-banner hidden" role="status" aria-live="polite"></div>
+              <p id="importSyncLine" class="import-sync-line">Última sincronización: —</p>
               <p id="importStatus" class="operational-table-meta import-status-line"></p>
 
               <section class="import-step-body" data-step-body="file" aria-label="Paso 1 Archivo">
@@ -4311,6 +4346,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=47"></script>
+    <script src="/dashboard.js?v=48"></script>
   </body>
 </html>

@@ -17,6 +17,13 @@ import {
   buildReviewGroups,
   selectReviewTargets
 } from "./import-review.service.js";
+import {
+  RESUMABLE_IMPORT_STATUSES,
+  buildImportResumePayload,
+  countUnresolved,
+  importConfirmability,
+  latestTimestamp
+} from "./import-resume.service.js";
 
 const importsRouter = Router();
 const upload = multer({
@@ -51,6 +58,34 @@ importsRouter.get("/", requireRole(["ADMIN", "SUPERVISOR"]), async (_req, res) =
     include: { createdBy: { select: { id: true, fullName: true, email: true } } }
   });
   res.json(rows);
+});
+
+importsRouter.get("/active", requireRole(["ADMIN"]), async (req, res) => {
+  const batch = await prisma.importBatch.findFirst({
+    where: {
+      createdById: req.auth!.userId,
+      status: { in: [...RESUMABLE_IMPORT_STATUSES] }
+    },
+    orderBy: { createdAt: "desc" },
+    include: {
+      rows: {
+        select: {
+          reviewState: true,
+          validatedAt: true,
+          corrections: true,
+          normalized: true
+        }
+      }
+    }
+  });
+  if (!batch) {
+    res.json({ available: false, import: null });
+    return;
+  }
+  res.json({
+    available: true,
+    import: buildImportResumePayload(batch, { includeReview: false })
+  });
 });
 
 importsRouter.post("/upload", requireRole(["ADMIN"]), upload.single("file"), async (req, res) => {
@@ -93,6 +128,14 @@ importsRouter.post("/upload", requireRole(["ADMIN"]), upload.single("file"), asy
     }
   });
   res.status(201).json(batch);
+});
+
+importsRouter.get("/:id/state", requireRole(["ADMIN"]), async (req, res) => {
+  const batch = await loadBatch(z.string().min(1).parse(req.params.id));
+  if (batch.createdById !== req.auth!.userId) {
+    throw new HttpError(404, "Importación no encontrada.");
+  }
+  res.json(buildImportResumePayload(batch, { includeReview: true }));
 });
 
 importsRouter.get("/:id", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
@@ -304,9 +347,24 @@ importsRouter.get("/:id/review", requireRole(["ADMIN"]), async (req, res) => {
     description: z.string().trim().min(1).max(160).optional().parse(req.query.q)
   };
   const review = buildReviewGroups(batch.rows, match);
+  const confirm = importConfirmability(batch, batch.rows);
   res.json({
     id: batch.id,
+    status: batch.status,
+    totalRows: batch.totalRows,
+    validRows: batch.validRows,
+    invalidRows: batch.invalidRows,
+    warningRows: batch.warningRows,
     counts: review.counts,
+    unresolvedCount: countUnresolved(batch.rows),
+    confirmable: confirm.confirmable,
+    confirmableReason: confirm.reason,
+    lastUpdated: latestTimestamp([
+      batch.createdAt,
+      batch.confirmedAt,
+      batch.completedAt,
+      ...batch.rows.map((row) => row.validatedAt)
+    ]),
     filters: match,
     globalNotices: batch.context === "INVENTORY" && asMeta(batch.metadata).inventoryMode === "RECONCILE"
       ? [{ code: "RECONCILE_PREVIEW_ONLY", message: "Modo conciliación: vista previa únicamente. No se aplicarán cambios hasta confirmación autorizada." }]
