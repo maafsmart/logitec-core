@@ -2558,6 +2558,68 @@
         font-weight: 700;
         color: var(--muted);
       }
+      .inventory-scope-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 20px;
+        align-items: flex-end;
+        margin: 0 0 14px;
+      }
+      .inventory-scope-bar .field.compact label {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: var(--muted);
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+      }
+      .inventory-scope-bar select {
+        min-width: 260px;
+        max-width: 420px;
+      }
+      .assignment-seg {
+        display: inline-flex;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+        background: #fff;
+      }
+      .assignment-seg button {
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        font-size: 0.82rem;
+        font-weight: 600;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      .assignment-seg button + button {
+        border-left: 1px solid var(--line);
+      }
+      .assignment-seg button:hover {
+        background: var(--accent-soft);
+        color: var(--accent-dark);
+      }
+      .assignment-seg button.active {
+        background: var(--accent);
+        color: #fff;
+      }
+      .assignment-seg button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .projects-stock-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .projects-stock-table th,
+      .projects-stock-table td {
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--line);
+        font-size: 0.9rem;
+      }
       .project-chips-hint {
         margin: 0 0 10px;
         font-size: 0.8rem;
@@ -2608,6 +2670,7 @@
           <div class="aviat-context-bar">
             <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
             <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
+            <span>Asignación: <strong data-aviat-assignment-label>Todas</strong></span>
           </div>
           <div class="app-user-block">
             <strong id="sessionDisplayName">Cargando sesión...</strong>
@@ -2744,17 +2807,29 @@
             <div class="aviat-context-bar">
               <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
               <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
+              <span>Asignación: <strong data-aviat-assignment-label>Todas</strong></span>
             </div>
             <div class="project-actions-row">
               <button type="button" class="btn-secondary btn-compact" data-goto-module="projects">Ver proyectos</button>
               <button type="button" id="ccAddProjectBtn" class="btn-primary btn-compact" data-goto-module="catalog">Agregar proyecto</button>
-              <span class="assignee-hint">Los proyectos se alimentan desde Catálogo y productos.</span>
             </div>
-            <p id="aviatScopeControl" class="operational-table-meta" style="margin:0 0 10px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
-            <p id="aviatFilterFallbackNotice" class="aviat-filter-notice hidden" role="status">No hay registros para este proyecto. Se muestran todos los proyectos de AVIAT.</p>
-            <section class="card-panel" aria-label="Proyectos de AVIAT" style="margin-bottom:16px">
-              <div id="ccAviatProjectChips"></div>
-            </section>
+            <p id="aviatScopeControl" class="operational-table-meta" style="margin:0 0 10px;font-weight:600">Proyecto: Todos los proyectos · Asignación: Todas</p>
+            <div class="inventory-scope-bar" data-inventory-scope>
+              <div class="field compact">
+                <label for="ccInventoryProjectSelect">Proyecto</label>
+                <select id="ccInventoryProjectSelect" class="js-inventory-project-select">
+                  <option value="">Todos los proyectos</option>
+                </select>
+              </div>
+              <div class="field compact">
+                <label>Asignación</label>
+                <div class="assignment-seg" role="group" aria-label="Asignación">
+                  <button type="button" class="js-assignment-opt active" data-assignment="">Todas</button>
+                  <button type="button" class="js-assignment-opt" data-assignment="PROJECT">Con proyecto</button>
+                  <button type="button" class="js-assignment-opt" data-assignment="FREE_TO_SALE">Free to Sale</button>
+                </div>
+              </div>
+            </div>
             <div class="kpi-grid" aria-label="Indicadores operativos">
               <div class="kpi-card accent">
                 <span class="kpi-value" id="ccKpiProducts">—</span>
@@ -2922,8 +2997,9 @@
             <div class="aviat-context-bar">
               <span>Cliente: <strong data-aviat-primary-label>AVIAT</strong></span>
               <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
+              <span>Asignación: <strong data-aviat-assignment-label>Todas</strong></span>
             </div>
-            <p id="aviatScopeTrace" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
+            <p id="aviatScopeTrace" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Proyecto: Todos los proyectos · Asignación: Todas</p>
             <div class="card-panel trace-query-panel">
             <div class="filter-strip">
               <div class="field compact">
@@ -3330,8 +3406,25 @@
             <div class="aviat-context-bar">
               <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
               <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
+              <span>Asignación: <strong data-aviat-assignment-label>Todas</strong></span>
             </div>
-            <p id="aviatScopeInventory" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
+            <p id="aviatScopeInventory" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Proyecto: Todos los proyectos · Asignación: Todas</p>
+            <div class="inventory-scope-bar" data-inventory-scope>
+              <div class="field compact">
+                <label for="inventoryProjectSelect">Proyecto</label>
+                <select id="inventoryProjectSelect" class="js-inventory-project-select">
+                  <option value="">Todos los proyectos</option>
+                </select>
+              </div>
+              <div class="field compact">
+                <label>Asignación</label>
+                <div class="assignment-seg" role="group" aria-label="Asignación">
+                  <button type="button" class="js-assignment-opt active" data-assignment="">Todas</button>
+                  <button type="button" class="js-assignment-opt" data-assignment="PROJECT">Con proyecto</button>
+                  <button type="button" class="js-assignment-opt" data-assignment="FREE_TO_SALE">Free to Sale</button>
+                </div>
+              </div>
+            </div>
             <div class="summary-cards card-panel" id="inventorySummaryCards">
               <div class="summary-card ok">
                 <span class="value" id="sumStockTotal">—</span>
@@ -3515,8 +3608,9 @@
             <div class="aviat-context-bar">
               <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
               <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
+              <span>Asignación: <strong data-aviat-assignment-label>Todas</strong></span>
             </div>
-            <p id="aviatScopeCatalog" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Mostrando todos los proyectos de AVIAT</p>
+            <p id="aviatScopeCatalog" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Proyecto: Todos los proyectos · Asignación: Todas</p>
             <div class="page-toolbar">
               <button type="button" id="openCatalogImportBtn" class="btn-primary">Importar catálogo</button>
               <button type="button" id="exportProductsBtn" class="btn-secondary">Exportar productos CSV</button>
@@ -4000,14 +4094,30 @@
           <div id="moduleProjects" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Proyectos</h3>
-              <p class="module-lead">Proyectos detectados del cliente principal AVIAT.</p>
+              <p class="module-lead">Proyectos con existencias asignadas en inventario.</p>
             </div>
             <div class="project-actions-row">
               <button type="button" class="btn-primary btn-compact" id="projectsAddBtn" data-goto-module="catalog">Agregar proyecto</button>
-              <button type="button" class="btn-secondary btn-compact" data-goto-module="catalog">Ir a catálogo</button>
+              <button type="button" class="btn-secondary btn-compact" data-goto-module="inventory">Ir a existencias</button>
             </div>
             <div class="card-panel">
-              <div id="projectsViewChips"></div>
+              <div class="inventory-scope-bar" data-inventory-scope>
+                <div class="field compact">
+                  <label for="projectsViewProjectSelect">Proyecto</label>
+                  <select id="projectsViewProjectSelect" class="js-inventory-project-select">
+                    <option value="">Todos los proyectos</option>
+                  </select>
+                </div>
+                <div class="field compact">
+                  <label>Asignación</label>
+                  <div class="assignment-seg" role="group" aria-label="Asignación">
+                    <button type="button" class="js-assignment-opt active" data-assignment="">Todas</button>
+                    <button type="button" class="js-assignment-opt" data-assignment="PROJECT">Con proyecto</button>
+                    <button type="button" class="js-assignment-opt" data-assignment="FREE_TO_SALE">Free to Sale</button>
+                  </div>
+                </div>
+              </div>
+              <div id="projectsStockList"></div>
             </div>
           </div>
           <div id="moduleWarehouses" class="module-pane hidden">
@@ -4246,6 +4356,21 @@
       </div>
     </div>
 
+    <div id="importConfirmModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-labelledby="importConfirmTitle" aria-modal="true" style="width:min(480px,96vw)">
+        <div class="modal-header">
+          <h3 id="importConfirmTitle">Confirmar importación</h3>
+          <button type="button" class="modal-close" id="importConfirmCloseX" aria-label="Cerrar">×</button>
+        </div>
+        <p id="importConfirmBody" class="module-lead"></p>
+        <p id="importConfirmError" class="ops-message error"></p>
+        <div class="import-actions" style="margin-top:12px">
+          <button type="button" id="importConfirmCancelBtn" class="btn-secondary">Cancelar</button>
+          <button type="button" id="importConfirmAcceptBtn" class="btn-primary">Confirmar</button>
+        </div>
+      </div>
+    </div>
+
     <div id="labResetModal" class="modal-overlay" aria-hidden="true">
       <div class="modal-panel" role="dialog" aria-labelledby="labResetTitle" aria-modal="true">
         <div class="modal-header">
@@ -4372,6 +4497,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=49"></script>
+    <script src="/dashboard.js?v=50"></script>
   </body>
 </html>

@@ -20,8 +20,21 @@ import {
   transferAssignment
 } from "./inventory-assignment-transfer.service.js";
 import { assertActiveInventoryStatus } from "./inventory-status.js";
+import { hasInventoryScope, inventoryScopeWhere, movementScopeWhere } from "./inventory-scope.js";
 
 const inventoryRouter = Router();
+
+const optionalId = z.preprocess(
+  (value) => (value == null || String(value).trim() === "" ? undefined : String(value).trim()),
+  z.string().min(1).optional()
+);
+const inventoryScopeQuerySchema = z.object({
+  projectId: optionalId,
+  assignmentType: z.preprocess(
+    (value) => (value == null || String(value).trim() === "" ? undefined : String(value).trim().toUpperCase()),
+    z.enum(["PROJECT", "FREE_TO_SALE"]).optional()
+  )
+});
 
 const movementTypes = ["IN", "OUT", "ADJUST_SET"] as const;
 
@@ -65,9 +78,14 @@ inventoryRouter.get("/statuses", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR",
 });
 
 inventoryRouter.get("/summary", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
-  const inventoryWhere = clientInventoryWhere(req.auth!);
-  const movementWhere = clientMovementWhere(req.auth!);
-  const [cubes, qtyAgg, productIds, locationIds, projectIds, movements, products] = await Promise.all([
+  const scope = inventoryScopeQuerySchema.parse(req.query);
+  const inventoryWhere: Prisma.InventoryWhereInput = {
+    AND: [clientInventoryWhere(req.auth!), inventoryScopeWhere(scope)]
+  };
+  const movementWhere: Prisma.InventoryMovementWhereInput = {
+    AND: [clientMovementWhere(req.auth!), movementScopeWhere(scope)]
+  };
+  const [cubes, qtyAgg, productIds, locationIds, projectIds, movements, catalogProducts] = await Promise.all([
     prisma.inventory.count({ where: inventoryWhere }),
     prisma.inventory.aggregate({ where: inventoryWhere, _sum: { qty: true } }),
     prisma.inventory.findMany({ where: inventoryWhere, distinct: ["productId"], select: { productId: true } }),
@@ -80,15 +98,51 @@ inventoryRouter.get("/summary", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", 
     prisma.inventoryMovement.count({ where: movementWhere }),
     prisma.product.count({ where: clientProductWhere(req.auth!) })
   ]);
+  const distinctInventoryProducts = productIds.length;
   res.json({
     cubes,
     qty: qtyAgg._sum.qty?.toString() ?? "0",
-    distinctInventoryProducts: productIds.length,
+    distinctInventoryProducts,
     locations: locationIds.length,
     projects: projectIds.length,
     movements,
-    products
+    products: hasInventoryScope(scope) ? distinctInventoryProducts : catalogProducts
   });
+});
+
+inventoryRouter.get("/projects", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const grouped = await prisma.inventory.groupBy({
+    by: ["projectId"],
+    where: {
+      AND: [
+        clientInventoryWhere(req.auth!),
+        { assignmentType: "PROJECT", projectId: { not: null }, qty: { gt: 0 } }
+      ]
+    },
+    _sum: { qty: true },
+    _count: { _all: true }
+  });
+  const ids = grouped.map((row) => row.projectId).filter((id): id is string => Boolean(id));
+  const customers = ids.length
+    ? await prisma.customer.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, code: true, name: true }
+      })
+    : [];
+  const qtyById = new Map(grouped.map((row) => [row.projectId, row]));
+  const projects = customers
+    .map((project) => {
+      const stats = qtyById.get(project.id);
+      return {
+        id: project.id,
+        code: project.code,
+        name: project.name,
+        cubes: stats?._count._all ?? 0,
+        qty: stats?._sum.qty?.toString() ?? "0"
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "es"));
+  res.json(projects);
 });
 
 inventoryRouter.get("/stock/:inventoryId/layers", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
@@ -170,8 +224,9 @@ inventoryRouter.get("/products/:productId/serials", requireRole(["ADMIN", "OPERA
 });
 
 inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const scope = inventoryScopeQuerySchema.parse(req.query);
   const rows = await prisma.inventory.findMany({
-    where: clientInventoryWhere(req.auth!),
+    where: { AND: [clientInventoryWhere(req.auth!), inventoryScopeWhere(scope)] },
     orderBy: [{ location: { warehouse: "asc" } }, { updatedAt: "desc" }],
     take: 500,
     include: {
@@ -236,7 +291,11 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
       sku: z.string().trim().min(1).max(80).optional(),
       productId: z.string().min(1).optional(),
       clientId: z.string().min(1).optional(),
-      projectId: z.string().min(1).optional(),
+      projectId: optionalId,
+      assignmentType: z.preprocess(
+        (value) => (value == null || String(value).trim() === "" ? undefined : String(value).trim().toUpperCase()),
+        z.enum(["PROJECT", "FREE_TO_SALE"]).optional()
+      ),
       movementType: z.string().trim().min(1).max(40).optional(),
       userId: z.string().min(1).optional(),
       from: z.string().trim().min(1).max(40).optional(),
@@ -265,7 +324,13 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
     ...(query.sku ? [{ product: { sku: { equals: query.sku, mode: "insensitive" as const } } }] : []),
     ...(query.productId ? [{ productId: query.productId }] : []),
     ...(query.clientId ? [{ product: { customer: { clientId: query.clientId } } }] : []),
-    ...(query.projectId ? [{ product: { customerId: query.projectId } }] : []),
+    ...(() => {
+      const scoped = movementScopeWhere({
+        projectId: query.projectId,
+        assignmentType: query.assignmentType
+      });
+      return Object.keys(scoped).length ? [scoped] : [];
+    })(),
     ...(query.movementType
       ? [{ movementType: { equals: query.movementType, mode: "insensitive" as const } }]
       : []),

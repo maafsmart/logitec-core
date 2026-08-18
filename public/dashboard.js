@@ -149,82 +149,223 @@ let clientsCache = [];
 
 const PRIMARY_CLIENT_AVIAT = "AVIAT";
 const PRIMARY_CLIENT_AVIAT_NAME = "AVIAT";
-const AVIAT_PROJECT_FILTER_KEY = "logitec_aviat_project_filter";
-const AVIAT_PROJECT_ALL = "ALL";
-let aviatProjectFilterFallback = false;
+const LEGACY_AVIAT_PROJECT_FILTER_KEY = "logitec_aviat_project_filter";
 
-function getActiveAviatProject() {
-  const raw = localStorage.getItem(AVIAT_PROJECT_FILTER_KEY);
-  if (!raw || String(raw).trim().toUpperCase() === AVIAT_PROJECT_ALL) return AVIAT_PROJECT_ALL;
-  return String(raw).trim().toUpperCase();
-}
+let inventoryProjectsCache = [];
+let inventoryScope = { projectId: "", assignmentType: "" };
+let environmentDisplayName = "Desarrollo";
+let inventoryScopeWired = false;
+let importConfirmResolver = null;
 
-function setActiveAviatProject(code) {
-  const value = code && String(code).trim() ? String(code).trim().toUpperCase() : AVIAT_PROJECT_ALL;
-  localStorage.setItem(AVIAT_PROJECT_FILTER_KEY, value);
-  aviatProjectFilterFallback = false;
-  updateAviatHeaderUi();
-  refreshAviatScopedViews();
-}
-
-/** Metadatos de proyecto (código + nombre) para navegación y filtros. */
-function resolveAviatProjectMeta(code) {
-  if (!code || String(code).trim().toUpperCase() === AVIAT_PROJECT_ALL) {
-    return { code: AVIAT_PROJECT_ALL, name: "Todos los proyectos" };
+function clearLegacyAviatProjectFilter() {
+  try {
+    localStorage.removeItem(LEGACY_AVIAT_PROJECT_FILTER_KEY);
+  } catch (_e) {
+    /* ignore */
   }
-  const normalized = normalizeProjectCode(code);
-  const fromData = collectAviatProjectsFromData().find(
-    (p) => normalizeProjectCode(p.code) === normalized || normalizeProjectToken(p.name) === normalizeProjectToken(code)
-  );
-  if (fromData) return { code: fromData.code, name: fromData.name || fromData.code };
-  const fromCustomers = getCustomersForSelect().find((p) => normalizeProjectCode(p.code) === normalized);
-  if (fromCustomers) return { code: fromCustomers.code, name: fromCustomers.name || fromCustomers.code };
-  return { code: String(code).trim(), name: String(code).trim() };
 }
 
-/** Rellena filtros de texto de catálogo/existencias (además del filtro global Aviat). */
-function setProjectTextFilters(code, name) {
-  const clear = !code || String(code).toUpperCase() === AVIAT_PROJECT_ALL;
-  const setVal = (id, val) => {
-    const el = document.getElementById(id);
-    if (el) el.value = clear ? "" : val || "";
+function getInventoryScope() {
+  const projectId = String(inventoryScope.projectId || "").trim();
+  const assignmentType = projectId
+    ? "PROJECT"
+    : String(inventoryScope.assignmentType || "").trim().toUpperCase();
+  return {
+    projectId,
+    assignmentType: assignmentType === "PROJECT" || assignmentType === "FREE_TO_SALE" ? assignmentType : ""
   };
-  setVal("invFilterCustomer", clear ? "" : code);
-  setVal("invFilterCliente", clear ? "" : name || code);
-  setVal("catFilterCustomer", clear ? "" : code);
-  setVal("catFilterCliente", clear ? "" : name || code);
 }
 
-function clearAviatProjectScope() {
-  setActiveAviatProject(AVIAT_PROJECT_ALL);
-  setProjectTextFilters(AVIAT_PROJECT_ALL, "");
+function hasActiveInventoryScope() {
+  const scope = getInventoryScope();
+  return Boolean(scope.projectId || scope.assignmentType);
 }
 
-/** Selecciona proyecto y abre Catálogo y productos filtrado. */
-function openProjectCatalogView(projectCode) {
-  const meta = resolveAviatProjectMeta(projectCode);
-  setActiveAviatProject(meta.code);
-  setProjectTextFilters(meta.code, meta.name);
-  navigateTo("inventario", "catalog");
+function inventoryScopeQueryString() {
+  const scope = getInventoryScope();
+  const params = new URLSearchParams();
+  if (scope.projectId) {
+    params.set("projectId", scope.projectId);
+    params.set("assignmentType", "PROJECT");
+  } else if (scope.assignmentType) {
+    params.set("assignmentType", scope.assignmentType);
+  }
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
 }
 
-/** Selecciona proyecto y abre Inventario / Existencias filtrado. */
-function openProjectInventoryView(projectCode) {
-  const meta = resolveAviatProjectMeta(projectCode);
-  setActiveAviatProject(meta.code);
-  setProjectTextFilters(meta.code, meta.name);
-  navigateTo("inventario", "inventory");
+function inventoryScopeLabel() {
+  const scope = getInventoryScope();
+  if (scope.projectId) {
+    const project = inventoryProjectsCache.find((p) => p.id === scope.projectId);
+    return project?.name || project?.code || "Proyecto seleccionado";
+  }
+  return "Todos los proyectos";
 }
 
-function normalizeProjectToken(value) {
-  return String(value || "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, " ");
+function inventoryAssignmentScopeLabel() {
+  const scope = getInventoryScope();
+  if (scope.projectId || scope.assignmentType === "PROJECT") return "Con proyecto";
+  if (scope.assignmentType === "FREE_TO_SALE") return "FREE TO SALE";
+  return "Todas";
 }
 
-function normalizeProjectCode(value) {
-  return normalizeProjectToken(value).replace(/\s+/g, "_");
+function getAviatScopeSummaryText() {
+  return `Proyecto: ${inventoryScopeLabel()} · Asignación: ${inventoryAssignmentScopeLabel()}`;
+}
+
+function getAviatExportBasename(kind) {
+  const scope = getInventoryScope();
+  if (scope.projectId) {
+    const project = inventoryProjectsCache.find((p) => p.id === scope.projectId);
+    const token = String(project?.code || scope.projectId).replace(/[^\w]+/g, "_");
+    return `${kind}_AVIAT_${token}`;
+  }
+  if (scope.assignmentType === "FREE_TO_SALE") return `${kind}_AVIAT_FREE_TO_SALE`;
+  if (scope.assignmentType === "PROJECT") return `${kind}_AVIAT_PROJECT`;
+  return `${kind}_AVIAT`;
+}
+
+function fillInventoryProjectSelects() {
+  const scope = getInventoryScope();
+  const options = [`<option value="">Todos los proyectos</option>`]
+    .concat(
+      inventoryProjectsCache.map(
+        (p) =>
+          `<option value="${escCell(p.id)}">${escCell(p.name || p.code)} (${escCell(p.code)})</option>`
+      )
+    )
+    .join("");
+  document.querySelectorAll(".js-inventory-project-select").forEach((sel) => {
+    const current = scope.projectId;
+    sel.innerHTML = options;
+    sel.value = current && inventoryProjectsCache.some((p) => p.id === current) ? current : "";
+    sel.disabled = scope.assignmentType === "FREE_TO_SALE" && !scope.projectId;
+  });
+  document.querySelectorAll(".js-assignment-opt").forEach((btn) => {
+    const value = btn.getAttribute("data-assignment") || "";
+    btn.classList.toggle("active", value === (scope.projectId ? "PROJECT" : scope.assignmentType));
+    btn.disabled = Boolean(scope.projectId) && value === "FREE_TO_SALE";
+  });
+}
+
+function updateInventoryScopeUi() {
+  const projectLabel = inventoryScopeLabel();
+  const assignmentLabel = inventoryAssignmentScopeLabel();
+  document.querySelectorAll("[data-aviat-primary-label]").forEach((el) => {
+    el.textContent = PRIMARY_CLIENT_AVIAT_NAME;
+  });
+  document.querySelectorAll("[data-aviat-project-label]").forEach((el) => {
+    el.textContent = projectLabel;
+  });
+  document.querySelectorAll("[data-aviat-assignment-label]").forEach((el) => {
+    el.textContent = assignmentLabel;
+  });
+  const scopeText = getAviatScopeSummaryText();
+  ["aviatScopeControl", "aviatScopeInventory", "aviatScopeCatalog", "aviatScopeTrace"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = scopeText;
+  });
+  const ccTitle = document.getElementById("ccModuleTitle");
+  if (ccTitle) ccTitle.textContent = `Centro de Control — ${PRIMARY_CLIENT_AVIAT_NAME}`;
+  const invTitle = document.getElementById("inventoryModuleTitle");
+  if (invTitle) invTitle.textContent = `Inventario de ${PRIMARY_CLIENT_AVIAT_NAME}`;
+  const catTitle = document.getElementById("catalogModuleTitle");
+  if (catTitle) catTitle.textContent = `Catálogo de ${PRIMARY_CLIENT_AVIAT_NAME}`;
+  fillInventoryProjectSelects();
+  renderProjectsStockList();
+}
+
+async function setInventoryScope(next, { reload = true } = {}) {
+  const projectId = String(next.projectId || "").trim();
+  let assignmentType = String(next.assignmentType || "").trim().toUpperCase();
+  if (projectId) assignmentType = "PROJECT";
+  if (assignmentType === "FREE_TO_SALE") {
+    inventoryScope = { projectId: "", assignmentType: "FREE_TO_SALE" };
+  } else if (assignmentType === "PROJECT") {
+    inventoryScope = { projectId, assignmentType: "PROJECT" };
+  } else {
+    inventoryScope = { projectId: "", assignmentType: "" };
+  }
+  updateInventoryScopeUi();
+  if (reload) {
+    await Promise.all([loadStockStrip(), loadInventoryMovements()]);
+  }
+}
+
+async function loadInventoryProjects() {
+  const response = await authenticatedFetch("/api/inventory/projects");
+  const rows = response?.ok ? await response.json() : [];
+  inventoryProjectsCache = Array.isArray(rows)
+    ? rows.filter((p) => p && p.id && Number(p.qty) > 0)
+    : [];
+  const selected = getInventoryScope().projectId;
+  if (selected && !inventoryProjectsCache.some((p) => p.id === selected)) {
+    inventoryScope.projectId = "";
+    if (inventoryScope.assignmentType === "PROJECT") inventoryScope.assignmentType = "";
+  }
+  updateInventoryScopeUi();
+  return inventoryProjectsCache;
+}
+
+function renderProjectsStockList() {
+  const box = document.getElementById("projectsStockList");
+  if (!box) return;
+  if (!inventoryProjectsCache.length) {
+    box.innerHTML = `<p class="filter-hint">No hay proyectos con existencias asignadas.</p>`;
+    return;
+  }
+  box.innerHTML = `<table class="projects-stock-table"><thead><tr><th>Proyecto</th><th>Código</th><th>Cubos</th><th>Qty</th></tr></thead><tbody>${inventoryProjectsCache
+    .map(
+      (p) =>
+        `<tr><td><button type="button" class="btn-secondary btn-compact js-open-project-stock" data-project-id="${escCell(
+          p.id
+        )}">${escCell(p.name)}</button></td><td>${escCell(p.code)}</td><td>${p.cubes}</td><td>${formatQty(
+          p.qty
+        )}</td></tr>`
+    )
+    .join("")}</tbody></table>`;
+  box.querySelectorAll(".js-open-project-stock").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-project-id") || "";
+      void setInventoryScope({ projectId: id, assignmentType: "PROJECT" }).then(() => {
+        navigateTo("inventario", "inventory");
+      });
+    });
+  });
+}
+
+function wireInventoryScopeUi() {
+  clearLegacyAviatProjectFilter();
+  if (inventoryScopeWired) {
+    updateInventoryScopeUi();
+    return;
+  }
+  inventoryScopeWired = true;
+  document.querySelectorAll(".js-inventory-project-select").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const projectId = sel.value || "";
+      void setInventoryScope({
+        projectId,
+        assignmentType: projectId ? "PROJECT" : getInventoryScope().assignmentType === "FREE_TO_SALE" ? "" : getInventoryScope().assignmentType
+      });
+    });
+  });
+  document.querySelectorAll(".js-assignment-opt").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      const assignmentType = btn.getAttribute("data-assignment") || "";
+      void setInventoryScope({
+        projectId: assignmentType === "FREE_TO_SALE" ? "" : getInventoryScope().projectId,
+        assignmentType
+      });
+    });
+  });
+  updateInventoryScopeUi();
+}
+
+function filterRowsByAviatProject(rows) {
+  return Array.isArray(rows) ? rows : [];
 }
 
 function getAviatProjectFromRow(row) {
@@ -251,11 +392,9 @@ function getAviatProjectFromRow(row) {
     parseRequisitionNotes(row?.notes)?.customerName ||
     code ||
     "";
-  const normalizedCode = String(code || "").trim();
-  const normalizedName = String(name || normalizedCode || "").trim();
   return {
-    code: normalizedCode,
-    name: normalizedName || normalizedCode
+    code: String(code || "").trim(),
+    name: String(name || code || "").trim()
   };
 }
 
@@ -264,189 +403,23 @@ function getAviatProjectDisplayFromRow(row) {
   return project.name || project.code || "—";
 }
 
-function aviatProjectTokensFromRow(row) {
-  const tokens = new Set();
-  const add = (value) => {
-    if (value == null || value === "") return;
-    tokens.add(normalizeProjectToken(value));
-    tokens.add(normalizeProjectCode(value));
-  };
-  const project = getAviatProjectFromRow(row);
-  add(project.code);
-  add(project.name);
-  add(row?.customerName);
-  add(row?.codigo_proyecto);
-  add(row?.proyecto);
-  if (typeof row?.customer === "string") add(row.customer);
-  return tokens;
+function normalizeProjectToken(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
 }
 
-function rowMatchesAviatProject(row) {
-  const activeProject = getActiveAviatProject();
-  if (activeProject === AVIAT_PROJECT_ALL) return true;
-  const tokens = aviatProjectTokensFromRow(row);
-  const target = normalizeProjectToken(activeProject);
-  const targetCode = normalizeProjectCode(activeProject);
-  return tokens.has(target) || tokens.has(targetCode);
-}
-
-function filterRowsByAviatProject(rows) {
-  const source = Array.isArray(rows) ? rows : [];
-  if (getActiveAviatProject() === AVIAT_PROJECT_ALL) {
-    return source;
-  }
-  const filtered = source.filter((row) => rowMatchesAviatProject(row));
-  if (source.length > 0 && filtered.length === 0) {
-    localStorage.setItem(AVIAT_PROJECT_FILTER_KEY, AVIAT_PROJECT_ALL);
-    aviatProjectFilterFallback = true;
-    queueMicrotask(() => updateAviatHeaderUi());
-    return source;
-  }
-  aviatProjectFilterFallback = false;
-  return filtered;
-}
-
-function collectAviatProjectsFromData() {
-  const map = new Map();
-  const add = (code, name) => {
-    const normalizedCode = String(code || "").trim();
-    if (!normalizedCode || normalizedCode === "—") return;
-    const upper = normalizedCode.toUpperCase();
-    if (upper === PRIMARY_CLIENT_AVIAT) return;
-    const label = String(name || normalizedCode).trim() || normalizedCode;
-    const existing = map.get(upper);
-    if (!existing || label.length > String(existing.name || "").length) {
-      map.set(upper, { code: normalizedCode, name: label });
-    }
-  };
-  for (const c of clientsCache) add(c.code, c.name || c.code);
-  for (const p of productsCache) add(p.customer?.code, p.customer?.name);
-  for (const row of stockRowsCache) {
-    const project = getAviatProjectFromRow(row);
-    add(project.code, project.name);
-  }
-  for (const m of movementsRowsCache) {
-    const project = getAviatProjectFromRow(m);
-    add(project.code, project.name);
-  }
-  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
-}
-
-function getActiveAviatProjectDisplayLabel() {
-  const active = getActiveAviatProject();
-  if (active === AVIAT_PROJECT_ALL) return "Todos los proyectos";
-  const match = collectAviatProjectsFromData().find((p) => normalizeProjectCode(p.code) === normalizeProjectCode(active));
-  return match?.name || active;
-}
-
-function getAviatScopeSummaryText() {
-  // Un solo mensaje de fallback vive en #aviatFilterFallbackNotice (evitar duplicar aquí).
-  if (getActiveAviatProject() === AVIAT_PROJECT_ALL) {
-    return "Mostrando todos los proyectos de AVIAT";
-  }
-  return `Mostrando proyecto ${getActiveAviatProjectDisplayLabel()} de AVIAT`;
-}
-
-function getAviatExportBasename(kind) {
-  const project = getActiveAviatProject();
-  if (project === AVIAT_PROJECT_ALL) return `${kind}_AVIAT`;
-  return `${kind}_AVIAT_${project}`;
+function normalizeProjectCode(value) {
+  return normalizeProjectToken(value).replace(/\s+/g, "_");
 }
 
 function updateAviatHeaderUi() {
-  const scopeText = getAviatScopeSummaryText();
-  const projectLabel = getActiveAviatProjectDisplayLabel();
-  document.querySelectorAll("[data-aviat-primary-label]").forEach((el) => {
-    el.textContent = PRIMARY_CLIENT_AVIAT_NAME;
-  });
-  document.querySelectorAll("[data-aviat-project-label]").forEach((el) => {
-    el.textContent = projectLabel;
-  });
-  ["aviatScopeControl", "aviatScopeInventory", "aviatScopeCatalog", "aviatScopeTrace"].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = scopeText;
-  });
-  const ccTitle = document.getElementById("ccModuleTitle");
-  if (ccTitle) ccTitle.textContent = `Centro de Control — ${PRIMARY_CLIENT_AVIAT_NAME}`;
-  const invTitle = document.getElementById("inventoryModuleTitle");
-  if (invTitle) invTitle.textContent = `Inventario de ${PRIMARY_CLIENT_AVIAT_NAME}`;
-  const catTitle = document.getElementById("catalogModuleTitle");
-  if (catTitle) catTitle.textContent = `Catálogo de ${PRIMARY_CLIENT_AVIAT_NAME}`;
-  const notice = document.getElementById("aviatFilterFallbackNotice");
-  if (notice) {
-    if (aviatProjectFilterFallback) {
-      notice.textContent = "No hay registros para este proyecto. Se muestran todos los proyectos de AVIAT.";
-      notice.classList.remove("hidden");
-    } else {
-      notice.textContent = "No hay registros para este proyecto. Se muestran todos los proyectos de AVIAT.";
-      notice.classList.add("hidden");
-    }
-  }
-  renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
-}
-
-/**
- * Chips de proyecto Aviat.
- * @param {HTMLElement|null} container
- * @param {{ mode?: "filter"|"catalog" }} [options]
- *   filter (default): solo cambia el alcance global (Centro de control, etc.).
- *   catalog: chip de proyecto abre catálogo filtrado; "Todos" limpia el alcance.
- */
-function renderAviatProjectChips(container, options = {}) {
-  if (!container) return;
-  const mode = options.mode === "catalog" ? "catalog" : "filter";
-  const projects = collectAviatProjectsFromData();
-  const activeProject = getActiveAviatProject();
-  const allTitle =
-    mode === "catalog"
-      ? "Quitar filtro y mostrar todos los proyectos"
-      : "Mostrar todos los proyectos";
-  const chipTitle =
-    mode === "catalog"
-      ? "Abrir catálogo filtrado por este proyecto"
-      : "Filtrar vistas por este proyecto";
-  const allChip = `<button type="button" class="project-chip${
-    activeProject === AVIAT_PROJECT_ALL ? " active" : ""
-  }" data-pick-aviat-project="${AVIAT_PROJECT_ALL}" title="${escCell(allTitle)}">Todos los proyectos</button>`;
-  const projectChips = projects
-    .map((p) => {
-      const isActive = normalizeProjectCode(activeProject) === normalizeProjectCode(p.code);
-      return `<button type="button" class="project-chip${isActive ? " active" : ""}" data-pick-aviat-project="${escCell(
-        p.code
-      )}" title="${escCell(`${chipTitle}: ${p.name} (${p.code})`)}">${escCell(p.name)}</button>`;
-    })
-    .join("");
-  const emptyMsg =
-    productsCache.length || stockRowsCache.length
-      ? "No se detectaron proyectos. Revisa carga de catálogo."
-      : "Cargando proyectos de AVIAT…";
-  const navHint =
-    mode === "catalog"
-      ? `<p class="project-chips-hint">Selecciona un proyecto para ver su catálogo filtrado.</p>`
-      : "";
-  container.innerHTML = `<div class="project-chips-label">Proyectos de ${escCell(
-    PRIMARY_CLIENT_AVIAT_NAME
-  )}</div>${navHint}<div class="project-chips-row">${allChip}${
-    projectChips || `<span class="filter-hint">${emptyMsg}</span>`
-  }</div>`;
-  container.querySelectorAll("[data-pick-aviat-project]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const code = btn.getAttribute("data-pick-aviat-project") || AVIAT_PROJECT_ALL;
-      if (code === AVIAT_PROJECT_ALL) {
-        clearAviatProjectScope();
-        return;
-      }
-      if (mode === "catalog") {
-        openProjectCatalogView(code);
-        return;
-      }
-      setActiveAviatProject(code);
-    });
-  });
+  updateInventoryScopeUi();
 }
 
 function refreshAviatScopedViews() {
-  updateAviatHeaderUi();
+  updateInventoryScopeUi();
   if (moduleControlCenter && !moduleControlCenter.classList.contains("hidden")) refreshControlCenter();
   if (moduleInventory && !moduleInventory.classList.contains("hidden")) {
     applyInventoryFilters();
@@ -461,10 +434,7 @@ function refreshAviatScopedViews() {
 }
 
 function wireAviatProjectUi() {
-  if (!localStorage.getItem(AVIAT_PROJECT_FILTER_KEY)) {
-    localStorage.setItem(AVIAT_PROJECT_FILTER_KEY, AVIAT_PROJECT_ALL);
-  }
-  updateAviatHeaderUi();
+  wireInventoryScopeUi();
 }
 
 function extractLoteFromText(text) {
@@ -978,6 +948,7 @@ async function loadEnvironmentBadge() {
     const payload = await response.json().catch(() => ({}));
     const environment = String(payload?.environment || "").toLowerCase();
     const isNonProduction = environment === "development" || environment === "qa";
+    environmentDisplayName = environment === "qa" ? "QA" : environment === "production" ? "Producción" : "Desarrollo";
     environmentBadge.classList.toggle("hidden", !isNonProduction);
     environmentBadge.textContent = environment === "qa" ? "ENTORNO QA" : "ENTORNO DEV";
   } catch {
@@ -3195,24 +3166,21 @@ function updateInventorySummary(rows) {
   const list = Array.isArray(rows) ? rows : [];
   const kpi = inventoryKpiCache;
   const products = new Set(list.map((r) => r.product?.sku).filter(Boolean));
-  const customers = new Set(
-    list.map((r) => r.product?.customer?.code || r.product?.customer?.name).filter(Boolean)
-  );
   const locations = new Set(list.map((r) => r.location?.code).filter(Boolean));
   pendingConflictsCache = countStockConflicts(list);
+  const scoped = hasActiveInventoryScope();
+  const productCount = scoped
+    ? Number(kpi?.products ?? kpi?.distinctInventoryProducts ?? products.size)
+    : Number(kpi?.products || productsCache.length || products.size);
   const elProducts = document.getElementById("sumProducts");
   const elCustomers = document.getElementById("sumCustomers");
   const elLocations = document.getElementById("sumLocations");
   const elMovements = document.getElementById("sumMovements");
   const elConflicts = document.getElementById("sumConflicts");
-  if (elProducts) {
-    elProducts.textContent = String(
-      productsCache.length || kpi?.products || products.size
-    );
-  }
-  if (elCustomers) elCustomers.textContent = String(kpi?.projects || customers.size);
+  if (elProducts) elProducts.textContent = String(productCount || 0);
+  if (elCustomers) elCustomers.textContent = String(kpi?.projects ?? inventoryProjectsCache.length);
   if (elLocations) elLocations.textContent = String(kpi?.locations || locations.size);
-  if (elMovements) elMovements.textContent = String(kpi?.movements ?? movementsCountCache);
+  if (elMovements) elMovements.textContent = String(kpi?.movements ?? movementsCountCache ?? 0);
   if (elConflicts) elConflicts.textContent = String(pendingConflictsCache);
   const elStockTotal = document.getElementById("sumStockTotal");
   if (elStockTotal) {
@@ -3264,38 +3232,21 @@ function sumStockQty(rows) {
 }
 
 function updateControlCenterKpis() {
-  const list = filterRowsByAviatProject(Array.isArray(stockRowsCache) ? stockRowsCache : []);
-  const scopedProducts = filterRowsByAviatProject(productsCache);
+  const list = Array.isArray(stockRowsCache) ? stockRowsCache : [];
   const kpi = inventoryKpiCache;
-  const productCount =
-    scopedProducts.length > 0
-      ? scopedProducts.length
-      : Number(kpi?.products || 0) || new Set(list.map((r) => r.product?.sku).filter(Boolean)).size;
-  const projects = new Set();
-  list.forEach((r) => {
-    const code = getAviatProjectFromRow(r).code;
-    if (code) projects.add(code);
-  });
-  collectAviatProjectsFromData().forEach((p) => {
-    if (p.code) projects.add(p.code);
-  });
-  const locations = new Set(list.map((r) => r.location?.code).filter(Boolean));
+  const scoped = hasActiveInventoryScope();
+  const productCount = scoped
+    ? Number(kpi?.products ?? kpi?.distinctInventoryProducts ?? 0)
+    : Number(kpi?.products || productsCache.length || 0);
   const stockTotal = kpi?.qty != null ? Number(kpi.qty) : sumStockQty(list);
   const movementTotal = kpi?.movements ?? movementsCountCache;
   const setKpi = (id, val) => {
     const el = document.getElementById(id);
     if (el) el.textContent = val;
   };
-  setKpi(
-    "ccKpiProducts",
-    productCount > 0
-      ? String(productCount)
-      : list.length
-        ? String(new Set(list.map((r) => r.product?.sku).filter(Boolean)).size)
-        : "0"
-  );
-  setKpi("ccKpiCustomers", String(kpi?.projects || projects.size || 0));
-  setKpi("ccKpiLocations", String(kpi?.locations || locations.size || 0));
+  setKpi("ccKpiProducts", String(productCount || 0));
+  setKpi("ccKpiCustomers", String(kpi?.projects ?? inventoryProjectsCache.length));
+  setKpi("ccKpiLocations", String(kpi?.locations || 0));
   setKpi("ccKpiStock", stockTotal ? formatQty(stockTotal) : "0");
   setKpi("ccKpiMovements", String(movementTotal || 0));
   setKpi("ccKpiConflicts", String(countStockConflicts(list)));
@@ -3956,10 +3907,10 @@ function filterStockRows(rows) {
 
 function renderStockTable(rows) {
   if (!inventoryList) return;
-  const total = filterRowsByAviatProject(stockRowsCache).length;
+  const total = Number(inventoryKpiCache?.cubes ?? (Array.isArray(stockRowsCache) ? stockRowsCache.length : 0));
   const shown = Array.isArray(rows) ? rows.length : 0;
   updateTableCountMeta("inventoryTableCount", shown, total, "saldos");
-  updateAviatHeaderUi();
+  updateInventoryScopeUi();
   renderDataGrid(inventoryList, {
     gridId: "inventory",
     columns: STOCK_COLUMNS_FULL,
@@ -3973,8 +3924,7 @@ function renderStockTable(rows) {
 }
 
 function applyInventoryFilters() {
-  const scoped = filterRowsByAviatProject(stockRowsCache);
-  updateInventorySummary(scoped);
+  updateInventorySummary(stockRowsCache);
   renderStockTable(filterStockRows(stockRowsCache));
   applyControlCenterFilters();
 }
@@ -4477,7 +4427,7 @@ function stripCustomerLegalSuffixes(name) {
 
 function normalizeCustomerCode(rawName) {
   let value = String(rawName || "").trim();
-  if (!value) return "LOGITEC";
+  if (!value) return "";
 
   value = value.replace(/AT&T/gi, "ATT");
   value = value.replace(/&/g, " AND ");
@@ -4492,7 +4442,6 @@ function normalizeCustomerCode(rawName) {
     .replace(/ /g, "_");
 
   if (value.length > 40) value = value.slice(0, 40).replace(/_+$/g, "");
-  if (!value) return "LOGITEC";
   return value;
 }
 
@@ -4600,7 +4549,7 @@ function convertLogitecToCatalog(headers, rows) {
       continue;
     }
 
-    const customerName = getCellValue(row, cols.customer) || "LOGITEC";
+    const customerName = getCellValue(row, cols.customer);
     const customer = normalizeCustomerCode(customerName);
     const name = getCellValue(row, cols.materialDescription);
     const existing = skuIndex.get(sku);
@@ -4679,7 +4628,7 @@ function convertLogitecToInventory(headers, rows, sheetName) {
       continue;
     }
 
-    const customerName = getCellValue(row, cols.customer) || "LOGITEC";
+    const customerName = getCellValue(row, cols.customer);
     const customer = normalizeCustomerCode(customerName);
     const skuCustomer = skuCustomerIndex.get(sku);
     if (skuCustomer && skuCustomer !== customer) {
@@ -4950,7 +4899,7 @@ const MOVEMENT_EXPORT_COLUMNS = [
 ];
 
 async function exportStockCsv() {
-  const response = await authenticatedFetch("/api/inventory/stock");
+  const response = await authenticatedFetch(`/api/inventory/stock${inventoryScopeQueryString()}`);
   if (!response?.ok) {
     window.alert("No se pudo exportar existencias.");
     return;
@@ -4982,7 +4931,9 @@ async function exportProductsCsvFiltered() {
 }
 
 async function exportMovementsCsv() {
-  const response = await authenticatedFetch("/api/inventory/movements?limit=all");
+  const scope = inventoryScopeQueryString();
+  const joiner = scope ? "&" : "?";
+  const response = await authenticatedFetch(`/api/inventory/movements${scope}${joiner}limit=all`);
   if (!response?.ok) {
     window.alert("No se pudo exportar movimientos.");
     return;
@@ -5357,7 +5308,7 @@ function unwrapMovementPayload(payload) {
 }
 
 async function loadInventoryKpis() {
-  const response = await authenticatedFetch("/api/inventory/summary");
+  const response = await authenticatedFetch(`/api/inventory/summary${inventoryScopeQueryString()}`);
   if (!response?.ok) {
     inventoryKpiCache = null;
     return null;
@@ -5388,8 +5339,8 @@ async function loadStockStrip() {
     applyControlCenterFilters();
     return;
   }
-  const [response, summary] = await Promise.all([
-    authenticatedFetch("/api/inventory/stock"),
+  const [response] = await Promise.all([
+    authenticatedFetch(`/api/inventory/stock${inventoryScopeQueryString()}`),
     loadInventoryKpis()
   ]);
   if (!response?.ok) {
@@ -5412,27 +5363,9 @@ async function loadStockStrip() {
   }
   const rows = await response.json();
   stockRowsCache = Array.isArray(rows) ? rows : [];
-  if (stockRowsCache.length === 0) {
-    updateInventorySummary([]);
-    updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
-    if (inventoryList) {
-      renderDataGrid(inventoryList, {
-        gridId: "inventory",
-        columns: STOCK_COLUMNS_FULL,
-        rowDataList: [],
-        rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true }),
-        colsClass: "data-grid-cols-stock",
-        sizeClass: "data-grid-size-inventory",
-        emptyMessage: "Sin registros de existencias. Use Importar inventario para cargar saldos."
-      });
-    }
-    applyControlCenterFilters();
-    return;
-  }
   applyInventoryFilters();
   renderClientsModule();
-  renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
-  updateAviatHeaderUi();
+  updateInventoryScopeUi();
 }
 
 async function loadInventoryMovements() {
@@ -5443,7 +5376,7 @@ async function loadInventoryMovements() {
     inventoryMovementsList.innerHTML = "";
     return;
   }
-  const response = await authenticatedFetch("/api/inventory/movements");
+  const response = await authenticatedFetch(`/api/inventory/movements${inventoryScopeQueryString()}`);
   if (!response?.ok) {
     movementsCountCache = 0;
     updateInventorySummary(stockRowsCache);
@@ -6302,7 +6235,7 @@ function renderInfoList(listId, items, emptyMsg) {
 }
 
 function renderProjectsModule() {
-  renderAviatProjectChips(document.getElementById("projectsViewChips"), { mode: "catalog" });
+  updateInventoryScopeUi();
   const addBtn = document.getElementById("projectsAddBtn");
   const ccAdd = document.getElementById("ccAddProjectBtn");
   const canAdd = currentRole === "ADMIN" || currentRole === "SUPERVISOR";
@@ -7545,8 +7478,8 @@ async function loadCatalogData() {
   if (clientsList) clientsList.innerHTML = "";
   renderClientsModule();
   populateOperationalSelects();
-  renderAviatProjectChips(document.getElementById("ccAviatProjectChips"));
-  updateAviatHeaderUi();
+  await loadInventoryProjects();
+  updateInventoryScopeUi();
 }
 
 async function deleteCustomerById(customerId) {
@@ -9542,6 +9475,49 @@ document.getElementById("importNormalizedBtn")?.addEventListener("click", () => 
   });
 });
 
+function environmentLabelForConfirm() {
+  return environmentDisplayName || "Desarrollo";
+}
+
+function finishImportConfirm(result) {
+  closeModal("importConfirmModal");
+  const resolve = importConfirmResolver;
+  importConfirmResolver = null;
+  if (typeof resolve === "function") resolve(Boolean(result));
+}
+
+function askImportConfirm() {
+  const total = Number(importUi.totalRows || 0);
+  const body = document.getElementById("importConfirmBody");
+  if (body) {
+    body.innerHTML =
+      `Se cargarán <strong>${escCell(formatImportCount(total))}</strong> registros al inventario.<br>` +
+      `La operación generará existencias, capas, movimientos y seriales.<br>` +
+      `Entorno: <strong>${escCell(environmentLabelForConfirm())}</strong><br><br>` +
+      `¿Deseas continuar?`;
+  }
+  const err = document.getElementById("importConfirmError");
+  if (err) err.textContent = "";
+  openModal("importConfirmModal");
+  return new Promise((resolve) => {
+    importConfirmResolver = resolve;
+  });
+}
+
+async function refreshInventoryAfterImport() {
+  await loadCatalogData();
+  await loadInventoryProjects();
+  await loadStockStrip();
+  await loadInventoryMovements();
+}
+
+document.getElementById("importConfirmCancelBtn")?.addEventListener("click", () => finishImportConfirm(false));
+document.getElementById("importConfirmCloseX")?.addEventListener("click", () => finishImportConfirm(false));
+document.getElementById("importConfirmAcceptBtn")?.addEventListener("click", () => finishImportConfirm(true));
+document.getElementById("importConfirmModal")?.addEventListener("click", (event) => {
+  if (event.target && event.target.id === "importConfirmModal") finishImportConfirm(false);
+});
+
 document.getElementById("importConfirmBtn")?.addEventListener("click", () => {
   if (!currentImportId || importUi.busy) return;
   const reason = getImportConfirmBlockReason();
@@ -9550,24 +9526,27 @@ document.getElementById("importConfirmBtn")?.addEventListener("click", () => {
     syncImportWizardUi();
     return;
   }
-  void withImportLock("Confirmando importación…", async () => {
-    const ok = window.confirm("¿Confirmar importación? Esto escribirá datos. No uses el archivo real de Hugo aquí.");
+  void (async () => {
+    const ok = await askImportConfirm();
     if (!ok) return;
-    const response = await authenticatedFetch(`/api/imports/${currentImportId}/confirm`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}"
+    await withImportLock("Confirmando importación…", async () => {
+      const response = await authenticatedFetch(`/api/imports/${currentImportId}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}"
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Confirmación rechazada.");
+      importUi.confirmed = true;
+      importUi.batchStatus = data.batch?.status || "COMPLETED";
+      setImportSyncState("ok", "✓ Estado sincronizado con servidor");
+      setImportStatus(`✓ Importación ${data.batch?.status || "COMPLETED"}. Fallidas: ${data.results?.filter((r) => !r.ok).length || 0}.`);
+      hideImportResumeBanner();
+      importResumeActive = null;
+      await refreshImportHistory();
+      await refreshInventoryAfterImport();
     });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.message || "Confirmación rechazada.");
-    importUi.confirmed = true;
-    importUi.batchStatus = data.batch?.status || "COMPLETED";
-    setImportSyncState("ok", "✓ Estado sincronizado con servidor");
-    setImportStatus(`✓ Importación ${data.batch?.status || "COMPLETED"}. Fallidas: ${data.results?.filter((r) => !r.ok).length || 0}.`);
-    hideImportResumeBanner();
-    importResumeActive = null;
-    await refreshImportHistory();
-  });
+  })();
 });
 
 document.getElementById("importInventoryMode")?.addEventListener("change", () => syncImportWizardUi());

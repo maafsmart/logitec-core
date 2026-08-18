@@ -295,6 +295,12 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
       });
     }
     if (!customer && mode === "apply" && autoCreateCustomers) {
+      if (!customerCode || customerCode === "LOGITEC") {
+        unknownCustomers.add(customerInput || customerCode || "(vacío)");
+        preview.push({ sku, action: "SKIP", reason: "CUSTOMER vacío o reservado; no se crea automáticamente." });
+        skipped += 1;
+        continue;
+      }
       customer = await prisma.customer.create({
         data: {
           code: customerCode,
