@@ -999,6 +999,8 @@ function updateTableCountMeta(elementId, shown, total, unit) {
 const GRID_WIDTHS_PREFIX = "logitec_grid_widths_";
 const GRID_SORT_PREFIX = "logitec_grid_sort_";
 const GRID_DENSITY_KEY = "logitec_grid_density";
+const GRID_DENSITY_DEFAULT_VERSION_KEY = "logitec_grid_density_default_version";
+const GRID_DENSITY_DEFAULT_VERSION = "compact-workspace-v1";
 const GRID_SELECTION_PREFIX = "logitec_grid_sel_";
 
 const GRID_DEFAULT_WIDTHS = {
@@ -1020,7 +1022,11 @@ const GRID_DEFAULT_WIDTHS = {
 const gridSortState = {};
 
 function initGridDensity() {
-  const mode = localStorage.getItem(GRID_DENSITY_KEY) || "comfortable";
+  if (localStorage.getItem(GRID_DENSITY_DEFAULT_VERSION_KEY) !== GRID_DENSITY_DEFAULT_VERSION) {
+    localStorage.setItem(GRID_DENSITY_KEY, "compact");
+    localStorage.setItem(GRID_DENSITY_DEFAULT_VERSION_KEY, GRID_DENSITY_DEFAULT_VERSION);
+  }
+  const mode = localStorage.getItem(GRID_DENSITY_KEY) || "compact";
   document.documentElement.dataset.gridDensity = mode;
   document.querySelectorAll(".grid-density-toggle").forEach((group) => {
     group.querySelectorAll("button[data-density]").forEach((btn) => {
