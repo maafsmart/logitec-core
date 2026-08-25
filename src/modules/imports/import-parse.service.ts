@@ -16,6 +16,26 @@ export type ParsedWorkbook = {
 const MAX_ROWS = 20000;
 const MAX_SHEETS = 30;
 
+const TECHNICAL_HEADERS = new Set([
+  "index",
+  "row",
+  "row number",
+  "numero de fila",
+  "#",
+  "unnamed: 0"
+]);
+
+function isTechnicalHeader(header: string): boolean {
+  const normalized = String(header || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\r\n]+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  return TECHNICAL_HEADERS.has(normalized);
+}
+
 function cellToString(value: unknown): string {
   if (value == null) return "";
   if (value instanceof Date) return value.toISOString();
@@ -71,7 +91,7 @@ function matrixToSheet(name: string, matrix: unknown[][]): ParsedSheet {
     headers.forEach((header, c) => {
       const value = line[c];
       const normalized = value instanceof Date ? value.toISOString() : value ?? "";
-      if (cellToString(normalized) !== "") empty = false;
+      if (cellToString(normalized) !== "" && !isTechnicalHeader(header)) empty = false;
       obj[header] = normalized;
     });
     if (!empty) rows.push(obj);

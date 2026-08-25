@@ -123,7 +123,7 @@ export function suggestField(header: string): CanonicalField | null {
 }
 
 function baseHeader(value: string): string {
-  return normalizeHeader(value).replace(/_\d+$/, "");
+  return normalizeHeader(value).replace(/[_.]\d+$/, "");
 }
 
 function priceCurrencyFromBlock(
