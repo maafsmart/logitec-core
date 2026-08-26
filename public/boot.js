@@ -1,3 +1,10 @@
+const redirectedToCanonicalWww = window.location.hostname === "control.logitec.com.mx";
+if (redirectedToCanonicalWww) {
+  window.location.replace(
+    "https://www.control.logitec.com.mx" + window.location.pathname + window.location.search + window.location.hash
+  );
+}
+
 const statusText = document.getElementById("statusText");
 const token = localStorage.getItem("token");
 
@@ -56,4 +63,6 @@ async function wakeService() {
   setTimeout(nextRoute, 900);
 }
 
-wakeService();
+if (!redirectedToCanonicalWww) {
+  wakeService();
+}

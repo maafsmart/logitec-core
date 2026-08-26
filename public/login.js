@@ -1,9 +1,23 @@
+function redirectApexLoginToWww() {
+  if (window.location.hostname !== "control.logitec.com.mx") return false;
+  window.location.replace(
+    "https://www.control.logitec.com.mx" + window.location.pathname + window.location.search + window.location.hash
+  );
+  return true;
+}
+
+if (redirectApexLoginToWww()) {
+  /* Stay on www before reading or sending credentials. */
+}
+
 const form = document.getElementById("loginForm");
 const errorMessage = document.getElementById("errorMessage");
 const submitBtn = document.getElementById("submitBtn");
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (redirectApexLoginToWww()) return;
+
   errorMessage.textContent = "";
   submitBtn.disabled = true;
 
