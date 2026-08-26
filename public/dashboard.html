@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es" data-ui-version="compact-workspace-v1" data-grid-density="compact">
+<html lang="es" data-ui-version="compact-workspace-v1" data-import-cancel-version="server-cancel-v1" data-grid-density="compact">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -4461,7 +4461,7 @@
                 <div id="importResumeMeta" class="import-resume-meta"></div>
                 <div class="page-toolbar">
                   <button type="button" id="importResumeContinueBtn" class="btn-primary btn-compact">Continuar importación</button>
-                  <button type="button" id="importResumeDiscardBtn" class="btn-secondary btn-compact">Descartar de la interfaz / iniciar nueva</button>
+                  <button type="button" id="importResumeDiscardBtn" class="btn-secondary btn-compact">Cancelar importación temporal</button>
                 </div>
               </div>
               <ol class="import-stepper" id="importStepper" aria-label="Pasos de importación">
@@ -4590,6 +4590,7 @@
                 <div class="page-toolbar">
                   <button type="button" id="importConfirmBtn" class="btn-compact btn-confirm-locked" disabled>🔒 Confirmar</button>
                   <button type="button" id="importNormalizedBtn" class="btn-secondary btn-compact" disabled>CSV normalizado</button>
+                  <button type="button" id="importCancelBtn" class="btn-secondary btn-compact hidden" aria-label="Cancelar importación temporal">Cancelar importación temporal</button>
                 </div>
               </section>
 
@@ -4643,6 +4644,20 @@
         <div class="import-actions" style="margin-top:12px">
           <button type="button" id="reqActionCancelBtn" class="btn-secondary">Cancelar</button>
           <button type="button" id="reqActionConfirmBtn" class="btn-primary">Confirmar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="importCancelModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-labelledby="importCancelTitle" aria-describedby="importCancelBody" aria-modal="true" style="width:min(480px,96vw)">
+        <div class="modal-header">
+          <h3 id="importCancelTitle">Cancelar importación temporal</h3>
+          <button type="button" class="modal-close" id="importCancelCloseX" data-close-modal="importCancelModal" aria-label="Cerrar diálogo de cancelación">×</button>
+        </div>
+        <p id="importCancelBody" class="module-lead">Se eliminarán únicamente el archivo procesado y las filas temporales de esta importación. El inventario, catálogo, ubicaciones y movimientos no cambiarán.</p>
+        <div class="import-actions" style="margin-top:12px">
+          <button type="button" id="importCancelKeepBtn" class="btn-secondary" data-close-modal="importCancelModal" aria-label="Conservar importación">Conservar importación</button>
+          <button type="button" id="importCancelConfirmBtn" class="btn-danger" aria-label="Cancelar importación temporal">Cancelar importación temporal</button>
         </div>
       </div>
     </div>
@@ -4788,6 +4803,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=51"></script>
+    <script src="/dashboard.js?v=52"></script>
   </body>
 </html>

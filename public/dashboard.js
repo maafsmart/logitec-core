@@ -8458,7 +8458,8 @@ function importStatusLabel(status) {
     READY: "Listo",
     PROCESSING: "Confirmando",
     COMPLETED: "Completado",
-    FAILED: "Fallido"
+    FAILED: "Fallido",
+    CANCELLED: "Cancelado"
   };
   return labels[status] || status || "—";
 }
@@ -8466,9 +8467,20 @@ function importStatusLabel(status) {
 function rememberImportBatchId(id) {
   try {
     if (id) localStorage.setItem(IMPORT_BATCH_HINT_KEY, id);
+    else localStorage.removeItem(IMPORT_BATCH_HINT_KEY);
   } catch (_error) {
     /* pista opcional */
   }
+}
+
+function isCancellableImportUiStatus(status) {
+  return ["UPLOADED", "MAPPED", "VALIDATED", "READY", "FAILED"].includes(String(status || ""));
+}
+
+function getImportCancelTargetId() {
+  if (currentImportId && isCancellableImportUiStatus(importUi.batchStatus)) return currentImportId;
+  if (importResumeActive?.id && isCancellableImportUiStatus(importResumeActive.status)) return importResumeActive.id;
+  return currentImportId || importResumeActive?.id || null;
 }
 
 function setImportSyncState(kind, extra) {
@@ -8570,6 +8582,7 @@ function resetImportDownstream(fromStep) {
 
 function getImportConfirmBlockReason() {
   if (importUi.busy) return "Hay una operación en curso.";
+  if (importUi.batchStatus === "CANCELLED") return "La importación fue cancelada.";
   if (importUi.batchStatus === "PROCESSING") return "La importación está en proceso de confirmación.";
   if (importUi.batchStatus === "COMPLETED") return "La importación ya fue confirmada.";
   if (!currentImportId || !importUi.fileName) return "Sube un archivo primero.";
@@ -8811,6 +8824,18 @@ function syncImportWizardUi() {
   document.querySelectorAll("#importReviewQueueBox button").forEach((btn) => {
     btn.disabled = busy;
   });
+  const wizardCancel = document.getElementById("importCancelBtn");
+  if (wizardCancel) {
+    const showWizardCancel = Boolean(currentImportId && isCancellableImportUiStatus(importUi.batchStatus));
+    wizardCancel.classList.toggle("hidden", !showWizardCancel);
+    wizardCancel.disabled = busy || !showWizardCancel;
+  }
+  const bannerCancel = document.getElementById("importResumeDiscardBtn");
+  if (bannerCancel) {
+    const showBannerCancel = Boolean(importResumeActive?.id && isCancellableImportUiStatus(importResumeActive.status));
+    bannerCancel.classList.toggle("hidden", !showBannerCancel);
+    bannerCancel.disabled = busy || !showBannerCancel;
+  }
 }
 
 async function withImportLock(label, fn) {
@@ -9146,13 +9171,45 @@ async function continueResumableImport() {
   });
 }
 
-function discardResumableImportUi() {
-  importResumeDismissedId = importResumeActive?.id || null;
-  hideImportResumeBanner();
+function openImportCancelModal() {
   if (importUi.busy) return;
-  resetImportWizardLocalState();
-  syncImportWizardUi();
-  setImportStatus("Interfaz lista para una nueva importación. Los datos del servidor no se borraron.");
+  const id = getImportCancelTargetId();
+  if (!id) return;
+  openModal("importCancelModal");
+}
+
+function closeImportCancelModal() {
+  closeModal("importCancelModal");
+}
+
+async function submitImportCancel() {
+  const id = getImportCancelTargetId();
+  if (!id) return;
+  closeImportCancelModal();
+  void withImportLock("Cancelando importación temporal…", async () => {
+    const response = await authenticatedFetch(`/api/imports/${id}/cancel`, { method: "POST" });
+    const data = await response?.json().catch(() => ({}));
+    if (!response?.ok) {
+      throw new Error(data.message || "No se pudo cancelar la importación temporal.");
+    }
+    if (data.status !== "CANCELLED" || data.inventoryChanged !== false) {
+      throw new Error("La cancelación no se confirmó correctamente.");
+    }
+    currentImportId = null;
+    importResumeActive = null;
+    importResumeDismissedId = null;
+    rememberImportBatchId(null);
+    resetImportWizardLocalState();
+    hideImportResumeBanner();
+    syncImportWizardUi();
+    await refreshImportHistory();
+    const activeRes = await authenticatedFetch("/api/imports/active");
+    const activeData = activeRes?.ok ? await activeRes.json().catch(() => ({})) : {};
+    if (activeData.available && activeData.import?.id === id) {
+      throw new Error("El lote cancelado sigue apareciendo como activo.");
+    }
+    setImportStatus("Importación temporal cancelada. El inventario no cambió.");
+  });
 }
 
 async function applyImportReviewCorrection(payload, successLabel) {
@@ -9561,9 +9618,23 @@ document.getElementById("importResumeContinueBtn")?.addEventListener("click", ()
   continueResumableImport();
 });
 document.getElementById("importResumeDiscardBtn")?.addEventListener("click", () => {
-  if (importUi.busy) return;
-  discardResumableImportUi();
+  openImportCancelModal();
 });
+document.getElementById("importCancelBtn")?.addEventListener("click", () => {
+  openImportCancelModal();
+});
+document.getElementById("importCancelConfirmBtn")?.addEventListener("click", () => {
+  if (importUi.busy) return;
+  void submitImportCancel();
+});
+document.getElementById("importCancelCloseX")?.addEventListener("click", () => closeImportCancelModal());
+const importCancelModal = document.getElementById("importCancelModal");
+if (importCancelModal && importCancelModal.dataset.modalWired !== "1") {
+  importCancelModal.dataset.modalWired = "1";
+  importCancelModal.addEventListener("click", (e) => {
+    if (e.target === importCancelModal) closeImportCancelModal();
+  });
+}
 syncImportWizardUi();
 
 createUserForm.addEventListener("submit", createUser);

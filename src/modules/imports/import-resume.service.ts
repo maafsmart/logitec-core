@@ -3,8 +3,11 @@ import { HttpError } from "../../shared/http-error.js";
 import { assertImportConfirmable, buildReviewGroups, collectMissingLocations } from "./import-review.service.js";
 
 export const RESUMABLE_IMPORT_STATUSES = ["UPLOADED", "MAPPED", "VALIDATED", "READY", "PROCESSING"] as const;
+export const CANCELLABLE_IMPORT_STATUSES = ["UPLOADED", "MAPPED", "VALIDATED", "READY", "FAILED"] as const;
+export const TERMINAL_IMPORT_STATUSES = ["PROCESSING", "COMPLETED", "CANCELLED"] as const;
 
 export type ResumableImportStatus = (typeof RESUMABLE_IMPORT_STATUSES)[number];
+export type CancellableImportStatus = (typeof CANCELLABLE_IMPORT_STATUSES)[number];
 
 type ResumeRow = {
   reviewState: string;
@@ -25,6 +28,50 @@ function asMeta(value: Prisma.JsonValue | null | undefined): Record<string, any>
 
 export function isResumableImportStatus(status: string): status is ResumableImportStatus {
   return (RESUMABLE_IMPORT_STATUSES as readonly string[]).includes(status);
+}
+
+export function isCancellableImportStatus(status: string): status is CancellableImportStatus {
+  return (CANCELLABLE_IMPORT_STATUSES as readonly string[]).includes(status);
+}
+
+export function isMutableImportStatus(status: string): boolean {
+  return !(TERMINAL_IMPORT_STATUSES as readonly string[]).includes(status);
+}
+
+export function assertImportBatchMutable(status: string): void {
+  if (isMutableImportStatus(status)) return;
+  if (status === "CANCELLED") {
+    throw new HttpError(409, "La importación fue cancelada y no puede modificarse.");
+  }
+  if (status === "COMPLETED") {
+    throw new HttpError(409, "La importación ya fue confirmada y no puede modificarse.");
+  }
+  if (status === "PROCESSING") {
+    throw new HttpError(409, "La importación está en proceso de confirmación y no puede modificarse.");
+  }
+  throw new HttpError(409, "La importación no puede modificarse.");
+}
+
+export function buildCancelledImportMetadata(
+  metadata: Prisma.JsonValue | null | undefined,
+  options: { cancelledById: string; cancelledAt?: Date }
+): Record<string, unknown> {
+  const meta = asMeta(metadata);
+  const mapping =
+    meta.mapping && typeof meta.mapping === "object" && !Array.isArray(meta.mapping)
+      ? { ...(meta.mapping as Record<string, unknown>) }
+      : {};
+  return {
+    selectedSheet: meta.selectedSheet ?? null,
+    inventoryMode: meta.inventoryMode ?? null,
+    priceCurrency: meta.priceCurrency ?? null,
+    mapping,
+    valuation: meta.valuation ?? null,
+    sheets: stripSheetRows(meta.sheets),
+    cancelledAt: (options.cancelledAt ?? new Date()).toISOString(),
+    cancelledById: options.cancelledById,
+    cancelReason: "CANCELLED_BY_ADMIN"
+  };
 }
 
 export function stripSheetRows(sheets: unknown): Array<{
@@ -81,6 +128,9 @@ export function importConfirmability(
   const meta = asMeta(batch.metadata);
   if (meta.inventoryMode === "RECONCILE") {
     return { confirmable: false, reason: "RECONCILE solo permite preview; no se puede confirmar." };
+  }
+  if (batch.status === "CANCELLED") {
+    return { confirmable: false, reason: "La importación fue cancelada." };
   }
   if (batch.status === "PROCESSING") {
     return { confirmable: false, reason: "La importación está en proceso de confirmación." };

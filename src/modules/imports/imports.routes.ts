@@ -19,7 +19,10 @@ import {
   selectReviewTargets
 } from "./import-review.service.js";
 import {
+  CANCELLABLE_IMPORT_STATUSES,
   RESUMABLE_IMPORT_STATUSES,
+  assertImportBatchMutable,
+  buildCancelledImportMetadata,
   buildImportResumePayload,
   countUnresolved,
   importConfirmability,
@@ -155,6 +158,7 @@ importsRouter.post("/:id/select-sheet", requireRole(["ADMIN"]), async (req, res)
   const id = z.string().min(1).parse(req.params.id);
   const sheetName = z.string().min(1).parse(req.body.sheetName);
   const batch = await loadBatch(id);
+  assertImportBatchMutable(batch.status);
   const meta = asMeta(batch.metadata);
   const sheet = (meta.sheets || []).find((s: any) => s.name === sheetName);
   if (!sheet) throw new HttpError(404, "Hoja no encontrada.");
@@ -178,6 +182,7 @@ importsRouter.post("/:id/select-sheet", requireRole(["ADMIN"]), async (req, res)
 importsRouter.post("/:id/mapping", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   const batch = await loadBatch(id);
+  assertImportBatchMutable(batch.status);
   const meta = asMeta(batch.metadata);
   const sheet =
     (meta.sheets || []).find((s: any) => s.name === (req.body.sheetName || batch.sheetName || meta.selectedSheet)) ||
@@ -201,6 +206,7 @@ importsRouter.post("/:id/mapping", requireRole(["ADMIN"]), async (req, res) => {
 importsRouter.post("/:id/validate", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   const batch = await loadBatch(id);
+  assertImportBatchMutable(batch.status);
   const meta = asMeta(batch.metadata);
   const mapping = (meta.mapping || {}) as Record<string, CanonicalField | null>;
   if (!Object.keys(mapping).length) throw new HttpError(400, "Define el mapeo antes de validar.");
@@ -395,6 +401,7 @@ importsRouter.patch("/:id/review", requireRole(["ADMIN"]), async (req, res) => {
     description: z.string().trim().min(1).max(160).optional()
   }).optional().parse(req.body.match);
   const batch = await loadBatch(id);
+  assertImportBatchMutable(batch.status);
   if (["SERIAL_DUPLICATE_FILE", "SERIAL_EXISTS", "SERIAL_QTY", "IMEI_DUPLICATE_FILE", "IMEI_EXISTS"].includes(String(issueCode || ""))) {
     throw new HttpError(409, "Este conflicto de identidad requiere revisión individual.");
   }
@@ -429,6 +436,12 @@ importsRouter.patch("/:id/review", requireRole(["ADMIN"]), async (req, res) => {
 
 importsRouter.post("/:id/review/missing-locations", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
+  const batch = await prisma.importBatch.findUnique({
+    where: { id },
+    select: { id: true, status: true }
+  });
+  if (!batch) throw new HttpError(404, "Importación no encontrada.");
+  assertImportBatchMutable(batch.status);
   const confirmPhysical = z.literal(true).parse(req.body.confirmPhysical);
   const result = await createMissingImportLocations({
     batchId: id,
@@ -440,6 +453,12 @@ importsRouter.post("/:id/review/missing-locations", requireRole(["ADMIN"]), asyn
 
 importsRouter.post("/:id/review/ignore", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
+  const batch = await prisma.importBatch.findUnique({
+    where: { id },
+    select: { id: true, status: true }
+  });
+  if (!batch) throw new HttpError(404, "Importación no encontrada.");
+  assertImportBatchMutable(batch.status);
   const sourceRows = z.array(z.number().int().positive()).min(1).parse(req.body.sourceRows);
   const rows = await prisma.importRow.findMany({ where: { importBatchId: id, sourceRow: { in: sourceRows } } });
   await prisma.$transaction(rows.flatMap((row) => [
@@ -509,9 +528,57 @@ importsRouter.get("/:id/normalized.csv", requireRole(["ADMIN", "SUPERVISOR"]), a
   res.send(`\uFEFF${lines.join("\r\n")}`);
 });
 
+importsRouter.post("/:id/cancel", requireRole(["ADMIN"]), async (req, res) => {
+  const id = z.string().min(1).parse(req.params.id);
+  const userId = req.auth!.userId;
+  const existing = await prisma.importBatch.findUnique({
+    where: { id },
+    select: { id: true, createdById: true }
+  });
+  if (!existing || existing.createdById !== userId) {
+    throw new HttpError(404, "Importación no encontrada.");
+  }
+  const deletedStagingRows = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.importBatch.updateMany({
+      where: {
+        id,
+        createdById: userId,
+        status: { in: [...CANCELLABLE_IMPORT_STATUSES] }
+      },
+      data: {
+        status: "CANCELLED",
+        confirmedAt: null,
+        completedAt: null
+      }
+    });
+    if (claimed.count !== 1) {
+      throw new HttpError(409, "La importación no puede cancelarse porque ya está en proceso, confirmada o cancelada.");
+    }
+    const batch = await tx.importBatch.findUnique({
+      where: { id },
+      select: { metadata: true }
+    });
+    const deleted = await tx.importRow.deleteMany({ where: { importBatchId: id } });
+    await tx.importBatch.update({
+      where: { id },
+      data: {
+        metadata: buildCancelledImportMetadata(batch?.metadata, { cancelledById: userId }) as Prisma.InputJsonValue
+      }
+    });
+    return deleted.count;
+  });
+  res.json({
+    id,
+    status: "CANCELLED",
+    deletedStagingRows,
+    inventoryChanged: false
+  });
+});
+
 importsRouter.post("/:id/confirm", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   const batch = await loadBatch(id);
+  assertImportBatchMutable(batch.status);
   const meta = asMeta(batch.metadata);
   if (meta.inventoryMode === "RECONCILE") {
     const blocked = batch.rows.filter((row) => row.reviewState === "BLOCKED").length;
