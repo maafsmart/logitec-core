@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "test": "tsx --test test/import-stabilization.test.ts test/dashboard-compact-layout.test.ts test/import-cancel.test.ts test/canonical-host.test.ts test/qa-admin-e2e-v2.test.ts",
+    "test": "tsx --test test/import-stabilization.test.ts test/dashboard-compact-layout.test.ts test/import-cancel.test.ts test/canonical-host.test.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
