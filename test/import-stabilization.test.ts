@@ -67,7 +67,7 @@ test("mapeo MXN/USD con Currency.1", () => {
   assert.equal(mapped.unitPriceUsd, "5.25");
 });
 
-test("CUSTOMER vacío no infiere FREE TO SALE desde LOTE", () => {
+test("CUSTOMER vacío no copia FREE TO SALE desde LOTE al proyecto", () => {
   const headers = ["SKU", "CUSTOMER", "LOTE", "QTY", "LOCATION"];
   const mapping = buildSuggestedMapping(headers);
   assert.equal(mapping.CUSTOMER, "project");
@@ -87,6 +87,4 @@ test("CUSTOMER vacío no infiere FREE TO SALE desde LOTE", () => {
   assert.equal(String(mapped.project ?? "").trim(), "");
   assert.equal(mapped.lotNumber, "FREE TO SALE");
   assert.notEqual(String(mapped.project ?? "").trim().toUpperCase(), "FREE TO SALE");
-  const assignmentType = String(mapped.project ?? "").trim() ? "PROJECT" : "UNRESOLVED";
-  assert.equal(assignmentType, "UNRESOLVED");
 });

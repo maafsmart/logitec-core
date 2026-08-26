@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { HttpError } from "../../shared/http-error.js";
-import { FREE_TO_SALE_LABEL } from "./import-validate.service.js";
+import { isFreeToSaleLabel } from "./import-assignment.js";
 
 export const IMPORT_CORRECTION_FIELDS = [
   "location",
@@ -117,7 +117,7 @@ export function selectReviewTargets(
 
 export function buildAssignmentCorrection(field: ImportCorrectionField, value: unknown) {
   const next: Record<string, unknown> = {};
-  if (field === "assignmentType" || (field === "project" && String(value || "").trim().toUpperCase() === FREE_TO_SALE_LABEL)) {
+  if (field === "assignmentType" || (field === "project" && isFreeToSaleLabel(value))) {
     next.assignmentType = "FREE_TO_SALE";
     next.project = "";
     return next;
@@ -140,7 +140,7 @@ export function assignmentAuditPayload(row: ReviewRow, field: ImportCorrectionFi
     projectCode: n.projectCode ?? n.projectName ?? null
   };
   const next =
-    field === "assignmentType" || String(value || "").trim().toUpperCase() === FREE_TO_SALE_LABEL
+    field === "assignmentType" || isFreeToSaleLabel(value)
       ? { assignmentType: "FREE_TO_SALE", projectId: null, projectCode: null, project: null }
       : field === "project"
         ? { assignmentType: "PROJECT", project: value }

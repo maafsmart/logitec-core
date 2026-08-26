@@ -297,7 +297,14 @@ importsRouter.post("/:id/validate", requireRole(["ADMIN"]), async (req, res) => 
         ...meta,
         valuation: validated.summary.valuation,
         reconcileDiff,
-        requiredLocationsMissing
+        requiredLocationsMissing,
+        assignmentSummary: {
+          totalRows: validated.summary.totalRows,
+          customerBlank: validated.summary.customerBlank,
+          freeToSaleAssigned: validated.summary.freeToSaleAssigned,
+          projectAssigned: validated.summary.projectAssigned,
+          assignmentUnresolved: validated.summary.assignmentUnresolved
+        }
       } as Prisma.InputJsonValue
     }
   });
@@ -510,7 +517,7 @@ importsRouter.get("/:id/normalized.csv", requireRole(["ADMIN", "SUPERVISOR"]), a
         n.assignmentType || "",
         n.projectId || "",
         n.projectCode || "",
-        n.projectName || (n.assignmentType === "UNRESOLVED" ? "PENDIENTE DE ASIGNACIÓN" : n.assignmentType === "FREE_TO_SALE" ? "FREE TO SALE" : ""),
+        n.projectName || "",
         n.clientName || n.client || "",
         n.reference || "",
         row.action || "",

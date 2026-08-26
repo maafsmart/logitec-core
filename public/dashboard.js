@@ -8423,6 +8423,9 @@ const importUi = {
   warningRows: 0,
   blocked: 0,
   unresolved: 0,
+  customerBlank: 0,
+  freeToSaleAssigned: 0,
+  projectAssigned: 0,
   ready: 0,
   ignored: 0,
   corrections: 0,
@@ -8535,6 +8538,9 @@ function resetImportWizardLocalState() {
   importUi.warningRows = 0;
   importUi.blocked = 0;
   importUi.unresolved = 0;
+  importUi.customerBlank = 0;
+  importUi.freeToSaleAssigned = 0;
+  importUi.projectAssigned = 0;
   importUi.ready = 0;
   importUi.ignored = 0;
   importUi.corrections = 0;
@@ -8568,6 +8574,9 @@ function resetImportDownstream(fromStep) {
     importUi.warningRows = 0;
     importUi.blocked = 0;
     importUi.unresolved = 0;
+    importUi.customerBlank = 0;
+    importUi.freeToSaleAssigned = 0;
+    importUi.projectAssigned = 0;
     const preview = document.getElementById("importPreviewBox");
     const summary = document.getElementById("importValidateSummary");
     if (preview) preview.innerHTML = "";
@@ -9033,11 +9042,15 @@ async function createImportMissingLocationsAndRevalidate() {
 
 function applyImportCountsFromServer(state) {
   const counts = state.counts || {};
+  const assignment = state.assignmentSummary || {};
   importUi.totalRows = Number(state.totalRows || 0);
   importUi.validRows = Number(state.validRows || 0);
   importUi.warningRows = Number(state.warningRows || 0);
   importUi.blocked = Number(counts.BLOCKED ?? state.invalidRows ?? 0);
-  importUi.unresolved = Number(state.unresolvedCount || 0);
+  importUi.unresolved = Number(assignment.assignmentUnresolved ?? state.unresolvedCount ?? 0);
+  importUi.customerBlank = Number(assignment.customerBlank || 0);
+  importUi.freeToSaleAssigned = Number(assignment.freeToSaleAssigned || 0);
+  importUi.projectAssigned = Number(assignment.projectAssigned || 0);
   importUi.ready = Number(counts.READY || 0);
   importUi.ignored = Number(counts.IGNORED || 0);
   importUi.corrections = Number(state.correctionsCount || 0);
@@ -9057,11 +9070,17 @@ function renderImportValidateSummary() {
   }
   summary.innerHTML =
     `<span class="project-chip">Total: ${formatImportCount(importUi.totalRows)}</span>` +
+    `<span class="project-chip">CUSTOMER vacío: ${formatImportCount(importUi.customerBlank)}</span>` +
+    `<span class="project-chip">FREE TO SALE: ${formatImportCount(importUi.freeToSaleAssigned)}</span>` +
+    `<span class="project-chip">Con proyecto: ${formatImportCount(importUi.projectAssigned)}</span>` +
     `<span class="project-chip">Listas: ${formatImportCount(importUi.validRows)}</span>` +
     `<span class="project-chip">Advertencias: ${formatImportCount(importUi.warningRows)}</span>` +
     `<span class="project-chip">Bloqueadas: ${formatImportCount(importUi.blocked)}</span>` +
     (importUi.unresolved
       ? `<span class="project-chip">Sin asignar: ${formatImportCount(importUi.unresolved)}</span>`
+      : "") +
+    (importUi.freeToSaleAssigned
+      ? `<p class="assignee-hint" style="margin:8px 0 0">FREE TO SALE es inventario libre; no pertenece a un proyecto y no se mezcla con la lista de proyectos.</p>`
       : "");
 }
 
@@ -9166,7 +9185,7 @@ async function continueResumableImport() {
     setImportStatus(
       importUi.blocked > 0 || importUi.unresolved > 0
         ? `✓ Importación reanudada. Bloqueados: ${formatImportCount(importUi.blocked)}. Sin asignar: ${formatImportCount(importUi.unresolved)}.`
-        : "✓ Importación reanudada. Estado sincronizado con servidor."
+        : `✓ Importación reanudada. FREE TO SALE ${formatImportCount(importUi.freeToSaleAssigned)}. Sin asignar ${formatImportCount(importUi.unresolved)}.`
     );
   });
 }
@@ -9288,8 +9307,14 @@ function renderImportReviewFromState(data) {
       <span class="project-chip">Advertencias: ${formatImportCount(counts.WARNING)}</span>
       <span class="project-chip">Bloqueados: ${formatImportCount(counts.BLOCKED)}</span>
       <span class="project-chip">Ignorados: ${formatImportCount(counts.IGNORED)}</span>
-      <span class="project-chip">Sin asignar: ${formatImportCount(data.unresolvedCount)}</span>
+      <span class="project-chip">FREE TO SALE: ${formatImportCount(data.assignmentSummary?.freeToSaleAssigned || importUi.freeToSaleAssigned)}</span>
+      ${Number(data.unresolvedCount || importUi.unresolved || 0)
+        ? `<span class="project-chip">Sin asignar: ${formatImportCount(data.unresolvedCount || importUi.unresolved)}</span>`
+        : ""}
     </div>
+    ${Number(data.assignmentSummary?.freeToSaleAssigned || importUi.freeToSaleAssigned || 0)
+      ? `<p class="operational-table-meta">Las filas FREE TO SALE son inventario libre. No pertenecen a un proyecto y no se añaden a la lista de proyectos.</p>`
+      : ""}
     ${missingBox}
     <div class="table-wrap"><table class="excel-table"><thead><tr><th>Problema</th><th>Valor fuente</th><th>Registros</th><th>Acción</th></tr></thead><tbody>
       ${groups.map((g, index) => `<tr><td>${escCell(g.issueCode)} · ${escCell(g.field || "fila")}</td><td>${escCell(String(g.sourceValue ?? "—"))}</td><td>${g.records}</td><td>${
@@ -9504,6 +9529,10 @@ document.getElementById("importValidateBtn")?.addEventListener("click", () => {
       importUi.validRows = Number(data.summary?.validRows || 0);
       importUi.warningRows = Number(data.summary?.warningRows || 0);
       importUi.blocked = Number(data.summary?.invalidRows || 0);
+      importUi.customerBlank = Number(data.summary?.customerBlank || 0);
+      importUi.freeToSaleAssigned = Number(data.summary?.freeToSaleAssigned || 0);
+      importUi.projectAssigned = Number(data.summary?.projectAssigned || 0);
+      importUi.unresolved = Number(data.summary?.assignmentUnresolved || 0);
       renderImportPreviewRows(data.preview);
       renderImportValidateSummary();
       setImportSyncState("error", "No se pudo sincronizar el estado");
@@ -9511,7 +9540,7 @@ document.getElementById("importValidateBtn")?.addEventListener("click", () => {
     }
     const val = data.summary?.valuation || {};
     setImportStatus(
-      `✓ Validado. Total ${formatImportCount(importUi.totalRows)}. Listas ${formatImportCount(importUi.validRows)}. Advertencias ${formatImportCount(importUi.warningRows)}. Bloqueadas ${formatImportCount(importUi.blocked)}. Valor MXN ${val.mxn || 0} / USD ${val.usd || 0}.`
+      `✓ Validado. Total ${formatImportCount(importUi.totalRows)}. Listas ${formatImportCount(importUi.validRows)}. FREE TO SALE ${formatImportCount(importUi.freeToSaleAssigned)}. Con proyecto ${formatImportCount(importUi.projectAssigned)}. Sin asignar ${formatImportCount(importUi.unresolved)}. Advertencias ${formatImportCount(importUi.warningRows)}. Bloqueadas ${formatImportCount(importUi.blocked)}. Valor MXN ${val.mxn || 0} / USD ${val.usd || 0}.`
     );
     await refreshImportHistory();
   });

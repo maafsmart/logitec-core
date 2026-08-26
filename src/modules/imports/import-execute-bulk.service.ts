@@ -480,6 +480,13 @@ function prepareRow(row: ExecRow, context: ImportContext): PreparedRow {
   };
 }
 
+export function prepareInventoryImportRow(
+  row: { sourceRow: number; normalized: Record<string, unknown>; errors: unknown[]; action?: string | null },
+  context: ImportContext = "INVENTORY"
+) {
+  return prepareRow(row, context);
+}
+
 async function updateExistingInventoryQty(
   tx: Prisma.TransactionClient,
   updates: Array<{ id: string; qty: Prisma.Decimal }>

@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { HttpError } from "../../shared/http-error.js";
+import { summarizeImportAssignments } from "./import-assignment.js";
 import { assertImportConfirmable, buildReviewGroups, collectMissingLocations } from "./import-review.service.js";
 
 export const RESUMABLE_IMPORT_STATUSES = ["UPLOADED", "MAPPED", "VALIDATED", "READY", "PROCESSING"] as const;
@@ -197,6 +198,13 @@ export function buildImportResumePayload(
   const unresolvedCount = countUnresolved(batch.rows);
   const correctionsCount = countCorrections(batch.rows);
   const assignmentTypeCorrected = countAssignmentCorrections(batch.rows);
+  const assignmentSummary = summarizeImportAssignments(
+    batch.rows.map((row) => ({
+      normalized: asMeta(row.normalized),
+      errors: Array.isArray(row.errors) ? (row.errors as Array<{ code?: string }>) : [],
+      reviewState: row.reviewState
+    }))
+  );
   const confirm = importConfirmability(batch, batch.rows);
   const hasMapping = Object.values(mapping).some((value) => Boolean(value));
   const lastUpdated = latestTimestamp([
@@ -229,6 +237,7 @@ export function buildImportResumePayload(
     counts,
     unresolvedCount,
     hasUnresolved: unresolvedCount > 0,
+    assignmentSummary,
     correctionsCount,
     assignmentTypeCorrected,
     confirmable: confirm.confirmable,

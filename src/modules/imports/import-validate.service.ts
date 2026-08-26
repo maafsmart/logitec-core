@@ -6,6 +6,16 @@ import {
   type CanonicalField,
   type ImportContext
 } from "./import-mapping.js";
+import {
+  FREE_TO_SALE_LABEL,
+  applyFreeToSaleNormalized,
+  classifyImportAssignment,
+  normalizeImportLabel,
+  summarizeImportAssignments
+} from "./import-assignment.js";
+
+export { FREE_TO_SALE_LABEL };
+export type { ImportAssignmentType } from "./import-assignment.js";
 
 export type Issue = {
   field?: string;
@@ -19,13 +29,6 @@ function asText(value: unknown): string {
   if (value == null) return "";
   return String(value).trim();
 }
-
-function normalizeLabel(value: unknown): string {
-  return asText(value).replace(/\s+/g, " ").toUpperCase();
-}
-
-export const FREE_TO_SALE_LABEL = "FREE TO SALE";
-export type ImportAssignmentType = "PROJECT" | "FREE_TO_SALE" | "UNRESOLVED";
 
 const SERIAL_PLACEHOLDERS = new Set(["N/A"]);
 
@@ -107,7 +110,7 @@ export async function validateMappedRows(
   const projectByCode = new Map(projects.map((p) => [p.code.toUpperCase(), p]));
   const projectsByName = new Map<string, (typeof projects)[number][]>();
   for (const project of projects) {
-    const key = normalizeLabel(project.name);
+    const key = normalizeImportLabel(project.name);
     projectsByName.set(key, [...(projectsByName.get(key) || []), project]);
   }
   const clients = await prisma.client.findMany({ select: { id: true, name: true, tradeName: true, legalName: true } });
@@ -256,20 +259,22 @@ export async function validateMappedRows(
     }
 
     const projectCode = asText(mapped.project);
-    const projectNorm = normalizeLabel(mapped.project);
-    const correctedAssignment = normalizeLabel(mapped.assignmentType);
+    const projectNorm = normalizeImportLabel(mapped.project);
+    const classified = classifyImportAssignment({
+      customer: mapped.project,
+      lotNumber: mapped.lotNumber,
+      assignmentType: mapped.assignmentType
+    });
 
     if (isInventoryImport) {
-      if (correctedAssignment === "FREE_TO_SALE" || projectNorm === FREE_TO_SALE_LABEL) {
-        normalized.assignmentType = "FREE_TO_SALE";
-        normalized.projectId = null;
-        normalized.projectCode = null;
-        normalized.projectName = FREE_TO_SALE_LABEL;
-      } else if (!projectNorm) {
+      if (classified.kind === "FREE_TO_SALE") {
+        applyFreeToSaleNormalized(normalized);
+      } else if (classified.kind === "UNRESOLVED") {
         normalized.assignmentType = "UNRESOLVED";
         normalized.projectId = null;
         normalized.projectCode = null;
         normalized.projectName = null;
+        normalized.project = "";
         errors.push({
           field: "project",
           value: sourceCustomer,
@@ -452,6 +457,8 @@ export async function validateMappedRows(
     if (mxn == null && usd == null && qty > 0) valuation.missingPriceQty += qty;
   }
 
+  const assignmentSummary = summarizeImportAssignments(validated);
+
   return {
     rows: validated,
     summary: {
@@ -459,7 +466,11 @@ export async function validateMappedRows(
       validRows,
       invalidRows,
       warningRows,
-      valuation
+      valuation,
+      customerBlank: assignmentSummary.customerBlank,
+      freeToSaleAssigned: assignmentSummary.freeToSaleAssigned,
+      projectAssigned: assignmentSummary.projectAssigned,
+      assignmentUnresolved: assignmentSummary.assignmentUnresolved
     }
   };
 }
