@@ -1,15 +1,43 @@
 import { prisma } from "../../db/prisma.js";
-import { env } from "../../config/env.js";
 import { HttpError } from "../../shared/http-error.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { collectMissingLocations, normalizeImportLocationCode } from "./import-review.service.js";
 
 const inFlightByBatch = new Set<string>();
+const LOCATION_CREATION_BATCH_STATUSES = new Set(["VALIDATED", "READY"]);
+const MAX_LOCATIONS_PER_IMPORT = 100;
+const SAFE_LOCATION_CODE = /^[A-Z0-9][A-Z0-9._/-]{0,79}$/;
 
-function assertDevLocationMasterMutation(): void {
-  if (env.NODE_ENV === "production" || env.DATABASE_ENVIRONMENT === "production") {
-    throw new HttpError(404, "Not found");
+export function assertImportLocationCreationAllowed(
+  batch: { context: string; status: string; createdById: string },
+  userId: string
+): void {
+  if (batch.createdById !== userId) {
+    throw new HttpError(404, "Importación no encontrada.");
   }
+  if (batch.context !== "INVENTORY") {
+    throw new HttpError(409, "Solo se pueden crear ubicaciones desde una importación de inventario.");
+  }
+  if (!LOCATION_CREATION_BATCH_STATUSES.has(batch.status)) {
+    throw new HttpError(409, "La importación debe estar validada antes de crear ubicaciones.");
+  }
+}
+
+export function normalizeMissingLocationCodes(
+  missing: Array<{ code: string }>
+): string[] {
+  const codes = [...new Set(
+    missing
+      .map((item) => normalizeImportLocationCode(item.code))
+      .filter((code) => code.length > 0)
+  )];
+  if (!codes.length) {
+    throw new HttpError(400, "No hay ubicaciones faltantes para dar de alta.");
+  }
+  if (codes.length > MAX_LOCATIONS_PER_IMPORT || codes.some((code) => !SAFE_LOCATION_CODE.test(code))) {
+    throw new HttpError(400, "Hay demasiados códigos o existen códigos de ubicación inválidos.");
+  }
+  return codes;
 }
 
 async function resolveLocationTemplate() {
@@ -42,7 +70,6 @@ export async function createMissingImportLocations(input: {
   userId: string;
   confirmPhysical: boolean;
 }) {
-  assertDevLocationMasterMutation();
   if (!input.confirmPhysical) {
     throw new HttpError(400, "Debes confirmar que las ubicaciones existen físicamente.");
   }
@@ -56,18 +83,10 @@ export async function createMissingImportLocations(input: {
       include: { rows: { select: { sourceRow: true, reviewState: true, errors: true, warnings: true } } }
     });
     if (!batch) throw new HttpError(404, "Importación no encontrada.");
-    if (batch.createdById !== input.userId) throw new HttpError(404, "Importación no encontrada.");
+    assertImportLocationCreationAllowed(batch, input.userId);
 
     const missing = collectMissingLocations(batch.rows);
-    const codes = missing
-      .map((item) => normalizeImportLocationCode(item.code))
-      .filter((code) => code.length > 0);
-    if (!codes.length) {
-      throw new HttpError(400, "No hay ubicaciones faltantes para dar de alta.");
-    }
-    if (codes.some((code) => code.length > 80)) {
-      throw new HttpError(400, "Hay códigos de ubicación inválidos o vacíos.");
-    }
+    const codes = normalizeMissingLocationCodes(missing);
 
     const template = await resolveLocationTemplate();
     const existing = await prisma.location.findMany({
