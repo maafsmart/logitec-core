@@ -45,6 +45,7 @@ app.use("/api/clients", clientsRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/comments", commentsRouter);
 app.use("/api/inventory", inventoryRouter);
+app.use("/api/v1/inventory", inventoryRouter);
 app.use("/api/imports", importsRouter);
 app.use("/api/exports", exportsRouter);
 app.use("/api/picking", pickingRouter);

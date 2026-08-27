@@ -3745,6 +3745,7 @@
             </div>
             <div class="page-toolbar">
               <button type="button" id="openInventoryImportBtn" class="btn-primary">Importar inventario</button>
+              <button type="button" id="physicalInventoryResetBtn" class="btn-danger hidden">Borrar todo el inventario</button>
               <button type="button" id="exportStockBtn" class="btn-secondary">Exportar existencias CSV</button>
               <button type="button" id="exportStockFilteredBtn" class="btn-secondary">Exportar resultado filtrado</button>
               <button type="button" id="exportMovementsBtn" class="btn-secondary">Exportar movimientos CSV</button>
@@ -4457,6 +4458,9 @@
             <div class="card-panel" id="importWizardPanel">
               <h4 class="secondary-panel-title">Importar datos</h4>
               <p class="module-hint">Secuencia: Archivo → Hoja → Mapeo → Validación → Revisión → Confirmación. Subir un archivo no modifica inventario hasta confirmar.</p>
+              <div class="page-toolbar" id="physicalInventoryResetImportBar">
+                <button type="button" id="physicalInventoryResetImportBtn" class="btn-danger hidden">Borrar todo el inventario</button>
+              </div>
               <div id="importResumeBanner" class="import-resume-banner hidden" role="status" aria-live="polite">
                 <h5>Importación en curso</h5>
                 <div id="importResumeMeta" class="import-resume-meta"></div>
@@ -4719,6 +4723,30 @@
       </div>
     </div>
 
+    <div id="physicalInventoryResetModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-labelledby="physicalInventoryResetTitle" aria-modal="true">
+        <div class="modal-header">
+          <h3 id="physicalInventoryResetTitle">Borrar todo el inventario</h3>
+          <button type="button" class="modal-close" id="physicalInventoryResetCloseX" aria-label="Cerrar">×</button>
+        </div>
+        <p>Esta acción dejará todas las existencias en cero. No eliminará productos, proyectos, ubicaciones ni usuarios. Después podrá realizarse una nueva carga de inventario.</p>
+        <label class="lab-reset-check" for="physicalInventoryResetPhrase">
+          Escribe <strong>BORRAR INVENTARIO</strong> para confirmar
+        </label>
+        <input id="physicalInventoryResetPhrase" type="text" autocomplete="off" spellcheck="false" placeholder="BORRAR INVENTARIO" />
+        <p id="physicalInventoryResetBusyStatus" class="lab-reset-busy hidden" role="status" aria-live="polite">
+          <span class="lab-reset-spinner"></span>
+          Dejando el inventario en cero…
+        </p>
+        <p id="physicalInventoryResetError" class="ops-message error"></p>
+        <p id="physicalInventoryResetSuccess" class="ops-message ok hidden"></p>
+        <div class="import-actions" style="margin-top:12px">
+          <button type="button" id="physicalInventoryResetCancelBtn" class="btn-secondary">Cancelar</button>
+          <button type="button" id="physicalInventoryResetConfirmBtn" class="btn-danger" disabled>Confirmar borrado</button>
+        </div>
+      </div>
+    </div>
+
     <div id="importMissingLocModal" class="modal-overlay" aria-hidden="true">
       <div class="modal-panel" role="dialog" aria-labelledby="importMissingLocTitle" aria-modal="true">
         <div class="modal-header">
@@ -4804,6 +4832,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=53"></script>
+    <script src="/dashboard.js?v=54"></script>
   </body>
 </html>

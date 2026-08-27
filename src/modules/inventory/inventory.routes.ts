@@ -21,6 +21,10 @@ import {
 } from "./inventory-assignment-transfer.service.js";
 import { assertActiveInventoryStatus } from "./inventory-status.js";
 import { hasInventoryScope, inventoryScopeWhere, movementScopeWhere } from "./inventory-scope.js";
+import {
+  assertPhysicalResetConfirmation,
+  executePhysicalInventoryReset
+} from "./physical-reset.service.js";
 
 const inventoryRouter = Router();
 
@@ -678,6 +682,13 @@ inventoryRouter.post("/assignment-transfer", requireRole(["ADMIN", "SUPERVISOR"]
     }
     throw error;
   }
+});
+
+inventoryRouter.post("/physical/reset", requireRole(["ADMIN"]), async (req, res) => {
+  const body = z.object({ confirmation: z.string().optional() }).parse(req.body ?? {});
+  assertPhysicalResetConfirmation(body.confirmation);
+  const result = await executePhysicalInventoryReset({ userId: req.auth!.userId });
+  res.json(result);
 });
 
 inventoryRouter.post("/import", requireRole(["ADMIN"]), async (req, res) => {

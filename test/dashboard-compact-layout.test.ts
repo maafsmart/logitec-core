@@ -20,6 +20,9 @@ const REQUIRED_IDS = [
   "inventoryList",
   "inventoryFilterStrip",
   "openInventoryImportBtn",
+  "physicalInventoryResetBtn",
+  "physicalInventoryResetImportBtn",
+  "physicalInventoryResetModal",
   "importWizardPanel"
 ];
 
@@ -96,9 +99,9 @@ test("densidad inicial es compact y hay migración versionada", () => {
   assert.match(html, /data-grid-density="compact"/);
 });
 
-test("dashboard.js usa v=53", () => {
-  assert.match(html, /dashboard\.js\?v=53/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=51/);
+test("dashboard.js usa v=54", () => {
+  assert.match(html, /dashboard\.js\?v=54/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=53/);
 });
 
 test("no aparecen textos técnicos nuevos visibles", () => {

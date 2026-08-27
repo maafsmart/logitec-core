@@ -132,6 +132,19 @@ const labResetError = document.getElementById("labResetError");
 let labResetBusy = false;
 let labResetAvailable = false;
 let labResetCompleted = false;
+const physicalInventoryResetBtns = [
+  document.getElementById("physicalInventoryResetBtn"),
+  document.getElementById("physicalInventoryResetImportBtn")
+].filter(Boolean);
+const physicalInventoryResetModal = document.getElementById("physicalInventoryResetModal");
+const physicalInventoryResetPhrase = document.getElementById("physicalInventoryResetPhrase");
+const physicalInventoryResetConfirmBtn = document.getElementById("physicalInventoryResetConfirmBtn");
+const physicalInventoryResetCancelBtn = document.getElementById("physicalInventoryResetCancelBtn");
+const physicalInventoryResetCloseX = document.getElementById("physicalInventoryResetCloseX");
+const physicalInventoryResetBusyStatus = document.getElementById("physicalInventoryResetBusyStatus");
+const physicalInventoryResetError = document.getElementById("physicalInventoryResetError");
+const physicalInventoryResetSuccess = document.getElementById("physicalInventoryResetSuccess");
+let physicalInventoryResetBusy = false;
 
 let currentRole = null;
 let movementsNextCursor = null;
@@ -7584,6 +7597,10 @@ function applyRoleNavigation(role) {
   const openInvBtn = document.getElementById("openInventoryImportBtn");
   if (openCatBtn) openCatBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
   if (openInvBtn) openInvBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
+  physicalInventoryResetBtns.forEach((btn) => {
+    btn.classList.toggle("hidden", role !== "ADMIN");
+    btn.style.display = role === "ADMIN" ? "inline-block" : "none";
+  });
   if (taskCreateWrap) {
     taskCreateWrap.classList.toggle("hidden", role !== "ADMIN" && role !== "SUPERVISOR" && role !== "OPERATOR");
   }
@@ -9713,6 +9730,103 @@ if (labResetModal && labResetModal.dataset.modalWired !== "1") {
   labResetModal.dataset.modalWired = "1";
   labResetModal.addEventListener("click", (event) => {
     if (event.target === labResetModal) closeLabResetModal();
+  });
+}
+
+const PHYSICAL_RESET_CONFIRMATION = "BORRAR INVENTARIO";
+
+function setPhysicalInventoryResetError(message) {
+  if (physicalInventoryResetError) physicalInventoryResetError.textContent = message || "";
+}
+
+function syncPhysicalInventoryResetConfirmEnabled() {
+  if (!physicalInventoryResetConfirmBtn) return;
+  const phrase = String(physicalInventoryResetPhrase?.value || "").trim();
+  const ready = phrase === PHYSICAL_RESET_CONFIRMATION && !physicalInventoryResetBusy;
+  physicalInventoryResetConfirmBtn.disabled = !ready;
+}
+
+function setPhysicalInventoryResetBusy(busy) {
+  physicalInventoryResetBusy = busy;
+  physicalInventoryResetBtns.forEach((btn) => {
+    btn.disabled = busy;
+  });
+  if (physicalInventoryResetPhrase) physicalInventoryResetPhrase.disabled = busy;
+  if (physicalInventoryResetCancelBtn) physicalInventoryResetCancelBtn.disabled = busy;
+  if (physicalInventoryResetCloseX) physicalInventoryResetCloseX.disabled = busy;
+  if (physicalInventoryResetBusyStatus) physicalInventoryResetBusyStatus.classList.toggle("hidden", !busy);
+  if (busy && physicalInventoryResetConfirmBtn) {
+    physicalInventoryResetConfirmBtn.disabled = true;
+    physicalInventoryResetConfirmBtn.textContent = "Borrando…";
+  } else if (physicalInventoryResetConfirmBtn) {
+    physicalInventoryResetConfirmBtn.textContent = "Confirmar borrado";
+    syncPhysicalInventoryResetConfirmEnabled();
+  }
+}
+
+function openPhysicalInventoryResetModal() {
+  if (currentRole !== "ADMIN" || physicalInventoryResetBusy) return;
+  setPhysicalInventoryResetError("");
+  if (physicalInventoryResetSuccess) {
+    physicalInventoryResetSuccess.textContent = "";
+    physicalInventoryResetSuccess.classList.add("hidden");
+  }
+  if (physicalInventoryResetPhrase) physicalInventoryResetPhrase.value = "";
+  syncPhysicalInventoryResetConfirmEnabled();
+  openModal("physicalInventoryResetModal");
+}
+
+function closePhysicalInventoryResetModal() {
+  if (physicalInventoryResetBusy) return;
+  closeModal("physicalInventoryResetModal");
+}
+
+async function runPhysicalInventoryReset() {
+  if (physicalInventoryResetBusy || currentRole !== "ADMIN") return;
+  const phrase = String(physicalInventoryResetPhrase?.value || "").trim();
+  if (phrase !== PHYSICAL_RESET_CONFIRMATION) {
+    setPhysicalInventoryResetError(`Para confirmar escribe exactamente: ${PHYSICAL_RESET_CONFIRMATION}`);
+    return;
+  }
+  setPhysicalInventoryResetBusy(true);
+  setPhysicalInventoryResetError("");
+  try {
+    const response = await authenticatedFetch("/api/v1/inventory/physical/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation: PHYSICAL_RESET_CONFIRMATION })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.message || "No se pudo borrar el inventario.");
+    }
+    const zeroed = Number(data.inventoriesZeroed || 0) + Number(data.serialsReleased || 0);
+    const message = data.alreadyZero
+      ? "El inventario ya estaba en cero. No hubo cambios."
+      : `Inventario en cero. ${zeroed} registro${zeroed === 1 ? "" : "s"} llevados a cero (${data.inventoriesZeroed || 0} existencias, ${data.serialsReleased || 0} seriales).`;
+    if (physicalInventoryResetSuccess) {
+      physicalInventoryResetSuccess.textContent = `✓ ${message}`;
+      physicalInventoryResetSuccess.classList.remove("hidden");
+    }
+    await refreshInventoryAfterImport();
+  } catch (error) {
+    setPhysicalInventoryResetError(error?.message || "No se pudo borrar el inventario.");
+  } finally {
+    setPhysicalInventoryResetBusy(false);
+  }
+}
+
+physicalInventoryResetBtns.forEach((btn) => {
+  btn.addEventListener("click", () => openPhysicalInventoryResetModal());
+});
+if (physicalInventoryResetCancelBtn) physicalInventoryResetCancelBtn.addEventListener("click", closePhysicalInventoryResetModal);
+if (physicalInventoryResetCloseX) physicalInventoryResetCloseX.addEventListener("click", closePhysicalInventoryResetModal);
+if (physicalInventoryResetPhrase) physicalInventoryResetPhrase.addEventListener("input", syncPhysicalInventoryResetConfirmEnabled);
+if (physicalInventoryResetConfirmBtn) physicalInventoryResetConfirmBtn.addEventListener("click", () => void runPhysicalInventoryReset());
+if (physicalInventoryResetModal && physicalInventoryResetModal.dataset.modalWired !== "1") {
+  physicalInventoryResetModal.dataset.modalWired = "1";
+  physicalInventoryResetModal.addEventListener("click", (event) => {
+    if (event.target === physicalInventoryResetModal) closePhysicalInventoryResetModal();
   });
 }
 const importMissingLocModal = document.getElementById("importMissingLocModal");
