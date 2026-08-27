@@ -20,7 +20,7 @@ const serviceSrc = readFileSync(new URL("../src/modules/inventory/physical-reset
 
 const resetBlock = routes.slice(
   routes.indexOf('inventoryRouter.post("/physical/reset"'),
-  routes.indexOf('inventoryRouter.post("/import"')
+  routes.indexOf('inventoryRouter.post("/physical/prepare"')
 );
 
 function d(n: number) {
@@ -178,7 +178,7 @@ test("el endpoint v1 existe, es ADMIN y no toca confirm de importación", () => 
   assert.match(resetBlock, /requireRole\(\["ADMIN"\]\)/);
   assert.doesNotMatch(resetBlock, /OPERATOR|CLIENT|SUPERVISOR/);
   assert.match(resetBlock, /executePhysicalInventoryReset/);
-  assert.doesNotMatch(resetBlock, /\/confirm/);
+  assert.doesNotMatch(resetBlock, /\/api\/imports\/.+\/confirm/);
   assert.doesNotMatch(serviceSrc, /importBatch/);
   assert.doesNotMatch(serviceSrc, /AN202|AN203|AN204/);
 });

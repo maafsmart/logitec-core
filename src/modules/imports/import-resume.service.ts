@@ -128,7 +128,10 @@ export function importConfirmability(
 ): { confirmable: boolean; reason: string | null } {
   const meta = asMeta(batch.metadata);
   if (meta.inventoryMode === "RECONCILE") {
-    return { confirmable: false, reason: "RECONCILE solo permite preview; no se puede confirmar." };
+    return {
+      confirmable: false,
+      reason: "RECONCILE se confirma con Sustituir inventario físico, no con la confirmación genérica."
+    };
   }
   if (batch.status === "CANCELLED") {
     return { confirmable: false, reason: "La importación fue cancelada." };
@@ -228,6 +231,7 @@ export function buildImportResumePayload(
     completedAt: batch.completedAt,
     lastUpdated,
     inventoryMode: meta.inventoryMode || "APPEND",
+    sourceSha256: meta.sourceSha256 || null,
     priceCurrency: meta.priceCurrency || null,
     mapping,
     hasMapping,

@@ -391,7 +391,7 @@ export async function validateMappedRows(
         errors.push({ field: "serialNumber", value: serial, code: "SERIAL_DUPLICATE_FILE", message: "Serial duplicado en archivo.", severity: "ERROR" });
       }
       fileSerials.add(serial);
-      if (serialSet.has(serial)) {
+      if (serialSet.has(serial) && options.inventoryMode !== "RECONCILE") {
         errors.push({ field: "serialNumber", value: serial, code: "SERIAL_EXISTS", message: "Serial ya existe en sistema.", severity: "ERROR" });
       }
       if (qty != null && qty !== 1) {
@@ -408,7 +408,7 @@ export async function validateMappedRows(
         errors.push({ field: "imei", value: imei, code: "IMEI_DUPLICATE_FILE", message: "IMEI duplicado en archivo.", severity: "ERROR" });
       }
       fileImeis.add(imei);
-      if (imeiSet.has(imei)) {
+      if (imeiSet.has(imei) && options.inventoryMode !== "RECONCILE") {
         errors.push({ field: "imei", value: imei, code: "IMEI_EXISTS", message: "IMEI ya existe en sistema.", severity: "ERROR" });
       }
     }

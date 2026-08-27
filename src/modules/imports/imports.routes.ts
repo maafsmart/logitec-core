@@ -7,6 +7,7 @@ import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
 import { buildSuggestedMapping, type CanonicalField, type ImportContext } from "./import-mapping.js";
 import { parseUpload } from "./import-parse.service.js";
+import { sha256Hex } from "./import-file-hash.js";
 import { buildInventoryReconcileDiff, validateMappedRows } from "./import-validate.service.js";
 import { executeImportBatch, ImportExecuteError } from "./import-execute.service.js";
 import {
@@ -128,7 +129,8 @@ importsRouter.post("/upload", requireRole(["ADMIN"]), upload.single("file"), asy
         selectedSheet: first?.name || null,
         inventoryMode,
         priceCurrency: priceCurrency || null,
-        parsedRows: first?.rows || []
+        parsedRows: first?.rows || [],
+        sourceSha256: sha256Hex(req.file.buffer)
       } as Prisma.InputJsonValue
     }
   });
@@ -382,7 +384,7 @@ importsRouter.get("/:id/review", requireRole(["ADMIN"]), async (req, res) => {
     ]),
     filters: match,
     globalNotices: batch.context === "INVENTORY" && asMeta(batch.metadata).inventoryMode === "RECONCILE"
-      ? [{ code: "RECONCILE_PREVIEW_ONLY", message: "Modo conciliación: vista previa únicamente. No se aplicarán cambios hasta confirmación autorizada." }]
+      ? [{ code: "RECONCILE_PREVIEW_ONLY", message: "Modo conciliación: se confirma con Sustituir inventario físico." }]
       : [],
     groups: review.groups,
     missingLocations: collectMissingLocations(batch.rows).map((item) => ({ code: item.code, records: item.records })),
@@ -588,11 +590,19 @@ importsRouter.post("/:id/confirm", requireRole(["ADMIN"]), async (req, res) => {
   assertImportBatchMutable(batch.status);
   const meta = asMeta(batch.metadata);
   if (meta.inventoryMode === "RECONCILE") {
-    const blocked = batch.rows.filter((row) => row.reviewState === "BLOCKED").length;
-    if (blocked > 0) {
-      throw new HttpError(409, `Existen ${blocked} registros pendientes de corrección. RECONCILE no permite confirmación parcial.`);
+    throw new HttpError(
+      409,
+      "RECONCILE se confirma con POST /api/v1/inventory/physical/confirm. La confirmación genérica no sustituye inventario."
+    );
+  }
+  if (batch.context === "INVENTORY") {
+    const live = await prisma.inventory.aggregate({ _sum: { qty: true } });
+    if (live._sum.qty && live._sum.qty.gt(0)) {
+      throw new HttpError(
+        409,
+        "No se puede confirmar un lote físico APPEND sobre inventario no vacío. Prepara conciliación RECONCILE."
+      );
     }
-    throw new HttpError(409, "RECONCILE bloqueado en este cambio. Solo preview/diff autorizado.");
   }
   assertImportConfirmable(batch.rows);
   const blockedRows = batch.rows.filter((row) => row.reviewState === "BLOCKED").length;
