@@ -310,7 +310,7 @@ async function loadInventoryProjects() {
   const response = await authenticatedFetch("/api/inventory/projects");
   const rows = response?.ok ? await response.json() : [];
   inventoryProjectsCache = Array.isArray(rows)
-    ? rows.filter((p) => p && p.id && Number(p.qty) > 0)
+    ? rows.filter((p) => p && p.id && Number(p.qty) > 0 && !isForbiddenProjectLabel(p.code) && !isForbiddenProjectLabel(p.name))
     : [];
   const selected = getInventoryScope().projectId;
   if (selected && !inventoryProjectsCache.some((p) => p.id === selected)) {
@@ -381,34 +381,34 @@ function filterRowsByAviatProject(rows) {
   return Array.isArray(rows) ? rows : [];
 }
 
+function isForbiddenProjectLabel(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+  return (
+    normalized === "LOGITEC" ||
+    normalized === "FREE TO SALE" ||
+    normalized === "FREE_TO_SALE" ||
+    normalized === "CUSTOMER OWNS" ||
+    normalized === "CUSTOMR OWNS" ||
+    normalized === "ASO"
+  );
+}
+
 function getAviatProjectFromRow(row) {
   if (row?.assignmentType === "FREE_TO_SALE" || row?.assignmentKey === "FREE_TO_SALE") {
-    return { code: "FREE_TO_SALE", name: "FREE TO SALE" };
+    return { code: "", name: "FREE TO SALE" };
   }
-  const code =
-    row?.project?.code ||
-    row?.product?.customer?.code ||
-    row?.customer?.code ||
-    (typeof row?.customer === "string" ? row.customer : "") ||
-    (typeof row?.project === "string" ? row.project : "") ||
-    row?.codigo_proyecto ||
-    row?.code ||
-    parseRequisitionNotes(row?.notes)?.customerCode ||
-    "";
-  const name =
-    row?.project?.name ||
-    row?.product?.customer?.name ||
-    row?.customer?.name ||
-    row?.customerName ||
-    row?.proyecto ||
-    row?.name ||
-    parseRequisitionNotes(row?.notes)?.customerName ||
-    code ||
-    "";
-  return {
-    code: String(code || "").trim(),
-    name: String(name || code || "").trim()
-  };
+  const code = String(row?.project?.code || "").trim();
+  const name = String(row?.project?.name || "").trim();
+  if (code || name) {
+    if (isForbiddenProjectLabel(code) || isForbiddenProjectLabel(name)) {
+      return { code: "", name: "" };
+    }
+    return { code, name: name || code };
+  }
+  return { code: "", name: "" };
 }
 
 function getAviatProjectDisplayFromRow(row) {
@@ -3222,6 +3222,7 @@ function getControlCenterFilterValues() {
 
 function filterStockRowsWithFilters(rows, filters) {
   return (Array.isArray(rows) ? rows : []).filter((row) => {
+    if (!(Number(row.qty) > 0)) return false;
     const p = row.product || {};
     const project = getAviatProjectFromRow(row);
     const lote = extractLoteFromRow(row);
@@ -5381,7 +5382,7 @@ async function loadStockStrip() {
     return;
   }
   const rows = await response.json();
-  stockRowsCache = Array.isArray(rows) ? rows : [];
+  stockRowsCache = Array.isArray(rows) ? rows.filter((row) => Number(row.qty) > 0) : [];
   applyInventoryFilters();
   renderClientsModule();
   updateInventoryScopeUi();
@@ -9620,6 +9621,25 @@ async function refreshInventoryAfterImport() {
   await loadInventoryMovements();
 }
 
+function clearInventoryWorkspaceState() {
+  stockRowsCache = [];
+  inventoryProjectsCache = [];
+  inventoryKpiCache = null;
+  movementsRowsCache = [];
+  movementsCountCache = 0;
+  pendingConflictsCache = 0;
+  updateInventorySummary([]);
+  updateTableCountMeta("inventoryTableCount", 0, 0, "saldos");
+  updateTableCountMeta("ccTableCount", 0, 0, "saldos");
+  fillInventoryProjectSelects();
+  renderProjectsStockList();
+}
+
+async function refreshInventoryAfterPhysicalPurge() {
+  clearInventoryWorkspaceState();
+  await refreshInventoryAfterImport();
+}
+
 document.getElementById("importConfirmCancelBtn")?.addEventListener("click", () => finishImportConfirm(false));
 document.getElementById("importConfirmCloseX")?.addEventListener("click", () => finishImportConfirm(false));
 document.getElementById("importConfirmAcceptBtn")?.addEventListener("click", () => finishImportConfirm(true));
@@ -9800,15 +9820,21 @@ async function runPhysicalInventoryReset() {
     if (!response.ok) {
       throw new Error(data.message || "No se pudo borrar el inventario.");
     }
-    const zeroed = Number(data.inventoriesZeroed || 0) + Number(data.serialsReleased || 0);
-    const message = data.alreadyZero
-      ? "El inventario ya estaba en cero. No hubo cambios."
-      : `Inventario en cero. ${zeroed} registro${zeroed === 1 ? "" : "s"} llevados a cero (${data.inventoriesZeroed || 0} existencias, ${data.serialsReleased || 0} seriales).`;
+    if (data.result !== "PURGED") {
+      throw new Error("El servidor no confirmó la eliminación física del inventario.");
+    }
+    const inventories = Number(data.inventoriesPurged ?? data.inventoriesZeroed ?? 0);
+    const layers = Number(data.layersPurged ?? data.layersZeroed ?? 0);
+    const serials = Number(data.serialsPurged ?? data.serialsReleased ?? 0);
+    const reservations = Number(data.reservationsPurged ?? data.reservationsReleased ?? 0);
+    const stock = Number(data.legacyStockPurged ?? data.legacyStockZeroed ?? 0);
+    const message =
+      `Inventario eliminado. ${inventories} existencias, ${layers} capas, ${serials} seriales, ${reservations} reservas, ${stock} stock legado.`;
     if (physicalInventoryResetSuccess) {
       physicalInventoryResetSuccess.textContent = `✓ ${message}`;
       physicalInventoryResetSuccess.classList.remove("hidden");
     }
-    await refreshInventoryAfterImport();
+    await refreshInventoryAfterPhysicalPurge();
   } catch (error) {
     setPhysicalInventoryResetError(error?.message || "No se pudo borrar el inventario.");
   } finally {

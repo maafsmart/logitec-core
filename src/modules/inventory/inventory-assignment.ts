@@ -1,5 +1,6 @@
 import { InventoryAssignmentType, Prisma } from "@prisma/client";
 import { InventoryMutationError } from "./inventory-errors.js";
+import { isForbiddenInventoryProjectRecord } from "./inventory-project-rules.js";
 
 export type InventoryAssignment = {
   assignmentType: InventoryAssignmentType;
@@ -74,15 +75,24 @@ export async function resolveInboundAssignment(
     if (!explicitProjectId) {
       throw new InventoryMutationError("PROJECT_REQUIRED", "La asignación PROJECT requiere projectId.");
     }
-    const project = await tx.customer.findUnique({ where: { id: explicitProjectId }, select: { id: true } });
-    if (!project) {
+    const project = await tx.customer.findUnique({
+      where: { id: explicitProjectId },
+      select: { id: true, code: true, name: true }
+    });
+    if (!project || isForbiddenInventoryProjectRecord(project)) {
       throw new InventoryMutationError("PROJECT_NOT_FOUND", "Proyecto no encontrado.");
     }
     return buildAssignment("PROJECT", project.id);
   }
 
   if (product.customerId) {
-    return buildAssignment("PROJECT", product.customerId);
+    const owner = await tx.customer.findUnique({
+      where: { id: product.customerId },
+      select: { id: true, code: true, name: true }
+    });
+    if (owner && !isForbiddenInventoryProjectRecord(owner)) {
+      return buildAssignment("PROJECT", owner.id);
+    }
   }
 
   throw new InventoryMutationError(

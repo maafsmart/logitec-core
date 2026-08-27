@@ -9,10 +9,12 @@ import {
 import {
   FREE_TO_SALE_LABEL,
   applyFreeToSaleNormalized,
+  applyUnassignedNormalized,
   classifyImportAssignment,
   normalizeImportLabel,
   summarizeImportAssignments
 } from "./import-assignment.js";
+import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
 
 export { FREE_TO_SALE_LABEL };
 export type { ImportAssignmentType } from "./import-assignment.js";
@@ -269,6 +271,8 @@ export async function validateMappedRows(
     if (isInventoryImport) {
       if (classified.kind === "FREE_TO_SALE") {
         applyFreeToSaleNormalized(normalized);
+      } else if (classified.kind === "UNASSIGNED") {
+        applyUnassignedNormalized(normalized);
       } else if (classified.kind === "UNRESOLVED") {
         normalized.assignmentType = "UNRESOLVED";
         normalized.projectId = null;
@@ -306,6 +310,8 @@ export async function validateMappedRows(
             message: "Proyecto no encontrado. No se creará automáticamente desde el texto fuente.",
             severity: "ERROR"
           });
+        } else if (isForbiddenInventoryProjectRecord(project)) {
+          applyUnassignedNormalized(normalized);
         } else {
           normalized.assignmentType = "PROJECT";
           normalized.projectId = project.id;

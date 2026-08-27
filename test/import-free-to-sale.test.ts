@@ -219,7 +219,7 @@ test("confirmación aislada crea cubo FREE_TO_SALE con projectId null y conserva
   assert.equal(assignment.projectId, null);
   assert.equal(assignment.assignmentKey, "FREE_TO_SALE");
   assert.match(bulk, /lotNumber: n\.lotNumber \? String\(n\.lotNumber\) : null/);
-  assert.match(bulk, /assignmentType !== "PROJECT" && assignmentType !== "FREE_TO_SALE"/);
+  assert.match(bulk, /assignmentType !== "LEGACY_UNASSIGNED"/);
   assert.match(bulk, /assignmentType === "PROJECT" \? String\(n\.projectId \|\| ""\) : null/);
   assert.doesNotMatch(js, /inventoryProjectsCache\.push\(/);
 });
@@ -260,4 +260,27 @@ test("la interfaz muestra FREE TO SALE y no lo trata como error pendiente ni lo 
   assert.match(js, /fillInventoryProjectSelects[\s\S]*inventoryProjectsCache\.map/);
   assert.doesNotMatch(js, /inventoryProjectsCache\.push/);
   assert.match(html, /class="js-inventory-project-select"/);
+});
+
+test("LOGITEC, CUSTOMER OWNS, CUSTOMR OWNS y ASO no se clasifican como proyecto", () => {
+  for (const customer of ["LOGITEC", "CUSTOMER OWNS", "CUSTOMR OWNS", "ASO"]) {
+    const classified = classifyImportAssignment({ customer, lotNumber: "LOT-1" });
+    assert.equal(classified.kind, "UNASSIGNED", customer);
+    assert.equal(classified.assignmentType, "LEGACY_UNASSIGNED", customer);
+    assert.equal(classified.projectId, null, customer);
+    assert.equal(classified.createsProject, false, customer);
+    const assignment = buildAssignment("LEGACY_UNASSIGNED", classified.projectId);
+    assert.equal(assignment.assignmentType, "LEGACY_UNASSIGNED", customer);
+    assert.equal(assignment.projectId, null, customer);
+  }
+  const empty = classifyImportAssignment({ customer: "", lotNumber: "LOT-99" });
+  assert.equal(empty.kind, "UNRESOLVED");
+  assert.equal(empty.projectId, null);
+  const real = classifyImportAssignment({ customer: "AVIAT NETWORKS" });
+  assert.equal(real.kind, "PROJECT_LOOKUP");
+  assert.equal(real.project, "AVIAT NETWORKS");
+  const projectFn = js.slice(js.indexOf("function getAviatProjectFromRow"), js.indexOf("function getAviatProjectDisplayFromRow"));
+  assert.match(projectFn, /row\?\.project\?\.code/);
+  assert.doesNotMatch(projectFn, /product\?\.customer/);
+  assert.match(js, /isForbiddenProjectLabel\(p\.code\)/);
 });

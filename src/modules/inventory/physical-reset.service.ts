@@ -15,15 +15,21 @@ export type PhysicalResetDb = {
 
 export type PhysicalResetResult = {
   ok: true;
-  alreadyZero: boolean;
-  inventoriesZeroed: number;
+  alreadyEmpty: boolean;
+  inventoriesPurged: number;
+  layersPurged: number;
+  serialsPurged: number;
+  reservationsPurged: number;
+  legacyStockPurged: number;
   qtyCleared: string;
   reservedCleared: string;
+  result: "PURGED";
+  inventoriesZeroed: number;
   layersZeroed: number;
   serialsReleased: number;
   reservationsReleased: number;
   legacyStockZeroed: number;
-  result: "ZEROED" | "ALREADY_ZERO";
+  alreadyZero: false;
 };
 
 let physicalResetInFlight = false;
@@ -43,88 +49,58 @@ function decimalText(value: Prisma.Decimal | null | undefined): string {
   return value ? value.toString() : "0";
 }
 
-function isPositive(value: Prisma.Decimal | null | undefined): boolean {
-  return Boolean(value && value.gt(0));
-}
-
-export async function applyPhysicalInventoryZero(
+export async function applyPhysicalInventoryPurge(
   tx: Prisma.TransactionClient,
   actor: { userId: string }
 ): Promise<PhysicalResetResult> {
-  const [qtyAgg, reservedAgg, layerQtyAgg, layerReservedAgg, stockAgg, serials, activeReservations, positiveCubes, positiveLayers, positiveStock] =
-    await Promise.all([
-      tx.inventory.aggregate({ _sum: { qty: true } }),
-      tx.inventory.aggregate({ _sum: { reservedQty: true } }),
-      tx.inventoryLayer.aggregate({ _sum: { qty: true } }),
-      tx.inventoryLayer.aggregate({ _sum: { reservedQty: true } }),
-      tx.inventoryStock.aggregate({ _sum: { quantity: true } }),
-      tx.inventorySerial.count(),
-      tx.inventoryReservation.count({ where: { status: "ACTIVE" } }),
-      tx.inventory.count({ where: { OR: [{ qty: { gt: 0 } }, { reservedQty: { gt: 0 } }] } }),
-      tx.inventoryLayer.count({ where: { OR: [{ qty: { gt: 0 } }, { reservedQty: { gt: 0 } }] } }),
-      tx.inventoryStock.count({ where: { quantity: { gt: 0 } } })
-    ]);
-
-  const alreadyZero =
-    !isPositive(qtyAgg._sum.qty) &&
-    !isPositive(reservedAgg._sum.reservedQty) &&
-    !isPositive(layerQtyAgg._sum.qty) &&
-    !isPositive(layerReservedAgg._sum.reservedQty) &&
-    !isPositive(stockAgg._sum.quantity) &&
-    serials === 0 &&
-    activeReservations === 0;
-
-  if (!alreadyZero) {
-    await tx.inventoryReservation.updateMany({
-      where: { status: "ACTIVE" },
-      data: { status: "RELEASED" }
-    });
-    await tx.inventory.updateMany({
-      data: { qty: 0, reservedQty: 0 }
-    });
-    await tx.inventoryLayer.updateMany({
-      data: { qty: 0, reservedQty: 0 }
-    });
-    await tx.inventoryStock.updateMany({
-      data: { quantity: 0 }
-    });
-    // Occupancy only. Movements keep audit history via onDelete: SetNull.
-    await tx.inventorySerial.deleteMany();
-  }
-
-  const [afterQty, afterReserved, afterLayerQty, afterLayerReserved, afterStock, afterSerials, afterActive] = await Promise.all([
+  const [qtyAgg, reservedAgg, inventoryCount, layerCount, serialCount, reservationCount, stockCount] = await Promise.all([
     tx.inventory.aggregate({ _sum: { qty: true } }),
     tx.inventory.aggregate({ _sum: { reservedQty: true } }),
-    tx.inventoryLayer.aggregate({ _sum: { qty: true } }),
-    tx.inventoryLayer.aggregate({ _sum: { reservedQty: true } }),
-    tx.inventoryStock.aggregate({ _sum: { quantity: true } }),
+    tx.inventory.count(),
+    tx.inventoryLayer.count(),
     tx.inventorySerial.count(),
-    tx.inventoryReservation.count({ where: { status: "ACTIVE" } })
+    tx.inventoryReservation.count(),
+    tx.inventoryStock.count()
   ]);
 
-  if (
-    isPositive(afterQty._sum.qty) ||
-    isPositive(afterReserved._sum.reservedQty) ||
-    isPositive(afterLayerQty._sum.qty) ||
-    isPositive(afterLayerReserved._sum.reservedQty) ||
-    isPositive(afterStock._sum.quantity) ||
-    afterSerials !== 0 ||
-    afterActive !== 0
-  ) {
-    throw new HttpError(500, "El inventario no quedó en cero. Se revirtió la operación.");
+  const alreadyEmpty =
+    inventoryCount === 0 && layerCount === 0 && serialCount === 0 && reservationCount === 0 && stockCount === 0;
+
+  const reservations = await tx.inventoryReservation.deleteMany();
+  const serials = await tx.inventorySerial.deleteMany();
+  const layers = await tx.inventoryLayer.deleteMany();
+  const inventories = await tx.inventory.deleteMany();
+  const stock = await tx.inventoryStock.deleteMany();
+
+  const [afterInventory, afterLayers, afterSerials, afterReservations, afterStock] = await Promise.all([
+    tx.inventory.count(),
+    tx.inventoryLayer.count(),
+    tx.inventorySerial.count(),
+    tx.inventoryReservation.count(),
+    tx.inventoryStock.count()
+  ]);
+
+  if (afterInventory !== 0 || afterLayers !== 0 || afterSerials !== 0 || afterReservations !== 0 || afterStock !== 0) {
+    throw new HttpError(500, "El inventario operativo no quedó vacío. Se revirtió la operación.");
   }
 
   const result: PhysicalResetResult = {
     ok: true,
-    alreadyZero,
-    inventoriesZeroed: alreadyZero ? 0 : positiveCubes,
-    qtyCleared: alreadyZero ? "0" : decimalText(qtyAgg._sum.qty),
-    reservedCleared: alreadyZero ? "0" : decimalText(reservedAgg._sum.reservedQty),
-    layersZeroed: alreadyZero ? 0 : positiveLayers,
-    serialsReleased: alreadyZero ? 0 : serials,
-    reservationsReleased: alreadyZero ? 0 : activeReservations,
-    legacyStockZeroed: alreadyZero ? 0 : positiveStock,
-    result: alreadyZero ? "ALREADY_ZERO" : "ZEROED"
+    alreadyEmpty,
+    inventoriesPurged: inventories.count,
+    layersPurged: layers.count,
+    serialsPurged: serials.count,
+    reservationsPurged: reservations.count,
+    legacyStockPurged: stock.count,
+    qtyCleared: decimalText(qtyAgg._sum.qty),
+    reservedCleared: decimalText(reservedAgg._sum.reservedQty),
+    result: "PURGED",
+    inventoriesZeroed: inventories.count,
+    layersZeroed: layers.count,
+    serialsReleased: serials.count,
+    reservationsReleased: reservations.count,
+    legacyStockZeroed: stock.count,
+    alreadyZero: false
   };
 
   await logActivity(
@@ -137,20 +113,28 @@ export async function applyPhysicalInventoryZero(
       result: result.result,
       metadata: {
         administratorUserId: actor.userId,
-        inventoriesZeroed: result.inventoriesZeroed,
+        inventoriesPurged: result.inventoriesPurged,
+        layersPurged: result.layersPurged,
+        serialsPurged: result.serialsPurged,
+        reservationsPurged: result.reservationsPurged,
+        legacyStockPurged: result.legacyStockPurged,
         qtyCleared: result.qtyCleared,
         reservedCleared: result.reservedCleared,
-        layersZeroed: result.layersZeroed,
-        serialsReleased: result.serialsReleased,
-        reservationsReleased: result.reservationsReleased,
-        legacyStockZeroed: result.legacyStockZeroed,
-        alreadyZero: result.alreadyZero
+        alreadyEmpty: result.alreadyEmpty
       }
     },
     tx
   );
 
   return result;
+}
+
+/** @deprecated Use applyPhysicalInventoryPurge. Kept so existing callers keep compiling during the cutover. */
+export async function applyPhysicalInventoryZero(
+  tx: Prisma.TransactionClient,
+  actor: { userId: string }
+): Promise<PhysicalResetResult> {
+  return applyPhysicalInventoryPurge(tx, actor);
 }
 
 export async function executePhysicalInventoryReset(
@@ -162,7 +146,7 @@ export async function executePhysicalInventoryReset(
   }
   physicalResetInFlight = true;
   try {
-    return await db.$transaction((tx) => applyPhysicalInventoryZero(tx, actor), {
+    return await db.$transaction((tx) => applyPhysicalInventoryPurge(tx, actor), {
       maxWait: 15_000,
       timeout: 120_000
     });

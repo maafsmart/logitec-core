@@ -25,6 +25,7 @@ import {
   assertPhysicalResetConfirmation,
   executePhysicalInventoryReset
 } from "./physical-reset.service.js";
+import { isForbiddenInventoryProjectRecord } from "./inventory-project-rules.js";
 
 const inventoryRouter = Router();
 
@@ -84,23 +85,32 @@ inventoryRouter.get("/statuses", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR",
 inventoryRouter.get("/summary", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   const scope = inventoryScopeQuerySchema.parse(req.query);
   const inventoryWhere: Prisma.InventoryWhereInput = {
-    AND: [clientInventoryWhere(req.auth!), inventoryScopeWhere(scope)]
+    AND: [clientInventoryWhere(req.auth!), inventoryScopeWhere(scope), { qty: { gt: 0 } }]
   };
   const movementWhere: Prisma.InventoryMovementWhereInput = {
     AND: [clientMovementWhere(req.auth!), movementScopeWhere(scope)]
   };
-  const [cubes, qtyAgg, productIds, locationIds, projectIds, movements, catalogProducts] = await Promise.all([
+  const [cubes, qtyAgg, productIds, locationIds, projectIds, movements, catalogProducts, layers, serials, activeReservations] = await Promise.all([
     prisma.inventory.count({ where: inventoryWhere }),
     prisma.inventory.aggregate({ where: inventoryWhere, _sum: { qty: true } }),
     prisma.inventory.findMany({ where: inventoryWhere, distinct: ["productId"], select: { productId: true } }),
     prisma.inventory.findMany({ where: inventoryWhere, distinct: ["locationId"], select: { locationId: true } }),
     prisma.inventory.findMany({
-      where: { AND: [inventoryWhere, { projectId: { not: null } }] },
+      where: {
+        AND: [inventoryWhere, { assignmentType: "PROJECT", projectId: { not: null } }]
+      },
       distinct: ["projectId"],
       select: { projectId: true }
     }),
     prisma.inventoryMovement.count({ where: movementWhere }),
-    prisma.product.count({ where: clientProductWhere(req.auth!) })
+    prisma.product.count({ where: clientProductWhere(req.auth!) }),
+    prisma.inventoryLayer.count({
+      where: { AND: [clientLayerWhere(req.auth!), { qty: { gt: 0 } }] }
+    }),
+    prisma.inventorySerial.count({ where: clientSerialWhere(req.auth!) }),
+    prisma.inventoryReservation.count({
+      where: { AND: [{ status: "ACTIVE" }, { inventory: clientInventoryWhere(req.auth!) }] }
+    })
   ]);
   const distinctInventoryProducts = productIds.length;
   res.json({
@@ -110,7 +120,10 @@ inventoryRouter.get("/summary", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", 
     locations: locationIds.length,
     projects: projectIds.length,
     movements,
-    products: hasInventoryScope(scope) ? distinctInventoryProducts : catalogProducts
+    products: hasInventoryScope(scope) ? distinctInventoryProducts : catalogProducts,
+    layers,
+    serials,
+    activeReservations
   });
 });
 
@@ -135,6 +148,7 @@ inventoryRouter.get("/projects", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR",
     : [];
   const qtyById = new Map(grouped.map((row) => [row.projectId, row]));
   const projects = customers
+    .filter((project) => !isForbiddenInventoryProjectRecord(project))
     .map((project) => {
       const stats = qtyById.get(project.id);
       return {
@@ -230,12 +244,14 @@ inventoryRouter.get("/products/:productId/serials", requireRole(["ADMIN", "OPERA
 inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   const scope = inventoryScopeQuerySchema.parse(req.query);
   const rows = await prisma.inventory.findMany({
-    where: { AND: [clientInventoryWhere(req.auth!), inventoryScopeWhere(scope)] },
+    where: {
+      AND: [clientInventoryWhere(req.auth!), inventoryScopeWhere(scope), { qty: { gt: 0 } }]
+    },
     orderBy: [{ location: { warehouse: "asc" } }, { updatedAt: "desc" }],
-    take: 500,
+    take: 20000,
     include: {
       product: {
-        select: { sku: true, name: true, active: true, customer: { select: { code: true, name: true } } }
+        select: { sku: true, name: true, active: true }
       },
       location: true,
       project: {

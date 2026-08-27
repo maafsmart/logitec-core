@@ -4729,14 +4729,14 @@
           <h3 id="physicalInventoryResetTitle">Borrar todo el inventario</h3>
           <button type="button" class="modal-close" id="physicalInventoryResetCloseX" aria-label="Cerrar">×</button>
         </div>
-        <p>Esta acción dejará todas las existencias en cero. No eliminará productos, proyectos, ubicaciones ni usuarios. Después podrá realizarse una nueva carga de inventario.</p>
+        <p>Esta acción eliminará completamente todos los registros de existencias, capas, seriales y reservas. No eliminará productos, proyectos, clientes, almacenes, ubicaciones ni usuarios. Después podrá realizar una nueva importación manual.</p>
         <label class="lab-reset-check" for="physicalInventoryResetPhrase">
           Escribe <strong>BORRAR INVENTARIO</strong> para confirmar
         </label>
         <input id="physicalInventoryResetPhrase" type="text" autocomplete="off" spellcheck="false" placeholder="BORRAR INVENTARIO" />
         <p id="physicalInventoryResetBusyStatus" class="lab-reset-busy hidden" role="status" aria-live="polite">
           <span class="lab-reset-spinner"></span>
-          Dejando el inventario en cero…
+          Eliminando existencias…
         </p>
         <p id="physicalInventoryResetError" class="ops-message error"></p>
         <p id="physicalInventoryResetSuccess" class="ops-message ok hidden"></p>
@@ -4832,6 +4832,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=54"></script>
+    <script src="/dashboard.js?v=55"></script>
   </body>
 </html>

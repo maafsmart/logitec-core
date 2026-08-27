@@ -6,7 +6,7 @@ import { HttpError } from "../src/shared/http-error.js";
 import {
   PHYSICAL_RESET_CONFIRMATION,
   PHYSICAL_RESET_PATH,
-  applyPhysicalInventoryZero,
+  applyPhysicalInventoryPurge,
   assertPhysicalResetConfirmation,
   executePhysicalInventoryReset,
   isPhysicalResetInFlight
@@ -72,22 +72,14 @@ function createFakeTx(seed?: Partial<{
         const key = Object.keys(_sum)[0]!;
         return { _sum: { [key]: sum(state.inventory, key) } };
       },
-      count: async ({ where }: { where?: { OR?: Array<Record<string, { gt: number }>> } } = {}) => {
-        if (!where?.OR) return state.inventory.length;
-        return state.inventory.filter((row) => where.OR!.some((cond) => {
-          const field = Object.keys(cond)[0]!;
-          return row[field as "qty" | "reservedQty"].gt(0);
-        })).length;
-      },
-      updateMany: async ({ data }: { data: { qty: number; reservedQty: number } }) => {
-        for (const row of state.inventory) {
-          row.qty = d(data.qty);
-          row.reservedQty = d(data.reservedQty);
-        }
-        return { count: state.inventory.length };
+      count: async () => state.inventory.length,
+      updateMany: async () => {
+        throw new Error("inventory.updateMany forbidden");
       },
       deleteMany: async () => {
-        throw new Error("inventory.deleteMany forbidden");
+        const count = state.inventory.length;
+        state.inventory = [];
+        return { count };
       }
     },
     inventoryLayer: {
@@ -95,19 +87,14 @@ function createFakeTx(seed?: Partial<{
         const key = Object.keys(_sum)[0]!;
         return { _sum: { [key]: sum(state.layers, key) } };
       },
-      count: async ({ where }: { where?: { OR?: Array<Record<string, { gt: number }>> } } = {}) => {
-        if (!where?.OR) return state.layers.length;
-        return state.layers.filter((row) => where.OR!.some((cond) => {
-          const field = Object.keys(cond)[0]!;
-          return row[field as "qty" | "reservedQty"].gt(0);
-        })).length;
+      count: async () => state.layers.length,
+      updateMany: async () => {
+        throw new Error("inventoryLayer.updateMany forbidden");
       },
-      updateMany: async ({ data }: { data: { qty: number; reservedQty: number } }) => {
-        for (const row of state.layers) {
-          row.qty = d(data.qty);
-          row.reservedQty = d(data.reservedQty);
-        }
-        return { count: state.layers.length };
+      deleteMany: async () => {
+        const count = state.layers.length;
+        state.layers = [];
+        return { count };
       }
     },
     inventorySerial: {
@@ -122,28 +109,24 @@ function createFakeTx(seed?: Partial<{
       aggregate: async ({ _sum }: { _sum: Record<string, boolean> }) => ({
         _sum: { quantity: sum(state.stock, "quantity") }
       }),
-      count: async ({ where }: { where?: { quantity?: { gt: number } } } = {}) => {
-        if (where?.quantity?.gt === 0) return state.stock.filter((row) => row.quantity.gt(0)).length;
-        return state.stock.length;
+      count: async () => state.stock.length,
+      updateMany: async () => {
+        throw new Error("inventoryStock.updateMany forbidden");
       },
-      updateMany: async ({ data }: { data: { quantity: number } }) => {
-        for (const row of state.stock) row.quantity = d(data.quantity);
-        return { count: state.stock.length };
+      deleteMany: async () => {
+        const count = state.stock.length;
+        state.stock = [];
+        return { count };
       }
     },
     inventoryReservation: {
-      count: async ({ where }: { where?: { status?: string } } = {}) => {
-        if (where?.status) return state.reservations.filter((row) => row.status === where.status).length;
-        return state.reservations.length;
+      count: async () => state.reservations.length,
+      updateMany: async () => {
+        throw new Error("inventoryReservation.updateMany forbidden");
       },
-      updateMany: async ({ where, data }: { where: { status: string }; data: { status: string } }) => {
-        let count = 0;
-        for (const row of state.reservations) {
-          if (row.status === where.status) {
-            row.status = data.status;
-            count += 1;
-          }
-        }
+      deleteMany: async () => {
+        const count = state.reservations.length;
+        state.reservations = [];
         return { count };
       }
     },
@@ -178,9 +161,12 @@ test("el endpoint v1 existe, es ADMIN y no toca confirm de importación", () => 
   assert.match(resetBlock, /requireRole\(\["ADMIN"\]\)/);
   assert.doesNotMatch(resetBlock, /OPERATOR|CLIENT|SUPERVISOR/);
   assert.match(resetBlock, /executePhysicalInventoryReset/);
-  assert.doesNotMatch(resetBlock, /\/confirm/);
+  assert.doesNotMatch(resetBlock, /\/api\/imports\/.+\/confirm/);
   assert.doesNotMatch(serviceSrc, /importBatch/);
   assert.doesNotMatch(serviceSrc, /AN202|AN203|AN204/);
+  assert.match(serviceSrc, /result: "PURGED"/);
+  assert.doesNotMatch(serviceSrc, /result: "ZEROED"|result: "ALREADY_ZERO"/);
+  assert.doesNotMatch(serviceSrc, /updateMany\(/);
 });
 
 test("OPERATOR y CLIENT no tienen el botón ni la ruta", () => {
@@ -193,40 +179,62 @@ test("el botón rojo y el modal están en Inventario y Carga física", () => {
   assert.match(html, /id="physicalInventoryResetBtn"[^>]*class="btn-danger hidden"[^>]*>Borrar todo el inventario/);
   assert.match(html, /id="physicalInventoryResetImportBtn"[^>]*class="btn-danger hidden"[^>]*>Borrar todo el inventario/);
   assert.match(html, /id="physicalInventoryResetModal"/);
-  assert.match(html, /Esta acción dejará todas las existencias en cero\. No eliminará productos, proyectos, ubicaciones ni usuarios\. Después podrá realizarse una nueva carga de inventario\./);
+  assert.match(
+    html,
+    /Esta acción eliminará completamente todos los registros de existencias, capas, seriales y reservas\. No eliminará productos, proyectos, clientes, almacenes, ubicaciones ni usuarios\. Después podrá realizar una nueva importación manual\./
+  );
   assert.match(html, /Escribe <strong>BORRAR INVENTARIO<\/strong> para confirmar/);
   assert.match(js, /physicalInventoryResetConfirmBtn\.addEventListener\("click", \(\) => void runPhysicalInventoryReset\(\)\)/);
   assert.doesNotMatch(js, /DOMContentLoaded[\s\S]{0,400}runPhysicalInventoryReset/);
+  assert.match(js, /refreshInventoryAfterPhysicalPurge/);
+  assert.match(js, /clearInventoryWorkspaceState/);
+  assert.match(js, /data\.result !== "PURGED"/);
+  assert.doesNotMatch(js.slice(js.indexOf("async function runPhysicalInventoryReset")), /refreshInventoryAfterImport\(\);\s*\n\s*await authenticatedFetch\(`\/api\/imports/);
+  assert.doesNotMatch(js.slice(js.indexOf("async function runPhysicalInventoryReset"), js.indexOf("physicalInventoryResetBtns.forEach")), /\/api\/imports\/.+\/confirm/);
 });
 
-test("deja existencias y seriales en cero, conserva catálogos y movimientos, y es idempotente", async () => {
-  const { state, tx } = createFakeTx();
-  const first = await applyPhysicalInventoryZero(tx as never, { userId: "admin-1" });
-  assert.equal(first.result, "ZEROED");
-  assert.equal(first.inventoriesZeroed, 1);
-  assert.equal(first.serialsReleased, 1);
-  assert.equal(first.reservationsReleased, 1);
+test("elimina físicamente existencias, incluidas qty=0, y conserva catálogos y movimientos", async () => {
+  const { state, tx } = createFakeTx({
+    inventory: [
+      { id: "inv-1", qty: d(10), reservedQty: d(2) },
+      { id: "inv-0", qty: d(0), reservedQty: d(0) }
+    ],
+    layers: [
+      { id: "ly-1", qty: d(10), reservedQty: d(0) },
+      { id: "ly-0", qty: d(0), reservedQty: d(0) }
+    ]
+  });
+  const first = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1" });
+  assert.equal(first.result, "PURGED");
+  assert.equal(first.alreadyZero, false);
+  assert.equal(first.inventoriesPurged, 2);
+  assert.equal(first.layersPurged, 2);
+  assert.equal(first.serialsPurged, 1);
+  assert.equal(first.reservationsPurged, 1);
+  assert.equal(first.legacyStockPurged, 1);
+  assert.equal(state.inventory.length, 0);
+  assert.equal(state.layers.length, 0);
   assert.equal(state.serials.length, 0);
-  assert.equal(String(state.inventory[0]!.qty), "0");
-  assert.equal(String(state.inventory[0]!.reservedQty), "0");
-  assert.equal(String(state.layers[0]!.qty), "0");
-  assert.equal(state.reservations[0]!.status, "RELEASED");
+  assert.equal(state.reservations.length, 0);
+  assert.equal(state.stock.length, 0);
   assert.equal(state.movements.length, 1);
   assert.equal(state.products.length, 1);
   assert.equal(state.locations.length, 1);
   assert.equal(state.users.length, 1);
   assert.equal(state.deleted.product, 0);
+  assert.equal(state.deleted.location, 0);
+  assert.equal(state.deleted.user, 0);
   assert.equal(state.deleted.movement, 0);
   assert.equal(state.deleted.importBatch, 0);
   assert.equal(state.logs.length, 1);
   assert.equal(state.logs[0]!.subtype, "PHYSICAL_RESET");
-  assert.equal(state.logs[0]!.userId, "admin-1");
+  assert.equal(state.logs[0]!.result, "PURGED");
 
-  const second = await applyPhysicalInventoryZero(tx as never, { userId: "admin-1" });
-  assert.equal(second.result, "ALREADY_ZERO");
-  assert.equal(second.inventoriesZeroed, 0);
-  assert.equal(second.serialsReleased, 0);
-  assert.equal(state.serials.length, 0);
+  const second = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1" });
+  assert.equal(second.result, "PURGED");
+  assert.equal(second.alreadyEmpty, true);
+  assert.equal(second.inventoriesPurged, 0);
+  assert.equal(second.serialsPurged, 0);
   assert.equal(state.logs.length, 2);
 });
 
@@ -234,8 +242,10 @@ test("un fallo intermedio hace rollback y no deja seriales a medias", async () =
   const { state, tx } = createFakeTx();
   const snapshot = {
     inventory: cloneRows(state.inventory),
+    layers: cloneRows(state.layers),
     serials: cloneRows(state.serials),
-    reservations: cloneRows(state.reservations)
+    reservations: cloneRows(state.reservations),
+    stock: cloneRows(state.stock)
   };
   const db = {
     $transaction: async (fn: (inner: typeof tx) => Promise<unknown>) => {
@@ -251,16 +261,20 @@ test("un fallo intermedio hace rollback y no deja seriales a medias", async () =
         }
       } catch (error) {
         state.inventory = cloneRows(snapshot.inventory);
+        state.layers = cloneRows(snapshot.layers);
         state.serials = cloneRows(snapshot.serials);
         state.reservations = cloneRows(snapshot.reservations);
+        state.stock = cloneRows(snapshot.stock);
         throw error;
       }
     }
   };
   await assert.rejects(() => executePhysicalInventoryReset({ userId: "admin-1" }, db as never), /audit-fail/);
+  assert.equal(state.inventory.length, 1);
   assert.equal(String(state.inventory[0]!.qty), "10");
   assert.equal(state.serials[0]!.serialNumber, "1659");
   assert.equal(state.reservations[0]!.status, "ACTIVE");
+  assert.equal(state.layers.length, 1);
   assert.equal(isPhysicalResetInFlight(), false);
 });
 
@@ -274,15 +288,21 @@ test("impide una segunda solicitud simultánea", async () => {
       await hold;
       return {
         ok: true,
-        alreadyZero: true,
-        inventoriesZeroed: 0,
+        alreadyEmpty: true,
+        inventoriesPurged: 0,
+        layersPurged: 0,
+        serialsPurged: 0,
+        reservationsPurged: 0,
+        legacyStockPurged: 0,
         qtyCleared: "0",
         reservedCleared: "0",
+        result: "PURGED",
+        inventoriesZeroed: 0,
         layersZeroed: 0,
         serialsReleased: 0,
         reservationsReleased: 0,
         legacyStockZeroed: 0,
-        result: "ALREADY_ZERO"
+        alreadyZero: false
       };
     }
   };
@@ -300,8 +320,18 @@ test("impide una segunda solicitud simultánea", async () => {
 
 test("después del reset los seriales de la carga borrada no bloquean una recarga", async () => {
   const { state, tx } = createFakeTx();
-  await applyPhysicalInventoryZero(tx as never, { userId: "admin-1" });
+  await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1" });
   const serialSet = new Set(state.serials.map((row) => row.serialNumber.toUpperCase()));
   assert.equal(serialSet.has("1659"), false);
   assert.equal(state.serials.length, 0);
+});
+
+test("Existencias no consulta qty=0 y AN102/202 siguen sin remapeo", () => {
+  const stockBlock = routes.slice(routes.indexOf('inventoryRouter.get("/stock"'), routes.indexOf('inventoryRouter.get("/locations"'));
+  assert.match(stockBlock, /qty:\s*\{\s*gt:\s*0\s*\}/);
+  assert.match(stockBlock, /take:\s*20000/);
+  assert.doesNotMatch(js, /AN202\s*[:=]\s*["']AN102["']/);
+  assert.doesNotMatch(js, /AN203\s*[:=]\s*["']AN103["']/);
+  assert.doesNotMatch(js, /AN204\s*[:=]\s*["']AN104["']/);
+  assert.match(js, /Number\(row\.qty\) > 0/);
 });

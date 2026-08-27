@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { HttpError } from "../../shared/http-error.js";
 import { isFreeToSaleLabel } from "./import-assignment.js";
+import { isForbiddenInventoryProjectLabel } from "../inventory/inventory-project-rules.js";
 
 export const IMPORT_CORRECTION_FIELDS = [
   "location",
@@ -122,6 +123,11 @@ export function buildAssignmentCorrection(field: ImportCorrectionField, value: u
     next.project = "";
     return next;
   }
+  if (field === "project" && isForbiddenInventoryProjectLabel(value)) {
+    next.assignmentType = "LEGACY_UNASSIGNED";
+    next.project = "";
+    return next;
+  }
   if (field === "project") {
     next.assignmentType = "PROJECT";
     next.project = value;
@@ -142,7 +148,9 @@ export function assignmentAuditPayload(row: ReviewRow, field: ImportCorrectionFi
   const next =
     field === "assignmentType" || isFreeToSaleLabel(value)
       ? { assignmentType: "FREE_TO_SALE", projectId: null, projectCode: null, project: null }
-      : field === "project"
+      : field === "project" && isForbiddenInventoryProjectLabel(value)
+        ? { assignmentType: "LEGACY_UNASSIGNED", projectId: null, projectCode: null, project: null }
+        : field === "project"
         ? { assignmentType: "PROJECT", project: value }
         : { [field]: value };
   return { original, next };

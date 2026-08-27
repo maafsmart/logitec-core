@@ -1,8 +1,13 @@
+import {
+  isCompanyProjectLabel,
+  isOwnershipStatusLabel
+} from "../inventory/inventory-project-rules.js";
+
 export const FREE_TO_SALE_LABEL = "FREE TO SALE";
 export const FREE_TO_SALE_TYPE = "FREE_TO_SALE";
 
-export type ImportAssignmentType = "PROJECT" | "FREE_TO_SALE" | "UNRESOLVED";
-export type ImportAssignmentKind = "FREE_TO_SALE" | "UNRESOLVED" | "PROJECT_LOOKUP";
+export type ImportAssignmentType = "PROJECT" | "FREE_TO_SALE" | "UNRESOLVED" | "LEGACY_UNASSIGNED";
+export type ImportAssignmentKind = "FREE_TO_SALE" | "UNRESOLVED" | "PROJECT_LOOKUP" | "UNASSIGNED";
 
 export type ClassifiedImportAssignment = {
   kind: ImportAssignmentKind;
@@ -50,6 +55,17 @@ function freeToSaleResult(): ClassifiedImportAssignment {
   };
 }
 
+function unassignedResult(): ClassifiedImportAssignment {
+  return {
+    kind: "UNASSIGNED",
+    assignmentType: "LEGACY_UNASSIGNED",
+    projectId: null,
+    project: "",
+    createsCustomer: false,
+    createsProject: false
+  };
+}
+
 /**
  * Central assignment classifier for inventory import rows.
  * Mapping must keep CUSTOMER and LOTE separate; this function never copies LOTE into project.
@@ -67,6 +83,9 @@ export function classifyImportAssignment(input: {
   }
   if (isFreeToSaleLabel(customer)) {
     return freeToSaleResult();
+  }
+  if (isCompanyProjectLabel(customerNorm) || isOwnershipStatusLabel(customerNorm)) {
+    return unassignedResult();
   }
   if (customerNorm) {
     return {
@@ -99,6 +118,14 @@ export function applyFreeToSaleNormalized(normalized: Record<string, unknown>): 
   normalized.project = "";
 }
 
+export function applyUnassignedNormalized(normalized: Record<string, unknown>): void {
+  normalized.assignmentType = "LEGACY_UNASSIGNED";
+  normalized.projectId = null;
+  normalized.projectCode = null;
+  normalized.projectName = null;
+  normalized.project = "";
+}
+
 export function summarizeImportAssignments(
   rows: Array<{
     normalized?: Record<string, unknown> | null;
@@ -125,6 +152,9 @@ export function summarizeImportAssignments(
     }
     if (type === "PROJECT") {
       summary.projectAssigned += 1;
+      continue;
+    }
+    if (type === "LEGACY_UNASSIGNED") {
       continue;
     }
     const unresolved =

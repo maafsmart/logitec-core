@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Prisma } from "@prisma/client";
+import { InventoryAssignmentType, Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import {
   buildAssignment,
@@ -439,7 +439,11 @@ function prepareRow(row: ExecRow, context: ImportContext): PreparedRow {
   if (!sku) throw new ImportExecuteError("SKU_REQUIRED", row.sourceRow);
   const assignmentType = String(n.assignmentType || "");
   if (assignmentType === "UNRESOLVED") throw new ImportExecuteError("ASSIGNMENT_UNRESOLVED", row.sourceRow);
-  if (assignmentType !== "PROJECT" && assignmentType !== "FREE_TO_SALE") {
+  if (
+    assignmentType !== "PROJECT" &&
+    assignmentType !== "FREE_TO_SALE" &&
+    assignmentType !== "LEGACY_UNASSIGNED"
+  ) {
     throw new ImportExecuteError("ASSIGNMENT_REQUIRED", row.sourceRow);
   }
   const projectId = assignmentType === "PROJECT" ? String(n.projectId || "") : null;
@@ -448,7 +452,7 @@ function prepareRow(row: ExecRow, context: ImportContext): PreparedRow {
   }
   let assignment: InventoryAssignment;
   try {
-    assignment = buildAssignment(assignmentType, projectId);
+    assignment = buildAssignment(assignmentType as InventoryAssignmentType, projectId);
   } catch (error) {
     throw new ImportExecuteError(error instanceof Error ? error.message : "ASSIGNMENT_REQUIRED", row.sourceRow);
   }
