@@ -752,7 +752,10 @@
           120px
           120px
           120px
-          90px;
+          90px
+          130px
+          130px
+          110px;
       }
       .data-grid-cols-stock-cc {
         grid-template-columns:
@@ -771,7 +774,10 @@
           170px
           minmax(320px, 2fr)
           120px
-          170px;
+          170px
+          140px
+          130px
+          110px;
       }
       .data-grid-cols-clients {
         grid-template-columns: minmax(180px, 1.5fr) 140px 100px 120px 100px;
@@ -2621,6 +2627,26 @@
         border-bottom: 1px solid var(--line);
         font-size: 0.9rem;
       }
+      .projects-stock-table td.numeric-cell,
+      .projects-stock-table th.numeric-cell {
+        text-align: right;
+      }
+      .economic-partial-hint {
+        margin: 0 0 10px;
+        font-size: 0.82rem;
+        color: var(--warn);
+        font-weight: 600;
+      }
+      .valuation-badge.completo { color: var(--ok); }
+      .valuation-badge.parcial { color: var(--warn); }
+      .fts-assignment-note {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        font-size: 0.88rem;
+        color: var(--muted);
+      }
       .project-chips-hint {
         margin: 0 0 10px;
         font-size: 0.8rem;
@@ -3742,7 +3768,24 @@
                 <span class="value" id="sumConflicts">—</span>
                 <span class="label">Conflictos</span>
               </div>
+              <div class="summary-card accent js-economic-card hidden">
+                <span class="value" id="sumInventoryValue">—</span>
+                <span class="label">Valor inventario MXN</span>
+              </div>
+              <div class="summary-card ok js-economic-card hidden">
+                <span class="value" id="sumValuedQty">—</span>
+                <span class="label">Piezas valuadas</span>
+              </div>
+              <div class="summary-card warn js-economic-card hidden">
+                <span class="value" id="sumUnvaluedQty">—</span>
+                <span class="label">Piezas sin valor</span>
+              </div>
+              <div class="summary-card js-economic-card hidden">
+                <span class="value" id="sumEconomicCoverage">—</span>
+                <span class="label">Cobertura económica</span>
+              </div>
             </div>
+            <p id="inventoryValuePartialHint" class="economic-partial-hint hidden">Valor parcial: existen piezas sin valor unitario</p>
             <div class="page-toolbar">
               <button type="button" id="openInventoryImportBtn" class="btn-primary">Importar inventario</button>
               <button type="button" id="physicalInventoryResetBtn" class="btn-danger hidden">Borrar todo el inventario</button>
@@ -3920,7 +3963,7 @@
               <div class="operational-filters-bar" style="border:0;border-radius:0;padding:0 0 12px;background:transparent">
                 <div class="filter-strip" id="catalogFilterStrip">
                   <div class="field compact">
-                    <label for="catFilterCliente">Proyecto</label>
+                    <label for="catFilterCliente">Proyectos con existencias</label>
                     <input id="catFilterCliente" type="text" placeholder="Nombre proyecto" autocomplete="off" />
                   </div>
                   <div class="field compact">
@@ -4832,6 +4875,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=55"></script>
+    <script src="/dashboard.js?v=56"></script>
   </body>
 </html>

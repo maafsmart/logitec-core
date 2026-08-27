@@ -4,9 +4,14 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
-import { clientCustomerWhere, clientProductWhere } from "../clients/client-scope.js";
+import { clientCustomerWhere, clientInventoryWhere, clientProductWhere } from "../clients/client-scope.js";
 import { getSkuContext, searchSkuProducts } from "./sku-search.service.js";
 import { ensureCanonicalProductProject } from "../inventory/inventory-assignment.js";
+import { canExposeEconomicValuation } from "../inventory/inventory-economic-access.js";
+import {
+  calculateInventoryValuation,
+  summarizeStockAssignments
+} from "../inventory/inventory-valuation.service.js";
 
 const catalogRouter = Router();
 
@@ -114,7 +119,45 @@ catalogRouter.get("/products", async (req, res) => {
       }
     }
   });
-  res.json(products);
+  const productIds = products.map((product) => product.id);
+  const inventories = productIds.length
+    ? await prisma.inventory.findMany({
+        where: {
+          AND: [clientInventoryWhere(req.auth!), { productId: { in: productIds }, qty: { gt: 0 } }]
+        },
+        select: {
+          productId: true,
+          assignmentType: true,
+          qty: true,
+          project: { select: { id: true, code: true, name: true } },
+          layers: {
+            where: { qty: { gt: 0 } },
+            select: { qty: true, reservedQty: true, unitPriceMxn: true, unitPriceUsd: true }
+          }
+        }
+      })
+    : [];
+  const byProduct = new Map<string, typeof inventories>();
+  for (const inventory of inventories) {
+    const current = byProduct.get(inventory.productId) || [];
+    current.push(inventory);
+    byProduct.set(inventory.productId, current);
+  }
+  const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
+  res.json(
+    products.map((product) => {
+      const stockRows = byProduct.get(product.id) || [];
+      const stockAssignments = summarizeStockAssignments(stockRows);
+      const valuation = exposeEconomic
+        ? calculateInventoryValuation(stockRows.flatMap((row) => row.layers))
+        : undefined;
+      return {
+        ...product,
+        stockAssignments,
+        ...(valuation ? { valuation } : {})
+      };
+    })
+  );
 });
 
 catalogRouter.post("/products", requireRole(["ADMIN"]), async (req, res) => {

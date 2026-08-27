@@ -328,16 +328,36 @@ function renderProjectsStockList() {
     box.innerHTML = `<p class="filter-hint">No hay proyectos con existencias asignadas.</p>`;
     return;
   }
-  box.innerHTML = `<table class="projects-stock-table"><thead><tr><th>Proyecto</th><th>Código</th><th>Cubos</th><th>Qty</th></tr></thead><tbody>${inventoryProjectsCache
-    .map(
-      (p) =>
-        `<tr><td><button type="button" class="btn-secondary btn-compact js-open-project-stock" data-project-id="${escCell(
-          p.id
-        )}">${escCell(p.name)}</button></td><td>${escCell(p.code)}</td><td>${p.cubes}</td><td>${formatQty(
-          p.qty
-        )}</td></tr>`
-    )
-    .join("")}</tbody></table>`;
+  const econ = canSeeEconomicValuation();
+  const head = econ
+    ? `<tr><th>Proyecto</th><th>Código</th><th>Cubos</th><th>Qty</th><th>Valor inventario MXN</th><th>Piezas sin valor</th><th>Cobertura económica</th></tr>`
+    : `<tr><th>Proyecto</th><th>Código</th><th>Cubos</th><th>Qty</th></tr>`;
+  const body = inventoryProjectsCache
+    .map((p) => {
+      const extra = econ
+        ? `<td class="numeric-cell">${escCell(formatMxn(p.inventoryValueMxn ?? p.valuation?.totalValueMxn))}</td><td class="numeric-cell">${escCell(
+            formatQty(p.qtyUnvalued ?? p.valuation?.qtyUnvalued ?? 0)
+          )}</td><td class="numeric-cell">${escCell(p.coveragePct ?? p.valuation?.coveragePct ?? "0.00")}%</td>`
+        : "";
+      return `<tr><td><button type="button" class="btn-secondary btn-compact js-open-project-stock" data-project-id="${escCell(
+        p.id
+      )}">${escCell(p.name)}</button></td><td>${escCell(p.code)}</td><td>${p.cubes}</td><td>${formatQty(
+        p.qty
+      )}</td>${extra}</tr>`;
+    })
+    .join("");
+  const ftsRows = (Array.isArray(stockRowsCache) ? stockRowsCache : []).filter(isFreeToSaleRow);
+  const ftsValuation = econ ? aggregateRowValuations(ftsRows) : null;
+  const ftsNote = ftsRows.length
+    ? `<p class="fts-assignment-note">Asignación Free to Sale (no es proyecto): ${ftsRows.length} cubos · ${formatQty(
+        ftsValuation ? ftsValuation.qtyTotal : sumStockQty(ftsRows)
+      )} pzas${
+        econ
+          ? ` · ${formatMxn(ftsValuation.totalValueMxn)} · cobertura ${ftsValuation.coveragePct}%`
+          : ""
+      }</p>`
+    : "";
+  box.innerHTML = `<table class="projects-stock-table"><thead>${head}</thead><tbody>${body}</tbody></table>${ftsNote}`;
   box.querySelectorAll(".js-open-project-stock").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = btn.getAttribute("data-project-id") || "";
@@ -1018,7 +1038,9 @@ const GRID_SELECTION_PREFIX = "logitec_grid_sel_";
 
 const GRID_DEFAULT_WIDTHS = {
   inventory: [140, 90, 170, 260, 110, 140, 110, 90],
+  inventory_econ: [180, 90, 170, 220, 100, 120, 100, 80, 120, 120, 110],
   catalog: [140, 90, 170, 260, 110, 150],
+  catalog_econ: [200, 90, 170, 220, 110, 140, 140, 120, 110],
   clients: [200, 120, 100, 120, 100],
   stock_cc: [140, 90, 170, 260, 140, 110, 90],
   movements: [130, 140, 90, 90, 170, 220, 80, 80, 120, 120, 140],
@@ -1225,10 +1247,10 @@ function openDetailDrawer(title, fields, actions) {
   if (!drawer || !titleEl || !bodyEl || !actionsEl) return;
   titleEl.textContent = title;
   bodyEl.innerHTML = fields
-    .map(
-      (f) =>
-        `<div class="detail-field"><label>${escCell(f.label)}</label><span>${escCell(f.value ?? "—")}</span></div>`
-    )
+    .map((f) => {
+      const valueHtml = f.html ? String(f.value ?? "—") : escCell(f.value ?? "—");
+      return `<div class="detail-field"><label>${escCell(f.label)}</label><span>${valueHtml}</span></div>`;
+    })
     .join("");
   actionsEl.innerHTML = actions
     .map((a) => `<button type="button" class="${a.className || "btn-secondary"}" data-detail-action="${escCell(a.id)}">${escCell(a.label)}</button>`)
@@ -1302,11 +1324,135 @@ function canReassignStock() {
 }
 
 function inventoryAssignmentLabel(row) {
-  if (row?.assignmentType === "FREE_TO_SALE" || row?.assignmentKey === "FREE_TO_SALE") return "FREE TO SALE";
+  if (row?.assignmentType === "FREE_TO_SALE" || row?.assignmentKey === "FREE_TO_SALE") return "Free to Sale";
   if (row?.project?.name) {
     return row.project.code ? `${row.project.name} (${row.project.code})` : row.project.name;
   }
   return getAviatProjectDisplayFromRow(row);
+}
+
+function canSeeEconomicValuation() {
+  return currentRole === "ADMIN";
+}
+
+function applyEconomicVisibility() {
+  const show = canSeeEconomicValuation();
+  document.querySelectorAll(".js-economic-card").forEach((el) => {
+    el.classList.toggle("hidden", !show);
+  });
+  const hint = document.getElementById("inventoryValuePartialHint");
+  if (hint && !show) hint.classList.add("hidden");
+}
+
+function isFreeToSaleRow(row) {
+  return row?.assignmentType === "FREE_TO_SALE" || row?.assignmentKey === "FREE_TO_SALE";
+}
+
+function inventoryProjectOrAssignmentLabel(row) {
+  if (isFreeToSaleRow(row)) return "Free to Sale";
+  if (row?.project?.name) {
+    return row.project.code ? `${row.project.name} (${row.project.code})` : row.project.name;
+  }
+  const fallback = getAviatProjectDisplayFromRow(row);
+  return fallback === "FREE TO SALE" ? "Free to Sale" : fallback;
+}
+
+function inventoryAssignmentKindLabel(row) {
+  return isFreeToSaleRow(row) ? "FREE_TO_SALE" : "PROJECT";
+}
+
+function catalogProjectsWithStockLabel(product) {
+  if (product?.stockAssignments?.label) return product.stockAssignments.label;
+  return "Sin existencias asignadas";
+}
+
+function formatMxn(value) {
+  if (value == null || value === "") return "Sin valor";
+  const s = String(value).trim();
+  const neg = s.startsWith("-");
+  const raw = neg ? s.slice(1) : s;
+  if (!/^\d+(\.\d+)?$/.test(raw)) return "Sin valor";
+  const [whole, frac = ""] = raw.split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const dec = (frac + "00").slice(0, 2);
+  return `${neg ? "-" : ""}$${grouped}.${dec}`;
+}
+
+function moneyToCents(value) {
+  if (value == null || value === "") return 0;
+  const s = String(value).trim();
+  const neg = s.startsWith("-");
+  const raw = neg ? s.slice(1) : s;
+  if (!/^\d+(\.\d+)?$/.test(raw)) return 0;
+  const [whole, frac = ""] = raw.split(".");
+  const cents = Number(whole || "0") * 100 + Number((frac + "00").slice(0, 2));
+  return neg ? -cents : cents;
+}
+
+function centsToMoney(cents) {
+  const neg = cents < 0;
+  const abs = Math.abs(cents);
+  const whole = Math.floor(abs / 100);
+  const frac = String(abs % 100).padStart(2, "0");
+  return `${neg ? "-" : ""}${whole}.${frac}`;
+}
+
+function valuationStatusLabel(status) {
+  if (status === "COMPLETE") return "Completo";
+  if (status === "PARTIAL") return "Parcial";
+  return "Sin valor";
+}
+
+function valuationStatusBadge(status) {
+  const label = valuationStatusLabel(status);
+  const cls = status === "COMPLETE" ? "completo" : status === "PARTIAL" ? "parcial" : "";
+  return `<span class="valuation-badge ${cls}">${escCell(label)}</span>`;
+}
+
+function unitPriceDisplay(valuation) {
+  if (!valuation || valuation.avgUnitPriceMxn == null) return "Sin valor";
+  if (valuation.hasMixedUnitPrices && valuation.minUnitPriceMxn != null && valuation.maxUnitPriceMxn != null) {
+    return `${formatMxn(valuation.minUnitPriceMxn)} – ${formatMxn(valuation.maxUnitPriceMxn)}`;
+  }
+  return formatMxn(valuation.avgUnitPriceMxn);
+}
+
+function aggregateRowValuations(rows) {
+  let qtyTotal = 0;
+  let qtyValued = 0;
+  let qtyUnvalued = 0;
+  let cents = 0;
+  let availableCents = 0;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const valuation = row?.valuation;
+    if (valuation) {
+      qtyTotal += Number(valuation.qtyTotal) || 0;
+      qtyValued += Number(valuation.qtyValued) || 0;
+      qtyUnvalued += Number(valuation.qtyUnvalued) || 0;
+      cents += moneyToCents(valuation.totalValueMxn);
+      availableCents += moneyToCents(valuation.availableValueMxn);
+    } else {
+      const qty = Number(row?.qty) || 0;
+      qtyTotal += qty;
+      qtyUnvalued += qty;
+    }
+  }
+  let status = "NONE";
+  if (qtyTotal > 0 && qtyUnvalued === 0 && qtyValued > 0) status = "COMPLETE";
+  else if (qtyValued > 0 && qtyUnvalued > 0) status = "PARTIAL";
+  const coveragePct = qtyTotal > 0 ? ((qtyValued / qtyTotal) * 100).toFixed(2) : "0.00";
+  const avgUnitPriceMxn = qtyValued > 0 ? centsToMoney(Math.round(cents / qtyValued)) : null;
+  return {
+    qtyTotal,
+    qtyValued,
+    qtyUnvalued,
+    totalValueMxn: qtyValued > 0 ? centsToMoney(cents) : null,
+    availableValueMxn: qtyValued > 0 ? centsToMoney(availableCents) : null,
+    avgUnitPriceMxn,
+    coveragePct,
+    status,
+    isPartial: status === "PARTIAL"
+  };
 }
 
 function openInventoryDetail(row) {
@@ -1385,10 +1531,9 @@ function openInventoryDetail(row) {
       }
     });
   }
-  openDetailDrawer("Detalle de inventario", [
+  const fields = [
     { label: "Cliente principal", value: PRIMARY_CLIENT_AVIAT_NAME },
-    { label: "Asignación actual", value: inventoryAssignmentLabel(row) },
-    { label: "Proyecto", value: getAviatProjectDisplayFromRow(row) },
+    { label: isFreeToSaleRow(row) ? "Asignación" : "Proyecto", value: inventoryProjectOrAssignmentLabel(row) },
     { label: "Lote", value: extractLoteFromRow(row) },
     { label: "SKU / Código de barras", value: formatSkuBarcode(p) },
     { label: "Producto", value: p.name },
@@ -1398,7 +1543,43 @@ function openInventoryDetail(row) {
     { label: "Cantidad", value: formatQty(row.qty) },
     { label: "Reservada", value: formatQty(row.reservedQty) },
     { label: "Disponible para reasignar", value: formatQty(free) }
-  ], actions);
+  ];
+  if (canSeeEconomicValuation()) {
+    const valuation = row.valuation || null;
+    const unitLabel = valuation?.hasMixedUnitPrices ? "Valor unitario promedio ponderado MXN" : "Valor unitario importado MXN";
+    fields.push(
+      { label: unitLabel, value: unitPriceDisplay(valuation) },
+      { label: "Moneda", value: valuation?.currency || "MXN" },
+      { label: "Valor total del saldo MXN", value: formatMxn(valuation?.totalValueMxn) },
+      { label: "Cantidad valuada", value: formatQty(valuation?.qtyValued ?? 0) },
+      { label: "Cantidad sin valor", value: formatQty(valuation?.qtyUnvalued ?? row.qty) },
+      { label: "Cobertura económica", value: `${valuation?.coveragePct || "0.00"}%` },
+      { label: "Estado de valuación", value: valuationStatusLabel(valuation?.status) },
+      {
+        label: "Valor disponible no reservado MXN",
+        value: formatMxn(valuation?.availableValueMxn)
+      }
+    );
+    if (valuation?.isPartial || valuation?.status === "NONE") {
+      fields.push({ label: "Aviso", value: "Valor parcial: existen piezas sin valor unitario" });
+    }
+    if (valuation?.hasMixedUnitPrices && Array.isArray(valuation.layers) && valuation.layers.length) {
+      const rowsHtml = valuation.layers
+        .map(
+          (layer) =>
+            `<tr><td>${escCell(layer.lotNumber || "sin lote")}</td><td>${escCell(formatQty(layer.qty))}</td><td>${escCell(
+              formatMxn(layer.unitPriceMxn)
+            )}</td><td>${escCell(formatMxn(layer.layerValueMxn))}</td></tr>`
+        )
+        .join("");
+      fields.push({
+        label: "Desglose por capas",
+        html: true,
+        value: `<table class="projects-stock-table"><thead><tr><th>Lote</th><th>Cantidad</th><th>Unitario MXN</th><th>Valor MXN</th></tr></thead><tbody>${rowsHtml}</tbody></table>`
+      });
+    }
+  }
+  openDetailDrawer("Detalle de inventario", fields, actions);
 }
 
 let assignmentTransferSource = null;
@@ -1589,15 +1770,25 @@ function wireAssignmentTransferPanel() {
 }
 
 function openCatalogDetail(product) {
-  openDetailDrawer("Detalle de producto", [
+  const fields = [
     { label: "Cliente principal", value: PRIMARY_CLIENT_AVIAT_NAME },
-    { label: "Proyecto", value: getAviatProjectDisplayFromRow(product) },
+    { label: "Proyectos con existencias", value: catalogProjectsWithStockLabel(product) },
     { label: "Lote", value: "N/D" },
     { label: "SKU / Código de barras", value: formatSkuBarcode(product) },
     { label: "Producto", value: product.name },
     { label: "Almacén", value: product.warehouse },
     { label: "Código de barras", value: product.barcode }
-  ], [
+  ];
+  if (canSeeEconomicValuation()) {
+    const valuation = product.valuation || null;
+    fields.push(
+      { label: "Valor unitario / rango MXN", value: unitPriceDisplay(valuation) },
+      { label: "Valor total actual MXN", value: formatMxn(valuation?.totalValueMxn) },
+      { label: "Piezas sin valor", value: formatQty(valuation?.qtyUnvalued ?? 0) },
+      { label: "Cobertura económica", value: `${valuation?.coveragePct || "0.00"}%` }
+    );
+  }
+  openDetailDrawer("Detalle de producto", fields, [
     {
       id: "inventory",
       label: "Ver inventario",
@@ -3206,7 +3397,27 @@ function updateInventorySummary(rows) {
     const qty = kpi?.qty != null ? Number(kpi.qty) : list.length ? sumStockQty(list) : 0;
     elStockTotal.textContent = qty ? formatQty(qty) : "0";
   }
+  updateEconomicSummaryCards(filterStockRows(list));
   updateControlCenterKpis();
+}
+
+function updateEconomicSummaryCards(rows) {
+  applyEconomicVisibility();
+  if (!canSeeEconomicValuation()) return;
+  const valuation = aggregateRowValuations(rows);
+  const elValue = document.getElementById("sumInventoryValue");
+  const elValued = document.getElementById("sumValuedQty");
+  const elUnvalued = document.getElementById("sumUnvaluedQty");
+  const elCoverage = document.getElementById("sumEconomicCoverage");
+  const hint = document.getElementById("inventoryValuePartialHint");
+  if (elValue) elValue.textContent = formatMxn(valuation.totalValueMxn);
+  if (elValued) elValued.textContent = formatQty(valuation.qtyValued);
+  if (elUnvalued) elUnvalued.textContent = formatQty(valuation.qtyUnvalued);
+  if (elCoverage) elCoverage.textContent = `${valuation.coveragePct}%`;
+  if (hint) {
+    const showHint = valuation.status === "PARTIAL" || (valuation.status === "NONE" && valuation.qtyTotal > 0);
+    hint.classList.toggle("hidden", !showHint);
+  }
 }
 
 function getControlCenterFilterValues() {
@@ -3225,6 +3436,7 @@ function filterStockRowsWithFilters(rows, filters) {
     if (!(Number(row.qty) > 0)) return false;
     const p = row.product || {};
     const project = getAviatProjectFromRow(row);
+    const assignmentLabel = inventoryProjectOrAssignmentLabel(row);
     const lote = extractLoteFromRow(row);
     const skuOk =
       !filters.sku ||
@@ -3233,7 +3445,7 @@ function filterStockRowsWithFilters(rows, filters) {
       matchesFilter(p.barcode, filters.sku) ||
       matchesSkuFlexible(p.barcode, filters.sku);
     return (
-      matchesFilter(project.name, filters.cliente) &&
+      matchesFilter(assignmentLabel, filters.cliente) &&
       matchesFilter(project.code, filters.customer) &&
       matchesFilter(lote, filters.lote) &&
       skuOk &&
@@ -3272,10 +3484,10 @@ function updateControlCenterKpis() {
   setKpi("ccKpiConflicts", String(countStockConflicts(list)));
 }
 
-function stockRowCells(row, { includeWarehouse = true } = {}) {
+function stockRowCells(row, { includeWarehouse = true, includeEconomic = false } = {}) {
   const p = row.product || {};
   const cells = [
-    renderCellEllipsis(getAviatProjectDisplayFromRow(row)),
+    renderCellEllipsis(inventoryProjectOrAssignmentLabel(row)),
     renderCellEllipsis(extractLoteFromRow(row)),
     `<strong class="cell-nowrap">${escCell(formatSkuBarcode(p))}</strong>`,
     renderCellEllipsis(p.name || "—")
@@ -3286,33 +3498,60 @@ function stockRowCells(row, { includeWarehouse = true } = {}) {
     inventoryStatusBadge(row.status || "—"),
     formatQty(row.qty)
   );
+  if (includeEconomic && canSeeEconomicValuation()) {
+    const valuation = row.valuation || null;
+    cells.push(
+      unitPriceDisplay(valuation),
+      formatMxn(valuation?.totalValueMxn),
+      valuationStatusBadge(valuation?.status)
+    );
+  }
   return cells;
 }
 
 function catalogRowCells(product) {
-  return [
-    renderCellEllipsis(getAviatProjectDisplayFromRow(product)),
+  const cells = [
+    renderCellEllipsis(catalogProjectsWithStockLabel(product)),
     renderCellEllipsis("N/D"),
     `<strong class="cell-nowrap">${escCell(formatSkuBarcode(product))}</strong>`,
     renderCellEllipsis(product.name || "—"),
     `<span class="cell-nowrap">${renderCellEllipsis(product.warehouse || "—")}</span>`,
     `<span class="cell-nowrap">${escCell(product.barcode || "—")}</span>`
   ];
+  if (canSeeEconomicValuation()) {
+    const valuation = product.valuation || null;
+    cells.push(
+      unitPriceDisplay(valuation),
+      formatMxn(valuation?.totalValueMxn),
+      formatQty(valuation?.qtyUnvalued ?? 0)
+    );
+  }
+  return cells;
 }
 
-const STOCK_COLUMNS_FULL = [
-  { label: "Proyecto", sortKey: (r) => getAviatProjectDisplayFromRow(r), sortType: "text" },
-  { label: "Lote", sortKey: (r) => extractLoteFromRow(r), sortType: "text" },
-  { label: "SKU / Código de barras", sortKey: (r) => r.product?.sku || "", sortType: "text" },
-  { label: "Producto", sortKey: (r) => r.product?.name || "", sortType: "text" },
-  { label: "Almacén", sortKey: (r) => r.location?.warehouse || "", sortType: "text" },
-  { label: "Ubicación", sortKey: (r) => r.location?.code || "", sortType: "text" },
-  { label: "Estatus", sortKey: (r) => r.status || "", sortType: "text" },
-  { label: "Cantidad", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number" }
-];
+function stockColumnsFull() {
+  const cols = [
+    { label: "Proyecto / asignación", sortKey: (r) => inventoryProjectOrAssignmentLabel(r), sortType: "text" },
+    { label: "Lote", sortKey: (r) => extractLoteFromRow(r), sortType: "text" },
+    { label: "SKU / Código de barras", sortKey: (r) => r.product?.sku || "", sortType: "text" },
+    { label: "Producto", sortKey: (r) => r.product?.name || "", sortType: "text" },
+    { label: "Almacén", sortKey: (r) => r.location?.warehouse || "", sortType: "text" },
+    { label: "Ubicación", sortKey: (r) => r.location?.code || "", sortType: "text" },
+    { label: "Estatus", sortKey: (r) => r.status || "", sortType: "text" },
+    { label: "Cantidad", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number" }
+  ];
+  if (canSeeEconomicValuation()) {
+    cols.push(
+      { label: "Valor unitario promedio MXN", align: "right", sortKey: (r) => Number(r.valuation?.avgUnitPriceMxn) || 0, sortType: "number" },
+      { label: "Valor total MXN", align: "right", sortKey: (r) => Number(r.valuation?.totalValueMxn) || 0, sortType: "number" },
+      { label: "Estado de valuación", sortKey: (r) => r.valuation?.status || "", sortType: "text" }
+    );
+  }
+  return cols;
+}
 
 const STOCK_COLUMNS_CC = [
-  { label: "Proyecto", sortKey: (r) => getAviatProjectDisplayFromRow(r) },
+  { label: "Proyecto / asignación", sortKey: (r) => inventoryProjectOrAssignmentLabel(r) },
   { label: "Lote", sortKey: (r) => extractLoteFromRow(r) },
   { label: "SKU / Código de barras", sortKey: (r) => r.product?.sku || "" },
   { label: "Producto", sortKey: (r) => r.product?.name || "" },
@@ -3321,14 +3560,26 @@ const STOCK_COLUMNS_CC = [
   { label: "Cantidad", align: "right", sortKey: (r) => Number(r.qty) || 0, sortType: "number" }
 ];
 
-const CATALOG_COLUMNS = [
-  { label: "Proyecto", sortKey: (p) => getAviatProjectDisplayFromRow(p) },
-  { label: "Lote", sortKey: () => "N/D" },
-  { label: "SKU / Código de barras", sortKey: (p) => p.sku || "" },
-  { label: "Producto", sortKey: (p) => p.name || "" },
-  { label: "Almacén", sortKey: (p) => p.warehouse || "" },
-  { label: "Código de barras", sortKey: (p) => p.barcode || "" }
-];
+function catalogColumns() {
+  const cols = [
+    { label: "Proyectos con existencias", sortKey: (p) => catalogProjectsWithStockLabel(p) },
+    { label: "Lote", sortKey: () => "N/D" },
+    { label: "SKU / Código de barras", sortKey: (p) => p.sku || "" },
+    { label: "Producto", sortKey: (p) => p.name || "" },
+    { label: "Almacén", sortKey: (p) => p.warehouse || "" },
+    { label: "Código de barras", sortKey: (p) => p.barcode || "" }
+  ];
+  if (canSeeEconomicValuation()) {
+    cols.push(
+      { label: "Valor unitario / rango MXN", align: "right", sortKey: (p) => Number(p.valuation?.avgUnitPriceMxn) || 0, sortType: "number" },
+      { label: "Valor total MXN", align: "right", sortKey: (p) => Number(p.valuation?.totalValueMxn) || 0, sortType: "number" },
+      { label: "Piezas sin valor", align: "right", sortKey: (p) => Number(p.valuation?.qtyUnvalued) || 0, sortType: "number" }
+    );
+  }
+  return cols;
+}
+
+const CATALOG_COLUMNS = catalogColumns();
 
 const CLIENTS_COLUMNS = [
   { label: "Proyecto", sortKey: (r) => r.name || "" },
@@ -3932,10 +4183,10 @@ function renderStockTable(rows) {
   updateTableCountMeta("inventoryTableCount", shown, total, "saldos");
   updateInventoryScopeUi();
   renderDataGrid(inventoryList, {
-    gridId: "inventory",
-    columns: STOCK_COLUMNS_FULL,
+    gridId: canSeeEconomicValuation() ? "inventory_econ" : "inventory",
+    columns: stockColumnsFull(),
     rowDataList: Array.isArray(rows) ? rows : [],
-    rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true }),
+    rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true, includeEconomic: true }),
     colsClass: "data-grid-cols-stock",
     sizeClass: "data-grid-size-inventory",
     emptyMessage: "Sin registros con los filtros actuales. Ajusta filtros o carga inventario.",
@@ -3952,10 +4203,11 @@ function applyInventoryFilters() {
 function filterProductRows(rows) {
   const f = getCatalogFilterValues();
   return filterRowsByAviatProject(rows).filter((product) => {
-    const project = getAviatProjectFromRow(product);
+    const label = catalogProjectsWithStockLabel(product);
+    const codes = (product.stockAssignments?.projects || []).map((p) => p.code).join(" ");
     return (
-      matchesFilter(project.name, f.cliente) &&
-      matchesFilter(project.code, f.customer) &&
+      matchesFilter(label, f.cliente) &&
+      matchesFilter(codes || label, f.customer) &&
       matchesFilter("N/D", f.lote) &&
       matchesFilter(product.sku, f.sku) &&
       matchesFilter(product.name, f.producto)
@@ -3970,8 +4222,8 @@ function renderProductsTable(rows) {
   updateTableCountMeta("catalogTableCount", shown, total, "productos");
   updateAviatHeaderUi();
   renderDataGrid(productsList, {
-    gridId: "catalog",
-    columns: CATALOG_COLUMNS,
+    gridId: canSeeEconomicValuation() ? "catalog_econ" : "catalog",
+    columns: catalogColumns(),
     rowDataList: Array.isArray(rows) ? rows : [],
     rowCellsFn: catalogRowCells,
     colsClass: "data-grid-cols-catalog",
@@ -4884,25 +5136,50 @@ function buildMovementsParams(cursor = null) {
   return params;
 }
 
-const STOCK_EXPORT_COLUMNS = [
-  { label: "proyecto", value: (r) => getAviatProjectDisplayFromRow(r) },
-  { label: "lote", value: (r) => extractLoteFromRow(r) },
-  { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r.product) },
-  { label: "producto", value: (r) => r.product?.name || "" },
-  { label: "almacen", value: (r) => r.location?.warehouse || "" },
-  { label: "ubicacion", value: (r) => r.location?.code || "" },
-  { label: "status", value: (r) => r.status || "" },
-  { label: "cantidad", value: (r) => formatQty(r.qty) }
-];
+function stockExportColumns() {
+  const cols = [
+    { label: "proyecto_real", value: (r) => (isFreeToSaleRow(r) ? "" : inventoryProjectOrAssignmentLabel(r)) },
+    { label: "tipo_asignacion", value: (r) => inventoryAssignmentKindLabel(r) },
+    { label: "lote", value: (r) => extractLoteFromRow(r) },
+    { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r.product) },
+    { label: "producto", value: (r) => r.product?.name || "" },
+    { label: "almacen", value: (r) => r.location?.warehouse || "" },
+    { label: "ubicacion", value: (r) => r.location?.code || "" },
+    { label: "status", value: (r) => r.status || "" },
+    { label: "cantidad", value: (r) => formatQty(r.qty) }
+  ];
+  if (canSeeEconomicValuation()) {
+    cols.push(
+      { label: "cantidad_valuada", value: (r) => formatQty(r.valuation?.qtyValued ?? 0) },
+      { label: "cantidad_sin_valor", value: (r) => formatQty(r.valuation?.qtyUnvalued ?? r.qty) },
+      { label: "valor_unitario_promedio_mxn", value: (r) => r.valuation?.avgUnitPriceMxn ?? "" },
+      { label: "valor_total_mxn", value: (r) => r.valuation?.totalValueMxn ?? "" },
+      { label: "estado_valuacion", value: (r) => valuationStatusLabel(r.valuation?.status) }
+    );
+  }
+  return cols;
+}
 
-const CATALOG_EXPORT_COLUMNS = [
-  { label: "proyecto", value: (r) => getAviatProjectDisplayFromRow(r) },
-  { label: "lote", value: () => "N/D" },
-  { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r) },
-  { label: "producto", value: (r) => r.name || "" },
-  { label: "almacen", value: (r) => r.warehouse || "" },
-  { label: "codigo_barras", value: (r) => r.barcode || "" }
-];
+const STOCK_EXPORT_COLUMNS = stockExportColumns();
+
+function catalogExportColumns() {
+  const cols = [
+    { label: "proyectos_con_existencias", value: (r) => catalogProjectsWithStockLabel(r) },
+    { label: "lote", value: () => "N/D" },
+    { label: "sku_codigo_barras", value: (r) => formatSkuBarcode(r) },
+    { label: "producto", value: (r) => r.name || "" },
+    { label: "almacen", value: (r) => r.warehouse || "" },
+    { label: "codigo_barras", value: (r) => r.barcode || "" }
+  ];
+  if (canSeeEconomicValuation()) {
+    cols.push(
+      { label: "valor_unitario_rango_mxn", value: (r) => unitPriceDisplay(r.valuation) },
+      { label: "valor_total_mxn", value: (r) => r.valuation?.totalValueMxn ?? "" },
+      { label: "piezas_sin_valor", value: (r) => formatQty(r.valuation?.qtyUnvalued ?? 0) }
+    );
+  }
+  return cols;
+}
 
 const MOVEMENT_EXPORT_COLUMNS = [
   { label: "fecha", value: (r) => formatExportDate(r.createdAt) },
@@ -4929,7 +5206,7 @@ async function exportStockCsv() {
     window.alert("No hay existencias para exportar.");
     return;
   }
-  exportToCsv(getAviatExportBasename("inventario"), rows, STOCK_EXPORT_COLUMNS);
+  exportToCsv(getAviatExportBasename("inventario"), rows, stockExportColumns());
 }
 
 async function exportStockCsvFiltered() {
@@ -4938,7 +5215,7 @@ async function exportStockCsvFiltered() {
     window.alert("No hay registros con los filtros actuales.");
     return;
   }
-  exportToCsv(`${getAviatExportBasename("inventario")}_filtrado`, rows, STOCK_EXPORT_COLUMNS);
+  exportToCsv(`${getAviatExportBasename("inventario")}_filtrado`, rows, stockExportColumns());
 }
 
 async function exportProductsCsvFiltered() {
@@ -4947,7 +5224,7 @@ async function exportProductsCsvFiltered() {
     window.alert("No hay productos con los filtros actuales.");
     return;
   }
-  exportToCsv(`${getAviatExportBasename("catalogo")}_filtrado`, rows, CATALOG_EXPORT_COLUMNS);
+  exportToCsv(`${getAviatExportBasename("catalogo")}_filtrado`, rows, catalogExportColumns());
 }
 
 async function exportMovementsCsv() {
@@ -5002,7 +5279,7 @@ async function exportProductsCsv() {
     window.alert("No hay productos para exportar.");
     return;
   }
-  exportToCsv(getAviatExportBasename("catalogo"), rows, CATALOG_EXPORT_COLUMNS);
+  exportToCsv(getAviatExportBasename("catalogo"), rows, catalogExportColumns());
 }
 
 async function loadCurrentUser() {
@@ -5348,9 +5625,9 @@ async function loadStockStrip() {
     if (inventoryList) {
       renderDataGrid(inventoryList, {
         gridId: "inventory",
-        columns: STOCK_COLUMNS_FULL,
+        columns: stockColumnsFull(),
         rowDataList: [],
-        rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true }),
+        rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true, includeEconomic: true }),
         colsClass: "data-grid-cols-stock",
         sizeClass: "data-grid-size-inventory",
         emptyMessage: "Las existencias solo aplican a roles operativos."
@@ -5370,9 +5647,9 @@ async function loadStockStrip() {
     if (inventoryList) {
       renderDataGrid(inventoryList, {
         gridId: "inventory",
-        columns: STOCK_COLUMNS_FULL,
+        columns: stockColumnsFull(),
         rowDataList: [],
-        rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true }),
+        rowCellsFn: (row) => stockRowCells(row, { includeWarehouse: true, includeEconomic: true }),
         colsClass: "data-grid-cols-stock",
         sizeClass: "data-grid-size-inventory",
         emptyMessage: "No se pudo cargar existencias."
@@ -5656,7 +5933,7 @@ async function loadSkuContext(productId) {
 
 function assignmentDisplayLabel(row) {
   if (!row) return "—";
-  if (row.assignmentType === "FREE_TO_SALE" || row.assignmentLabel === "FREE TO SALE") return "FREE TO SALE";
+  if (row.assignmentType === "FREE_TO_SALE" || row.assignmentLabel === "FREE TO SALE" || row.assignmentLabel === "Free to Sale") return "Free to Sale";
   if (row.project?.name) {
     return row.project.code ? `${row.project.name} (${row.project.code})` : row.project.name;
   }
@@ -5677,7 +5954,9 @@ function renderSkuContext(listEl, context) {
   }
   const locations = Array.isArray(context.inventory?.locations) ? context.inventory.locations : [];
   const clientName = context.client?.tradeName || context.client?.legalName || context.client?.name || "—";
-  const project = context.project ? `${context.project.name} (${context.project.code})` : "—";
+  const project =
+    context.stockAssignments?.label ||
+    (context.project ? `${context.project.name} (${context.project.code})` : "—");
   const locationSummary = !locations.length
     ? "Sin existencia / ubicación."
     : locations.length === 1
@@ -5706,8 +5985,8 @@ function renderSkuContext(listEl, context) {
       formatQty(context.inventory?.totalUnreservedQty || 0)
     )}</div>
     <div>Capas: ${escCell(String(layerCount))} · Serializadas: ${escCell(String(context.serializedQty || 0))}${
-      valuation
-        ? ` · Valor MXN ${escCell(valuation.totalValueMxn || 0)} · USD ${escCell(valuation.totalValueUsd || 0)}`
+      canSeeEconomicValuation() && valuation
+        ? ` · Valor MXN ${escCell(formatMxn(valuation.totalValueMxn))} · cobertura ${escCell(valuation.coveragePct || "0.00")}%`
         : ""
     }</div>
     <div>${escCell(locationSummary)}</div>
@@ -8314,6 +8593,7 @@ async function validateSession() {
     currentRole = user.role || "CLIENT";
     currentUserId = user.id || null;
     applyRoleNavigation(currentRole);
+    applyEconomicVisibility();
     void initLabResetAvailability();
 
     if (statusBox) statusBox.innerHTML = '<span class="ok">Sistema operativo</span>';

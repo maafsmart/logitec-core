@@ -3,7 +3,8 @@ import { prisma } from "../../db/prisma.js";
 import { HttpError } from "../../shared/http-error.js";
 import { clientInventoryWhere, clientProductWhere } from "../clients/client-scope.js";
 import type { UserRole } from "../../middlewares/auth.middleware.js";
-import { calculateInventoryValuation } from "../inventory/inventory-valuation.service.js";
+import { calculateInventoryValuation, summarizeStockAssignments } from "../inventory/inventory-valuation.service.js";
+import { canExposeEconomicValuation } from "../inventory/inventory-economic-access.js";
 
 type AuthContext = {
   role: UserRole;
@@ -237,9 +238,14 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
     }))
   );
   const serialCount = await prisma.inventorySerial.count({ where: { productId: product.id } });
+  const exposeEconomic = canExposeEconomicValuation(auth.role);
   const valuation = calculateInventoryValuation(
     product.inventories.flatMap((inventory) => inventory.layers)
   );
+  const stockAssignments = summarizeStockAssignments(product.inventories);
+  const layerPreview = exposeEconomic
+    ? layers.slice(0, 100)
+    : layers.slice(0, 100).map(({ unitPriceMxn: _mxn, unitPriceUsd: _usd, ...rest }) => rest);
 
   return {
     product: {
@@ -263,6 +269,7 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
     project: product.customer
       ? { id: product.customer.id, code: product.customer.code, name: product.customer.name }
       : null,
+    stockAssignments,
     inventory: {
       totalQty: totalQty.toString(),
       totalReservedQty: totalReservedQty.toString(),
@@ -271,9 +278,9 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
     },
     layers: {
       count: layers.length,
-      preview: layers.slice(0, 100)
+      preview: layerPreview
     },
     serializedQty: serialCount.toString(),
-    valuation
+    ...(exposeEconomic ? { valuation } : {})
   };
 }
