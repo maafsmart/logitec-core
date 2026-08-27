@@ -145,6 +145,12 @@ const physicalInventoryResetBusyStatus = document.getElementById("physicalInvent
 const physicalInventoryResetError = document.getElementById("physicalInventoryResetError");
 const physicalInventoryResetSuccess = document.getElementById("physicalInventoryResetSuccess");
 let physicalInventoryResetBusy = false;
+const physicalInventoryReconcileBtns = [
+  document.getElementById("physicalInventoryPrepareBtn"),
+  document.getElementById("physicalInventoryPrepareConfirmStepBtn"),
+  document.getElementById("physicalInventoryConfirmBtn"),
+  document.getElementById("physicalInventoryConfirmStepBtn")
+].filter(Boolean);
 
 let currentRole = null;
 let movementsNextCursor = null;
@@ -7601,6 +7607,10 @@ function applyRoleNavigation(role) {
     btn.classList.toggle("hidden", role !== "ADMIN");
     btn.style.display = role === "ADMIN" ? "inline-block" : "none";
   });
+  physicalInventoryReconcileBtns.forEach((btn) => {
+    btn.classList.toggle("hidden", role !== "ADMIN");
+    btn.style.display = role === "ADMIN" ? "inline-block" : "none";
+  });
   if (taskCreateWrap) {
     taskCreateWrap.classList.toggle("hidden", role !== "ADMIN" && role !== "SUPERVISOR" && role !== "OPERATOR");
   }
@@ -8449,6 +8459,9 @@ const importUi = {
   batchStatus: "",
   confirmable: false,
   confirmableReason: "",
+  inventoryMode: "APPEND",
+  sourceSha256: "",
+  context: "INVENTORY",
   lastSyncAt: null,
   syncOk: false,
   error: ""
@@ -8620,8 +8633,11 @@ function getImportConfirmBlockReason() {
   if (importUi.unresolved > 0) {
     return `Hay ${formatImportCount(importUi.unresolved)} asignaciones sin resolver.`;
   }
-  if (document.getElementById("importInventoryMode")?.value === "RECONCILE") {
-    return "RECONCILE solo permite preview; no se puede confirmar.";
+  if (document.getElementById("importContext")?.value === "INVENTORY" || importUi.context === "INVENTORY") {
+    return "La carga física se sustituye con Sustituir inventario, no con confirmar APPEND.";
+  }
+  if (document.getElementById("importInventoryMode")?.value === "RECONCILE" || importUi.inventoryMode === "RECONCILE") {
+    return "RECONCILE se confirma con Sustituir inventario físico, no con la confirmación genérica.";
   }
   if (importUi.confirmableReason && importUi.confirmable === false) return importUi.confirmableReason;
   return "";
@@ -9073,7 +9089,12 @@ function applyImportCountsFromServer(state) {
   importUi.corrections = Number(state.correctionsCount || 0);
   importUi.confirmable = Boolean(state.confirmable);
   importUi.confirmableReason = state.confirmableReason || "";
+  importUi.inventoryMode = state.inventoryMode || "APPEND";
+  importUi.sourceSha256 = state.sourceSha256 || "";
+  importUi.context = state.context || document.getElementById("importContext")?.value || "INVENTORY";
   importUi.batchStatus = state.status || "";
+  const modeEl = document.getElementById("importInventoryMode");
+  if (modeEl && importUi.inventoryMode) modeEl.value = importUi.inventoryMode;
   importUi.validated = Boolean(state.validated) || ["VALIDATED", "READY", "PROCESSING", "COMPLETED"].includes(state.status);
   importUi.confirmed = state.status === "COMPLETED";
 }
@@ -9829,6 +9850,185 @@ if (physicalInventoryResetModal && physicalInventoryResetModal.dataset.modalWire
     if (event.target === physicalInventoryResetModal) closePhysicalInventoryResetModal();
   });
 }
+
+const PHYSICAL_CONFIRM_PHRASE = "SUSTITUIR INVENTARIO";
+const physicalInventoryPrepareModal = document.getElementById("physicalInventoryPrepareModal");
+const physicalInventoryPrepareSha = document.getElementById("physicalInventoryPrepareSha");
+const physicalInventoryPrepareConfirmBtn = document.getElementById("physicalInventoryPrepareConfirmBtn");
+const physicalInventoryPrepareCancelBtn = document.getElementById("physicalInventoryPrepareCancelBtn");
+const physicalInventoryPrepareCloseX = document.getElementById("physicalInventoryPrepareCloseX");
+const physicalInventoryPrepareBusyStatus = document.getElementById("physicalInventoryPrepareBusyStatus");
+const physicalInventoryPrepareError = document.getElementById("physicalInventoryPrepareError");
+const physicalInventoryPrepareSuccess = document.getElementById("physicalInventoryPrepareSuccess");
+const physicalInventoryConfirmModal = document.getElementById("physicalInventoryConfirmModal");
+const physicalInventoryConfirmSha = document.getElementById("physicalInventoryConfirmSha");
+const physicalInventoryConfirmPhrase = document.getElementById("physicalInventoryConfirmPhrase");
+const physicalInventoryConfirmAcceptBtn = document.getElementById("physicalInventoryConfirmAcceptBtn");
+const physicalInventoryConfirmCancelBtn = document.getElementById("physicalInventoryConfirmCancelBtn");
+const physicalInventoryConfirmCloseX = document.getElementById("physicalInventoryConfirmCloseX");
+const physicalInventoryConfirmBusyStatus = document.getElementById("physicalInventoryConfirmBusyStatus");
+const physicalInventoryConfirmError = document.getElementById("physicalInventoryConfirmError");
+const physicalInventoryConfirmSuccess = document.getElementById("physicalInventoryConfirmSuccess");
+let physicalInventoryReconcileBusy = false;
+
+function normalizeUiSha(value) {
+  return String(value || "").trim().toUpperCase().replace(/[^A-F0-9]/g, "");
+}
+
+function syncPhysicalInventoryPrepareEnabled() {
+  if (!physicalInventoryPrepareConfirmBtn) return;
+  physicalInventoryPrepareConfirmBtn.disabled = normalizeUiSha(physicalInventoryPrepareSha?.value).length !== 64 || physicalInventoryReconcileBusy;
+}
+
+function syncPhysicalInventoryConfirmEnabled() {
+  if (!physicalInventoryConfirmAcceptBtn) return;
+  const phraseOk = String(physicalInventoryConfirmPhrase?.value || "").trim() === PHYSICAL_CONFIRM_PHRASE;
+  const shaOk = normalizeUiSha(physicalInventoryConfirmSha?.value).length === 64;
+  physicalInventoryConfirmAcceptBtn.disabled = !phraseOk || !shaOk || physicalInventoryReconcileBusy;
+}
+
+function openPhysicalInventoryPrepareModal() {
+  if (currentRole !== "ADMIN" || physicalInventoryReconcileBusy) return;
+  if (physicalInventoryPrepareError) physicalInventoryPrepareError.textContent = "";
+  if (physicalInventoryPrepareSuccess) {
+    physicalInventoryPrepareSuccess.textContent = "";
+    physicalInventoryPrepareSuccess.classList.add("hidden");
+  }
+  if (physicalInventoryPrepareSha) physicalInventoryPrepareSha.value = importUi.sourceSha256 || "";
+  syncPhysicalInventoryPrepareEnabled();
+  openModal("physicalInventoryPrepareModal");
+}
+
+function closePhysicalInventoryPrepareModal() {
+  if (physicalInventoryReconcileBusy) return;
+  closeModal("physicalInventoryPrepareModal");
+}
+
+function openPhysicalInventoryConfirmModal() {
+  if (currentRole !== "ADMIN" || physicalInventoryReconcileBusy) return;
+  if (physicalInventoryConfirmError) physicalInventoryConfirmError.textContent = "";
+  if (physicalInventoryConfirmSuccess) {
+    physicalInventoryConfirmSuccess.textContent = "";
+    physicalInventoryConfirmSuccess.classList.add("hidden");
+  }
+  if (physicalInventoryConfirmSha) physicalInventoryConfirmSha.value = importUi.sourceSha256 || "";
+  if (physicalInventoryConfirmPhrase) physicalInventoryConfirmPhrase.value = "";
+  syncPhysicalInventoryConfirmEnabled();
+  openModal("physicalInventoryConfirmModal");
+}
+
+function closePhysicalInventoryConfirmModal() {
+  if (physicalInventoryReconcileBusy) return;
+  closeModal("physicalInventoryConfirmModal");
+}
+
+async function runPhysicalInventoryPrepare() {
+  if (physicalInventoryReconcileBusy || currentRole !== "ADMIN") return;
+  const sha = normalizeUiSha(physicalInventoryPrepareSha?.value);
+  if (sha.length !== 64 || !currentImportId) return;
+  physicalInventoryReconcileBusy = true;
+  physicalInventoryReconcileBtns.forEach((btn) => { btn.disabled = true; });
+  if (physicalInventoryPrepareBusyStatus) physicalInventoryPrepareBusyStatus.classList.remove("hidden");
+  if (physicalInventoryPrepareError) physicalInventoryPrepareError.textContent = "";
+  try {
+    const response = await authenticatedFetch("/api/v1/inventory/physical/prepare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ batchId: currentImportId, sourceSha256: sha })
+    });
+    const data = await response?.json().catch(() => ({}));
+    if (!response?.ok) throw new Error(data.message || "No se pudo preparar la conciliación.");
+    importUi.inventoryMode = "RECONCILE";
+    importUi.sourceSha256 = sha;
+    if (data.id) await hydrateImportFromServer(data.id);
+    if (physicalInventoryPrepareSuccess) {
+      physicalInventoryPrepareSuccess.textContent = "✓ Lote preparado como RECONCILE. El inventario no cambió.";
+      physicalInventoryPrepareSuccess.classList.remove("hidden");
+    }
+    setImportStatus("✓ Lote preparado como RECONCILE. El inventario no cambió.");
+  } catch (error) {
+    if (physicalInventoryPrepareError) {
+      physicalInventoryPrepareError.textContent = error instanceof Error ? error.message : "No se pudo preparar la conciliación.";
+    }
+  } finally {
+    physicalInventoryReconcileBusy = false;
+    physicalInventoryReconcileBtns.forEach((btn) => { btn.disabled = false; });
+    if (physicalInventoryPrepareBusyStatus) physicalInventoryPrepareBusyStatus.classList.add("hidden");
+    syncPhysicalInventoryPrepareEnabled();
+  }
+}
+
+async function runPhysicalInventoryConfirm() {
+  if (physicalInventoryReconcileBusy || currentRole !== "ADMIN") return;
+  const sha = normalizeUiSha(physicalInventoryConfirmSha?.value);
+  const phrase = String(physicalInventoryConfirmPhrase?.value || "").trim();
+  if (sha.length !== 64 || phrase !== PHYSICAL_CONFIRM_PHRASE || !currentImportId) return;
+  physicalInventoryReconcileBusy = true;
+  physicalInventoryReconcileBtns.forEach((btn) => { btn.disabled = true; });
+  if (physicalInventoryConfirmBusyStatus) physicalInventoryConfirmBusyStatus.classList.remove("hidden");
+  if (physicalInventoryConfirmError) physicalInventoryConfirmError.textContent = "";
+  try {
+    const response = await authenticatedFetch("/api/v1/inventory/physical/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        batchId: currentImportId,
+        confirmation: phrase,
+        sourceSha256: sha
+      })
+    });
+    const data = await response?.json().catch(() => ({}));
+    if (!response?.ok) throw new Error(data.message || "No se pudo sustituir el inventario.");
+    if (data.batchId) await hydrateImportFromServer(data.batchId);
+    await refreshInventoryAfterImport();
+    if (physicalInventoryConfirmSuccess) {
+      physicalInventoryConfirmSuccess.textContent = data.alreadyApplied
+        ? "✓ El lote ya estaba confirmado. No se duplicó inventario."
+        : `✓ Inventario sustituido. Qty ${data.after?.qty || "—"}.`;
+      physicalInventoryConfirmSuccess.classList.remove("hidden");
+    }
+    setImportStatus("✓ Conciliación física completada.");
+  } catch (error) {
+    if (physicalInventoryConfirmError) {
+      physicalInventoryConfirmError.textContent = error instanceof Error ? error.message : "No se pudo sustituir el inventario.";
+    }
+  } finally {
+    physicalInventoryReconcileBusy = false;
+    physicalInventoryReconcileBtns.forEach((btn) => { btn.disabled = false; });
+    if (physicalInventoryConfirmBusyStatus) physicalInventoryConfirmBusyStatus.classList.add("hidden");
+    syncPhysicalInventoryConfirmEnabled();
+  }
+}
+
+physicalInventoryReconcileBtns.forEach((btn) => {
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    if (btn.id.includes("Prepare") || btn.id.includes("prepare")) openPhysicalInventoryPrepareModal();
+    else openPhysicalInventoryConfirmModal();
+  });
+});
+if (physicalInventoryPrepareCancelBtn) physicalInventoryPrepareCancelBtn.addEventListener("click", closePhysicalInventoryPrepareModal);
+if (physicalInventoryPrepareCloseX) physicalInventoryPrepareCloseX.addEventListener("click", closePhysicalInventoryPrepareModal);
+if (physicalInventoryPrepareSha) physicalInventoryPrepareSha.addEventListener("input", syncPhysicalInventoryPrepareEnabled);
+if (physicalInventoryPrepareConfirmBtn) physicalInventoryPrepareConfirmBtn.addEventListener("click", () => void runPhysicalInventoryPrepare());
+if (physicalInventoryPrepareModal && physicalInventoryPrepareModal.dataset.modalWired !== "1") {
+  physicalInventoryPrepareModal.dataset.modalWired = "1";
+  physicalInventoryPrepareModal.addEventListener("click", (event) => {
+    if (event.target === physicalInventoryPrepareModal) closePhysicalInventoryPrepareModal();
+  });
+}
+if (physicalInventoryConfirmCancelBtn) physicalInventoryConfirmCancelBtn.addEventListener("click", closePhysicalInventoryConfirmModal);
+if (physicalInventoryConfirmCloseX) physicalInventoryConfirmCloseX.addEventListener("click", closePhysicalInventoryConfirmModal);
+if (physicalInventoryConfirmSha) physicalInventoryConfirmSha.addEventListener("input", syncPhysicalInventoryConfirmEnabled);
+if (physicalInventoryConfirmPhrase) physicalInventoryConfirmPhrase.addEventListener("input", syncPhysicalInventoryConfirmEnabled);
+if (physicalInventoryConfirmAcceptBtn) physicalInventoryConfirmAcceptBtn.addEventListener("click", () => void runPhysicalInventoryConfirm());
+if (physicalInventoryConfirmModal && physicalInventoryConfirmModal.dataset.modalWired !== "1") {
+  physicalInventoryConfirmModal.dataset.modalWired = "1";
+  physicalInventoryConfirmModal.addEventListener("click", (event) => {
+    if (event.target === physicalInventoryConfirmModal) closePhysicalInventoryConfirmModal();
+  });
+}
+
 const importMissingLocModal = document.getElementById("importMissingLocModal");
 document.getElementById("importMissingLocOpenBtn")?.addEventListener("click", () => openImportMissingLocModal());
 document.getElementById("importMissingLocCancelBtn")?.addEventListener("click", () => closeImportMissingLocModal());

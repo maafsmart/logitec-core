@@ -11,6 +11,7 @@ import {
   type InventoryAssignment
 } from "./inventory-assignment.js";
 import { assertNoSerialAmbiguity } from "./inventory-serial-guard.js";
+import { isPhysicalInventoryMutationInFlight } from "./physical-inventory-lock.js";
 
 export { InventoryMutationError } from "./inventory-errors.js";
 
@@ -541,5 +542,11 @@ export async function mutateInventoryInTransaction(tx: Prisma.TransactionClient,
 }
 
 export async function mutateInventory(input: InventoryMutationInput) {
+  if (isPhysicalInventoryMutationInFlight()) {
+    throw new InventoryMutationError(
+      "PHYSICAL_INVENTORY_IN_FLIGHT",
+      "Hay una conciliación o reinicio físico de inventario en curso."
+    );
+  }
   return prisma.$transaction((tx) => mutateInventoryInTransaction(tx, input), { maxWait: 5_000, timeout: 15_000 });
 }

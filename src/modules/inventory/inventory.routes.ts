@@ -25,6 +25,10 @@ import {
   assertPhysicalResetConfirmation,
   executePhysicalInventoryReset
 } from "./physical-reset.service.js";
+import {
+  executePhysicalInventoryConfirm,
+  preparePhysicalReconcileBatch
+} from "./physical-confirm.service.js";
 
 const inventoryRouter = Router();
 
@@ -688,6 +692,34 @@ inventoryRouter.post("/physical/reset", requireRole(["ADMIN"]), async (req, res)
   const body = z.object({ confirmation: z.string().optional() }).parse(req.body ?? {});
   assertPhysicalResetConfirmation(body.confirmation);
   const result = await executePhysicalInventoryReset({ userId: req.auth!.userId });
+  res.json(result);
+});
+
+inventoryRouter.post("/physical/prepare", requireRole(["ADMIN"]), async (req, res) => {
+  const body = z.object({
+    batchId: z.string().min(1),
+    sourceSha256: z.string().min(1)
+  }).parse(req.body ?? {});
+  const result = await preparePhysicalReconcileBatch({
+    batchId: body.batchId,
+    userId: req.auth!.userId,
+    sourceSha256: body.sourceSha256
+  });
+  res.json(result);
+});
+
+inventoryRouter.post("/physical/confirm", requireRole(["ADMIN"]), async (req, res) => {
+  const body = z.object({
+    batchId: z.string().min(1),
+    confirmation: z.string().optional(),
+    sourceSha256: z.string().min(1)
+  }).parse(req.body ?? {});
+  const result = await executePhysicalInventoryConfirm({
+    batchId: body.batchId,
+    userId: req.auth!.userId,
+    confirmation: body.confirmation,
+    sourceSha256: body.sourceSha256
+  });
   res.json(result);
 });
 

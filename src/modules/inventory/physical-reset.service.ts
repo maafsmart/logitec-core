@@ -2,9 +2,11 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
+import { isPhysicalResetInFlight, withPhysicalInventoryLock } from "./physical-inventory-lock.js";
 
 export const PHYSICAL_RESET_CONFIRMATION = "BORRAR INVENTARIO";
 export const PHYSICAL_RESET_PATH = "/api/v1/inventory/physical/reset";
+export { isPhysicalResetInFlight };
 
 export type PhysicalResetDb = {
   $transaction<T>(
@@ -26,12 +28,6 @@ export type PhysicalResetResult = {
   result: "ZEROED" | "ALREADY_ZERO";
 };
 
-let physicalResetInFlight = false;
-
-export function isPhysicalResetInFlight(): boolean {
-  return physicalResetInFlight;
-}
-
 export function assertPhysicalResetConfirmation(value: unknown): void {
   const phrase = String(value ?? "").trim();
   if (phrase !== PHYSICAL_RESET_CONFIRMATION) {
@@ -47,9 +43,8 @@ function isPositive(value: Prisma.Decimal | null | undefined): boolean {
   return Boolean(value && value.gt(0));
 }
 
-export async function applyPhysicalInventoryZero(
-  tx: Prisma.TransactionClient,
-  actor: { userId: string }
+export async function zeroPhysicalInventoryState(
+  tx: Prisma.TransactionClient
 ): Promise<PhysicalResetResult> {
   const [qtyAgg, reservedAgg, layerQtyAgg, layerReservedAgg, stockAgg, serials, activeReservations, positiveCubes, positiveLayers, positiveStock] =
     await Promise.all([
@@ -114,7 +109,7 @@ export async function applyPhysicalInventoryZero(
     throw new HttpError(500, "El inventario no quedó en cero. Se revirtió la operación.");
   }
 
-  const result: PhysicalResetResult = {
+  return {
     ok: true,
     alreadyZero,
     inventoriesZeroed: alreadyZero ? 0 : positiveCubes,
@@ -126,7 +121,13 @@ export async function applyPhysicalInventoryZero(
     legacyStockZeroed: alreadyZero ? 0 : positiveStock,
     result: alreadyZero ? "ALREADY_ZERO" : "ZEROED"
   };
+}
 
+export async function applyPhysicalInventoryZero(
+  tx: Prisma.TransactionClient,
+  actor: { userId: string }
+): Promise<PhysicalResetResult> {
+  const result = await zeroPhysicalInventoryState(tx);
   await logActivity(
     {
       type: "INVENTORY",
@@ -149,7 +150,6 @@ export async function applyPhysicalInventoryZero(
     },
     tx
   );
-
   return result;
 }
 
@@ -157,16 +157,10 @@ export async function executePhysicalInventoryReset(
   actor: { userId: string },
   db: PhysicalResetDb = prisma
 ): Promise<PhysicalResetResult> {
-  if (physicalResetInFlight) {
-    throw new HttpError(409, "Ya hay un reinicio de inventario en curso.");
-  }
-  physicalResetInFlight = true;
-  try {
-    return await db.$transaction((tx) => applyPhysicalInventoryZero(tx, actor), {
+  return withPhysicalInventoryLock("RESET", () =>
+    db.$transaction((tx) => applyPhysicalInventoryZero(tx, actor), {
       maxWait: 15_000,
       timeout: 120_000
-    });
-  } finally {
-    physicalResetInFlight = false;
-  }
+    })
+  );
 }

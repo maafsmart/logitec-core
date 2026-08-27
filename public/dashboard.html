@@ -4460,6 +4460,8 @@
               <p class="module-hint">Secuencia: Archivo → Hoja → Mapeo → Validación → Revisión → Confirmación. Subir un archivo no modifica inventario hasta confirmar.</p>
               <div class="page-toolbar" id="physicalInventoryResetImportBar">
                 <button type="button" id="physicalInventoryResetImportBtn" class="btn-danger hidden">Borrar todo el inventario</button>
+                <button type="button" id="physicalInventoryPrepareBtn" class="btn-secondary hidden">Preparar conciliación RECONCILE</button>
+                <button type="button" id="physicalInventoryConfirmBtn" class="btn-danger hidden">Sustituir inventario físico</button>
               </div>
               <div id="importResumeBanner" class="import-resume-banner hidden" role="status" aria-live="polite">
                 <h5>Importación en curso</h5>
@@ -4528,7 +4530,7 @@
                     <label for="importInventoryMode">Modo inventario</label>
                     <select id="importInventoryMode">
                       <option value="APPEND">APPEND / recepción</option>
-                      <option value="RECONCILE">RECONCILE / conciliación (solo preview)</option>
+                      <option value="RECONCILE">RECONCILE / conciliación física</option>
                     </select>
                   </div>
                   <div class="field">
@@ -4594,6 +4596,8 @@
                 <p id="importConfirmHint" class="import-confirm-hint">🔒 Confirmar está bloqueado hasta completar los pasos anteriores.</p>
                 <div class="page-toolbar">
                   <button type="button" id="importConfirmBtn" class="btn-compact btn-confirm-locked" disabled>🔒 Confirmar</button>
+                  <button type="button" id="physicalInventoryPrepareConfirmStepBtn" class="btn-secondary btn-compact hidden">Preparar RECONCILE</button>
+                  <button type="button" id="physicalInventoryConfirmStepBtn" class="btn-danger btn-compact hidden">Sustituir inventario</button>
                   <button type="button" id="importNormalizedBtn" class="btn-secondary btn-compact" disabled>CSV normalizado</button>
                   <button type="button" id="importCancelBtn" class="btn-secondary btn-compact hidden" aria-label="Cancelar importación temporal">Cancelar importación temporal</button>
                 </div>
@@ -4747,6 +4751,54 @@
       </div>
     </div>
 
+    <div id="physicalInventoryPrepareModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-labelledby="physicalInventoryPrepareTitle" aria-modal="true">
+        <div class="modal-header">
+          <h3 id="physicalInventoryPrepareTitle">Preparar conciliación RECONCILE</h3>
+          <button type="button" class="modal-close" id="physicalInventoryPrepareCloseX" aria-label="Cerrar">×</button>
+        </div>
+        <p>El lote permanecerá READY y no se confirmará. El inventario actual no cambia. Escribe el SHA-256 del Excel original.</p>
+        <label class="lab-reset-check" for="physicalInventoryPrepareSha">SHA-256 del archivo original</label>
+        <input id="physicalInventoryPrepareSha" type="text" autocomplete="off" spellcheck="false" placeholder="SHA-256" />
+        <p id="physicalInventoryPrepareBusyStatus" class="lab-reset-busy hidden" role="status" aria-live="polite">
+          <span class="lab-reset-spinner"></span>
+          Preparando lote RECONCILE…
+        </p>
+        <p id="physicalInventoryPrepareError" class="ops-message error"></p>
+        <p id="physicalInventoryPrepareSuccess" class="ops-message ok hidden"></p>
+        <div class="import-actions" style="margin-top:12px">
+          <button type="button" id="physicalInventoryPrepareCancelBtn" class="btn-secondary">Cancelar</button>
+          <button type="button" id="physicalInventoryPrepareConfirmBtn" class="btn-primary" disabled>Preparar RECONCILE</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="physicalInventoryConfirmModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-labelledby="physicalInventoryConfirmTitle" aria-modal="true">
+        <div class="modal-header">
+          <h3 id="physicalInventoryConfirmTitle">Sustituir inventario físico</h3>
+          <button type="button" class="modal-close" id="physicalInventoryConfirmCloseX" aria-label="Cerrar">×</button>
+        </div>
+        <p>Esta acción sustituye todo el inventario actual por las filas del lote RECONCILE, en una sola transacción. Conserva catálogos, usuarios y movimientos históricos.</p>
+        <label class="lab-reset-check" for="physicalInventoryConfirmSha">SHA-256 del archivo original</label>
+        <input id="physicalInventoryConfirmSha" type="text" autocomplete="off" spellcheck="false" placeholder="SHA-256" />
+        <label class="lab-reset-check" for="physicalInventoryConfirmPhrase">
+          Escribe <strong>SUSTITUIR INVENTARIO</strong> para confirmar
+        </label>
+        <input id="physicalInventoryConfirmPhrase" type="text" autocomplete="off" spellcheck="false" placeholder="SUSTITUIR INVENTARIO" />
+        <p id="physicalInventoryConfirmBusyStatus" class="lab-reset-busy hidden" role="status" aria-live="polite">
+          <span class="lab-reset-spinner"></span>
+          Sustituyendo inventario…
+        </p>
+        <p id="physicalInventoryConfirmError" class="ops-message error"></p>
+        <p id="physicalInventoryConfirmSuccess" class="ops-message ok hidden"></p>
+        <div class="import-actions" style="margin-top:12px">
+          <button type="button" id="physicalInventoryConfirmCancelBtn" class="btn-secondary">Cancelar</button>
+          <button type="button" id="physicalInventoryConfirmAcceptBtn" class="btn-danger" disabled>Confirmar sustitución</button>
+        </div>
+      </div>
+    </div>
+
     <div id="importMissingLocModal" class="modal-overlay" aria-hidden="true">
       <div class="modal-panel" role="dialog" aria-labelledby="importMissingLocTitle" aria-modal="true">
         <div class="modal-header">
@@ -4832,6 +4884,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=54"></script>
+    <script src="/dashboard.js?v=55"></script>
   </body>
 </html>

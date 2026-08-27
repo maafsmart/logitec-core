@@ -92,26 +92,49 @@ type PreparedRow = {
   lotControlled: boolean;
 };
 
-export async function executeInventoryImportBulk(input: {
+export type InventoryImportApplyInput = {
   context: ImportContext;
   rows: ExecRow[];
   userId: string;
   batchId: string;
   metadata?: Record<string, unknown>;
-  txOptions: { maxWait: number; timeout: number };
-}) {
+  finalizeBatch?: boolean;
+};
+
+export type InventoryImportApplyResult = {
+  results: Array<{ sourceRow: number; ok: boolean; message?: string; productId?: string }>;
+  stagedQty: string;
+  cubes: number;
+  layers: number;
+  movements: number;
+  serials: number;
+  newProducts: number;
+};
+
+export async function applyInventoryImportInTransaction(
+  tx: Prisma.TransactionClient,
+  input: InventoryImportApplyInput
+): Promise<InventoryImportApplyResult> {
   const valid = [...input.rows]
     .filter((r) => !Array.isArray(r.errors) || r.errors.length === 0)
     .sort((a, b) => a.sourceRow - b.sourceRow);
   const sourceMeta = asMetaRecord(input.metadata);
+  const prepared: PreparedRow[] = [];
+  for (const row of valid) {
+    prepared.push(prepareRow(row, input.context));
+  }
 
-  return prisma.$transaction(async (tx) => {
-      const prepared: PreparedRow[] = [];
-      for (const row of valid) {
-        prepared.push(prepareRow(row, input.context));
-      }
+  const serialSeen = new Set<string>();
+  for (const row of prepared) {
+    if (!row.serialNumber) continue;
+    const key = `${row.sku}::${row.serialNumber}`;
+    if (serialSeen.has(key)) {
+      throw new ImportExecuteError("SERIAL_DUPLICATE_FILE", row.sourceRow);
+    }
+    serialSeen.add(key);
+  }
 
-      const skuKeys = [...new Set(prepared.map((r) => r.sku))];
+  const skuKeys = [...new Set(prepared.map((r) => r.sku))];
       const locationIds = [...new Set(prepared.map((r) => r.locationId))];
       const projectIds = [
         ...new Set(prepared.map((r) => r.assignment.projectId).filter((id): id is string => Boolean(id)))
@@ -405,32 +428,53 @@ export async function executeInventoryImportBulk(input: {
       }
 
       const qtyTotal = [...runningQty.values()].reduce((sum, qty) => sum.add(qty), new Prisma.Decimal(0));
-      const cleanMeta = { ...sourceMeta };
-      delete cleanMeta.lastFailedAttempt;
-      await tx.importBatch.update({
-        where: { id: input.batchId },
-        data: {
-          status: "COMPLETED",
-          completedAt: new Date(),
-          metadata: {
-            ...cleanMeta,
-            execution: {
-              results: txResults,
-              failed: 0,
-              bulk: {
-                cubes: neededCubes.size,
-                layers: layers.length,
-                movements: movements.length,
-                serials: serials.length,
-                newProducts: newProducts.length,
-                qtyTotal: qtyTotal.toString()
+      const stagedQty = prepared.reduce((sum, row) => sum.add(row.qty), new Prisma.Decimal(0));
+      const result: InventoryImportApplyResult = {
+        results: txResults,
+        stagedQty: stagedQty.toString(),
+        cubes: neededCubes.size,
+        layers: layers.length,
+        movements: movements.length,
+        serials: serials.length,
+        newProducts: newProducts.length
+      };
+      if (input.finalizeBatch !== false) {
+        const cleanMeta = { ...sourceMeta };
+        delete cleanMeta.lastFailedAttempt;
+        await tx.importBatch.update({
+          where: { id: input.batchId },
+          data: {
+            status: "COMPLETED",
+            completedAt: new Date(),
+            metadata: {
+              ...cleanMeta,
+              execution: {
+                results: txResults,
+                failed: 0,
+                bulk: {
+                  cubes: result.cubes,
+                  layers: result.layers,
+                  movements: result.movements,
+                  serials: result.serials,
+                  newProducts: result.newProducts,
+                  qtyTotal: qtyTotal.toString()
+                }
               }
-            }
-          } as Prisma.InputJsonValue
-        }
-      });
-      return txResults;
-  }, input.txOptions);
+            } as Prisma.InputJsonValue
+          }
+        });
+      }
+      return result;
+}
+
+export async function executeInventoryImportBulk(input: InventoryImportApplyInput & {
+  txOptions: { maxWait: number; timeout: number };
+}) {
+  const applied = await prisma.$transaction(
+    (tx) => applyInventoryImportInTransaction(tx, input),
+    input.txOptions
+  );
+  return applied.results;
 }
 
 function prepareRow(row: ExecRow, context: ImportContext): PreparedRow {
