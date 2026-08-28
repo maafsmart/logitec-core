@@ -1714,6 +1714,40 @@ function layerPriceSplitConfirmMessage(priceParsed, qtyRaw, remainingRaw, totalR
   return `Se asignará un precio unitario de ${priceLabel} MXN a ${formatQty(qtyRaw)} piezas. Quedarán ${formatQty(remainingRaw)} piezas sin precio. El saldo total de ${formatQty(totalRaw)} piezas no cambia. ¿Deseas continuar?`;
 }
 
+function priceDestinationType() {
+  return document.getElementById("priceDestType")?.value || "KEEP";
+}
+
+function priceDestinationIsKeep(row) {
+  const dest = priceDestinationType();
+  if (dest === "KEEP") return true;
+  if (dest === "FREE_TO_SALE") return isFreeToSaleRow(row);
+  if (dest === "PROJECT") {
+    const projectId = document.getElementById("priceDestProject")?.value || "";
+    return Boolean(projectId && row?.projectId === projectId);
+  }
+  return true;
+}
+
+function selectedPriceDestProjectOption() {
+  const sel = document.getElementById("priceDestProject");
+  return sel?.selectedOptions?.[0] || null;
+}
+
+function priceDestinationLabel(row) {
+  const dest = priceDestinationType();
+  if (dest === "KEEP" || priceDestinationIsKeep(row)) return inventoryProjectOrAssignmentLabel(row);
+  if (dest === "FREE_TO_SALE") return "Free to Sale";
+  const opt = selectedPriceDestProjectOption();
+  return opt?.dataset?.name || opt?.textContent || "—";
+}
+
+function layerValueAssignConfirmMessage(priceParsed, qtyRaw, remainingRaw, totalRaw, fromLabel, toLabel, remainingLabel, destIsProject) {
+  const priceLabel = formatLayerPriceMxnExact(priceParsed.value);
+  const destPhrase = destIsProject ? `al proyecto ${toLabel}` : `a ${toLabel}`;
+  return `Se valuarán ${formatQty(qtyRaw)} piezas a ${priceLabel} MXN y se asignarán de ${fromLabel} ${destPhrase}. Quedarán ${formatQty(remainingRaw)} piezas en ${remainingLabel}. El total físico de ${formatQty(totalRaw)} piezas no cambia. ¿Deseas continuar?`;
+}
+
 function decimal4ProductToMoney(qtyRaw, priceRaw) {
   const product = decimal4ToScaled(qtyRaw) * decimal4ToScaled(priceRaw);
   const cents = (product + 500000n) / 1000000n;
@@ -1722,10 +1756,45 @@ function decimal4ProductToMoney(qtyRaw, priceRaw) {
   return formatMxn(`${whole.toString()}.${frac}`);
 }
 
+function syncPriceDestProjectVisible() {
+  const field = document.getElementById("priceDestProjectField");
+  if (!field) return;
+  const unpriced = !layerHasAssignedPrice(selectedPriceLayer());
+  field.classList.toggle("hidden", !unpriced || priceDestinationType() !== "PROJECT");
+}
+
+function realActiveProjectsForPriceRow(projects, row) {
+  const clientId =
+    row?.project?.client?.id || row?.product?.customer?.clientId || row?.product?.customer?.client?.id || "";
+  return (Array.isArray(projects) ? projects : []).filter((project) => {
+    if (!project?.id || project.active === false) return false;
+    if (isForbiddenProjectLabel(project.code) || isForbiddenProjectLabel(project.name)) return false;
+    if (clientId && project.clientId && project.clientId !== clientId) return false;
+    if (clientId && project.client?.id && project.client.id !== clientId) return false;
+    return true;
+  });
+}
+
+async function fillPriceDestProjects(row) {
+  const sel = document.getElementById("priceDestProject");
+  if (!sel) return;
+  const response = await authenticatedFetch("/api/catalog/customers");
+  const projects = response?.ok ? await response.json() : [];
+  sel.innerHTML =
+    '<option value="">— Seleccionar proyecto —</option>' +
+    realActiveProjectsForPriceRow(projects, row)
+      .map(
+        (project) =>
+          `<option value="${escCell(project.id)}" data-name="${escCell(project.name)}">${escCell(project.name)} (${escCell(project.code)})</option>`
+      )
+      .join("");
+}
+
 function syncPriceSplitFieldsVisible(unpriced) {
   document.querySelectorAll(".price-split-only").forEach((el) => {
     el.classList.toggle("hidden", !unpriced);
   });
+  syncPriceDestProjectVisible();
 }
 
 function openInventoryDetail(row) {
@@ -2084,7 +2153,9 @@ function syncLayerPriceSaveButton() {
   const parsed = parseLayerPriceMxnInput(document.getElementById("priceNew")?.value);
   if (!layerHasAssignedPrice(layer)) {
     const qtyParsed = parseLayerQtyToValueInput(document.getElementById("priceQtyToValue")?.value);
-    btn.disabled = !(layer?.id && parsed.ok && qtyParsed.ok && qtyFitsUnpricedLayer(layer, qtyParsed.value));
+    const destType = priceDestinationType();
+    const projectOk = destType !== "PROJECT" || Boolean(document.getElementById("priceDestProject")?.value);
+    btn.disabled = !(layer?.id && parsed.ok && qtyParsed.ok && qtyFitsUnpricedLayer(layer, qtyParsed.value) && projectOk);
     return;
   }
   btn.disabled = !(layer?.id && parsed.ok && layerPriceHasRealChange(layer, parsed));
@@ -2096,6 +2167,10 @@ function resetNewPriceInput(layer) {
   el.value = "";
   const qtyEl = document.getElementById("priceQtyToValue");
   if (qtyEl) qtyEl.value = "";
+  const destType = document.getElementById("priceDestType");
+  if (destType) destType.value = "KEEP";
+  const destProject = document.getElementById("priceDestProject");
+  if (destProject) destProject.value = "";
   if (layerHasAssignedPrice(layer)) {
     el.value = String(layer.unitPriceMxn);
   }
@@ -2131,20 +2206,31 @@ function updateLayerPricePreview() {
   } else if (!unpriced) {
     remainingRaw = "0";
   }
+  const destKeep = priceDestinationIsKeep(layerPriceSource);
+  const destLabel = priceDestinationLabel(layerPriceSource);
+  const currentAssignment = inventoryProjectOrAssignmentLabel(layerPriceSource);
   preview.textContent = unpriced
     ? [
         `SKU: ${layerPriceSource.product?.sku || "—"}`,
         `Producto: ${layerPriceSource.product?.name || "—"}`,
-        `Asignación: ${inventoryProjectOrAssignmentLabel(layerPriceSource)}`,
+        `Asignación actual: ${currentAssignment}`,
+        `Asignación destino: ${destLabel}`,
         `Ubicación: ${layerPriceSource.location?.code || "—"}`,
         `Cantidad de la capa: ${qty} piezas`,
         `Cantidad disponible sin precio: ${layer ? formatQty(availableRaw) : "—"}`,
         `Cantidad a valuar: ${qtyParsed.ok ? formatQty(qtyParsed.value) : "—"}`,
-        `Piezas que permanecerán sin precio: ${qtyParsed.ok ? formatQty(remainingRaw) : "—"}`,
-        `Nuevo precio unitario MXN: ${next}`,
+        destKeep
+          ? `Piezas que permanecerán sin precio: ${qtyParsed.ok ? formatQty(remainingRaw) : "—"}`
+          : `Cantidad que se transferirá: ${qtyParsed.ok ? formatQty(qtyParsed.value) : "—"}`,
+        destKeep ? null : `Cantidad que quedará en la asignación actual: ${qtyParsed.ok ? formatQty(remainingRaw) : "—"}`,
+        `Precio unitario: ${next}`,
         `Valor que se agregará al inventario: ${addedValue}`,
-        "El saldo total del cubo no cambia. No se modifican existencias, asignaciones ni movimientos."
-      ].join("\n")
+        destKeep
+          ? "El saldo total del cubo no cambia. No se modifican existencias, asignaciones ni movimientos."
+          : `El total físico de ${formatQty(layerPriceSource.qty ?? layerQty)} piezas no cambia.`
+      ]
+        .filter(Boolean)
+        .join("\n")
     : [
         `SKU: ${layerPriceSource.product?.sku || "—"}`,
         `Producto: ${layerPriceSource.product?.name || "—"}`,
@@ -2203,6 +2289,9 @@ async function openLayerPricePanel(row) {
   panel.classList.remove("hidden");
   setPriceMessage("", true);
   fillLayerPriceFields(row);
+  await fillPriceDestProjects(row);
+  syncPriceDestProjectVisible();
+  updateLayerPricePreview();
   if (!layerPriceOptions(row).length) {
     setPriceMessage("No hay capas con saldo para asignar precio.", false);
     const btn = document.getElementById("priceConfirmBtn");
@@ -2219,6 +2308,10 @@ function closeLayerPricePanel() {
   if (priceNew) priceNew.value = "";
   const qtyToValue = document.getElementById("priceQtyToValue");
   if (qtyToValue) qtyToValue.value = "";
+  const destType = document.getElementById("priceDestType");
+  if (destType) destType.value = "KEEP";
+  const destProject = document.getElementById("priceDestProject");
+  if (destProject) destProject.value = "";
   const btn = document.getElementById("priceConfirmBtn");
   if (btn) btn.disabled = true;
   setPriceMessage("", true);
@@ -2278,11 +2371,65 @@ async function confirmLayerPriceUpdate() {
   }
   const remainingScaled = decimal4ToScaled(String(layer.qty ?? "0")) - decimal4ToScaled(qtyParsed.value);
   const remainingRaw = remainingScaled >= 0n ? scaledToDecimalString(remainingScaled) : "0";
-  if (!window.confirm(layerPriceSplitConfirmMessage(parsed, qtyParsed.value, remainingRaw, String(layer.qty)))) return;
-  const response = await authenticatedFetch(`/api/inventory/layers/${encodeURIComponent(layer.id)}/price-split`, {
+  const destKeep = priceDestinationIsKeep(layerPriceSource);
+  if (destKeep) {
+    if (!window.confirm(layerPriceSplitConfirmMessage(parsed, qtyParsed.value, remainingRaw, String(layer.qty)))) return;
+    const response = await authenticatedFetch(`/api/inventory/layers/${encodeURIComponent(layer.id)}/price-split`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ qtyToValue: qtyParsed.value, unitPriceMxn: parsed.value })
+    });
+    const data = await response?.json().catch(() => ({}));
+    if (!response?.ok) {
+      setPriceMessage(data.message || data.code || "No se pudo guardar el precio.", false);
+      return;
+    }
+    setPriceMessage(
+      `Precio guardado. ${formatQty(data.qtyAffected || qtyParsed.value)} piezas valuadas. Remanente ${formatQty(data.qtyRemaining ?? remainingRaw)}.`,
+      true
+    );
+    await loadStockStrip();
+    const updated = (Array.isArray(stockRowsCache) ? stockRowsCache : []).find((item) => item.id === layerPriceSource.id);
+    if (updated) {
+      layerPriceSource = updated;
+      fillLayerPriceFields(updated);
+    }
+    return;
+  }
+  const destType = priceDestinationType();
+  if (destType === "PROJECT" && !document.getElementById("priceDestProject")?.value) {
+    setPriceMessage("Selecciona un proyecto destino.", false);
+    syncLayerPriceSaveButton();
+    return;
+  }
+  const fromLabel = inventoryProjectOrAssignmentLabel(layerPriceSource);
+  const toLabel = priceDestinationLabel(layerPriceSource);
+  if (
+    !window.confirm(
+      layerValueAssignConfirmMessage(
+        parsed,
+        qtyParsed.value,
+        remainingRaw,
+        String(layerPriceSource.qty ?? layer.qty),
+        fromLabel,
+        toLabel,
+        fromLabel,
+        destType === "PROJECT"
+      )
+    )
+  ) {
+    return;
+  }
+  const body = {
+    qtyToValue: qtyParsed.value,
+    unitPriceMxn: parsed.value,
+    destinationType: destType
+  };
+  if (destType === "PROJECT") body.projectId = document.getElementById("priceDestProject")?.value;
+  const response = await authenticatedFetch(`/api/inventory/layers/${encodeURIComponent(layer.id)}/value-and-assign`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ qtyToValue: qtyParsed.value, unitPriceMxn: parsed.value })
+    body: JSON.stringify(body)
   });
   const data = await response?.json().catch(() => ({}));
   if (!response?.ok) {
@@ -2321,6 +2468,19 @@ function wireLayerPricePanel() {
     qtyToValue.dataset.wired = "1";
     qtyToValue.addEventListener("input", updateLayerPricePreview);
     qtyToValue.addEventListener("change", updateLayerPricePreview);
+  }
+  const destType = document.getElementById("priceDestType");
+  if (destType && destType.dataset.wired !== "1") {
+    destType.dataset.wired = "1";
+    destType.addEventListener("change", () => {
+      syncPriceDestProjectVisible();
+      updateLayerPricePreview();
+    });
+  }
+  const destProject = document.getElementById("priceDestProject");
+  if (destProject && destProject.dataset.wired !== "1") {
+    destProject.dataset.wired = "1";
+    destProject.addEventListener("change", updateLayerPricePreview);
   }
   const confirmBtn = document.getElementById("priceConfirmBtn");
   if (confirmBtn && confirmBtn.dataset.wired !== "1") {

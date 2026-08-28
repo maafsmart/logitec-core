@@ -499,7 +499,8 @@ test("endpoint, roles, PATCH intacto y UI de valuación parcial", () => {
   assert.match(html, /id="priceAvailableUnpriced"/);
   assert.match(html, /id="priceRemainingUnpriced"/);
   assert.match(html, /id="priceAddedValue"/);
-  assert.doesNotMatch(html, /id="priceDestProject"/);
+  assert.match(html, /id="priceDestType"/);
+  assert.match(html, /id="priceDestProject"/);
   assert.match(html, /Proyecto o asignación/);
   assert.match(js, /\/api\/inventory\/layers\/\$\{encodeURIComponent\(layer\.id\)\}\/price-split/);
   assert.match(js, /layerPriceSplitConfirmMessage/);
@@ -518,6 +519,6 @@ test("endpoint, roles, PATCH intacto y UI de valuación parcial", () => {
   assert.match(msg, /Se asignará un precio unitario de \$\{priceLabel\} MXN a \$\{formatQty\(qtyRaw\)\} piezas/);
   assert.match(msg, /Quedarán \$\{formatQty\(remainingRaw\)\} piezas sin precio/);
   assert.match(msg, /El saldo total de \$\{formatQty\(totalRaw\)\} piezas no cambia/);
-  assert.match(html, /dashboard\.js\?v=64/);
+  assert.match(html, /dashboard\.js\?v=65/);
   assert.match(js, /logitec_active_nav/);
 });

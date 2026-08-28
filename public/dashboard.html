@@ -3925,12 +3925,26 @@
             <div id="layerPricePanel" class="card-panel ops-form-panel hidden js-economic-card">
               <h4 class="secondary-panel-title">Asignar o editar precio MXN</h4>
               <p class="module-hint" style="margin:0 0 12px">
-                El precio se aplica a toda la capa seleccionada cuando ya tiene valor. Si la capa está sin precio, puedes valuar solo una cantidad. No se modifican existencias totales, seriales, reservas ni asignaciones.
+                El precio se aplica a toda la capa seleccionada cuando ya tiene valor. Si la capa está sin precio, puedes valuar una cantidad y conservarla o asignarla a Free to Sale o a un proyecto. El total físico no cambia.
               </p>
               <div class="form-grid">
                 <div class="field"><label>SKU</label><input id="priceSku" type="text" readonly /></div>
                 <div class="field"><label>Producto</label><input id="priceProduct" type="text" readonly /></div>
-                <div class="field"><label>Proyecto o asignación</label><input id="priceAssignment" type="text" readonly /></div>
+                <div class="field"><label>Proyecto o asignación actual</label><input id="priceAssignment" type="text" readonly /></div>
+                <div class="field price-split-only hidden">
+                  <label for="priceDestType">Destino de las piezas</label>
+                  <select id="priceDestType">
+                    <option value="KEEP" selected>Conservar asignación actual</option>
+                    <option value="FREE_TO_SALE">Free to Sale</option>
+                    <option value="PROJECT">Proyecto</option>
+                  </select>
+                </div>
+                <div class="field price-split-only hidden" id="priceDestProjectField">
+                  <label for="priceDestProject">Proyecto destino</label>
+                  <select id="priceDestProject">
+                    <option value="">— Seleccionar proyecto —</option>
+                  </select>
+                </div>
                 <div class="field"><label>Ubicación</label><input id="priceLocation" type="text" readonly /></div>
                 <div class="field">
                   <label for="priceLayer">Capa</label>
@@ -4954,6 +4968,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=64"></script>
+    <script src="/dashboard.js?v=65"></script>
   </body>
 </html>
