@@ -8739,43 +8739,42 @@ function hideReqActionCandidateFields() {
   if (layerSel) layerSel.innerHTML = '<option value="">— Seleccionar —</option>';
 }
 
-function showReqAmbiguity(data) {
-  const code = data?.code;
-  const details = data?.details || {};
+function formatReserveCubeLabel(cube) {
+  const layers = Number(cube?.layerCount) || 0;
+  const layerText = layers === 1 ? "1 capa interna" : `${layers} capas internas`;
+  return `${cube?.location || "—"} · ${cube?.status || ""} · Física ${formatQty(cube?.qty)} · Reservada ${formatQty(cube?.reservedQty)} · Disponible ${formatQty(cube?.freeQty ?? cube?.unreservedQty)} · ${layerText}`;
+}
+
+function fillReserveCubeSelect(cubes) {
   const invField = document.getElementById("reqActionInventoryField");
   const layerField = document.getElementById("reqActionLayerField");
   const invSel = document.getElementById("reqActionInventoryId");
-  const layerSel = document.getElementById("reqActionLayerId");
+  if (layerField) layerField.classList.add("hidden");
+  const list = Array.isArray(cubes) ? cubes : [];
+  if (!invSel) return;
+  invSel.innerHTML =
+    '<option value="">— Seleccionar cubo —</option>' +
+    list
+      .map((cube) => `<option value="${escCell(cube.inventoryId)}">${escCell(formatReserveCubeLabel(cube))}</option>`)
+      .join("");
+  if (invField) {
+    if (list.length) invField.classList.remove("hidden");
+    else invField.classList.add("hidden");
+  }
+  if (list.length === 1) invSel.value = list[0].inventoryId;
+}
+
+function showReqAmbiguity(data) {
+  const code = data?.code;
+  const details = data?.details || {};
   if (code === "AMBIGUOUS_STOCK") {
     const candidates = Array.isArray(details.candidates) ? details.candidates : [];
-    setReqActionMessage("Hay varias ubicaciones disponibles. Debes elegir una línea de inventario.", false);
-    if (invField) invField.classList.remove("hidden");
-    if (invSel) {
-      invSel.innerHTML =
-        '<option value="">— Seleccionar línea —</option>' +
-        candidates
-          .map((c) => {
-            const label = `${c.location || "—"} · ${c.status || ""} · libre ${formatQty(c.freeQty ?? c.unreservedQty)}`;
-            return `<option value="${escCell(c.inventoryId)}">${escCell(label)}</option>`;
-          })
-          .join("");
-    }
+    setReqActionMessage("Hay varias ubicaciones disponibles. Debes elegir un cubo de inventario.", false);
+    fillReserveCubeSelect(candidates);
     return;
   }
   if (code === "AMBIGUOUS_LAYER") {
-    const layers = Array.isArray(details.layers) ? details.layers : [];
-    setReqActionMessage("Hay varias capas/lotes disponibles. Debes seleccionar una capa.", false);
-    if (layerField) layerField.classList.remove("hidden");
-    if (layerSel) {
-      layerSel.innerHTML =
-        '<option value="">— Seleccionar capa —</option>' +
-        layers
-          .map((layer) => {
-            const label = `${layer.lotNumber || "sin lote"} · libre ${formatQty(layer.freeQty)}`;
-            return `<option value="${escCell(layer.layerId)}">${escCell(label)}</option>`;
-          })
-          .join("");
-    }
+    setReqActionMessage("Hay varias capas libres. La reserva canónica usa FIFO por cubo; no se selecciona capa.", false);
   }
 }
 
@@ -8809,9 +8808,12 @@ function openReserveModal(req, line) {
   const sku = line.product?.sku || line.productId || "SKU";
   const pending = reqQtyNumber(line.pendingQty);
   const reserved = reqQtyNumber(line.reservedQty);
+  const cubes = Array.isArray(line.reserveCubes) ? line.reserveCubes : [];
+  const selectedFree = cubes.length === 1 ? reqQtyNumber(cubes[0].freeQty ?? cubes[0].unreservedQty) : 0;
   const projectAvailable = reqQtyNumber(line.stock?.projectAvailable);
   const reservable = lineReservableQty(line);
-  const defaultQty = Math.min(reservable, projectAvailable);
+  const cubeCap = selectedFree > 0 ? selectedFree : projectAvailable;
+  const defaultQty = Math.min(reservable, cubeCap > 0 ? cubeCap : reservable);
   reqActionContext = { mode: "reserve", requisition: req, line };
   const title = document.getElementById("reqActionTitle");
   if (title) title.textContent = "Reservar inventario";
@@ -8828,6 +8830,7 @@ function openReserveModal(req, line) {
     { label: "Disponible en proyecto", value: formatQty(projectAvailable) }
   ]);
   hideReqActionCandidateFields();
+  fillReserveCubeSelect(cubes);
   const qtyEl = document.getElementById("reqActionQty");
   if (qtyEl) qtyEl.value = defaultQty > 0 ? String(defaultQty) : "";
   setReqActionMessage("", true);
@@ -8884,21 +8887,22 @@ async function confirmReserveFromModal(qty) {
   const line = reqActionContext?.line;
   if (!req?.id || !line?.id) return;
   const inventoryId = document.getElementById("reqActionInventoryId")?.value?.trim();
-  const layerId = document.getElementById("reqActionLayerId")?.value?.trim();
   const invField = document.getElementById("reqActionInventoryField");
-  const layerField = document.getElementById("reqActionLayerField");
   if (invField && !invField.classList.contains("hidden") && !inventoryId) {
-    setReqActionMessage("Hay varias ubicaciones disponibles. Debes elegir una línea de inventario.", false);
+    setReqActionMessage("Hay varias ubicaciones disponibles. Debes elegir un cubo de inventario.", false);
     return;
   }
-  if (layerField && !layerField.classList.contains("hidden") && !layerId) {
-    setReqActionMessage("Hay varias capas/lotes disponibles. Debes seleccionar una capa.", false);
+  const selectedCube = (Array.isArray(line.reserveCubes) ? line.reserveCubes : []).find(
+    (cube) => cube.inventoryId === inventoryId
+  );
+  const cubeFree = reqQtyNumber(selectedCube?.freeQty ?? selectedCube?.unreservedQty);
+  if (selectedCube && qty > cubeFree) {
+    setReqActionMessage(`La cantidad no puede superar el disponible del cubo (${formatQty(cubeFree)}).`, false);
     return;
   }
   /** @type {Record<string, unknown>} */
-  const body = { qty };
+  const body = { quantity: qty, allocationMode: "FIFO" };
   if (inventoryId) body.inventoryId = inventoryId;
-  if (layerId) body.layerId = layerId;
   const response = await authenticatedFetch(
     `/api/requisitions/${encodeURIComponent(req.id)}/lines/${encodeURIComponent(line.id)}/reservations`,
     {
@@ -9019,7 +9023,7 @@ function renderRequisitionDetail(row) {
       if (activeQty <= 0) continue;
       fields.push({
         label: `${sku} · Reserva activa`,
-        value: `Inventario ${reservation.inventoryId || "—"} · reservado ${formatQty(reservation.qty)} · consumido ${formatQty(reservation.consumedQty)} · activo ${formatQty(activeQty)}`
+        value: `Inventario ${reservation.inventoryId || "—"} · capa ${reservation.inventoryLayerId || "—"} · lote ${reservation.lotNumber || "sin lote"} · reservado ${formatQty(reservation.qty)} · consumido ${formatQty(reservation.consumedQty)} · activo ${formatQty(activeQty)}`
       });
     }
   }

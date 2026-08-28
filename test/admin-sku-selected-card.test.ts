@@ -183,8 +183,8 @@ function loadSkuFns(document: unknown) {
   )(document);
 }
 
-test("dashboard.js usa cache-buster v=71 para la tarjeta de SKU", () => {
-  assert.match(html, /dashboard\.js\?v=71/);
+test("dashboard.js usa cache-buster v=72 para la tarjeta de SKU", () => {
+  assert.match(html, /dashboard\.js\?v=72/);
   assert.doesNotMatch(html, /dashboard\.js\?v=65/);
 });
 

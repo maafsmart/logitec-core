@@ -4,6 +4,7 @@ import { HttpError } from "../../shared/http-error.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import type { UserRole } from "../../middlewares/auth.middleware.js";
 import { assignmentFromInventory, outboundAssignmentFields } from "../inventory/inventory-assignment.js";
+import { planRelocateFifoAllocation } from "../inventory/inventory-mutation.service.js";
 import { assertNoSerialAmbiguity } from "../inventory/inventory-serial-guard.js";
 
 export class RequisitionError extends Error {
@@ -137,6 +138,7 @@ async function loadInventoriesForProducts(productIds: string[]) {
 
 function mapReservationCandidate(row: {
   id: string;
+  productId?: string;
   status: string;
   qty: Prisma.Decimal;
   reservedQty: Prisma.Decimal;
@@ -144,10 +146,14 @@ function mapReservationCandidate(row: {
   projectId: string | null;
   location: { code: string; warehouse: string };
   project: { id: string; code: string; name: string } | null;
+  layers?: Array<{ id: string }>;
+  _count?: { layers?: number };
 }) {
   const freeQty = row.qty.minus(row.reservedQty);
+  const layerCount = row._count?.layers ?? row.layers?.length ?? 0;
   return {
     inventoryId: row.id,
+    productId: row.productId || null,
     location: row.location.code,
     warehouse: row.location.warehouse,
     status: row.status,
@@ -158,8 +164,23 @@ function mapReservationCandidate(row: {
     qty: row.qty.toString(),
     reservedQty: row.reservedQty.toString(),
     freeQty: freeQty.toString(),
-    unreservedQty: freeQty.toString()
+    unreservedQty: freeQty.toString(),
+    layerCount
   };
+}
+
+function parseAllocationMode(value: string | undefined): "FIFO" | undefined {
+  const mode = String(value || "").trim();
+  if (!mode) return undefined;
+  if (mode === "FIFO") return "FIFO";
+  throw new RequisitionError("INVALID_ALLOCATION_MODE", "allocationMode debe ser FIFO.");
+}
+
+async function lockInventoryAndLayers(tx: Prisma.TransactionClient, inventoryId: string) {
+  await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Inventory" WHERE "id" = ${inventoryId} FOR UPDATE`);
+  await tx.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "InventoryLayer" WHERE "inventoryId" = ${inventoryId} ORDER BY "id" FOR UPDATE`
+  );
 }
 
 async function loadRequisition(id: string) {
@@ -171,7 +192,11 @@ async function loadRequisition(id: string) {
       lines: {
         include: {
           product: { select: { id: true, sku: true, name: true, barcode: true, customerId: true } },
-          reservations: true
+          reservations: {
+            include: {
+              inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true } }
+            }
+          }
         },
         orderBy: { createdAt: "asc" }
       },
@@ -251,6 +276,7 @@ function serializeRequisition(row: Awaited<ReturnType<typeof loadRequisition>>) 
           freeToSaleAvailable: "0",
           otherProjectsAvailable: "0"
         },
+        reserveCubes: [] as ReturnType<typeof mapReservationCandidate>[],
         reservations: line.reservations.map((r) => ({
           id: r.id,
           inventoryId: r.inventoryId,
@@ -260,7 +286,9 @@ function serializeRequisition(row: Awaited<ReturnType<typeof loadRequisition>>) 
           releasedQty: r.releasedQty.toString(),
           activeQty: activeReserved(r.qty, r.consumedQty, r.releasedQty).toString(),
           status: r.status,
-          createdAt: r.createdAt
+          createdAt: r.createdAt,
+          lotNumber: r.inventoryLayer?.lotNumber ?? null,
+          receivedAt: r.inventoryLayer?.receivedAt ? r.inventoryLayer.receivedAt.toISOString() : null
         }))
       };
     }),
@@ -295,6 +323,38 @@ async function withLineStockMany<T extends { project: { id: string }; lines: Arr
   }));
 }
 
+async function withReserveCubes<
+  T extends {
+    project: { id: string };
+    lines: Array<{ productId: string; reserveCubes?: unknown }>;
+  }
+>(row: T): Promise<T> {
+  const productIds = [...new Set(row.lines.map((line) => line.productId))];
+  if (!productIds.length) return row;
+  const cubes = await prisma.inventory.findMany({
+    where: {
+      productId: { in: productIds },
+      assignmentType: "PROJECT",
+      projectId: row.project.id,
+      qty: { gt: 0 }
+    },
+    include: {
+      location: true,
+      project: { select: { id: true, code: true, name: true } },
+      layers: { select: { id: true } }
+    }
+  });
+  return {
+    ...row,
+    lines: row.lines.map((line) => ({
+      ...line,
+      reserveCubes: cubes
+        .filter((cube) => cube.productId === line.productId && cube.qty.minus(cube.reservedQty).greaterThan(0))
+        .map(mapReservationCandidate)
+    }))
+  };
+}
+
 export async function listRequisitions() {
   const rows = await prisma.requisition.findMany({
     orderBy: [{ createdAt: "desc" }],
@@ -305,7 +365,11 @@ export async function listRequisitions() {
       lines: {
         include: {
           product: { select: { id: true, sku: true, name: true, barcode: true, customerId: true } },
-          reservations: true
+          reservations: {
+            include: {
+              inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true } }
+            }
+          }
         }
       },
       tasks: {
@@ -317,7 +381,7 @@ export async function listRequisitions() {
 }
 
 export async function getRequisition(id: string) {
-  return withLineStock(serializeRequisition(await loadRequisition(id)));
+  return withReserveCubes(await withLineStock(serializeRequisition(await loadRequisition(id))));
 }
 
 export async function createRequisition(input: {
@@ -335,58 +399,71 @@ export async function createRequisition(input: {
   });
   if (!project) throw new HttpError(404, "Proyecto no encontrado.");
 
-  const priority = priorityFromUi(input.priority);
-  const created = await prisma.$transaction(async (tx) => {
-    const existing = await tx.requisition.findUnique({ where: { number: input.number.trim() } });
-    if (existing) throw new HttpError(409, "Ya existe una requisición con ese folio.");
+  const created = await prisma.$transaction(async (tx) => createRequisitionInTransaction(tx, { ...input, project }));
+  return getRequisition(created);
+}
 
-    const req = await tx.requisition.create({
-      data: {
-        number: input.number.trim(),
-        projectId: project.id,
-        createdById: input.userId,
-        priority,
-        status: "DRAFT",
-        reference: input.reference?.trim() || input.number.trim(),
-        notes: input.notes?.trim() || null
+export async function createRequisitionInTransaction(
+  tx: Prisma.TransactionClient,
+  input: {
+    number: string;
+    priority?: string | number;
+    reference?: string | null;
+    notes?: string | null;
+    lines: Array<{ sku: string; requestedQty: number; lotNumber?: string | null }>;
+    userId: string;
+    project: { id: string };
+  }
+) {
+  const priority = priorityFromUi(input.priority);
+  const existing = await tx.requisition.findUnique({ where: { number: input.number.trim() } });
+  if (existing) throw new HttpError(409, "Ya existe una requisición con ese folio.");
+
+  const req = await tx.requisition.create({
+    data: {
+      number: input.number.trim(),
+      projectId: input.project.id,
+      createdById: input.userId,
+      priority,
+      status: "DRAFT",
+      reference: input.reference?.trim() || input.number.trim(),
+      notes: input.notes?.trim() || null
+    }
+  });
+
+  for (const line of input.lines) {
+    const product = await tx.product.findFirst({
+      where: {
+        active: true,
+        OR: [{ sku: line.sku.trim() }, { barcode: line.sku.trim() }]
       }
     });
-
-    for (const line of input.lines) {
-      const product = await tx.product.findFirst({
-        where: {
-          active: true,
-          OR: [{ sku: line.sku.trim() }, { barcode: line.sku.trim() }]
-        }
-      });
-      if (!product) throw new HttpError(404, `Producto no encontrado: ${line.sku}`);
-      await assertProductInProject(tx, product.id, project.id, product.sku);
-      const qty = dec(line.requestedQty);
-      if (qty.lessThanOrEqualTo(0)) throw new HttpError(400, "requestedQty debe ser mayor a 0.");
-      await tx.requisitionLine.create({
-        data: {
-          requisitionId: req.id,
-          productId: product.id,
-          requestedQty: qty,
-          fulfilledQty: 0
-        }
-      });
-    }
-    await logActivity(
-      {
-        type: "REQUISITION",
-        subtype: "CREATED",
-        reference: req.number,
-        userId: input.userId,
-        customerId: project.id,
-        result: "OK",
-        metadata: { requisitionId: req.id }
-      },
-      tx
-    );
-    return req.id;
-  });
-  return getRequisition(created);
+    if (!product) throw new HttpError(404, `Producto no encontrado: ${line.sku}`);
+    await assertProductInProject(tx, product.id, input.project.id, product.sku);
+    const qty = dec(line.requestedQty);
+    if (qty.lessThanOrEqualTo(0)) throw new HttpError(400, "requestedQty debe ser mayor a 0.");
+    await tx.requisitionLine.create({
+      data: {
+        requisitionId: req.id,
+        productId: product.id,
+        requestedQty: qty,
+        fulfilledQty: 0
+      }
+    });
+  }
+  await logActivity(
+    {
+      type: "REQUISITION",
+      subtype: "CREATED",
+      reference: req.number,
+      userId: input.userId,
+      customerId: input.project.id,
+      result: "OK",
+      metadata: { requisitionId: req.id }
+    },
+    tx
+  );
+  return req.id;
 }
 
 export async function addRequisitionLine(
@@ -547,6 +624,7 @@ export async function reserveLine(input: {
   qty: number;
   inventoryId?: string;
   layerId?: string;
+  allocationMode?: string;
   userId: string;
   role: UserRole;
 }) {
@@ -556,154 +634,248 @@ export async function reserveLine(input: {
 
   try {
     await prisma.$transaction(async (tx) => {
-      const req = await tx.requisition.findUnique({
-        where: { id: input.requisitionId },
-        include: { lines: { include: { reservations: true, product: true } } }
-      });
-      if (!req) throw new HttpError(404, "Requisición no encontrada.");
-      if (!["APPROVED", "IN_PROGRESS"].includes(req.status)) {
-        throw new HttpError(409, "Solo se puede reservar en APPROVED/IN_PROGRESS.");
-      }
-      const line = req.lines.find((l) => l.id === input.lineId);
-      if (!line) throw new HttpError(404, "Línea no encontrada.");
-
-      const alreadyReserved = line.reservations.reduce(
-        (t, r) => t.plus(activeReserved(r.qty, r.consumedQty, r.releasedQty)),
-        new Prisma.Decimal(0)
-      );
-      const pending = line.requestedQty.minus(line.fulfilledQty);
-      const reservable = pending.minus(alreadyReserved);
-      if (qty.greaterThan(reservable)) {
-        throw new RequisitionError("OVER_LINE_RESERVE", "No se puede reservar más que el pendiente de la línea.");
-      }
-
-      const allInventories = await tx.inventory.findMany({
-        where: { productId: line.productId },
-        select: { productId: true, assignmentType: true, projectId: true, qty: true, reservedQty: true }
-      });
-      const stockInfo = serializeStockBreakdown(
-        accumulateStockBreakdown(allInventories, line.productId, req.projectId)
-      );
-      const informational = {
-        ...stockInfo,
-        hint:
-          new Prisma.Decimal(stockInfo.freeToSaleAvailable).greaterThan(0)
-            ? `FREE TO SALE disponible: ${stockInfo.freeToSaleAvailable} — requiere reasignación`
-            : undefined
-      };
-
-      if (input.inventoryId) {
-        const target = await tx.inventory.findUnique({
-          where: { id: input.inventoryId },
-          include: { location: true, project: { select: { id: true, code: true, name: true } } }
-        });
-        if (!target) throw new RequisitionError("INVENTORY_NOT_FOUND", "Línea de inventario no disponible.");
-        if (
-          target.productId !== line.productId ||
-          target.assignmentType !== "PROJECT" ||
-          target.projectId !== req.projectId
-        ) {
-          throw new RequisitionError(
-            "RESERVATION_PROJECT_MISMATCH",
-            "El inventario no pertenece al proyecto de la requisición.",
-            informational
-          );
-        }
-      }
-
-      const candidates = await tx.inventory.findMany({
-        where: {
-          productId: line.productId,
-          assignmentType: "PROJECT",
-          projectId: req.projectId,
-          qty: { gt: 0 }
-        },
-        include: { location: true, project: { select: { id: true, code: true, name: true } } }
-      });
-      const withFree = candidates.filter((c) => c.qty.minus(c.reservedQty).greaterThan(0));
-      if (!withFree.length) {
-        throw new RequisitionError("NO_STOCK", "Sin stock libre del proyecto para reservar.", informational);
-      }
-
-      let inventory = input.inventoryId
-        ? withFree.find((c) => c.id === input.inventoryId)
-        : withFree.length === 1
-          ? withFree[0]
-          : undefined;
-      if (!inventory && !input.inventoryId && withFree.length > 1) {
-        throw new RequisitionError("AMBIGUOUS_STOCK", "Hay varias ubicaciones; indica inventoryId.", {
-          ...informational,
-          candidates: withFree.map(mapReservationCandidate)
-        });
-      }
-      if (!inventory) throw new RequisitionError("INVENTORY_NOT_FOUND", "Línea de inventario no disponible.");
-
-      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Inventory" WHERE "id" = ${inventory.id} FOR UPDATE`);
-      const locked = await tx.inventory.findUniqueOrThrow({ where: { id: inventory.id } });
-      if (
-        locked.productId !== line.productId ||
-        locked.assignmentType !== "PROJECT" ||
-        locked.projectId !== req.projectId
-      ) {
-        throw new RequisitionError(
-          "RESERVATION_PROJECT_MISMATCH",
-          "El inventario no pertenece al proyecto de la requisición."
-        );
-      }
-      if (locked.qty.minus(locked.reservedQty).lessThan(qty)) {
-        throw new RequisitionError("INSUFFICIENT_FREE", "Stock libre insuficiente en el proyecto.", informational);
-      }
-      const layer = await selectFreeLayer(tx, inventory.id, input.layerId, qty);
-
-      const layerRows = await tx.$queryRaw<Array<{ id: string }>>`
-        UPDATE "InventoryLayer"
-        SET "reservedQty" = "reservedQty" + ${qty}, "updatedAt" = NOW()
-        WHERE id = ${layer.id}
-          AND qty - "reservedQty" >= ${qty}
-        RETURNING id
-      `;
-      if (!layerRows.length) throw new RequisitionError("INSUFFICIENT_FREE", "Conflicto de reserva en capa.");
-      const invRows = await tx.$queryRaw<Array<{ id: string }>>`
-        UPDATE "Inventory"
-        SET "reservedQty" = "reservedQty" + ${qty}, "updatedAt" = NOW()
-        WHERE id = ${inventory.id}
-          AND qty - "reservedQty" >= ${qty}
-        RETURNING id
-      `;
-      if (!invRows.length) throw new RequisitionError("INSUFFICIENT_FREE", "Conflicto de reserva en inventario.");
-
-      await tx.inventoryReservation.create({
-        data: {
-          requisitionLineId: line.id,
-          inventoryId: inventory.id,
-          inventoryLayerId: layer.id,
-          qty,
-          consumedQty: 0,
-          releasedQty: 0,
-          status: "ACTIVE",
-          createdById: input.userId
-        }
-      });
-      await logActivity(
-        {
-          type: "REQUISITION",
-          subtype: "RESERVED",
-          reference: req.number,
-          userId: input.userId,
-          productId: line.productId,
-          customerId: req.projectId,
-          qty,
-          result: "OK",
-          metadata: { requisitionId: req.id, lineId: line.id, inventoryId: inventory.id, layerId: layer.id }
-        },
-        tx
-      );
+      await reserveLineInTransaction(tx, { ...input, qty });
     });
   } catch (error) {
     if (error instanceof RequisitionError || error instanceof HttpError) throw error;
     throw error;
   }
   return getRequisition(input.requisitionId);
+}
+
+export async function reserveLineInTransaction(
+  tx: Prisma.TransactionClient,
+  input: {
+    requisitionId: string;
+    lineId: string;
+    qty: Prisma.Decimal;
+    inventoryId?: string;
+    layerId?: string;
+    allocationMode?: string;
+    userId: string;
+  }
+) {
+  const qty = dec(input.qty);
+  const layerId = input.layerId?.trim() || "";
+  const allocationMode = parseAllocationMode(input.allocationMode);
+  if (layerId && allocationMode) {
+    throw new RequisitionError(
+      "LAYER_ALLOCATION_CONFLICT",
+      "No se puede indicar layerId y allocationMode al mismo tiempo."
+    );
+  }
+
+  const req = await tx.requisition.findUnique({
+    where: { id: input.requisitionId },
+    include: { lines: { include: { reservations: true, product: true } } }
+  });
+  if (!req) throw new HttpError(404, "Requisición no encontrada.");
+  if (!["APPROVED", "IN_PROGRESS"].includes(req.status)) {
+    throw new HttpError(409, "Solo se puede reservar en APPROVED/IN_PROGRESS.");
+  }
+  const line = req.lines.find((l) => l.id === input.lineId);
+  if (!line) throw new HttpError(404, "Línea no encontrada.");
+
+  const alreadyReserved = line.reservations.reduce(
+    (t, r) => t.plus(activeReserved(r.qty, r.consumedQty, r.releasedQty)),
+    new Prisma.Decimal(0)
+  );
+  const pending = line.requestedQty.minus(line.fulfilledQty);
+  const reservable = pending.minus(alreadyReserved);
+  if (qty.greaterThan(reservable)) {
+    throw new RequisitionError("OVER_LINE_RESERVE", "No se puede reservar más que el pendiente de la línea.");
+  }
+
+  const allInventories = await tx.inventory.findMany({
+    where: { productId: line.productId },
+    select: { productId: true, assignmentType: true, projectId: true, qty: true, reservedQty: true }
+  });
+  const stockInfo = serializeStockBreakdown(accumulateStockBreakdown(allInventories, line.productId, req.projectId));
+  const informational = {
+    ...stockInfo,
+    hint:
+      new Prisma.Decimal(stockInfo.freeToSaleAvailable).greaterThan(0)
+        ? `FREE TO SALE disponible: ${stockInfo.freeToSaleAvailable} — requiere reasignación`
+        : undefined
+  };
+
+  if (input.inventoryId) {
+    const target = await tx.inventory.findUnique({
+      where: { id: input.inventoryId },
+      include: { location: true, project: { select: { id: true, code: true, name: true } }, layers: { select: { id: true } } }
+    });
+    if (!target) throw new RequisitionError("INVENTORY_NOT_FOUND", "Línea de inventario no disponible.");
+    if (target.productId !== line.productId || target.assignmentType !== "PROJECT" || target.projectId !== req.projectId) {
+      throw new RequisitionError(
+        "RESERVATION_PROJECT_MISMATCH",
+        "El inventario no pertenece al proyecto de la requisición.",
+        informational
+      );
+    }
+  }
+
+  const candidates = await tx.inventory.findMany({
+    where: {
+      productId: line.productId,
+      assignmentType: "PROJECT",
+      projectId: req.projectId,
+      qty: { gt: 0 }
+    },
+    include: { location: true, project: { select: { id: true, code: true, name: true } }, layers: { select: { id: true } } }
+  });
+  const withFree = candidates.filter((c) => c.qty.minus(c.reservedQty).greaterThan(0));
+  if (!withFree.length) {
+    throw new RequisitionError("NO_STOCK", "Sin stock libre del proyecto para reservar.", informational);
+  }
+
+  let inventory = input.inventoryId
+    ? withFree.find((c) => c.id === input.inventoryId)
+    : withFree.length === 1
+      ? withFree[0]
+      : undefined;
+  if (!inventory && !input.inventoryId && withFree.length > 1) {
+    throw new RequisitionError("AMBIGUOUS_STOCK", "Hay varias ubicaciones; indica inventoryId.", {
+      ...informational,
+      candidates: withFree.map(mapReservationCandidate)
+    });
+  }
+  if (!inventory) throw new RequisitionError("INVENTORY_NOT_FOUND", "Línea de inventario no disponible.");
+
+  await lockInventoryAndLayers(tx, inventory.id);
+  const locked = await tx.inventory.findUniqueOrThrow({ where: { id: inventory.id } });
+  if (locked.productId !== line.productId || locked.assignmentType !== "PROJECT" || locked.projectId !== req.projectId) {
+    throw new RequisitionError(
+      "RESERVATION_PROJECT_MISMATCH",
+      "El inventario no pertenece al proyecto de la requisición."
+    );
+  }
+  if (locked.qty.minus(locked.reservedQty).lessThan(qty)) {
+    throw new RequisitionError("INSUFFICIENT_FREE", "Stock libre insuficiente en el proyecto.", informational);
+  }
+
+  const layersReloaded = await tx.inventoryLayer.findMany({ where: { inventoryId: inventory.id } });
+
+  if (allocationMode === "FIFO") {
+    const planned = planRelocateFifoAllocation(layersReloaded, qty);
+    if (planned.remaining.greaterThan(0) || !planned.allocations.length) {
+      throw new RequisitionError("INSUFFICIENT_FREE", "Las capas no tienen saldo libre suficiente.", informational);
+    }
+
+    const invRows = await tx.$queryRaw<Array<{ id: string }>>`
+      UPDATE "Inventory"
+      SET "reservedQty" = "reservedQty" + ${qty}, "updatedAt" = NOW()
+      WHERE id = ${inventory.id}
+        AND qty - "reservedQty" >= ${qty}
+      RETURNING id
+    `;
+    if (!invRows.length) throw new RequisitionError("INSUFFICIENT_FREE", "Conflicto de reserva en inventario.");
+
+    const allocations: Prisma.InputJsonValue[] = [];
+    for (const slice of planned.allocations) {
+      const layerRows = await tx.$queryRaw<Array<{ id: string }>>`
+        UPDATE "InventoryLayer"
+        SET "reservedQty" = "reservedQty" + ${slice.qty}, "updatedAt" = NOW()
+        WHERE id = ${slice.layer.id}
+          AND qty - "reservedQty" >= ${slice.qty}
+        RETURNING id
+      `;
+      if (!layerRows.length) throw new RequisitionError("INSUFFICIENT_FREE", "Conflicto de reserva en capa.");
+      const reservation = await tx.inventoryReservation.create({
+        data: {
+          requisitionLineId: line.id,
+          inventoryId: inventory.id,
+          inventoryLayerId: slice.layer.id,
+          qty: slice.qty,
+          consumedQty: 0,
+          releasedQty: 0,
+          status: "ACTIVE",
+          createdById: input.userId
+        }
+      });
+      allocations.push({
+        reservationId: reservation.id,
+        inventoryLayerId: slice.layer.id,
+        qty: slice.qty.toString(),
+        lotNumber: slice.layer.lotNumber,
+        receivedAt: slice.layer.receivedAt ? slice.layer.receivedAt.toISOString() : null
+      });
+    }
+
+    await logActivity(
+      {
+        type: "REQUISITION",
+        subtype: "RESERVED",
+        reference: req.number,
+        userId: input.userId,
+        productId: line.productId,
+        customerId: req.projectId,
+        qty,
+        result: "OK",
+        metadata: {
+          requisitionId: req.id,
+          lineId: line.id,
+          inventoryId: inventory.id,
+          allocationMode: "FIFO",
+          requestedQty: qty.toString(),
+          allocations
+        }
+      },
+      tx
+    );
+    return;
+  }
+
+  const layer = await selectFreeLayer(tx, inventory.id, layerId || undefined, qty);
+
+  const layerRows = await tx.$queryRaw<Array<{ id: string }>>`
+    UPDATE "InventoryLayer"
+    SET "reservedQty" = "reservedQty" + ${qty}, "updatedAt" = NOW()
+    WHERE id = ${layer.id}
+      AND qty - "reservedQty" >= ${qty}
+    RETURNING id
+  `;
+  if (!layerRows.length) throw new RequisitionError("INSUFFICIENT_FREE", "Conflicto de reserva en capa.");
+  const invRows = await tx.$queryRaw<Array<{ id: string }>>`
+    UPDATE "Inventory"
+    SET "reservedQty" = "reservedQty" + ${qty}, "updatedAt" = NOW()
+    WHERE id = ${inventory.id}
+      AND qty - "reservedQty" >= ${qty}
+    RETURNING id
+  `;
+  if (!invRows.length) throw new RequisitionError("INSUFFICIENT_FREE", "Conflicto de reserva en inventario.");
+
+  const reservation = await tx.inventoryReservation.create({
+    data: {
+      requisitionLineId: line.id,
+      inventoryId: inventory.id,
+      inventoryLayerId: layer.id,
+      qty,
+      consumedQty: 0,
+      releasedQty: 0,
+      status: "ACTIVE",
+      createdById: input.userId
+    }
+  });
+  await logActivity(
+    {
+      type: "REQUISITION",
+      subtype: "RESERVED",
+      reference: req.number,
+      userId: input.userId,
+      productId: line.productId,
+      customerId: req.projectId,
+      qty,
+      result: "OK",
+      metadata: {
+        requisitionId: req.id,
+        lineId: line.id,
+        inventoryId: inventory.id,
+        layerId: layer.id,
+        reservationId: reservation.id
+      }
+    },
+    tx
+  );
 }
 
 export async function releaseReservation(reservationId: string, userId: string, role: UserRole, releaseQty?: number) {
@@ -779,51 +951,63 @@ export async function cancelRequisition(id: string, userId: string, role: UserRo
   if (role === "OPERATOR") throw new HttpError(403, "OPERATOR no puede cancelar una requisición aprobada.");
 
   await prisma.$transaction(async (tx) => {
-    const req = await tx.requisition.findUnique({
-      where: { id },
-      include: { lines: { include: { reservations: true } } }
-    });
-    if (!req) throw new HttpError(404, "Requisición no encontrada.");
-    if (req.status === "CANCELLED") return;
-    if (req.status === "COMPLETED") throw new HttpError(409, "No se puede cancelar una requisición COMPLETADA.");
-
-    for (const line of req.lines) {
-      for (const reservation of line.reservations.filter((r) => r.status === "ACTIVE")) {
-        const active = activeReserved(reservation.qty, reservation.consumedQty, reservation.releasedQty);
-        if (active.lessThanOrEqualTo(0) || !reservation.inventoryLayerId) continue;
-        await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Inventory" WHERE "id" = ${reservation.inventoryId} FOR UPDATE`);
-        await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "InventoryLayer" WHERE "id" = ${reservation.inventoryLayerId} FOR UPDATE`);
-        await tx.$executeRaw`
-          UPDATE "InventoryLayer"
-          SET "reservedQty" = "reservedQty" - ${active}, "updatedAt" = NOW()
-          WHERE id = ${reservation.inventoryLayerId} AND "reservedQty" >= ${active}
-        `;
-        await tx.$executeRaw`
-          UPDATE "Inventory"
-          SET "reservedQty" = "reservedQty" - ${active}, "updatedAt" = NOW()
-          WHERE id = ${reservation.inventoryId} AND "reservedQty" >= ${active}
-        `;
-        await tx.inventoryReservation.update({
-          where: { id: reservation.id },
-          data: { releasedQty: reservation.releasedQty.plus(active), status: "RELEASED" }
-        });
-      }
-    }
-    await tx.requisition.update({ where: { id }, data: { status: "CANCELLED" } });
-    await logActivity(
-      {
-        type: "REQUISITION",
-        subtype: "CANCELLED",
-        reference: req.number,
-        userId,
-        customerId: req.projectId,
-        result: "OK",
-        metadata: { requisitionId: id }
-      },
-      tx
-    );
+    await cancelRequisitionInTransaction(tx, id, userId);
   });
   return getRequisition(id);
+}
+
+export async function cancelRequisitionInTransaction(tx: Prisma.TransactionClient, id: string, userId: string) {
+  const req = await tx.requisition.findUnique({
+    where: { id },
+    include: { lines: { include: { reservations: true } } }
+  });
+  if (!req) throw new HttpError(404, "Requisición no encontrada.");
+  if (req.status === "CANCELLED") return;
+  if (req.status === "COMPLETED") throw new HttpError(409, "No se puede cancelar una requisición COMPLETADA.");
+
+  for (const line of req.lines) {
+    for (const reservation of line.reservations.filter((r) => r.status === "ACTIVE")) {
+      const active = activeReserved(reservation.qty, reservation.consumedQty, reservation.releasedQty);
+      if (active.lessThanOrEqualTo(0) || !reservation.inventoryLayerId) continue;
+      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Inventory" WHERE "id" = ${reservation.inventoryId} FOR UPDATE`);
+      await tx.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "InventoryLayer" WHERE "id" = ${reservation.inventoryLayerId} FOR UPDATE`
+      );
+      const layerRows = await tx.$queryRaw<Array<{ id: string }>>`
+        UPDATE "InventoryLayer"
+        SET "reservedQty" = "reservedQty" - ${active}, "updatedAt" = NOW()
+        WHERE id = ${reservation.inventoryLayerId} AND "reservedQty" >= ${active}
+        RETURNING id
+      `;
+      if (!layerRows.length) throw new RequisitionError("RELEASE_CONFLICT", "No se pudo liberar reservedQty de capa.");
+      const invRows = await tx.$queryRaw<Array<{ id: string }>>`
+        UPDATE "Inventory"
+        SET "reservedQty" = "reservedQty" - ${active}, "updatedAt" = NOW()
+        WHERE id = ${reservation.inventoryId} AND "reservedQty" >= ${active}
+        RETURNING id
+      `;
+      if (!invRows.length) {
+        throw new RequisitionError("RELEASE_CONFLICT", "No se pudo liberar reservedQty de inventario.");
+      }
+      await tx.inventoryReservation.update({
+        where: { id: reservation.id },
+        data: { releasedQty: reservation.releasedQty.plus(active), status: "RELEASED" }
+      });
+    }
+  }
+  await tx.requisition.update({ where: { id }, data: { status: "CANCELLED" } });
+  await logActivity(
+    {
+      type: "REQUISITION",
+      subtype: "CANCELLED",
+      reference: req.number,
+      userId,
+      customerId: req.projectId,
+      result: "OK",
+      metadata: { requisitionId: id }
+    },
+    tx
+  );
 }
 
 export async function consumeReservationPick(input: {

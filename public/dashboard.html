@@ -472,6 +472,15 @@
         font-size: 0.8rem;
         line-height: 1.4;
       }
+      .req-stock-hint {
+        margin: 0 0 12px;
+        padding: 8px 12px;
+        background: #eef6ff;
+        border: 1px solid #c5d9ef;
+        border-radius: 10px;
+        color: var(--text);
+        white-space: normal;
+      }
       .tasks-kpi-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
@@ -2978,6 +2987,19 @@
         flex: 1 1 auto;
         min-width: 0;
       }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact #moduleRequisitions .req-stock-hint {
+        margin: 0 0 8px;
+        padding: 8px 12px;
+        background: #eef6ff;
+        border: 1px solid #c5d9ef;
+        border-radius: 10px;
+        color: var(--text);
+        white-space: normal;
+        overflow: visible;
+        max-height: none;
+        line-height: 1.35;
+        font-size: 0.82rem;
+      }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .module-pane .aviat-context-bar,
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .ops-aviat-banner,
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact [id^="aviatScope"] {
@@ -4429,10 +4451,10 @@
               <p class="module-lead">
                 Crea solicitudes para preparar productos de salida. Puede ser una orden simple o una orden por volumen.
               </p>
-              <p class="module-hint" style="margin:10px 0 0;padding:10px 12px;background:#eef6ff;border:1px solid #c5d9ef;border-radius:10px;color:var(--text)">
-                La requisición no descuenta inventario. El stock se descuenta únicamente al surtir mediante Picking/Salida.
-              </p>
             </div>
+            <p class="module-hint req-stock-hint">
+              La requisición no descuenta inventario. El stock se descuenta únicamente al surtir mediante Picking/Salida.
+            </p>
             <div class="card-panel ops-form-panel">
               <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong> · No registra entrada de inventario</p>
               <p class="module-hint" style="margin:0 0 12px">
@@ -4499,7 +4521,7 @@
                 </div>
               </div>
               <div id="reqBulkFields" class="hidden" style="margin-top:10px">
-                <p class="assignee-hint" style="margin:0 0 8px">Agrega varias líneas con el mismo folio. Se creará una tarea de surtido por cada línea.</p>
+                <p class="assignee-hint" style="margin:0 0 8px">Agrega varias líneas con el mismo folio. Al aprobar se crea una sola tarea de surtido (PICK) para toda la requisición.</p>
                 <div id="reqBulkLines"></div>
                 <button type="button" id="reqAddLineBtn" class="btn-secondary btn-compact">Agregar línea</button>
               </div>
@@ -4871,7 +4893,7 @@
         </div>
         <div id="reqActionSummary"></div>
         <div id="reqActionInventoryField" class="field hidden">
-          <label for="reqActionInventoryId">Línea de inventario</label>
+          <label for="reqActionInventoryId">Cubo de inventario</label>
           <select id="reqActionInventoryId"><option value="">— Seleccionar —</option></select>
         </div>
         <div id="reqActionLayerField" class="field hidden">
@@ -5069,6 +5091,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=71"></script>
+    <script src="/dashboard.js?v=72"></script>
   </body>
 </html>

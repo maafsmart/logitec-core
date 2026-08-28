@@ -35,7 +35,9 @@ function mapError(res: import("express").Response, error: unknown) {
       "NO_STOCK",
       "RESERVATION_PROJECT_MISMATCH",
       "PICK_PROJECT_MISMATCH",
-      "LINE_MISMATCH"
+      "LINE_MISMATCH",
+      "LAYER_ALLOCATION_CONFLICT",
+      "INVALID_ALLOCATION_MODE"
     ].includes(error.code)
       ? 409
       : 400;
@@ -132,18 +134,26 @@ requisitionsRouter.post("/:id/lines/:lineId/reservations", requireRole(["ADMIN",
   try {
     const body = z
       .object({
-        qty: z.coerce.number().positive(),
+        qty: z.coerce.number().positive().optional(),
+        quantity: z.coerce.number().positive().optional(),
         inventoryId: z.string().min(1).optional(),
-        layerId: z.string().min(1).optional()
+        layerId: z.string().min(1).optional(),
+        allocationMode: z.string().max(20).optional()
       })
       .parse(req.body);
+    const qty = body.qty ?? body.quantity;
+    if (qty == null) {
+      res.status(400).json({ message: "qty o quantity es requerido." });
+      return;
+    }
     res.status(201).json(
       await reserveLine({
         requisitionId: z.string().min(1).parse(req.params.id),
         lineId: z.string().min(1).parse(req.params.lineId),
-        qty: body.qty,
+        qty,
         inventoryId: body.inventoryId,
         layerId: body.layerId,
+        allocationMode: body.allocationMode,
         userId: req.auth!.userId,
         role: req.auth!.role
       })
