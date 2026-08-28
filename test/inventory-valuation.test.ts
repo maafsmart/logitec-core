@@ -247,7 +247,8 @@ test("HTML de existencias, proyectos y catálogo muestra la vista económica", (
   assert.match(html, /id="sumStockCubes"/);
   assert.match(html, /id="sumStockTotal"[\s\S]{0,120}Piezas/);
   assert.match(html, /id="sumStockCubes"[\s\S]{0,120}Saldos/);
-  assert.match(html, /dashboard\.js\?v=58/);
+  assert.match(html, /dashboard\.js\?v=59/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=58/);
   assert.doesNotMatch(html, /dashboard\.js\?v=57/);
   assert.doesNotMatch(html, /dashboard\.js\?v=56/);
 });
@@ -364,7 +365,10 @@ test("precio null deja el campo vacío y nunca convierte vacío en cero", () => 
   assert.match(resetBlock, /layerHasAssignedPrice\(layer\)/);
   assert.doesNotMatch(resetBlock, /Number\(/);
   assert.match(html, /id="priceNew"[^>]*placeholder="Escribe el precio unitario MXN"/);
-  assert.match(html, /id="priceNewHint"/);
+  assert.equal((html.match(/Escribe el precio unitario MXN/g) || []).length, 1);
+  assert.match(html, /id="priceNewHint"[^>]*>Permite valores desde 0 y hasta 4 decimales\./);
+  assert.match(html, /class="price-new-help"/);
+  assert.doesNotMatch(html, /id="priceNewHint"[^>]*>Escribe el precio unitario MXN/);
   assert.doesNotMatch(html, /id="priceNew"[^>]*placeholder="0\.0000"/);
 });
 
@@ -383,10 +387,31 @@ test("campo vacío mantiene Guardar desactivado y cero escrito a mano es válido
   assert.equal(helpers.layerPriceHasRealChange(valuedLayer, helpers.parseLayerPriceMxnInput("12.5000")), false);
   assert.equal(helpers.layerPriceHasRealChange(valuedLayer, helpers.parseLayerPriceMxnInput("12.51")), true);
   assert.match(html, /id="priceConfirmBtn"[^>]*disabled/);
+  assert.match(html, /#priceConfirmBtn:disabled[\s\S]*cursor:\s*not-allowed/);
+  assert.match(html, /#priceConfirmBtn:disabled[\s\S]*background:\s*#94a3b8/);
   assert.match(js, /btn\.disabled = !\(layer\?\.id && parsed\.ok && layerPriceHasRealChange/);
   const parseStart = js.indexOf("function parseLayerPriceMxnInput");
   const parseEnd = js.indexOf("function normalizeLayerPriceMxn");
   assert.doesNotMatch(js.slice(parseStart, parseEnd), /Number\(/);
+});
+
+test("Guardar precio desactivado se ve gris y se reactiva con un valor válido", () => {
+  const cssStart = html.indexOf("#priceConfirmBtn:disabled");
+  assert.ok(cssStart >= 0);
+  const cssBlock = html.slice(cssStart, cssStart + 220);
+  assert.match(cssBlock, /background:\s*#94a3b8/);
+  assert.match(cssBlock, /cursor:\s*not-allowed/);
+  assert.doesNotMatch(cssBlock, /var\(--accent\)/);
+  assert.match(html, /id="priceConfirmBtn"[^>]*disabled/);
+  const helpers = loadLayerPriceInputHelpers();
+  const zero = helpers.parseLayerPriceMxnInput("0");
+  const valid = helpers.parseLayerPriceMxnInput("12.5");
+  const nullLayer = { id: "l1", unitPriceMxn: null };
+  assert.equal(zero.ok, true);
+  assert.equal(valid.ok, true);
+  assert.equal(helpers.layerPriceHasRealChange(nullLayer, zero), true);
+  assert.equal(helpers.layerPriceHasRealChange(nullLayer, valid), true);
+  assert.match(js, /btn\.disabled = !\(layer\?\.id && parsed\.ok && layerPriceHasRealChange\(layer, parsed\)\)/);
 });
 
 test("Cancelar no hace PATCH y un precio existente exige un cambio real", () => {
