@@ -539,6 +539,94 @@ const NAV_SECTION_DEFAULTS = {
 
 let currentNavSection = "inicio";
 let currentModuleName = null;
+const ACTIVE_NAV_STORAGE_KEY = "logitec_active_nav";
+let userSelectedNavDuringBoot = false;
+let pendingUserNav = null;
+
+function isSafeNavToken(value) {
+  return typeof value === "string" && /^[a-z0-9_-]+$/i.test(value);
+}
+
+function clearStoredNavRoute() {
+  try {
+    sessionStorage.removeItem(ACTIVE_NAV_STORAGE_KEY);
+  } catch (_e) {
+    /* ignore private mode */
+  }
+}
+
+function persistNavRoute(section, moduleName) {
+  if (!isSafeNavToken(section) || !isSafeNavToken(moduleName)) return;
+  try {
+    sessionStorage.setItem(ACTIVE_NAV_STORAGE_KEY, JSON.stringify({ section, module: moduleName }));
+  } catch (_e) {
+    /* ignore quota / private mode */
+  }
+}
+
+function readStoredNavRoute() {
+  try {
+    const raw = sessionStorage.getItem(ACTIVE_NAV_STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    const section = typeof data?.section === "string" ? data.section.trim() : "";
+    const moduleName = typeof data?.module === "string" ? data.module.trim() : "";
+    if (!isSafeNavToken(section)) return null;
+    return { section, module: isSafeNavToken(moduleName) ? moduleName : "" };
+  } catch (_e) {
+    return null;
+  }
+}
+
+function resolveStoredNavRoute(role) {
+  const stored = readStoredNavRoute();
+  if (!stored) return null;
+  const allowed = roleModules[role] || [];
+  const sectionMods = NAV_SECTION_MODULES[stored.section];
+  if (!sectionMods) return null;
+  let moduleName = stored.module;
+  if (!moduleName) {
+    const preferred = NAV_SECTION_DEFAULTS[stored.section];
+    moduleName =
+      preferred && allowed.includes(preferred) && sectionMods.includes(preferred)
+        ? preferred
+        : sectionMods.find((item) => allowed.includes(item)) || "";
+  }
+  if (!moduleName || !sectionMods.includes(moduleName) || !allowed.includes(moduleName)) {
+    return null;
+  }
+  return { section: stored.section, module: moduleName };
+}
+
+function noteUserNavChoice(sectionId, moduleName) {
+  userSelectedNavDuringBoot = true;
+  pendingUserNav = { section: sectionId || null, module: moduleName || null };
+  if (sectionId && moduleName) persistNavRoute(sectionId, moduleName);
+}
+
+function applyDefaultLandingRoute() {
+  const landing = defaultLandingModule[currentRole] || roleModules[currentRole]?.[0] || "account";
+  const landingSection = resolveSectionForModule(landing, "inicio");
+  navigateTo(landingSection, landing);
+}
+
+function applySessionRoute() {
+  if (!currentRole) return;
+  if (userSelectedNavDuringBoot) {
+    if (pendingUserNav) {
+      navigateTo(pendingUserNav.section, pendingUserNav.module);
+      return;
+    }
+    if (currentModuleName) return;
+  }
+  if (typeof applyModuleDeepLinkFromHash === "function" && applyModuleDeepLinkFromHash()) return;
+  const restored = resolveStoredNavRoute(currentRole);
+  if (restored) {
+    navigateTo(restored.section, restored.module);
+    return;
+  }
+  applyDefaultLandingRoute();
+}
 
 /**
  * Tipos de tarea visibles en UI.
@@ -647,6 +735,7 @@ function resetContentScroll() {
 currentUrl && (currentUrl.textContent = window.location.href);
 
 function forceLogout() {
+  clearStoredNavRoute();
   localStorage.removeItem("token");
   window.location.replace("/login.html");
 }
@@ -766,6 +855,7 @@ function navigateTo(sectionId, moduleName) {
   setNavSection(section);
   currentNavSection = section;
   currentModuleName = mod;
+  persistNavRoute(section, mod);
 
   const activeEl = MODULE_REGISTRY[mod];
   if (activeEl) activeEl.classList.remove("hidden");
@@ -3194,6 +3284,7 @@ function wireNavSectionTabs() {
     tab.addEventListener("click", () => {
       const section = tab.getAttribute("data-nav-section");
       if (!section) return;
+      noteUserNavChoice(section, null);
       // Siempre abre el módulo default de la sección y limpia el anterior.
       navigateTo(section, null);
     });
@@ -8944,6 +9035,9 @@ async function validateSession() {
     if (currentUserFullName) currentUserFullName.textContent = user.fullName || "—";
     currentUserEmail.textContent = user.email || "No disponible";
     currentUserRoleText.textContent = currentRole;
+    if (scanHint) scanHint.textContent = "";
+    wireHashModuleNavigation();
+    applySessionRoute();
     await loadUsersModule(currentRole);
     await loadCatalogData();
     if (currentRole === "ADMIN" || currentRole === "OPERATOR" || currentRole === "SUPERVISOR") {
@@ -8953,15 +9047,6 @@ async function validateSession() {
     } else if (scanEventsList) {
       scanEventsList.innerHTML =
         '<p class="subtitle" style="margin:0">El historial de picking no aplica a tu rol.</p>';
-    }
-    if (scanHint) scanHint.textContent = "";
-    wireHashModuleNavigation();
-    // Preferir deep-link #module=… si es válido/permisible; si no hay hash, Centro de Control (por rol).
-    const openedFromHash = applyModuleDeepLinkFromHash();
-    if (!openedFromHash) {
-      const landing = defaultLandingModule[currentRole] || roleModules[currentRole]?.[0] || "account";
-      const landingSection = resolveSectionForModule(landing, "inicio");
-      navigateTo(landingSection, landing);
     }
   } catch (_error) {
     if (statusBox) statusBox.innerHTML = '<span class="error">Error de red validando sesion.</span>';
@@ -8982,6 +9067,7 @@ moduleButtons.forEach((btn) => {
       const pref = btn.getAttribute("data-task-pref-type");
       taskViewMode = view === "notices" || pref === "INTERNAL_NOTICE" ? "notices" : "ops";
     }
+    noteUserNavChoice(section, mod);
     navigateTo(section, mod);
     if (mod === "tasks") {
       applyTaskViewModeUi();
