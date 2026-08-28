@@ -6958,9 +6958,16 @@ function parseRelocateQty() {
 }
 
 function relocateAvailableQtyNumber() {
-  const raw = document.getElementById("relocateAvailableHint")?.dataset?.available;
-  if (raw == null || String(raw).trim() === "") return null;
-  const qty = Number(raw);
+  const hintRaw = document.getElementById("relocateAvailableHint")?.dataset?.available;
+  const skuRaw = document.getElementById("relocateSku")?.dataset?.relocateAvailable;
+  const raw =
+    hintRaw != null && String(hintRaw).trim() !== ""
+      ? hintRaw
+      : skuRaw != null && String(skuRaw).trim() !== ""
+        ? skuRaw
+        : "";
+  if (String(raw).trim() === "") return null;
+  const qty = Number(String(raw).trim().replace(",", "."));
   return Number.isFinite(qty) ? qty : null;
 }
 
@@ -6993,7 +7000,6 @@ function relocateSerialsBlockRelocate() {
 function relocateFormIsComplete() {
   if (!relocateOriginContextReady()) return false;
   if (!relocateHasBalanceSelection()) return false;
-  if (relocateSerialsBlockRelocate()) return false;
   const dest = relocateToValue();
   const origin = relocateFromValue();
   if (!dest) return false;
@@ -7191,18 +7197,18 @@ function relocateActiveLocationCodes(warehouse, { excludeCode } = {}) {
 function fillRelocateLocationSelect(selectId, codes, { disabled = false, emptyLabel = "— Seleccionar —" } = {}) {
   const sel = document.getElementById(selectId);
   if (!(sel instanceof HTMLSelectElement)) return;
-  const prev = sel.value;
+  const prev = String(sel.value || "").trim();
+  const prevUpper = prev.toUpperCase();
+  const match = prevUpper ? codes.find((code) => String(code).toUpperCase() === prevUpper) : "";
   sel.innerHTML =
     `<option value="">${escCell(emptyLabel)}</option>` +
     codes.map((code) => `<option value="${escCell(code)}">${escCell(code)}</option>`).join("");
-  if (prev && codes.some((code) => code === prev)) sel.value = prev;
-  else sel.value = "";
+  sel.value = match || "";
   sel.disabled = Boolean(disabled);
   const inp = document.getElementById(selectId.replace(/Select$/, ""));
   if (inp) {
     inp.classList.add("hidden");
-    if (sel.value) inp.value = sel.value;
-    else inp.value = "";
+    inp.value = sel.value || "";
     inp.disabled = Boolean(disabled);
   }
 }
@@ -7267,7 +7273,10 @@ function syncRelocateSkuEnabled() {
 function syncRelocateSubmitEnabled() {
   const btn = document.getElementById("relocateSubmitBtn");
   if (!btn) return;
-  btn.disabled = !relocateFormIsComplete();
+  const ready = relocateFormIsComplete();
+  btn.disabled = !ready;
+  if (ready) btn.removeAttribute("disabled");
+  else btn.setAttribute("disabled", "");
 }
 
 function syncRelocateFormState() {
@@ -7293,7 +7302,12 @@ function buildRelocateConfirmMessage(input) {
   const lote = Number(input.layerCount) > 1 ? `${input.layerCount} capas internas` : input.lotNumber ? `lote ${input.lotNumber}` : "sin lote";
   const statusLabel =
     typeof formatInventoryStatus === "function" ? formatInventoryStatus(input.status) : input.status;
-  return `Se reubicará ${qty} piezas del SKU ${sku}${product}, ${assignment}, almacén ${input.warehouse}, de ${input.fromLoc} a ${input.toLoc}, estatus ${statusLabel}, ${lote}. La cantidad se distribuirá automáticamente respetando FIFO, lotes y precios. ¿Deseas continuar?`;
+  const fifo =
+    Number(input.layerCount) > 1
+      ? ` Asignación FIFO sobre ${input.layerCount} capas.`
+      : " La cantidad se distribuirá automáticamente respetando FIFO, lotes y precios.";
+  const reference = input.reference ? ` Referencia ${input.reference}.` : "";
+  return `Se reubicará ${qty} piezas del SKU ${sku}${product}, ${assignment}, almacén ${input.warehouse}, de ${input.fromLoc} a ${input.toLoc}, estatus ${statusLabel}, ${lote}.${reference}${fifo} ¿Deseas continuar?`;
 }
 
 function showRelocateBalanceSuggestions(listEl, items, activeIdx, onPick) {
@@ -8478,14 +8492,6 @@ async function submitRelocate() {
     setOpsMessage(msgId, "Selecciona un saldo real desde el buscador. No se reubica por texto de SKU.", false);
     return;
   }
-  if (selected.serialCount > 0) {
-    setOpsMessage(
-      msgId,
-      "El saldo contiene series; requiere selección explícita de seriales. Esta reubicación no puede continuar.",
-      false
-    );
-    return;
-  }
   if (!toLoc) {
     setOpsMessage(msgId, "Selecciona la ubicación destino.", false);
     return;
@@ -8519,9 +8525,19 @@ async function submitRelocate() {
     toLoc,
     status: stockStatus,
     lotNumber: selected.lotNumber,
-    layerCount: selected.layerCount
+    layerCount: selected.layerCount,
+    reference: referenceRaw || ""
   });
   if (typeof window !== "undefined" && window.confirm && !window.confirm(confirmMsg)) {
+    syncRelocateSubmitEnabled();
+    return;
+  }
+  if (selected.serialCount > 0) {
+    setOpsMessage(
+      msgId,
+      "El saldo contiene series; requiere selección explícita de seriales. Esta reubicación no puede continuar.",
+      false
+    );
     syncRelocateSubmitEnabled();
     return;
   }
@@ -9395,8 +9411,15 @@ function wireOperationalForms() {
     const el = document.getElementById(id);
     if (!el || el.dataset.relocateReadyWired === "1") return;
     el.dataset.relocateReadyWired = "1";
-    el.addEventListener("input", () => syncRelocateSubmitEnabled());
-    el.addEventListener("change", () => syncRelocateSubmitEnabled());
+    const onReady = () => {
+      if (id === "relocateToSelect") {
+        const inp = document.getElementById("relocateTo");
+        if (inp && el.value !== SMART_OTHER) inp.value = el.value || "";
+      }
+      syncRelocateFormState();
+    };
+    el.addEventListener("input", onReady);
+    el.addEventListener("change", onReady);
   });
   if (typeof wireRelocateBalanceTypeahead === "function") wireRelocateBalanceTypeahead();
   syncRelocateLocationSelects();

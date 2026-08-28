@@ -459,12 +459,13 @@ function loadRelocateUi(document: unknown) {
     sliceFunction(js, "relocateSelectedBalance"),
     sliceFunction(js, "relocateSerialsBlockRelocate"),
     sliceFunction(js, "relocateFormIsComplete"),
+    sliceFunction(js, "syncRelocateSubmitEnabled"),
     sliceFunction(js, "buildRelocateConfirmMessage"),
     sliceFunction(js, "relocateLayerSummary")
   ].join("\n");
   return new Function(
     "document",
-    `${src}; return { relocateOriginContextReady, relocateHasBalanceSelection, parseRelocateQty, relocateFormIsComplete, buildRelocateConfirmMessage, relocateLayerSummary, relocateStatusValue, relocateFromValue };`
+    `${src}; return { relocateOriginContextReady, relocateHasBalanceSelection, parseRelocateQty, relocateFormIsComplete, relocateSerialsBlockRelocate, syncRelocateSubmitEnabled, buildRelocateConfirmMessage, relocateLayerSummary, relocateStatusValue, relocateFromValue };`
   )(document);
 }
 
@@ -486,7 +487,18 @@ function makeRelocateDom(opts?: Record<string, string>) {
   set("relocateLayerId", opts?.layerId ?? "layer-1");
   set("relocateQty", opts?.qty ?? "2");
   set("relocateSubmitBtn", "");
-  values.relocateSubmitBtn.disabled = true;
+  const submitBtn = values.relocateSubmitBtn as {
+    disabled?: boolean;
+    setAttribute: (name: string) => void;
+    removeAttribute: (name: string) => void;
+  };
+  submitBtn.disabled = true;
+  submitBtn.setAttribute = (name: string) => {
+    if (name === "disabled") submitBtn.disabled = true;
+  };
+  submitBtn.removeAttribute = (name: string) => {
+    if (name === "disabled") submitBtn.disabled = false;
+  };
   values.relocateSku.dataset.relocateProductName = "Radio";
   values.relocateSku.dataset.relocateAssignmentLabel = opts?.assignmentLabel ?? "Free to Sale";
   values.relocateSku.dataset.relocateAssignmentType = opts?.assignmentType ?? "FREE_TO_SALE";
@@ -515,9 +527,9 @@ function makeRelocateDom(opts?: Record<string, string>) {
   };
 }
 
-test("dashboard.js usa cache-buster v=70 para reubicación", () => {
-  assert.match(html, /dashboard\.js\?v=70/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=69/);
+test("dashboard.js usa cache-buster v=71 para reubicación", () => {
+  assert.match(html, /dashboard\.js\?v=71/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=70/);
 });
 
 test("1 SKU nace desactivado sin origen", () => {
@@ -738,7 +750,12 @@ test("19 comportamiento seguro con seriales", async () => {
   );
   assert.match(js, /El saldo contiene series; requiere selección explícita de seriales/);
   const serialDom = makeRelocateDom({ serialCount: "2" });
-  assert.equal(loadRelocateUi(serialDom.document).relocateFormIsComplete(), false);
+  const serialUi = loadRelocateUi(serialDom.document);
+  assert.equal(serialUi.relocateSerialsBlockRelocate(), true);
+  assert.equal(serialUi.relocateFormIsComplete(), true);
+  const submitSrc = sliceFunction(js, "submitRelocate");
+  assert.ok(submitSrc.indexOf("window.confirm") < submitSrc.indexOf("selected.serialCount > 0"));
+  assert.ok(submitSrc.indexOf("selected.serialCount > 0") < submitSrc.indexOf('authenticatedFetch("/api/inventory/relocate"'));
 });
 
 test("20 no modifica recepción v67, valuación v65, importación ni navegación", () => {
@@ -1284,5 +1301,130 @@ test("FIFO: receivedAt nulo va al final del orden", () => {
     d("1")
   );
   assert.equal(planned.allocations[0]?.layer.id, "old");
+});
+
+function qaFifoDom(overrides: Record<string, string> = {}) {
+  return makeRelocateDom({
+    warehouse: "TULTITLAN24",
+    status: "OPERATIONS",
+    from: "AN12-C",
+    to: "AN12-B",
+    sku: "00262A-00000B-000001",
+    inventoryId: "inv-00262A",
+    layerId: "",
+    qty: "2",
+    available: "3",
+    layerCount: "3",
+    serialCount: "0",
+    assignmentLabel: "Free to Sale",
+    assignmentType: "FREE_TO_SALE",
+    ...overrides
+  });
+}
+
+function assertRelocateSubmitState(dom: ReturnType<typeof qaFifoDom>, enabled: boolean) {
+  const ui = loadRelocateUi(dom.document);
+  assert.equal(ui.relocateFormIsComplete(), enabled);
+  ui.syncRelocateSubmitEnabled();
+  assert.equal(dom.values.relocateSubmitBtn.disabled, !enabled);
+}
+
+test("v71 1: FIFO completo sin layerId habilita el botón", () => {
+  const complete = sliceFunction(js, "relocateFormIsComplete");
+  assert.doesNotMatch(complete, /layerId/);
+  assert.doesNotMatch(complete, /relocateSerialsBlockRelocate/);
+  assert.doesNotMatch(complete, /allocationMode/);
+  assert.match(sliceFunction(js, "applyRelocateBalanceSelection"), /inv\.value = item\.inventoryId \|\| ""/);
+  assert.match(sliceFunction(js, "applyRelocateBalanceSelection"), /layer\.value = ""/);
+  const dom = qaFifoDom();
+  assert.equal(dom.values.relocateLayerId.value, "");
+  assert.equal(dom.values.relocateInventoryId.value, "inv-00262A");
+  assertRelocateSubmitState(dom, true);
+});
+
+test("v71 2-8: inventoryId, destino, origen y cantidad controlan el botón", () => {
+  assertRelocateSubmitState(qaFifoDom({ inventoryId: "" }), false);
+  assertRelocateSubmitState(qaFifoDom({ to: "" }), false);
+  assertRelocateSubmitState(qaFifoDom({ from: "AN12-C", to: "AN12-C" }), false);
+  assertRelocateSubmitState(qaFifoDom({ qty: "" }), false);
+  assertRelocateSubmitState(qaFifoDom({ qty: "0" }), false);
+  assertRelocateSubmitState(qaFifoDom({ qty: "2", available: "3" }), true);
+  assertRelocateSubmitState(qaFifoDom({ qty: "4", available: "3" }), false);
+});
+
+test("v71 9: cambiar saldo invalida y desactiva", () => {
+  const dom = qaFifoDom();
+  assertRelocateSubmitState(dom, true);
+  dom.values.relocateInventoryId.value = "";
+  assertRelocateSubmitState(dom, false);
+  assert.match(js, /invalidateRelocateBalanceSelection\(input\)/);
+  assert.match(js, /clearRelocateBalanceFields\(input, \{ keepSkuText: true \}\)/);
+});
+
+test("v71 10-11: cancelar confirmación no hace POST y el body es FIFO sin layerId", () => {
+  const src = sliceFunction(js, "submitRelocate");
+  const confirmIdx = src.indexOf("window.confirm");
+  const postIdx = src.indexOf('authenticatedFetch("/api/inventory/relocate"');
+  assert.ok(confirmIdx >= 0 && postIdx > confirmIdx);
+  assert.match(src, /!window\.confirm\(confirmMsg\)\) \{\s*syncRelocateSubmitEnabled\(\);\s*return;/);
+  assert.match(src, /allocationMode: "FIFO"/);
+  assert.doesNotMatch(src, /body\.layerId/);
+  assert.doesNotMatch(src, /layerId:/);
+});
+
+test("v71 12: predictor, tarjeta, capas y motor v70 permanecen intactos", () => {
+  const rows = toRelocateBalanceSuggestions([cubeSuggestion(3)]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.layerId, "");
+  assert.equal(rows[0]?.layerCount, 3);
+  assert.equal(rows[0]?.availableQty, "3");
+  assert.match(js, /allocationMode: "FIFO"/);
+  assert.match(js, /Ver detalle/);
+  assert.match(js, /capas internas/);
+  assert.match(mutationSrc, /type === "RELOCATE"/);
+  assert.match(sliceFunction(js, "applyRelocateBalanceSelection"), /layer\.value = ""/);
+});
+
+test("v71 13: referencia y notas opcionales no bloquean", () => {
+  const pane = relocateHtml();
+  assert.match(pane, /Referencia \(opcional\)/);
+  assert.match(pane, /Notas \(opcional\)/);
+  const complete = sliceFunction(js, "relocateFormIsComplete");
+  assert.doesNotMatch(complete, /relocateReference/);
+  assert.doesNotMatch(complete, /relocateNotes/);
+  assertRelocateSubmitState(qaFifoDom(), true);
+});
+
+test("v71 14: recepción v67 permanece intacta", () => {
+  const inbound = inboundHtml();
+  assert.match(inbound, /id="inboundProductId"/);
+  assert.match(inbound, /id="inboundUnitPriceMxn"/);
+  assert.match(inbound, /Sin precio por ahora/);
+  assert.match(inbound, /id="inboundAssignmentType"/);
+  assert.match(inbound, /Free to Sale/);
+});
+
+test("v71 confirmación FIFO incluye SKU, destino, referencia y capas", () => {
+  const msg = loadRelocateUi(qaFifoDom().document).buildRelocateConfirmMessage({
+    qty: "2",
+    sku: "00262A-00000B-000001",
+    productName: "Antena",
+    assignmentLabel: "Free to Sale",
+    warehouse: "TULTITLAN24",
+    fromLoc: "AN12-C",
+    toLoc: "AN12-B",
+    status: "OPERATIONS",
+    layerCount: "3",
+    reference: "QA-CANCELAR"
+  });
+  assert.match(msg, /00262A-00000B-000001/);
+  assert.match(msg, /Antena/);
+  assert.match(msg, /Free to Sale/);
+  assert.match(msg, /2 piezas/);
+  assert.match(msg, /AN12-C/);
+  assert.match(msg, /AN12-B/);
+  assert.match(msg, /OPERATIONS/);
+  assert.match(msg, /QA-CANCELAR/);
+  assert.match(msg, /Asignación FIFO sobre 3 capas/);
 });
 
