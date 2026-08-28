@@ -247,10 +247,10 @@ test("HTML de existencias, proyectos y catálogo muestra la vista económica", (
   assert.match(html, /id="sumStockCubes"/);
   assert.match(html, /id="sumStockTotal"[\s\S]{0,120}Piezas/);
   assert.match(html, /id="sumStockCubes"[\s\S]{0,120}Saldos/);
-  assert.match(html, /dashboard\.js\?v=61/);
+  assert.match(html, /dashboard\.js\?v=62/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=61/);
   assert.doesNotMatch(html, /dashboard\.js\?v=60/);
   assert.doesNotMatch(html, /dashboard\.js\?v=59/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=58/);
 });
 
 test("APIs de inventario y catálogo no rellenan precios faltantes ni usan customerId como proyecto", () => {

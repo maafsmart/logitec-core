@@ -599,8 +599,8 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
                 : row.movementType === "IN"
                   ? row.qty.toString()
                   : row.qty.negated().toString(),
-          quantityBefore: row.quantityBefore,
-          quantityAfter: row.quantityAfter,
+          quantityBefore: row.quantityBefore.toString(),
+          quantityAfter: row.quantityAfter.toString(),
           stockStatus: row.stockStatus,
           stockStatusLabel: row.stockStatus ? statusLabels.get(row.stockStatus) ?? null : null,
           fromAssignmentType: row.fromAssignmentType,

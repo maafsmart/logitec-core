@@ -4171,8 +4171,8 @@ const MOVEMENT_COLUMNS = [
   },
   { label: "SKU / Código", sortKey: (m) => m.product?.sku || "", render: (m) => escCell(formatSkuBarcode(m.product)), title: (m) => m.product?.sku || "" },
   { label: "Producto", sortKey: (m) => m.product?.name || "", render: (m) => renderCellWithClamp(m.product?.name, "cell-truncate", 28), title: (m) => m.product?.name || "" },
-  { label: "Antes", align: "right", sortKey: (m) => Number(m.quantityBefore) || 0, sortType: "number", render: (m) => formatQty(m.quantityBefore) },
-  { label: "Después", align: "right", sortKey: (m) => Number(m.quantityAfter) || 0, sortType: "number", render: (m) => formatQty(m.quantityAfter) },
+  { label: "Antes", align: "right", sortKey: (m) => Number(m.movement?.quantityBefore) || 0, sortType: "number", render: (m) => formatMovementBalance(m, "quantityBefore") },
+  { label: "Después", align: "right", sortKey: (m) => Number(m.movement?.quantityAfter) || 0, sortType: "number", render: (m) => formatMovementBalance(m, "quantityAfter") },
   { label: "Ubicación", sortKey: (m) => m.toLocation?.code || m.fromLocation?.code || "", render: (m) => renderCellWithClamp(m.toLocation?.code || m.fromLocation?.code || m.warehouse, "cell-truncate", 20), title: (m) => m.toLocation?.code || m.fromLocation?.code || "" },
   { label: "Usuario", sortKey: (m) => m.user?.fullName || "", render: (m) => renderCellWithClamp(m.user?.fullName, "cell-truncate", 20), title: (m) => m.user?.fullName || "" },
   { label: "Referencia", sortKey: (m) => m.reference || "", render: (m) => renderCellWithClamp(m.reference, "cell-truncate", 20), title: (m) => m.reference || "" }
@@ -5709,6 +5709,10 @@ function formatQty(q) {
   const n = typeof q === "string" ? Number(q.replace(",", ".")) : Number(q);
   if (Number.isNaN(n)) return String(q);
   return n.toLocaleString("es-MX", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+}
+
+function formatMovementBalance(row, field) {
+  return formatQty(row?.movement?.[field]);
 }
 
 function escCell(s) {
