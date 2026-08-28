@@ -70,15 +70,6 @@ const productWarehouse = document.getElementById("productWarehouse");
 const productsList = document.getElementById("productsList");
 const clientsList = document.getElementById("clientsList");
 const inventoryList = document.getElementById("inventoryList");
-const movementForm = document.getElementById("movementForm");
-const movementBtn = document.getElementById("movementBtn");
-const movementError = document.getElementById("movementError");
-const moveSku = document.getElementById("moveSku");
-const moveWarehouse = document.getElementById("moveWarehouse");
-const moveType = document.getElementById("moveType");
-const moveQty = document.getElementById("moveQty");
-const moveRef = document.getElementById("moveRef");
-const moveNotes = document.getElementById("moveNotes");
 const importSection = document.getElementById("importSection");
 const importCsv = document.getElementById("importCsv");
 const importBtn = document.getElementById("importBtn");
@@ -166,6 +157,7 @@ const PRIMARY_CLIENT_AVIAT_NAME = "AVIAT";
 const LEGACY_AVIAT_PROJECT_FILTER_KEY = "logitec_aviat_project_filter";
 
 let inventoryProjectsCache = [];
+let catalogProjectsCache = [];
 let inventoryScope = { projectId: "", assignmentType: "" };
 let environmentDisplayName = "Desarrollo";
 let inventoryScopeWired = false;
@@ -2759,6 +2751,8 @@ function pickableInventoryStatuses() {
 function formatInventoryStatus(status) {
   if (status == null || status === "") return "—";
   const found = inventoryStatusRecord(status);
+  const code = String(found?.code || status);
+  if (code.toUpperCase() === "AVAILABLE") return "Disponible";
   if (found) return found.label || found.code || String(status);
   return String(status);
 }
@@ -2771,7 +2765,7 @@ function inventoryStatusSearchBlob(status) {
 function inventoryStatusBadge(value) {
   const raw = value == null || value === "" ? "—" : String(value);
   const found = inventoryStatusRecord(raw);
-  const label = found ? found.label || found.code : raw;
+  const label = found ? formatInventoryStatus(found.code) : raw;
   const title = found ? found.code : raw;
   return `<span class="badge status-badge" title="${escCell(String(title))}">${escCell(String(label))}</span>`;
 }
@@ -6503,7 +6497,7 @@ function fillInventoryStatusSelect(selectId, { includeEmpty = false, emptyLabel 
   for (const row of rows) {
     const code = String(row.code || "");
     if (!code) continue;
-    opts.push(`<option value="${escCell(code)}">${escCell(row.label || code)}</option>`);
+    opts.push(`<option value="${escCell(code)}">${escCell(formatInventoryStatus(code))}</option>`);
   }
   sel.innerHTML = opts.join("");
   const values = rows.map((row) => String(row.code || ""));
@@ -6521,7 +6515,6 @@ function fillInventoryStatusSelects() {
   fillInventoryStatusSelect("inboundStatus", { preferred });
   fillInventoryStatusSelect("outboundStatus", { preferred });
   fillInventoryStatusSelect("relocateStatus", { includeEmpty: false, preferred });
-  fillInventoryStatusSelect("moveStatus", { preferred });
   fillInventoryStatusSelect("pickStatus", {
     includeEmpty: true,
     emptyLabel: "— Cualquiera (solo si hay una línea) —",
@@ -6688,15 +6681,191 @@ function assignmentDisplayLabel(row) {
   return row.assignmentType || "—";
 }
 
-function renderSkuContext(listEl, context) {
-  if (!listEl || !context?.product) return;
-  let panel = listEl.parentElement?.querySelector(".sku-context-summary");
-  if (!panel) {
-    panel = document.createElement("div");
-    panel.className = "sku-context-summary operational-table-meta";
-    listEl.insertAdjacentElement("afterend", panel);
+function skuSelectedLocationLabel(locations) {
+  const rows = Array.isArray(locations) ? locations : [];
+  if (!rows.length) return "Sin existencia";
+  if (rows.length === 1) {
+    const code = String(rows[0]?.locationCode || "").trim() || "—";
+    const warehouse = String(rows[0]?.warehouse || "").trim();
+    return warehouse ? `${code} · ${warehouse}` : code;
   }
-  const locations = Array.isArray(context.inventory?.locations) ? context.inventory.locations : [];
+  return `${rows.length} saldos`;
+}
+
+function opsPrefixFromTypeahead(listEl, input) {
+  const wrap =
+    (listEl && typeof listEl.closest === "function" && listEl.closest("[data-pta]")) ||
+    (input && typeof input.closest === "function" && input.closest("[data-pta]"));
+  return String(wrap?.getAttribute?.("data-pta") || "");
+}
+
+function inboundHasSystemSkuSelection() {
+  return Boolean(document.getElementById("inboundProductId")?.value?.trim());
+}
+
+function inboundAssignmentTypeValue() {
+  return String(document.getElementById("inboundAssignmentType")?.value || "").trim();
+}
+
+function inboundSelectedProjectId() {
+  return String(document.getElementById("inboundProjectId")?.value || "").trim();
+}
+
+function inboundTypeaheadProjectCode() {
+  if (inboundAssignmentTypeValue() !== "PROJECT") return "";
+  const sel = document.getElementById("inboundProjectId");
+  const opt = sel?.selectedOptions?.[0];
+  return String(opt?.getAttribute?.("data-code") || opt?.dataset?.code || "").trim();
+}
+
+function inboundSelectedSkuClientId() {
+  const skuEl = document.getElementById("inboundSku");
+  const fromDataset = String(skuEl?.dataset?.skuClientId || "").trim();
+  if (fromDataset) return fromDataset;
+  const productId = document.getElementById("inboundProductId")?.value?.trim();
+  const prod = productId ? productsCache.find((p) => p.id === productId) : null;
+  return String(prod?.customer?.clientId || prod?.customer?.client?.id || "").trim();
+}
+
+function realActiveCatalogProjects(clientId) {
+  const wanted = String(clientId || "").trim();
+  return (Array.isArray(catalogProjectsCache) ? catalogProjectsCache : []).filter((project) => {
+    if (!project?.id || project.active === false) return false;
+    if (isForbiddenProjectLabel(project.code) || isForbiddenProjectLabel(project.name)) return false;
+    if (wanted && project.clientId && project.clientId !== wanted) return false;
+    if (wanted && project.client?.id && project.client.id !== wanted) return false;
+    return true;
+  });
+}
+
+function fillInboundProjectSelect() {
+  const sel = document.getElementById("inboundProjectId");
+  if (!(sel instanceof HTMLSelectElement)) return;
+  const prev = sel.value;
+  const projects = realActiveCatalogProjects(inboundSelectedSkuClientId());
+  sel.innerHTML =
+    '<option value="">— Seleccionar proyecto —</option>' +
+    projects
+      .map(
+        (project) =>
+          `<option value="${escCell(project.id)}" data-code="${escCell(project.code)}" data-name="${escCell(project.name)}">${escCell(
+            project.name
+          )} (${escCell(project.code)})</option>`
+      )
+      .join("");
+  if (prev && projects.some((project) => project.id === prev)) sel.value = prev;
+  else sel.value = "";
+}
+
+function syncInboundAssignmentUi() {
+  const type = inboundAssignmentTypeValue();
+  const field = document.getElementById("inboundProjectField");
+  const sel = document.getElementById("inboundProjectId");
+  if (field) field.classList.toggle("hidden", type !== "PROJECT");
+  if (sel && type !== "PROJECT") sel.value = "";
+  if (type === "PROJECT") fillInboundProjectSelect();
+  syncInboundSubmitEnabled();
+}
+
+function inboundFormIsComplete() {
+  const assignmentType = inboundAssignmentTypeValue();
+  if (assignmentType !== "FREE_TO_SALE" && assignmentType !== "PROJECT") return false;
+  if (assignmentType === "PROJECT" && !inboundSelectedProjectId()) return false;
+  if (!inboundHasSystemSkuSelection()) return false;
+  const qty = Number(document.getElementById("inboundQty")?.value);
+  if (!Number.isFinite(qty) || qty <= 0) return false;
+  const warehouse =
+    (typeof readSmartFieldValue === "function" ? readSmartFieldValue("inboundWarehouse") : "") ||
+    document.getElementById("inboundWarehouse")?.value?.trim();
+  if (!warehouse) return false;
+  const location =
+    (typeof readSmartFieldValue === "function" ? readSmartFieldValue("inboundLocation") : "") ||
+    document.getElementById("inboundLocation")?.value?.trim();
+  if (!location) return false;
+  const status = document.getElementById("inboundStatus")?.value?.trim();
+  if (!status) return false;
+  return true;
+}
+
+function syncInboundSubmitEnabled() {
+  const btn = document.getElementById("inboundSubmitBtn");
+  if (!btn) return;
+  btn.disabled = !inboundFormIsComplete();
+}
+
+function hideSkuSelectedCard(listEl) {
+  const wrap = listEl?.parentElement;
+  if (!wrap || typeof wrap.querySelectorAll !== "function") return;
+  wrap.querySelectorAll(".sku-selected-card, .sku-context-summary").forEach((panel) => {
+    panel.classList.add("hidden");
+    panel.hidden = true;
+    panel.innerHTML = "";
+  });
+}
+
+function clearSkuSelectionFields(prefix, input, { keepSkuText = false } = {}) {
+  if (input) {
+    if (!keepSkuText) input.value = "";
+    if (input.dataset) {
+      delete input.dataset.skuSelectedId;
+      delete input.dataset.skuSelectedCode;
+      delete input.dataset.skuClientId;
+    }
+  }
+  if (prefix === "inbound" || prefix === "outbound" || prefix === "req" || prefix === "relocate") {
+    const productEl = document.getElementById(`${prefix}Product`);
+    if (productEl) productEl.value = "";
+    const productIdEl = document.getElementById(`${prefix}ProductId`);
+    if (productIdEl) productIdEl.value = "";
+  }
+  if (prefix === "inbound") {
+    const hid = document.getElementById("inboundProductId");
+    if (hid) hid.value = "";
+    const assignment = String(document.getElementById("inboundAssignmentType")?.value || "").trim();
+    if (assignment === "PROJECT" && typeof fillInboundProjectSelect === "function") fillInboundProjectSelect();
+    if (typeof syncInboundSubmitEnabled === "function") syncInboundSubmitEnabled();
+  }
+  if (prefix === "relocate") {
+    const inv = document.getElementById("relocateInventoryId");
+    if (inv) inv.value = "";
+    const layer = document.getElementById("relocateLayerId");
+    if (layer) layer.value = "";
+  }
+  if (prefix === "inventory") {
+    const prod = document.getElementById("invFilterProducto");
+    if (prod) prod.value = "";
+  }
+  if (prefix === "picking") {
+    const box = document.getElementById("pickCandidates");
+    if (box) delete box.dataset.inventoryId;
+    if (typeof clearPickCandidates === "function") clearPickCandidates();
+  }
+  if (prefix === "incident" || input?.id === "incidentProductSku") {
+    const incidentId = document.getElementById("incidentProductId");
+    if (incidentId) incidentId.value = "";
+  }
+}
+
+function beginSkuChange(listEl, input) {
+  const prefix = opsPrefixFromTypeahead(listEl, input);
+  const skuInput = input || listEl?.parentElement?.querySelector("input");
+  clearSkuSelectionFields(prefix, skuInput, { keepSkuText: false });
+  hideSkuSelectedCard(listEl);
+  hideProductTypeaheadList(listEl);
+  if (skuInput && typeof skuInput.focus === "function") skuInput.focus();
+}
+
+function invalidateSkuSelection(listEl, input) {
+  if (!input?.dataset?.skuSelectedId) return false;
+  if (input.value.trim() === (input.dataset.skuSelectedCode || "")) return false;
+  const prefix = opsPrefixFromTypeahead(listEl, input);
+  clearSkuSelectionFields(prefix, input, { keepSkuText: true });
+  hideSkuSelectedCard(listEl);
+  return true;
+}
+
+function buildSkuContextDetailHtml(context, { pickingSelector = false } = {}) {
+  const locations = Array.isArray(context?.inventory?.locations) ? context.inventory.locations : [];
   const clientName = context.client?.tradeName || context.client?.legalName || context.client?.name || "—";
   const project =
     context.stockAssignments?.label ||
@@ -6706,7 +6875,6 @@ function renderSkuContext(listEl, context) {
     : locations.length === 1
       ? "1 cubo encontrado."
       : `${locations.length} cubos: selecciona Proyecto / FREE TO SALE y ubicación antes de operar.`;
-  const pickingSelector = Boolean(document.getElementById("pickCandidates") && listEl?.id === "scanSkuSuggestions");
   const locationRows = locations
     .map((row) => {
       const assignmentLabel = assignmentDisplayLabel(row);
@@ -6723,7 +6891,7 @@ function renderSkuContext(listEl, context) {
     .join("");
   const layerCount = Number(context.layers?.count || 0);
   const valuation = context.valuation || null;
-  panel.innerHTML = `<strong>${escCell(context.product.sku)} · ${escCell(context.product.name)}</strong>
+  return `<strong>${escCell(context.product.sku)} · ${escCell(context.product.name)}</strong>
     <div>${escCell(clientName)} · ${escCell(project)}</div>
     <div>Existencia total: ${escCell(formatQty(context.inventory?.totalQty || 0))} · No reservada: ${escCell(
       formatQty(context.inventory?.totalUnreservedQty || 0)
@@ -6735,6 +6903,48 @@ function renderSkuContext(listEl, context) {
     }</div>
     <div>${escCell(locationSummary)}</div>
     ${locationRows ? `<ul style="margin:4px 0 0;padding-left:18px">${locationRows}</ul>` : ""}`;
+}
+
+function buildSkuSelectedCardHtml(context, detailHtml) {
+  const product = context?.product || {};
+  const locations = Array.isArray(context?.inventory?.locations) ? context.inventory.locations : [];
+  const locationLabel = skuSelectedLocationLabel(locations);
+  const locationCaption = locations.length === 1 ? "Ubicación" : "Saldos";
+  return `<div class="sku-selected-card-title">✓ SKU seleccionado</div>
+    <dl class="sku-selected-card-meta">
+      <div><dt>SKU</dt><dd>${escCell(product.sku)}</dd></div>
+      <div><dt>Producto</dt><dd>${escCell(product.name)}</dd></div>
+      <div><dt>Existencia actual</dt><dd>${escCell(formatQty(context?.inventory?.totalQty || 0))}</dd></div>
+      <div><dt>Cantidad disponible</dt><dd>${escCell(formatQty(context?.inventory?.totalUnreservedQty || 0))}</dd></div>
+      <div><dt>${escCell(locationCaption)}</dt><dd>${escCell(locationLabel)}</dd></div>
+    </dl>
+    <button type="button" class="btn-secondary btn-compact sku-change-btn">Cambiar SKU</button>
+    <details class="sku-selected-detail">
+      <summary>Ver detalle</summary>
+      <div class="sku-selected-detail-body">${detailHtml || ""}</div>
+    </details>`;
+}
+
+function renderSkuContext(listEl, context) {
+  if (!listEl || !context?.product) return;
+  hideProductTypeaheadList(listEl);
+  const wrap = listEl.parentElement;
+  wrap?.querySelector(".sku-context-summary")?.remove();
+  let panel = wrap?.querySelector(".sku-selected-card");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.className = "sku-selected-card";
+    listEl.insertAdjacentElement("afterend", panel);
+  }
+  panel.classList.remove("hidden");
+  panel.hidden = false;
+  const locations = Array.isArray(context.inventory?.locations) ? context.inventory.locations : [];
+  const pickingSelector = Boolean(document.getElementById("pickCandidates") && listEl?.id === "scanSkuSuggestions");
+  panel.innerHTML = buildSkuSelectedCardHtml(context, buildSkuContextDetailHtml(context, { pickingSelector }));
+  const input = wrap?.querySelector("input");
+  panel.querySelector(".sku-change-btn")?.addEventListener("click", () => {
+    beginSkuChange(listEl, input);
+  });
   if (pickingSelector) {
     panel.querySelectorAll("[data-sku-cube]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -6891,14 +7101,34 @@ function wireProductTypeahead(cfg) {
   };
 
   const pick = (item) => {
+    if (state.timer) clearTimeout(state.timer);
     close();
-    void loadSkuContext(item.productId).then((context) => {
+    if (item.sku) input.value = item.sku;
+    input.dataset.skuSelectedId = item.productId || "";
+    input.dataset.skuSelectedCode = item.sku || "";
+    const prefix = opsPrefixFromTypeahead(listEl, input);
+    if (prefix === "inbound") {
+      const hid = document.getElementById("inboundProductId");
+      if (hid) hid.value = item.productId || "";
+      input.dataset.skuClientId =
+        item.product?.customer?.client?.id || item.context?.client?.id || item.product?.customer?.clientId || "";
+      if (inboundAssignmentTypeValue() === "PROJECT") fillInboundProjectSelect();
+      syncInboundSubmitEnabled();
+    }
+    const selectedId = item.productId || "";
+    void loadSkuContext(selectedId).then((context) => {
+      if (input.dataset.skuSelectedId !== selectedId) return;
+      hideProductTypeaheadList(listEl);
       if (context) renderSkuContext(listEl, context);
       cfg.onSelect({ ...item, context });
     });
   };
 
   const refresh = async () => {
+    if (input.dataset.skuSelectedId && input.value.trim() === (input.dataset.skuSelectedCode || "")) {
+      close();
+      return;
+    }
     const q = input.value.trim();
     if (q.length < minChars) {
       close();
@@ -6911,15 +7141,24 @@ function wireProductTypeahead(cfg) {
       max: PRODUCT_TYPEAHEAD_MAX
     });
     if (input.value.trim() !== searchValue) return;
+    if (input.dataset.skuSelectedId && input.value.trim() === (input.dataset.skuSelectedCode || "")) {
+      close();
+      return;
+    }
     state.active = state.items.length ? 0 : -1;
     showProductTypeaheadList(listEl, state.items, state.active, pick);
   };
 
   input.addEventListener("input", () => {
+    invalidateSkuSelection(listEl, input);
     if (state.timer) clearTimeout(state.timer);
     state.timer = setTimeout(refresh, 120);
   });
   input.addEventListener("focus", () => {
+    if (input.dataset.skuSelectedId && input.value.trim() === (input.dataset.skuSelectedCode || "")) {
+      close();
+      return;
+    }
     if (input.value.trim().length >= minChars) refresh();
   });
   input.addEventListener("blur", () => {
@@ -6952,11 +7191,23 @@ function applyCatalogSuggestionToOps(prefix, item) {
   const skuEl = document.getElementById(`${prefix}Sku`);
   if (skuEl) {
     skuEl.value = item.sku || "";
+    skuEl.dataset.skuSelectedId = item.productId || skuEl.dataset.skuSelectedId || "";
+    skuEl.dataset.skuSelectedCode = item.sku || skuEl.dataset.skuSelectedCode || "";
     skuEl.dispatchEvent(new Event("change", { bubbles: true }));
   }
   const productEl = document.getElementById(`${prefix}Product`);
   if (productEl) productEl.value = item.productName || item.product?.name || "";
-  if (item.projectCode) {
+  if (prefix === "inbound") {
+    const hid = document.getElementById("inboundProductId");
+    if (hid) hid.value = item.productId || "";
+    if (skuEl) {
+      skuEl.dataset.skuClientId =
+        item.product?.customer?.client?.id || item.context?.client?.id || item.product?.customer?.clientId || "";
+    }
+    if (inboundAssignmentTypeValue() === "PROJECT") fillInboundProjectSelect();
+    syncInboundSubmitEnabled();
+  }
+  if (item.projectCode && prefix !== "inbound") {
     setSelectValueFlexible(`${prefix}Customer`, item.projectCode);
     const cliente = document.getElementById(`${prefix}Cliente`);
     if (cliente) cliente.value = item.projectName || item.projectCode;
@@ -7153,7 +7404,10 @@ function wireAllProductTypeaheads() {
       input,
       listEl,
       mode,
-      getCustomerCode: () => document.getElementById(`${prefix}Customer`)?.value?.trim() || "",
+      getCustomerCode: () =>
+        prefix === "inbound"
+          ? inboundTypeaheadProjectCode()
+          : document.getElementById(`${prefix}Customer`)?.value?.trim() || "",
       onSelect: (item) => {
         if (prefix === "outbound" && item.kind === "stock") {
           applyStockSuggestionToOps(prefix, item);
@@ -7354,6 +7608,10 @@ function fillSkuSelect(selectId, customerCode, productInputId) {
     if (productInputId) {
       const inp = document.getElementById(productInputId);
       const raw = String(sel.value || "").trim();
+      if (selectId === "inboundSku" && !inboundHasSystemSkuSelection()) {
+        if (inp && !raw) inp.value = "";
+        return;
+      }
       const prod = raw ? findProductBySku(raw) || resolveProductBySkuOrCode(raw) : null;
       if (inp) {
         if (prod && (!customerCode || prod.customer?.code === customerCode || !customerCode)) {
@@ -7379,11 +7637,12 @@ function fillSkuSelect(selectId, customerCode, productInputId) {
 }
 
 function populateOperationalSelects() {
-  fillCustomerSelect("inboundCustomer", "inboundCliente");
   fillCustomerSelect("outboundCustomer", "outboundCliente");
   fillCustomerSelect("reqCustomer", "reqCliente");
   fillInventoryStatusSelects();
-  fillSkuSelect("inboundSku", document.getElementById("inboundCustomer")?.value || "", "inboundProduct");
+  fillInboundProjectSelect();
+  syncInboundAssignmentUi();
+  fillSkuSelect("inboundSku", inboundTypeaheadProjectCode(), "inboundProduct");
   fillSkuSelect("outboundSku", document.getElementById("outboundCustomer")?.value || "", "outboundProduct");
   fillSkuSelect("reqSku", document.getElementById("reqCustomer")?.value || "", null);
   populateSmartOperationalFields();
@@ -7415,39 +7674,69 @@ async function submitOperationalMovement(kind) {
   setOpsMessage(msgId, "", true);
 
   const customerCode = document.getElementById(`${prefix}Customer`)?.value?.trim();
+  const inboundAssignmentType = kind === "in" ? inboundAssignmentTypeValue() : "";
+  const inboundProjectId = kind === "in" && inboundAssignmentType === "PROJECT" ? inboundSelectedProjectId() : "";
   const sku = document.getElementById(`${prefix}Sku`)?.value?.trim();
   const qty = Number(document.getElementById(`${prefix}Qty`)?.value);
   const warehouse =
     readSmartFieldValue(`${prefix}Warehouse`) ||
     document.getElementById(`${prefix}Warehouse`)?.value?.trim() ||
-    "TULTITLAN24";
+    (kind === "in" ? "" : "TULTITLAN24");
   const location =
     readSmartFieldValue(`${prefix}Location`) ||
     document.getElementById(`${prefix}Location`)?.value?.trim();
-  const status = document.getElementById(`${prefix}Status`)?.value || "AVAILABLE";
+  const status = document.getElementById(`${prefix}Status`)?.value || "";
   const referenceRaw = document.getElementById(`${prefix}Reference`)?.value?.trim();
   const notes = document.getElementById(`${prefix}Notes`)?.value?.trim();
   const lote = document.getElementById(`${prefix}Lote`)?.value?.trim();
 
-  if (customerCode === SMART_OTHER) {
+  if (kind !== "in" && customerCode === SMART_OTHER) {
     setOpsMessage(msgId, "Seleccione un proyecto válido o créelo en catálogo.", false);
     return;
   }
 
-  if (!customerCode) {
+  if (kind === "in") {
+    if (inboundAssignmentType !== "FREE_TO_SALE" && inboundAssignmentType !== "PROJECT") {
+      setOpsMessage(msgId, "Seleccione una asignación.", false);
+      syncInboundSubmitEnabled();
+      return;
+    }
+    if (inboundAssignmentType === "PROJECT" && !inboundProjectId) {
+      setOpsMessage(msgId, "Seleccione un proyecto destino.", false);
+      syncInboundSubmitEnabled();
+      return;
+    }
+  } else if (!customerCode) {
     setOpsMessage(msgId, "Seleccione un proyecto.", false);
+    return;
+  }
+  if (kind === "in" && !inboundHasSystemSkuSelection()) {
+    setOpsMessage(msgId, "Seleccione un SKU de las sugerencias.", false);
+    syncInboundSubmitEnabled();
     return;
   }
   if (!sku) {
     setOpsMessage(msgId, "Seleccione un SKU del catálogo.", false);
     return;
   }
+  if (!warehouse) {
+    setOpsMessage(msgId, "Indique el almacén.", false);
+    if (kind === "in") syncInboundSubmitEnabled();
+    return;
+  }
   if (!location) {
     setOpsMessage(msgId, "Indique la ubicación.", false);
+    if (kind === "in") syncInboundSubmitEnabled();
+    return;
+  }
+  if (!status) {
+    setOpsMessage(msgId, "Seleccione un estatus.", false);
+    if (kind === "in") syncInboundSubmitEnabled();
     return;
   }
   if (!Number.isFinite(qty) || qty <= 0) {
     setOpsMessage(msgId, "La cantidad debe ser mayor que 0.", false);
+    if (kind === "in") syncInboundSubmitEnabled();
     return;
   }
 
@@ -7456,7 +7745,7 @@ async function submitOperationalMovement(kind) {
     setOpsMessage(msgId, "SKU inexistente en catálogo.", false);
     return;
   }
-  if (customerCode && product.customer?.code !== customerCode) {
+  if (kind !== "in" && customerCode && product.customer?.code !== customerCode) {
     setOpsMessage(msgId, "El SKU no pertenece al customer seleccionado.", false);
     return;
   }
@@ -7465,19 +7754,24 @@ async function submitOperationalMovement(kind) {
 
   if (btn) btn.disabled = true;
   try {
+    const payload = {
+      sku,
+      type: kind === "in" ? "IN" : "OUT",
+      quantity: qty,
+      warehouse,
+      location,
+      status,
+      reference,
+      notes: notes || undefined
+    };
+    if (kind === "in") {
+      payload.assignmentType = inboundAssignmentType;
+      payload.projectId = inboundAssignmentType === "FREE_TO_SALE" ? null : inboundProjectId;
+    }
     const response = await authenticatedFetch("/api/inventory/movements", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sku,
-        type: kind === "in" ? "IN" : "OUT",
-        quantity: qty,
-        warehouse,
-        location,
-        status,
-        reference,
-        notes: notes || undefined
-      })
+      body: JSON.stringify(payload)
     });
     if (!response) return;
     const data = await response.json().catch(() => ({}));
@@ -7495,7 +7789,8 @@ async function submitOperationalMovement(kind) {
   } catch (_e) {
     setOpsMessage(msgId, "Error de red.", false);
   } finally {
-    if (btn) btn.disabled = false;
+    if (kind === "in") syncInboundSubmitEnabled();
+    else if (btn) btn.disabled = false;
   }
 }
 
@@ -8335,7 +8630,6 @@ function wireRequisitionModes() {
 
 function wireOperationalForms() {
   [
-    ["inboundCustomer", "inboundSku", "inboundProduct", "inboundCliente"],
     ["outboundCustomer", "outboundSku", "outboundProduct", "outboundCliente"],
     ["reqCustomer", "reqSku", null, "reqCliente"]
   ].forEach(([custId, skuId, prodId, clienteId]) => {
@@ -8357,6 +8651,11 @@ function wireOperationalForms() {
       sku.dataset.opsWired = "1";
       const syncProductName = () => {
         if (!prodId) return;
+        if (skuId === "inboundSku" && !inboundHasSystemSkuSelection()) {
+          const inp = document.getElementById(prodId);
+          if (inp) inp.value = "";
+          return;
+        }
         const prod =
           findProductBySku(sku.value) || resolveProductBySkuOrCode(String(sku.value || "").trim());
         const inp = document.getElementById(prodId);
@@ -8367,11 +8666,43 @@ function wireOperationalForms() {
     }
   });
 
+  const inboundSku = document.getElementById("inboundSku");
+  if (inboundSku && inboundSku.dataset.opsWired !== "1") {
+    inboundSku.dataset.opsWired = "1";
+    inboundSku.addEventListener("change", () => {
+      if (!inboundHasSystemSkuSelection()) {
+        const inp = document.getElementById("inboundProduct");
+        if (inp) inp.value = "";
+      }
+    });
+  }
+  const inboundAssignment = document.getElementById("inboundAssignmentType");
+  if (inboundAssignment && inboundAssignment.dataset.opsWired !== "1") {
+    inboundAssignment.dataset.opsWired = "1";
+    inboundAssignment.addEventListener("change", () => syncInboundAssignmentUi());
+  }
+  [
+    "inboundProjectId",
+    "inboundQty",
+    "inboundWarehouse",
+    "inboundWarehouseSelect",
+    "inboundLocation",
+    "inboundLocationSelect",
+    "inboundStatus"
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.inboundReadyWired === "1") return;
+    el.dataset.inboundReadyWired = "1";
+    el.addEventListener("input", () => syncInboundSubmitEnabled());
+    el.addEventListener("change", () => syncInboundSubmitEnabled());
+  });
+
   const inBtn = document.getElementById("inboundSubmitBtn");
   if (inBtn && inBtn.dataset.opsWired !== "1") {
     inBtn.dataset.opsWired = "1";
     inBtn.addEventListener("click", () => void submitOperationalMovement("in"));
   }
+  syncInboundSubmitEnabled();
   const outBtn = document.getElementById("outboundSubmitBtn");
   if (outBtn && outBtn.dataset.opsWired !== "1") {
     outBtn.dataset.opsWired = "1";
@@ -8394,43 +8725,6 @@ function wireOperationalForms() {
   }
 
   wireAllProductTypeaheads();
-}
-
-async function submitMovement(event) {
-  event.preventDefault();
-  movementError.textContent = "";
-  movementBtn.disabled = true;
-  const payload = {
-    sku: moveSku.value.trim(),
-    warehouse: moveWarehouse.value.trim() || "TULTITLAN24",
-    type: moveType.value,
-    quantity: Number(moveQty.value),
-    reference: moveRef.value.trim() || undefined,
-    notes: moveNotes.value.trim() || undefined,
-    location: document.getElementById("moveLocation")?.value?.trim() || undefined,
-    status: document.getElementById("moveStatus")?.value || "AVAILABLE"
-  };
-  try {
-    const response = await authenticatedFetch("/api/inventory/movements", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    if (!response) return;
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      movementError.textContent = data.message || "No se pudo registrar el movimiento.";
-      return;
-    }
-    movementForm.reset();
-    moveWarehouse.value = "TULTITLAN24";
-    await loadStockStrip();
-    await loadInventoryMovements();
-  } catch (_e) {
-    movementError.textContent = "Error de red.";
-  } finally {
-    movementBtn.disabled = false;
-  }
 }
 
 async function runImport() {
@@ -8518,6 +8812,9 @@ async function loadCatalogData() {
   const clientsResponse = await authenticatedFetch("/api/catalog/clients");
   clientsCache = clientsResponse?.ok ? await clientsResponse.json() : [];
   if (!Array.isArray(clientsCache)) clientsCache = [];
+  const projectsResponse = await authenticatedFetch("/api/catalog/customers");
+  catalogProjectsCache = projectsResponse?.ok ? await projectsResponse.json() : [];
+  if (!Array.isArray(catalogProjectsCache)) catalogProjectsCache = [];
   if (clientsList) clientsList.innerHTML = "";
   renderClientsModule();
   populateOperationalSelects();
@@ -8616,7 +8913,8 @@ function applyRoleNavigation(role) {
   createCustomerForm.classList.toggle("hidden", role !== "ADMIN");
   if (importSection) importSection.classList.remove("hidden");
   if (catalogImportSection) catalogImportSection.classList.remove("hidden");
-  movementForm.classList.toggle("hidden", role !== "ADMIN");
+  const inventoryOpsNavPanel = document.getElementById("inventoryOpsNavPanel");
+  if (inventoryOpsNavPanel) inventoryOpsNavPanel.classList.toggle("hidden", role !== "ADMIN");
   const openCatBtn = document.getElementById("openCatalogImportBtn");
   const openInvBtn = document.getElementById("openInventoryImportBtn");
   const bulkInboundOpenImportBtn = document.getElementById("bulkInboundOpenImportBtn");
@@ -8635,7 +8933,10 @@ function applyRoleNavigation(role) {
   const inBtn = document.getElementById("inboundSubmitBtn");
   const outBtn = document.getElementById("outboundSubmitBtn");
   const canOperate = role === "ADMIN" || role === "SUPERVISOR" || role === "OPERATOR";
-  if (inBtn) inBtn.style.display = canOperate ? "inline-block" : "none";
+  if (inBtn) {
+    inBtn.style.display = canOperate ? "inline-block" : "none";
+    syncInboundSubmitEnabled();
+  }
   if (outBtn) outBtn.style.display = canOperate ? "inline-block" : "none";
   const canExportInventory = role === "ADMIN" || role === "OPERATOR" || role === "SUPERVISOR";
   const canExportTrace = canExportInventory;
@@ -10731,7 +11032,6 @@ changePasswordForm.addEventListener("submit", changePassword);
 createCustomerForm.addEventListener("submit", createCustomer);
 createProductForm.addEventListener("submit", createProduct);
 scanForm.addEventListener("submit", scanCode);
-movementForm.addEventListener("submit", submitMovement);
 importBtn.addEventListener("click", runImport);
 catalogPreviewBtn.addEventListener("click", () => runCatalogImport("preview"));
 catalogApplyBtn.addEventListener("click", () => runCatalogImport("apply"));

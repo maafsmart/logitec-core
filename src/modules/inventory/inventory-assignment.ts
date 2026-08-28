@@ -55,50 +55,62 @@ export function assignmentFromInventory(inventory: {
   };
 }
 
+async function ownerClientIdForProduct(
+  tx: Prisma.TransactionClient,
+  product: { customerId: string | null; customer?: { clientId: string | null } | null }
+): Promise<string | null> {
+  if (product.customer?.clientId) return product.customer.clientId;
+  if (!product.customerId) return null;
+  const owner = await tx.customer.findUnique({
+    where: { id: product.customerId },
+    select: { clientId: true }
+  });
+  return owner?.clientId ?? null;
+}
+
 export async function resolveInboundAssignment(
   tx: Prisma.TransactionClient,
-  product: { customerId: string | null },
+  product: { customerId: string | null; customer?: { clientId: string | null } | null },
   input: InboundAssignmentInput
 ): Promise<InventoryAssignment> {
   const explicitType = input.assignmentType;
-  const hasExplicitProject = input.projectId !== undefined;
   const explicitProjectId = input.projectId ?? null;
 
+  if (explicitType !== "PROJECT" && explicitType !== "FREE_TO_SALE") {
+    throw new InventoryMutationError(
+      "ASSIGNMENT_REQUIRED",
+      "La entrada requiere asignación PROJECT o FREE_TO_SALE; no se crearán existencias LEGACY_UNASSIGNED."
+    );
+  }
+
   if (explicitType === "FREE_TO_SALE") {
-    if (hasExplicitProject && explicitProjectId) {
+    if (explicitProjectId) {
       throw new InventoryMutationError("PROJECT_MUST_BE_NULL", "FREE TO SALE no admite projectId.");
     }
     return buildAssignment("FREE_TO_SALE", null);
   }
 
-  if (explicitType === "PROJECT" || hasExplicitProject) {
-    if (!explicitProjectId) {
-      throw new InventoryMutationError("PROJECT_REQUIRED", "La asignación PROJECT requiere projectId.");
-    }
-    const project = await tx.customer.findUnique({
-      where: { id: explicitProjectId },
-      select: { id: true, code: true, name: true }
-    });
-    if (!project || isForbiddenInventoryProjectRecord(project)) {
-      throw new InventoryMutationError("PROJECT_NOT_FOUND", "Proyecto no encontrado.");
-    }
-    return buildAssignment("PROJECT", project.id);
+  if (!explicitProjectId) {
+    throw new InventoryMutationError("PROJECT_REQUIRED", "La asignación PROJECT requiere projectId.");
   }
-
-  if (product.customerId) {
-    const owner = await tx.customer.findUnique({
-      where: { id: product.customerId },
-      select: { id: true, code: true, name: true }
-    });
-    if (owner && !isForbiddenInventoryProjectRecord(owner)) {
-      return buildAssignment("PROJECT", owner.id);
-    }
+  const project = await tx.customer.findUnique({
+    where: { id: explicitProjectId },
+    select: { id: true, code: true, name: true, active: true, clientId: true }
+  });
+  if (!project || isForbiddenInventoryProjectRecord(project)) {
+    throw new InventoryMutationError("PROJECT_NOT_FOUND", "Proyecto no encontrado.");
   }
-
-  throw new InventoryMutationError(
-    "ASSIGNMENT_REQUIRED",
-    "La entrada requiere asignación PROJECT o FREE_TO_SALE; no se crearán existencias LEGACY_UNASSIGNED."
-  );
+  if (!project.active) {
+    throw new InventoryMutationError("PROJECT_INACTIVE", "El proyecto destino no está activo.");
+  }
+  const ownerClientId = await ownerClientIdForProduct(tx, product);
+  if (ownerClientId && project.clientId !== ownerClientId) {
+    throw new InventoryMutationError(
+      "PROJECT_WRONG_CLIENT",
+      "No se puede asignar a un proyecto de otro cliente."
+    );
+  }
+  return buildAssignment("PROJECT", project.id);
 }
 
 export async function ensureCanonicalProductProject(

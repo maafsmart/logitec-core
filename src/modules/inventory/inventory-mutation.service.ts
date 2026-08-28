@@ -217,7 +217,7 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
     }
     const product = await tx.product.findUnique({
       where: { id: input.productId },
-      select: { id: true, customerId: true }
+      select: { id: true, customerId: true, customer: { select: { id: true, clientId: true } } }
     });
     if (!product) throw new InventoryMutationError("PRODUCT_NOT_FOUND", "Producto no encontrado.");
     const assignment = await resolveInboundAssignment(tx, product, {

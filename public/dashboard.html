@@ -370,6 +370,63 @@
       .field.compact .product-typeahead-list {
         min-width: min(420px, 80vw);
       }
+      .sku-selected-card {
+        margin-top: 8px;
+        padding: 10px 12px;
+        border: 1.5px solid #059669;
+        border-radius: 10px;
+        background: #ecfdf5;
+        color: #065f46;
+        box-shadow: 0 1px 0 rgba(5, 150, 105, 0.12);
+      }
+      .sku-selected-card.hidden {
+        display: none !important;
+      }
+      .sku-selected-card-title {
+        font-weight: 800;
+        font-size: 0.86rem;
+        margin: 0 0 8px;
+        color: #047857;
+      }
+      .sku-selected-card-meta {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px 12px;
+        margin: 0 0 8px;
+      }
+      .sku-selected-card-meta dt {
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: #047857;
+        font-weight: 700;
+      }
+      .sku-selected-card-meta dd {
+        margin: 0;
+        font-size: 0.84rem;
+        font-weight: 650;
+        color: #134e4a;
+        word-break: break-word;
+      }
+      .sku-selected-card .sku-change-btn {
+        margin: 0 0 4px;
+      }
+      .sku-selected-detail {
+        margin-top: 6px;
+        font-size: 0.78rem;
+        color: #3f5d54;
+      }
+      .sku-selected-detail summary {
+        cursor: pointer;
+        font-weight: 700;
+        color: #047857;
+      }
+      .sku-selected-detail-body {
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px dashed rgba(5, 150, 105, 0.35);
+        line-height: 1.4;
+      }
       .assignee-hint {
         margin: 4px 0 0;
         font-size: 0.78rem;
@@ -3993,41 +4050,14 @@
               </div>
               <div id="inventoryMovementsList">Cargando...</div>
             </div>
-            <form id="movementForm" class="hidden">
-              <h4 style="margin: 16px 0 8px">Registrar movimiento</h4>
-              <div class="form-grid">
-                <div class="field">
-                  <label for="moveSku">SKU</label>
-                  <input id="moveSku" type="text" required placeholder="Ej. SKU-001" />
-                </div>
-                <div class="field">
-                  <label for="moveWarehouse">Almacén</label>
-                  <input id="moveWarehouse" type="text" value="TULTITLAN24" required />
-                </div>
-                <div class="field">
-                  <label for="moveType">Tipo</label>
-                  <select id="moveType" required>
-                    <option value="IN">Entrada (+)</option>
-                    <option value="OUT">Salida (−)</option>
-                    <option value="ADJUST_SET">Ajuste: fijar saldo</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="moveQty">Cantidad</label>
-                  <input id="moveQty" type="number" step="0.0001" min="0" required />
-                </div>
-                <div class="field">
-                  <label for="moveRef">Referencia (opcional)</label>
-                  <input id="moveRef" type="text" placeholder="OC, factura, etc." />
-                </div>
-                <div class="field full">
-                  <label for="moveNotes">Notas (opcional)</label>
-                  <input id="moveNotes" type="text" />
-                </div>
+            <div id="inventoryOpsNavPanel" class="card-panel hidden">
+              <p class="module-hint" style="margin:0 0 10px">Los movimientos de inventario se registran desde Operación para conservar asignación, ubicación y trazabilidad.</p>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button type="button" class="btn-secondary btn-compact" id="inventoryGoInboundBtn" data-goto-module="inbound" data-nav-section="operacion">Entradas / Recepción</button>
+                <button type="button" class="btn-secondary btn-compact" id="inventoryGoRelocateBtn" data-goto-module="relocate" data-nav-section="operacion">Movimiento interno / Reubicación</button>
+                <button type="button" class="btn-secondary btn-compact" id="inventoryGoOutboundBtn" data-goto-module="outbound" data-nav-section="operacion">Salidas / Despacho</button>
               </div>
-              <p id="movementError" class="inline-error"></p>
-              <button id="movementBtn" type="submit">Registrar movimiento</button>
-            </form>
+            </div>
           </div>
           <div id="moduleCatalog" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
@@ -4172,11 +4202,21 @@
             <div class="card-panel ops-form-panel">
               <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong></p>
               <h4 class="secondary-panel-title">Registrar entrada</h4>
-              <p class="module-hint" style="margin:0 0 10px">Primero selecciona proyecto, después SKU.</p>
+              <p class="module-hint" style="margin:0 0 10px">Primero selecciona la asignación. Si eliges Proyecto, indica el proyecto destino. Después selecciona un SKU de las sugerencias.</p>
               <div class="form-grid">
                 <div class="field">
-                  <label for="inboundCustomer">Proyecto</label>
-                  <select id="inboundCustomer" required><option value="">— Seleccionar proyecto —</option></select>
+                  <label for="inboundAssignmentType">Asignación</label>
+                  <select id="inboundAssignmentType">
+                    <option value="">— Seleccionar asignación —</option>
+                    <option value="FREE_TO_SALE">Free to Sale</option>
+                    <option value="PROJECT">Proyecto</option>
+                  </select>
+                </div>
+                <div class="field hidden" id="inboundProjectField">
+                  <label for="inboundProjectId">Proyecto destino</label>
+                  <select id="inboundProjectId">
+                    <option value="">— Seleccionar proyecto —</option>
+                  </select>
                 </div>
                 <div class="field hidden">
                   <label for="inboundCliente">Cliente</label>
@@ -4196,6 +4236,7 @@
                       spellcheck="false"
                       placeholder="Buscar SKU, barras, nombre o proyecto…"
                     />
+                    <input type="hidden" id="inboundProductId" value="" />
                     <div id="inboundSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
                   </div>
                 </div>
@@ -4235,7 +4276,7 @@
                 </div>
               </div>
               <p id="inboundMessage" class="ops-message"></p>
-              <button type="button" id="inboundSubmitBtn" class="btn-primary btn-compact">Registrar entrada</button>
+              <button type="button" id="inboundSubmitBtn" class="btn-primary btn-compact" disabled>Registrar entrada</button>
             </div>
             <div class="card-panel" style="padding:0">
               <p id="inboundTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Entradas recientes</p>
@@ -4968,6 +5009,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=65"></script>
+    <script src="/dashboard.js?v=66"></script>
   </body>
 </html>
