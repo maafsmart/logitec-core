@@ -112,7 +112,7 @@ test("conserva las demás columnas y no escribe inventario", () => {
   assert.doesNotMatch(html, /id="movementForm"/);
   assert.match(html, /id="inventoryOpsNavPanel"/);
   assert.match(html, /id="exportMovementsBtn"/);
-  assert.match(html, /dashboard\.js\?v=66/);
+  assert.match(html, /dashboard\.js\?v=67/);
   assert.match(loadMovements, /authenticatedFetch\(`\/api\/inventory\/movements/);
   assert.doesNotMatch(loadMovements, /method:\s*"POST"/i);
   assert.doesNotMatch(loadMovements, /method:\s*"PATCH"/i);

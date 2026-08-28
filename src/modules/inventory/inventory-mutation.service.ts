@@ -208,6 +208,87 @@ export async function incrementParent(tx: Prisma.TransactionClient, inventoryId:
   return rows[0]!;
 }
 
+function sameNullableDecimal(left: Prisma.Decimal | null | undefined, right: Prisma.Decimal | null | undefined) {
+  if (left == null && right == null) return true;
+  if (left == null || right == null) return false;
+  return left.equals(right);
+}
+
+export function inboundLayerAttributesMatch(
+  existing: {
+    lotNumber: string | null;
+    sourceReference: string | null;
+    unitPriceMxn: Prisma.Decimal | null;
+    unitPriceUsd: Prisma.Decimal | null;
+  },
+  incoming: {
+    lotNumber: string | null;
+    sourceReference: string | null;
+    unitPriceMxn: Prisma.Decimal | null;
+    unitPriceUsd: Prisma.Decimal | null;
+  }
+) {
+  return (
+    (existing.lotNumber ?? null) === (incoming.lotNumber ?? null) &&
+    (existing.sourceReference ?? null) === (incoming.sourceReference ?? null) &&
+    sameNullableDecimal(existing.unitPriceMxn, incoming.unitPriceMxn) &&
+    sameNullableDecimal(existing.unitPriceUsd, incoming.unitPriceUsd)
+  );
+}
+
+async function incrementLayerQty(tx: Prisma.TransactionClient, layerId: string, delta: Prisma.Decimal) {
+  const rows = await tx.$queryRaw<Array<{ id: string; qty: Prisma.Decimal; unitPriceMxn: Prisma.Decimal | null }>>`
+    UPDATE "InventoryLayer"
+    SET qty = qty + ${delta}, "updatedAt" = NOW()
+    WHERE id = ${layerId}
+    RETURNING id, qty, "unitPriceMxn"
+  `;
+  if (!rows.length) throw new InventoryMutationError("LAYER_NOT_AVAILABLE", "La capa destino no existe.");
+  return rows[0]!;
+}
+
+async function selectOrCreateInboundLayer(
+  tx: Prisma.TransactionClient,
+  inventoryId: string,
+  input: InventoryMutationInput
+) {
+  await tx.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "InventoryLayer" WHERE "inventoryId" = ${inventoryId} ORDER BY "id" FOR UPDATE`
+  );
+  const incoming = {
+    lotNumber: input.lotNumber ?? null,
+    sourceReference: input.reference ?? null,
+    unitPriceMxn: input.unitPriceMxn ?? null,
+    unitPriceUsd: input.unitPriceUsd ?? null
+  };
+  const layers = await tx.inventoryLayer.findMany({
+    where: { inventoryId },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+  });
+  const match = layers.find((layer) => inboundLayerAttributesMatch(layer, incoming));
+  if (match) {
+    const updated = await incrementLayerQty(tx, match.id, input.qty);
+    return {
+      ...match,
+      qty: updated.qty,
+      unitPriceMxn: match.unitPriceMxn
+    };
+  }
+  return tx.inventoryLayer.create({
+    data: {
+      inventoryId,
+      qty: input.qty,
+      reservedQty: 0,
+      lotNumber: incoming.lotNumber,
+      receivedAt: new Date(),
+      unitPriceMxn: incoming.unitPriceMxn,
+      unitPriceUsd: incoming.unitPriceUsd,
+      sourceReference: incoming.sourceReference,
+      sourceType: "MANUAL_IN"
+    }
+  });
+}
+
 async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutationInput) {
   const status = input.status ?? "AVAILABLE";
 
@@ -229,19 +310,7 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
       throw new InventoryMutationError("INVENTORY_PRODUCT_MISMATCH", "La línea no corresponde al producto.");
     }
     const before = inventory.qty;
-    const layer = await tx.inventoryLayer.create({
-      data: {
-        inventoryId: inventory.id,
-        qty: input.qty,
-        reservedQty: 0,
-        lotNumber: input.lotNumber ?? null,
-        receivedAt: new Date(),
-        unitPriceMxn: input.unitPriceMxn ?? null,
-        unitPriceUsd: input.unitPriceUsd ?? null,
-        sourceReference: input.reference ?? null,
-        sourceType: "MANUAL_IN"
-      }
-    });
+    const layer = await selectOrCreateInboundLayer(tx, inventory.id, input);
     const updatedParent = await incrementParent(tx, inventory.id, input.qty);
     const movement = await tx.inventoryMovement.create({
       data: {

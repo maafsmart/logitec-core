@@ -15,6 +15,12 @@ export class LayerPriceError extends Error {
 
 const PRICE_PATTERN = /^\d+(\.\d{1,4})?$/;
 
+export function inboundUnitPriceWasProvided(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === "string" && value.trim() === "") return false;
+  return true;
+}
+
 export function parseLayerUnitPriceMxn(value: unknown): Prisma.Decimal {
   const raw = value == null ? "" : String(value).trim().replace(",", ".");
   if (!raw) {
@@ -34,6 +40,11 @@ export function parseLayerUnitPriceMxn(value: unknown): Prisma.Decimal {
     );
   }
   return price;
+}
+
+export function parseOptionalUnitPriceMxn(value: unknown): Prisma.Decimal | null {
+  if (!inboundUnitPriceWasProvided(value)) return null;
+  return parseLayerUnitPriceMxn(value);
 }
 
 export function layerPriceOnlyData(unitPriceMxn: Prisma.Decimal): { unitPriceMxn: Prisma.Decimal } {

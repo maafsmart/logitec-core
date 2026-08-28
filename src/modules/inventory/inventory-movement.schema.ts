@@ -16,7 +16,7 @@ export const createMovementSchema = z
     inventoryId: z.string().min(1).optional(),
     layerId: z.string().min(1).optional(),
     lotNumber: z.string().min(1).max(120).optional(),
-    unitPriceMxn: z.coerce.number().nonnegative().optional(),
+    unitPriceMxn: z.unknown().optional(),
     unitPriceUsd: z.coerce.number().nonnegative().optional(),
     assignmentType: z.enum(["PROJECT", "FREE_TO_SALE"]).optional(),
     projectId: z.string().min(1).nullable().optional()

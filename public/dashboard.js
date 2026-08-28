@@ -6784,13 +6784,119 @@ function inboundFormIsComplete() {
   if (!location) return false;
   const status = document.getElementById("inboundStatus")?.value?.trim();
   if (!status) return false;
+  const priceRaw = document.getElementById("inboundUnitPriceMxn")?.value;
+  if (priceRaw != null && String(priceRaw).trim() !== "") {
+    const normalized = String(priceRaw).trim().replace(",", ".");
+    if (!/^\d+(\.\d{1,4})?$/.test(normalized)) return false;
+  }
   return true;
+}
+
+function parseInboundUnitPriceMxn() {
+  const raw = document.getElementById("inboundUnitPriceMxn")?.value;
+  if (raw == null || String(raw).trim() === "") return { ok: true, empty: true, value: null };
+  if (typeof parseLayerPriceMxnInput === "function") {
+    const parsed = parseLayerPriceMxnInput(raw);
+    if (!parsed.ok) return { ok: false, empty: false, value: null, message: parsed.message };
+    return { ok: true, empty: false, value: parsed.value };
+  }
+  const normalized = String(raw).trim().replace(",", ".");
+  if (!/^\d+(\.\d{1,4})?$/.test(normalized)) return { ok: false, empty: false, value: null };
+  return { ok: true, empty: false, value: normalized };
+}
+
+function inboundEntryQtyValue() {
+  const raw = document.getElementById("inboundQty")?.value;
+  const qty = Number(raw);
+  if (!Number.isFinite(qty) || qty <= 0) return null;
+  return String(raw).trim();
+}
+
+function formatInboundQtyLabel(qty) {
+  const raw = String(qty ?? "").trim();
+  if (!raw) return "";
+  if (/^\d+$/.test(raw)) return raw;
+  return raw.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") || raw;
+}
+
+function multiplyInboundQtyPrice(qtyRaw, priceRaw) {
+  const qty = String(qtyRaw).trim();
+  const price = String(priceRaw).trim();
+  if (!/^\d+(\.\d+)?$/.test(qty) || !/^\d+(\.\d+)?$/.test(price)) return null;
+  const [qWhole, qFrac = ""] = qty.split(".");
+  const [pWhole, pFrac = ""] = price.split(".");
+  const qScale = qFrac.length;
+  const pScale = pFrac.length;
+  const qInt = BigInt(qWhole + qFrac);
+  const pInt = BigInt(pWhole + pFrac);
+  const prod = qInt * pInt;
+  const scale = qScale + pScale;
+  const digits = prod.toString().padStart(scale + 1, "0");
+  const whole = scale === 0 ? digits : digits.slice(0, -scale) || "0";
+  const frac = scale === 0 ? "" : digits.slice(-scale);
+  const cents = frac.padEnd(2, "0").slice(0, 2);
+  const leftover = frac.slice(2);
+  let carry = 0;
+  if (leftover && leftover[0] && leftover[0] >= "5") carry = 1;
+  let centsN = Number(cents) + carry;
+  let wholeN = BigInt(whole);
+  if (centsN >= 100) {
+    wholeN += 1n;
+    centsN -= 100;
+  }
+  return `${wholeN.toString()}.${String(centsN).padStart(2, "0")}`;
+}
+
+function inboundEntryValueLabel() {
+  const qty = inboundEntryQtyValue();
+  const price = parseInboundUnitPriceMxn();
+  if (!qty || !price.ok || price.empty) return "Pendiente";
+  const total = multiplyInboundQtyPrice(qty, price.value);
+  if (!total) return "Pendiente";
+  return `${formatInboundQtyLabel(qty)} × ${formatMxn(price.value)} = ${formatMxn(total)} MXN`;
+}
+
+function updateInboundEntryValue() {
+  const el = document.getElementById("inboundEntryValue");
+  if (el) el.value = inboundEntryValueLabel();
+}
+
+function inboundProjectConfirmLabel() {
+  const sel = document.getElementById("inboundProjectId");
+  if (!sel) return "";
+  const opt = sel.options?.[sel.selectedIndex];
+  const name = String(opt?.getAttribute("data-name") || "").trim();
+  const code = String(opt?.getAttribute("data-code") || "").trim();
+  if (name) return name;
+  const text = String(opt?.textContent || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
+  return text || code || sel.value || "";
+}
+
+function buildInboundConfirmMessage(input) {
+  const qty = formatInboundQtyLabel(input.qty);
+  const sku = input.sku;
+  const product = input.productName ? ` (${input.productName})` : "";
+  const location = input.location;
+  const warehouse = input.warehouse;
+  const lote = input.lote ? `lote ${input.lote}` : "sin lote";
+  const assignment =
+    input.assignmentType === "PROJECT"
+      ? `al proyecto ${input.projectLabel || input.projectId}`
+      : "como Free to Sale";
+  if (input.priceEmpty) {
+    return `Se registrará la entrada de ${qty} piezas del SKU ${sku}${product} ${assignment}, almacén ${warehouse}, ubicación ${location}, ${lote}, sin precio asignado. Podrá valuarse posteriormente desde Existencias. ¿Deseas continuar?`;
+  }
+  const unit = formatLayerPriceMxnExact(input.priceValue) || formatMxn(input.priceValue);
+  const total = multiplyInboundQtyPrice(input.qty, input.priceValue);
+  const totalLabel = total ? formatMxn(total) : "Pendiente";
+  return `Se registrará la entrada de ${qty} piezas del SKU ${sku}${product} ${assignment}, almacén ${warehouse}, ubicación ${location}, ${lote}, con precio unitario de ${unit} MXN y valor total de ${totalLabel} MXN. ¿Deseas continuar?`;
 }
 
 function syncInboundSubmitEnabled() {
   const btn = document.getElementById("inboundSubmitBtn");
   if (!btn) return;
   btn.disabled = !inboundFormIsComplete();
+  if (typeof updateInboundEntryValue === "function") updateInboundEntryValue();
 }
 
 function hideSkuSelectedCard(listEl) {
@@ -7752,6 +7858,37 @@ async function submitOperationalMovement(kind) {
 
   const reference = buildOpsReference(lote, referenceRaw, kind);
 
+  if (kind === "in") {
+    const price = parseInboundUnitPriceMxn();
+    if (!price.ok) {
+      setOpsMessage(msgId, price.message || "El precio unitario MXN no es válido.", false);
+      syncInboundSubmitEnabled();
+      return;
+    }
+    if (typeof canSeeEconomicValuation === "function" && !canSeeEconomicValuation() && !price.empty) {
+      setOpsMessage(msgId, "Solo ADMIN puede asignar precio unitario MXN en la entrada.", false);
+      syncInboundSubmitEnabled();
+      return;
+    }
+    const confirmMsg = buildInboundConfirmMessage({
+      sku,
+      productName: document.getElementById("inboundProduct")?.value?.trim() || product.name || "",
+      qty: document.getElementById("inboundQty")?.value || qty,
+      assignmentType: inboundAssignmentType,
+      projectId: inboundProjectId,
+      projectLabel: inboundProjectConfirmLabel(),
+      warehouse,
+      location,
+      lote,
+      priceEmpty: price.empty,
+      priceValue: price.value
+    });
+    if (typeof window !== "undefined" && window.confirm && !window.confirm(confirmMsg)) {
+      syncInboundSubmitEnabled();
+      return;
+    }
+  }
+
   if (btn) btn.disabled = true;
   try {
     const payload = {
@@ -7767,6 +7904,11 @@ async function submitOperationalMovement(kind) {
     if (kind === "in") {
       payload.assignmentType = inboundAssignmentType;
       payload.projectId = inboundAssignmentType === "FREE_TO_SALE" ? null : inboundProjectId;
+      if (lote) payload.lotNumber = lote;
+      const price = parseInboundUnitPriceMxn();
+      if (!price.empty && price.value != null && (typeof canSeeEconomicValuation !== "function" || canSeeEconomicValuation())) {
+        payload.unitPriceMxn = price.value;
+      }
     }
     const response = await authenticatedFetch("/api/inventory/movements", {
       method: "POST",
@@ -7782,6 +7924,11 @@ async function submitOperationalMovement(kind) {
     setOpsMessage(msgId, kind === "in" ? "Entrada registrada correctamente." : "Salida registrada correctamente.", true);
     document.getElementById(`${prefix}Qty`).value = "";
     document.getElementById(`${prefix}Notes`).value = "";
+    if (kind === "in") {
+      const priceEl = document.getElementById("inboundUnitPriceMxn");
+      if (priceEl) priceEl.value = "";
+      updateInboundEntryValue();
+    }
     await loadStockStrip();
     await loadInventoryMovements();
     if (kind === "in") await loadInboundList();
@@ -8688,7 +8835,8 @@ function wireOperationalForms() {
     "inboundWarehouseSelect",
     "inboundLocation",
     "inboundLocationSelect",
-    "inboundStatus"
+    "inboundStatus",
+    "inboundUnitPriceMxn"
   ].forEach((id) => {
     const el = document.getElementById(id);
     if (!el || el.dataset.inboundReadyWired === "1") return;

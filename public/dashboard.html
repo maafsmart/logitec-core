@@ -656,6 +656,26 @@
       #priceConfirmBtn:disabled:hover {
         background: #94a3b8;
       }
+      #inboundSubmitBtn:disabled,
+      #inboundSubmitBtn[disabled] {
+        background: #94a3b8 !important;
+        border: 1px solid #94a3b8 !important;
+        color: #fff !important;
+        cursor: not-allowed !important;
+        box-shadow: none !important;
+        opacity: 1;
+      }
+      #inboundSubmitBtn:disabled:hover,
+      #inboundSubmitBtn[disabled]:hover {
+        background: #94a3b8 !important;
+        border-color: #94a3b8 !important;
+        color: #fff !important;
+      }
+      #inboundSubmitBtn:not(:disabled) {
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+      }
       .price-new-help {
         margin: 4px 0 0;
         padding: 0;
@@ -4248,6 +4268,14 @@
                   <label for="inboundQty">Cantidad</label>
                   <input id="inboundQty" type="number" step="0.0001" min="0.0001" required />
                 </div>
+                <div class="field js-economic-card hidden">
+                  <label for="inboundUnitPriceMxn">Precio unitario MXN (opcional)</label>
+                  <input id="inboundUnitPriceMxn" type="text" inputmode="decimal" autocomplete="off" placeholder="Sin precio por ahora" value="" />
+                </div>
+                <div class="field js-economic-card hidden">
+                  <label for="inboundEntryValue">Valor de esta entrada</label>
+                  <input id="inboundEntryValue" type="text" class="field-readonly" readonly value="Pendiente" />
+                </div>
                 <div class="field">
                   <label for="inboundWarehouse">Almacén</label>
                   <div class="smart-select-wrap">
@@ -4275,6 +4303,7 @@
                   <input id="inboundNotes" type="text" />
                 </div>
               </div>
+              <p class="module-hint js-economic-card hidden" id="inboundPriceHelp" style="margin:8px 0 10px">Si todavía no conoces el precio, puedes dejarlo vacío y asignarlo posteriormente desde Existencias.</p>
               <p id="inboundMessage" class="ops-message"></p>
               <button type="button" id="inboundSubmitBtn" class="btn-primary btn-compact" disabled>Registrar entrada</button>
             </div>
@@ -5009,6 +5038,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=66"></script>
+    <script src="/dashboard.js?v=67"></script>
   </body>
 </html>

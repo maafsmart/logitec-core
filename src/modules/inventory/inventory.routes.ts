@@ -15,7 +15,12 @@ import {
 import { parseMexicoCityDateFilter } from "../../shared/mexico-city-date.js";
 import { canExposeEconomicValuation } from "./inventory-economic-access.js";
 import { calculateInventoryValuation } from "./inventory-valuation.service.js";
-import { LayerPriceError, updateInventoryLayerUnitPriceMxn } from "./inventory-layer-price.service.js";
+import {
+  inboundUnitPriceWasProvided,
+  LayerPriceError,
+  parseOptionalUnitPriceMxn,
+  updateInventoryLayerUnitPriceMxn
+} from "./inventory-layer-price.service.js";
 import { splitUnpricedInventoryLayerPrice } from "./inventory-layer-price-split.service.js";
 import { valueAndAssignUnpricedLayer } from "./inventory-layer-value-and-assign.service.js";
 import { InventoryMutationError, mutateInventory } from "./inventory-mutation.service.js";
@@ -663,6 +668,24 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
 
 inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
   const body = createMovementSchema.parse(req.body);
+  if (
+    body.type === "IN" &&
+    inboundUnitPriceWasProvided((req.body as { unitPriceMxn?: unknown } | undefined)?.unitPriceMxn) &&
+    req.auth!.role !== "ADMIN"
+  ) {
+    throw new HttpError(403, "Solo ADMIN puede asignar precio unitario MXN en la entrada.");
+  }
+  let inboundUnitPriceMxn: Prisma.Decimal | null = null;
+  if (body.type === "IN") {
+    try {
+      inboundUnitPriceMxn = parseOptionalUnitPriceMxn(body.unitPriceMxn);
+    } catch (error) {
+      if (error instanceof LayerPriceError) {
+        throw new HttpError(error.statusCode, error.message);
+      }
+      throw error;
+    }
+  }
   const stockStatus = await assertActiveInventoryStatus(body.status || "AVAILABLE");
   const qtyIn = dec(body.quantity);
   const product = await prisma.product.findFirst({ where: { sku: body.sku.trim(), active: true } });
@@ -706,7 +729,7 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
       taskId: body.taskId?.trim() || null,
       userId: req.auth!.userId,
       lotNumber: body.lotNumber?.trim() || null,
-      unitPriceMxn: body.unitPriceMxn == null ? null : dec(body.unitPriceMxn),
+      unitPriceMxn: body.type === "IN" ? inboundUnitPriceMxn : body.unitPriceMxn == null ? null : dec(body.unitPriceMxn as string | number),
       unitPriceUsd: body.unitPriceUsd == null ? null : dec(body.unitPriceUsd),
       assignmentType: body.assignmentType,
       projectId: body.projectId === undefined ? undefined : body.projectId,
