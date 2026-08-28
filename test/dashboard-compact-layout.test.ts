@@ -99,11 +99,11 @@ test("densidad inicial es compact y hay migración versionada", () => {
   assert.match(html, /data-grid-density="compact"/);
 });
 
-test("dashboard.js usa v=60", () => {
-  assert.match(html, /dashboard\.js\?v=60/);
+test("dashboard.js usa v=61", () => {
+  assert.match(html, /dashboard\.js\?v=61/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=60/);
   assert.doesNotMatch(html, /dashboard\.js\?v=59/);
   assert.doesNotMatch(html, /dashboard\.js\?v=58/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=57/);
 });
 
 test("no aparecen textos técnicos nuevos visibles", () => {

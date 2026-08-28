@@ -5574,19 +5574,7 @@ async function exportProductsCsvFiltered() {
 }
 
 async function exportMovementsCsv() {
-  const scope = inventoryScopeQueryString();
-  const joiner = scope ? "&" : "?";
-  const response = await authenticatedFetch(`/api/inventory/movements${scope}${joiner}limit=all`);
-  if (!response?.ok) {
-    window.alert("No se pudo exportar movimientos.");
-    return;
-  }
-  const rows = filterRowsByAviatProject(unwrapMovementPayload(await response.json()).items);
-  if (!Array.isArray(rows) || rows.length === 0) {
-    window.alert("No hay movimientos para exportar.");
-    return;
-  }
-  exportToCsv(getAviatExportBasename("movimientos"), rows, MOVEMENT_EXPORT_COLUMNS);
+  await downloadExport("/api/exports/movements.csv?limit=20000", "logitec_movimientos.csv");
 }
 
 async function exportTraceabilityCsv() {
@@ -9509,11 +9497,20 @@ async function withImportLock(label, fn) {
 
 async function downloadExport(url, filename) {
   const response = await authenticatedFetch(url);
-  if (!response?.ok) {
-    window.alert("No se pudo exportar.");
+  if (!response) {
+    window.alert("Sesión expirada. Vuelve a iniciar sesión para exportar.");
+    return;
+  }
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    window.alert(data.message || "No se pudo completar la exportación. Intenta de nuevo.");
     return;
   }
   const blob = await response.blob();
+  if (!blob || blob.size === 0) {
+    window.alert("No se pudo completar la exportación. Intenta de nuevo.");
+    return;
+  }
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
   link.download = filename;
