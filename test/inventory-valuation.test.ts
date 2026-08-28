@@ -6,13 +6,23 @@ import { canExposeEconomicValuation } from "../src/modules/inventory/inventory-e
 import {
   calculateInventoryValuation,
   publicValuationForRole,
-  summarizeStockAssignments
+  summarizeStockAssignments,
+  summarizeVisibleStock
 } from "../src/modules/inventory/inventory-valuation.service.js";
+import {
+  layerPriceOnlyData,
+  parseLayerUnitPriceMxn,
+  LayerPriceError
+} from "../src/modules/inventory/inventory-layer-price.service.js";
 
 const js = readFileSync(new URL("../public/dashboard.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../public/dashboard.html", import.meta.url), "utf8");
 const stockRoutes = readFileSync(new URL("../src/modules/inventory/inventory.routes.ts", import.meta.url), "utf8");
 const catalogRoutes = readFileSync(new URL("../src/modules/catalog/catalog.routes.ts", import.meta.url), "utf8");
+const priceService = readFileSync(
+  new URL("../src/modules/inventory/inventory-layer-price.service.ts", import.meta.url),
+  "utf8"
+);
 
 function d(n: string | number) {
   return new Prisma.Decimal(n);
@@ -223,7 +233,7 @@ test("dashboard exporta columnas económicas y no trata Free to Sale como proyec
   assert.match(js, /tipo_asignacion/);
   assert.match(js, /Proyectos con existencias/);
   assert.match(js, /Free to Sale/);
-  assert.match(js, /Valor parcial: existen piezas sin valor unitario/);
+  assert.match(js, /El valor es parcial porque existen piezas sin precio asignado/);
   assert.match(js, /STOCK_EXPORT_COLUMNS/);
 });
 
@@ -233,8 +243,11 @@ test("HTML de existencias, proyectos y catálogo muestra la vista económica", (
   assert.match(html, /id="sumUnvaluedQty"/);
   assert.match(html, /id="sumEconomicCoverage"/);
   assert.match(html, /js-economic-card/);
-  assert.match(html, /dashboard\.js\?v=56/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=55/);
+  assert.match(html, /id="sumStockCubes"/);
+  assert.match(html, /id="sumStockTotal"[\s\S]{0,120}Piezas/);
+  assert.match(html, /id="sumStockCubes"[\s\S]{0,120}Saldos/);
+  assert.match(html, /dashboard\.js\?v=57/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=56/);
 });
 
 test("APIs de inventario y catálogo no rellenan precios faltantes ni usan customerId como proyecto", () => {
@@ -243,4 +256,76 @@ test("APIs de inventario y catálogo no rellenan precios faltantes ni usan custo
   assert.match(catalogRoutes, /stockAssignments/);
   assert.match(catalogRoutes, /summarizeStockAssignments/);
   assert.match(stockRoutes, /qty: \{ gt: 0 \}/);
+});
+
+test("Piezas es la suma de qty y Saldos es el conteo de cubos con qty>0", () => {
+  const summary = summarizeVisibleStock([
+    { qty: 100, valuation: { qtyUnvalued: "0" } },
+    { qty: 43, valuation: { qtyUnvalued: "43" } },
+    { qty: 0, valuation: { qtyUnvalued: "0" } },
+    { qty: "7.5", valuation: { qtyUnvalued: "2.5" } }
+  ]);
+  assert.equal(summary.saldos, 3);
+  assert.equal(summary.piezas, "150.5");
+  assert.equal(summary.unvaluedSaldos, 2);
+  assert.equal(summary.unvaluedPiezas, "45.5");
+});
+
+test("precio cero es valor asignado y null es ausencia de precio", () => {
+  const zero = calculateInventoryValuation([layer({ qty: 6, unitPriceMxn: 0 })]);
+  const missing = calculateInventoryValuation([layer({ qty: 6, unitPriceMxn: null })]);
+  assert.equal(zero.status, "COMPLETE");
+  assert.equal(zero.qtyValued, "6");
+  assert.equal(zero.qtyUnvalued, "0");
+  assert.equal(zero.totalValueMxn, "0.00");
+  assert.equal(missing.status, "NONE");
+  assert.equal(missing.qtyValued, "0");
+  assert.equal(missing.qtyUnvalued, "6");
+  assert.equal(missing.totalValueMxn, null);
+  const parsedZero = parseLayerUnitPriceMxn("0");
+  assert.equal(parsedZero.toString(), "0");
+  assert.throws(() => parseLayerUnitPriceMxn(null), LayerPriceError);
+  assert.throws(() => parseLayerUnitPriceMxn(""), LayerPriceError);
+  assert.throws(() => parseLayerUnitPriceMxn("1.23456"), LayerPriceError);
+  assert.equal(parseLayerUnitPriceMxn("12.3456").toString(), "12.3456");
+});
+
+test("la edición de precio solo actualiza unitPriceMxn y no toca existencias", () => {
+  const data = layerPriceOnlyData(new Prisma.Decimal("9.5"));
+  assert.deepEqual(Object.keys(data), ["unitPriceMxn"]);
+  assert.match(priceService, /data: layerPriceOnlyData\(price\)/);
+  assert.match(priceService, /subtype: "LAYER_PRICE_UPDATE"/);
+  assert.match(priceService, /logActivity/);
+  assert.doesNotMatch(priceService, /inventoryMovement\.create/);
+  assert.doesNotMatch(priceService, /tx\.inventory\.update/);
+  assert.doesNotMatch(priceService, /tx\.inventoryLayer\.create/);
+  assert.doesNotMatch(priceService, /tx\.inventoryLayer\.delete/);
+  assert.doesNotMatch(priceService, /splitLayer/);
+});
+
+test("ADMIN puede editar precio; OPERATOR y CLIENT quedan rechazados", () => {
+  assert.match(stockRoutes, /inventoryRouter\.patch\("\/layers\/:layerId\/price", requireRole\(\["ADMIN"\]\)/);
+  assert.match(stockRoutes, /No autorizado para editar valuación económica/);
+  assert.match(stockRoutes, /No autorizado para consultar valuación económica/);
+  const patchIdx = stockRoutes.indexOf('inventoryRouter.patch("/layers/:layerId/price"');
+  const patchBlock = stockRoutes.slice(patchIdx, stockRoutes.indexOf("inventoryRouter.get(\"/products/:productId/valuation\"", patchIdx));
+  assert.match(patchBlock, /requireRole\(\["ADMIN"\]\)/);
+  assert.doesNotMatch(patchBlock, /OPERATOR/);
+  assert.doesNotMatch(patchBlock, /CLIENT/);
+  assert.match(stockRoutes, /unitPriceMxn: _mxn/);
+  assert.match(stockRoutes, /unitPriceUsd: _usd/);
+});
+
+test("tras guardar precio se recalcan tarjetas y tabla sin recargar la página", () => {
+  const start = js.indexOf("async function confirmLayerPriceUpdate");
+  const end = js.indexOf("function wireLayerPricePanel");
+  const block = js.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(block, /loadStockStrip/);
+  assert.doesNotMatch(block, /location\.reload/);
+  assert.match(js, /inventoryUnpricedOnly/);
+  assert.match(js, /sumStockCubes/);
+  assert.match(html, /Ver registros sin precio/);
+  assert.match(html, /id="layerPricePanel"/);
+  assert.match(js, /window\.confirm/);
 });

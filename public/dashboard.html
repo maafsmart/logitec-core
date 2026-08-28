@@ -2637,6 +2637,9 @@
         color: var(--warn);
         font-weight: 600;
       }
+      .economic-partial-hint p {
+        margin: 0 0 8px;
+      }
       .valuation-badge.completo { color: var(--ok); }
       .valuation-badge.parcial { color: var(--warn); }
       .fts-assignment-note {
@@ -3746,6 +3749,10 @@
             <div class="summary-cards card-panel" id="inventorySummaryCards">
               <div class="summary-card ok">
                 <span class="value" id="sumStockTotal">—</span>
+                <span class="label">Piezas</span>
+              </div>
+              <div class="summary-card">
+                <span class="value" id="sumStockCubes">—</span>
                 <span class="label">Saldos</span>
               </div>
               <div class="summary-card">
@@ -3785,7 +3792,13 @@
                 <span class="label">Cobertura económica</span>
               </div>
             </div>
-            <p id="inventoryValuePartialHint" class="economic-partial-hint hidden">Valor parcial: existen piezas sin valor unitario</p>
+            <div id="inventoryValuePartialHint" class="economic-partial-hint hidden">
+              <p>
+                El valor es parcial porque existen piezas sin precio asignado. El total mostrado no incluye esas piezas.
+              </p>
+              <p id="inventoryUnvaluedCounts">—</p>
+              <button type="button" id="inventoryUnpricedFilterBtn" class="btn-secondary btn-compact">Ver registros sin precio</button>
+            </div>
             <div class="page-toolbar">
               <button type="button" id="openInventoryImportBtn" class="btn-primary">Importar inventario</button>
               <button type="button" id="physicalInventoryResetBtn" class="btn-danger hidden">Borrar todo el inventario</button>
@@ -3887,6 +3900,35 @@
               <div style="display:flex;gap:8px;flex-wrap:wrap">
                 <button type="button" id="assignConfirmBtn" class="btn-primary btn-compact">Confirmar reasignación</button>
                 <button type="button" id="assignCancelBtn" class="btn-secondary btn-compact">Cancelar</button>
+              </div>
+            </div>
+            <div id="layerPricePanel" class="card-panel ops-form-panel hidden js-economic-card">
+              <h4 class="secondary-panel-title">Asignar o editar precio MXN</h4>
+              <p class="module-hint" style="margin:0 0 12px">
+                El precio se aplica a toda la capa seleccionada. No se modifican existencias, seriales, reservas ni asignaciones.
+              </p>
+              <div class="form-grid">
+                <div class="field"><label>SKU</label><input id="priceSku" type="text" readonly /></div>
+                <div class="field"><label>Producto</label><input id="priceProduct" type="text" readonly /></div>
+                <div class="field"><label>Proyecto o asignación</label><input id="priceAssignment" type="text" readonly /></div>
+                <div class="field"><label>Ubicación</label><input id="priceLocation" type="text" readonly /></div>
+                <div class="field">
+                  <label for="priceLayer">Capa</label>
+                  <select id="priceLayer"></select>
+                </div>
+                <div class="field"><label>Cantidad de la capa</label><input id="priceQty" type="text" readonly /></div>
+                <div class="field"><label>Piezas afectadas</label><input id="priceAffected" type="text" readonly /></div>
+                <div class="field"><label>Precio actual MXN</label><input id="priceCurrent" type="text" readonly /></div>
+                <div class="field">
+                  <label for="priceNew">Nuevo precio MXN</label>
+                  <input id="priceNew" type="text" inputmode="decimal" placeholder="0.0000" />
+                </div>
+              </div>
+              <p id="pricePreview" class="module-hint" style="margin:12px 0"></p>
+              <p id="priceMessage" class="ops-message"></p>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button type="button" id="priceConfirmBtn" class="btn-primary btn-compact">Guardar precio</button>
+                <button type="button" id="priceCancelBtn" class="btn-secondary btn-compact">Cancelar</button>
               </div>
             </div>
             <div id="movementsPanel" class="movements-panel card-panel secondary-panel">
@@ -4875,6 +4917,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=56"></script>
+    <script src="/dashboard.js?v=57"></script>
   </body>
 </html>

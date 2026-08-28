@@ -156,6 +156,7 @@ let productsCache = [];
 let movementsCountCache = 0;
 let movementsRowsCache = [];
 let inventoryKpiCache = null;
+let inventoryUnpricedOnly = false;
 let pendingConflictsCache = 0;
 
 let clientsCache = [];
@@ -1338,10 +1339,13 @@ function canSeeEconomicValuation() {
 function applyEconomicVisibility() {
   const show = canSeeEconomicValuation();
   document.querySelectorAll(".js-economic-card").forEach((el) => {
+    if (el.id === "layerPricePanel") return;
     el.classList.toggle("hidden", !show);
   });
   const hint = document.getElementById("inventoryValuePartialHint");
   if (hint && !show) hint.classList.add("hidden");
+  const pricePanel = document.getElementById("layerPricePanel");
+  if (pricePanel && !show) pricePanel.classList.add("hidden");
 }
 
 function isFreeToSaleRow(row) {
@@ -1455,6 +1459,57 @@ function aggregateRowValuations(rows) {
   };
 }
 
+function rowHasUnvaluedPieces(row) {
+  const unvalued = Number(row?.valuation?.qtyUnvalued);
+  if (Number.isFinite(unvalued)) return unvalued > 0;
+  return row?.valuation?.status === "NONE" || row?.valuation?.status === "PARTIAL";
+}
+
+function summarizeVisibleStock(rows) {
+  const visible = (Array.isArray(rows) ? rows : []).filter((row) => Number(row.qty) > 0);
+  let unvaluedSaldos = 0;
+  let unvaluedPiezas = 0;
+  for (const row of visible) {
+    const unvalued = Number(row?.valuation?.qtyUnvalued);
+    if (Number.isFinite(unvalued) && unvalued > 0) {
+      unvaluedSaldos += 1;
+      unvaluedPiezas += unvalued;
+    } else if (!row?.valuation) {
+      unvaluedSaldos += 1;
+      unvaluedPiezas += Number(row.qty) || 0;
+    }
+  }
+  return {
+    saldos: visible.length,
+    piezas: sumStockQty(visible),
+    unvaluedSaldos,
+    unvaluedPiezas
+  };
+}
+
+function inventoryHasLocalFilters() {
+  const filters = getInventoryFilterValues();
+  return Boolean(
+    filters.cliente ||
+      filters.customer ||
+      filters.lote ||
+      filters.sku ||
+      filters.producto ||
+      filters.ubicacion ||
+      filters.status ||
+      inventoryUnpricedOnly
+  );
+}
+
+function parseLayerPriceMxnInput(value) {
+  const raw = String(value ?? "").trim().replace(",", ".");
+  if (!raw) return { ok: false, message: "Indica un precio en MXN." };
+  if (!/^\d+(\.\d{1,4})?$/.test(raw)) {
+    return { ok: false, message: "El precio debe ser un importe no negativo con hasta cuatro decimales." };
+  }
+  return { ok: true, value: raw };
+}
+
 function openInventoryDetail(row) {
   const p = row.product || {};
   const reserved = Number(row.reservedQty || 0);
@@ -1531,6 +1586,17 @@ function openInventoryDetail(row) {
       }
     });
   }
+  if (canSeeEconomicValuation()) {
+    actions.unshift({
+      id: "edit-price",
+      label: "Asignar o editar precio",
+      className: "btn-primary",
+      onClick: () => {
+        closeDetailDrawer();
+        void openLayerPricePanel(row);
+      }
+    });
+  }
   const fields = [
     { label: "Cliente principal", value: PRIMARY_CLIENT_AVIAT_NAME },
     { label: isFreeToSaleRow(row) ? "Asignación" : "Proyecto", value: inventoryProjectOrAssignmentLabel(row) },
@@ -1561,15 +1627,19 @@ function openInventoryDetail(row) {
       }
     );
     if (valuation?.isPartial || valuation?.status === "NONE") {
-      fields.push({ label: "Aviso", value: "Valor parcial: existen piezas sin valor unitario" });
+      fields.push({
+        label: "Aviso",
+        value:
+          "El valor es parcial porque existen piezas sin precio asignado. El total mostrado no incluye esas piezas."
+      });
     }
-    if (valuation?.hasMixedUnitPrices && Array.isArray(valuation.layers) && valuation.layers.length) {
+    if (Array.isArray(valuation?.layers) && valuation.layers.length) {
       const rowsHtml = valuation.layers
         .map(
           (layer) =>
             `<tr><td>${escCell(layer.lotNumber || "sin lote")}</td><td>${escCell(formatQty(layer.qty))}</td><td>${escCell(
-              formatMxn(layer.unitPriceMxn)
-            )}</td><td>${escCell(formatMxn(layer.layerValueMxn))}</td></tr>`
+              layer.unitPriceMxn == null ? "Sin precio" : formatMxn(layer.unitPriceMxn)
+            )}</td><td>${escCell(layer.layerValueMxn == null ? "Sin valor" : formatMxn(layer.layerValueMxn))}</td></tr>`
         )
         .join("");
       fields.push({
@@ -1766,6 +1836,167 @@ function wireAssignmentTransferPanel() {
   if (cancelBtn && cancelBtn.dataset.wired !== "1") {
     cancelBtn.dataset.wired = "1";
     cancelBtn.addEventListener("click", closeAssignmentTransferPanel);
+  }
+}
+
+let layerPriceSource = null;
+
+function setPriceMessage(text, ok) {
+  const el = document.getElementById("priceMessage");
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("ok", Boolean(ok));
+  el.classList.toggle("error", Boolean(text) && !ok);
+}
+
+function layerPriceOptions(row) {
+  const layers = Array.isArray(row?.valuation?.layers) ? row.valuation.layers : [];
+  return layers.filter((layer) => layer?.id);
+}
+
+function selectedPriceLayer() {
+  const layerId = document.getElementById("priceLayer")?.value;
+  return layerPriceOptions(layerPriceSource).find((layer) => layer.id === layerId) || null;
+}
+
+function updateLayerPricePreview() {
+  const preview = document.getElementById("pricePreview");
+  if (!preview || !layerPriceSource) return;
+  const layer = selectedPriceLayer();
+  const parsed = parseLayerPriceMxnInput(document.getElementById("priceNew")?.value);
+  const qty = layer ? formatQty(layer.qty) : "—";
+  const current = layer?.unitPriceMxn == null ? "Sin precio" : formatMxn(layer.unitPriceMxn);
+  const next = parsed.ok ? formatMxn(parsed.value) : "—";
+  preview.textContent = [
+    `SKU: ${layerPriceSource.product?.sku || "—"}`,
+    `Producto: ${layerPriceSource.product?.name || "—"}`,
+    `Asignación: ${inventoryProjectOrAssignmentLabel(layerPriceSource)}`,
+    `Ubicación: ${layerPriceSource.location?.code || "—"}`,
+    `Cantidad restante de la capa: ${qty} piezas`,
+    `Piezas afectadas: ${qty}`,
+    `Precio actual MXN: ${current}`,
+    `Nuevo precio MXN: ${next}`,
+    "El precio se asigna a la capa completa. No se modifican existencias."
+  ].join("\n");
+  const qtyEl = document.getElementById("priceQty");
+  const affectedEl = document.getElementById("priceAffected");
+  const currentEl = document.getElementById("priceCurrent");
+  if (qtyEl) qtyEl.value = qty;
+  if (affectedEl) affectedEl.value = qty;
+  if (currentEl) currentEl.value = current;
+}
+
+function fillLayerPriceFields(row) {
+  document.getElementById("priceSku").value = row.product?.sku || "";
+  document.getElementById("priceProduct").value = row.product?.name || "";
+  document.getElementById("priceAssignment").value = inventoryProjectOrAssignmentLabel(row);
+  document.getElementById("priceLocation").value = row.location?.code || "";
+  const sel = document.getElementById("priceLayer");
+  const layers = layerPriceOptions(row);
+  if (sel) {
+    const previous = sel.value;
+    sel.innerHTML = layers
+      .map((layer) => {
+        const price = layer.unitPriceMxn == null ? "sin precio" : formatMxn(layer.unitPriceMxn);
+        const label = `${layer.lotNumber || "sin lote"} · ${formatQty(layer.qty)} pzas · ${price}`;
+        return `<option value="${escCell(layer.id)}">${escCell(label)}</option>`;
+      })
+      .join("");
+    if (previous && layers.some((layer) => layer.id === previous)) sel.value = previous;
+    else if (layers[0]?.id) sel.value = layers[0].id;
+  }
+  updateLayerPricePreview();
+}
+
+async function openLayerPricePanel(row) {
+  if (!canSeeEconomicValuation()) return;
+  layerPriceSource = row;
+  const panel = document.getElementById("layerPricePanel");
+  if (!panel) return;
+  panel.classList.remove("hidden");
+  document.getElementById("priceNew").value = "";
+  setPriceMessage("", true);
+  fillLayerPriceFields(row);
+  if (!layerPriceOptions(row).length) {
+    setPriceMessage("No hay capas con saldo para asignar precio.", false);
+  }
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function closeLayerPricePanel() {
+  const panel = document.getElementById("layerPricePanel");
+  if (panel) panel.classList.add("hidden");
+  layerPriceSource = null;
+  setPriceMessage("", true);
+}
+
+async function confirmLayerPriceUpdate() {
+  if (!canSeeEconomicValuation() || !layerPriceSource) return;
+  const layer = selectedPriceLayer();
+  if (!layer?.id) {
+    setPriceMessage("Selecciona una capa.", false);
+    return;
+  }
+  const parsed = parseLayerPriceMxnInput(document.getElementById("priceNew")?.value);
+  if (!parsed.ok) {
+    setPriceMessage(parsed.message, false);
+    return;
+  }
+  const qty = formatQty(layer.qty);
+  const current = layer.unitPriceMxn == null ? "Sin precio" : formatMxn(layer.unitPriceMxn);
+  const summary = [
+    `SKU: ${layerPriceSource.product?.sku || "—"}`,
+    `Producto: ${layerPriceSource.product?.name || "—"}`,
+    `Asignación: ${inventoryProjectOrAssignmentLabel(layerPriceSource)}`,
+    `Ubicación: ${layerPriceSource.location?.code || "—"}`,
+    `Cantidad restante de la capa: ${qty} piezas`,
+    `Piezas afectadas: ${qty}`,
+    `Precio actual MXN: ${current}`,
+    `Nuevo precio MXN: ${formatMxn(parsed.value)}`,
+    "El precio se aplica a toda la capa. No se modifican existencias, seriales ni reservas."
+  ].join("\n");
+  if (!window.confirm(`Confirmar precio de capa:\n${summary}`)) return;
+  const response = await authenticatedFetch(`/api/inventory/layers/${encodeURIComponent(layer.id)}/price`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ unitPriceMxn: parsed.value })
+  });
+  const data = await response?.json().catch(() => ({}));
+  if (!response?.ok) {
+    setPriceMessage(data.message || data.code || "No se pudo guardar el precio.", false);
+    return;
+  }
+  setPriceMessage(`Precio guardado. ${formatQty(data.qtyAffected || layer.qty)} piezas afectadas.`, true);
+  await loadStockStrip();
+  const updated = (Array.isArray(stockRowsCache) ? stockRowsCache : []).find((item) => item.id === layerPriceSource.id);
+  if (updated) {
+    layerPriceSource = updated;
+    fillLayerPriceFields(updated);
+    document.getElementById("priceNew").value = "";
+    updateLayerPricePreview();
+  }
+}
+
+function wireLayerPricePanel() {
+  const layerSel = document.getElementById("priceLayer");
+  if (layerSel && layerSel.dataset.wired !== "1") {
+    layerSel.dataset.wired = "1";
+    layerSel.addEventListener("change", updateLayerPricePreview);
+  }
+  const priceNew = document.getElementById("priceNew");
+  if (priceNew && priceNew.dataset.wired !== "1") {
+    priceNew.dataset.wired = "1";
+    priceNew.addEventListener("input", updateLayerPricePreview);
+  }
+  const confirmBtn = document.getElementById("priceConfirmBtn");
+  if (confirmBtn && confirmBtn.dataset.wired !== "1") {
+    confirmBtn.dataset.wired = "1";
+    confirmBtn.addEventListener("click", () => void confirmLayerPriceUpdate());
+  }
+  const cancelBtn = document.getElementById("priceCancelBtn");
+  if (cancelBtn && cancelBtn.dataset.wired !== "1") {
+    cancelBtn.dataset.wired = "1";
+    cancelBtn.addEventListener("click", closeLayerPricePanel);
   }
 }
 
@@ -3349,7 +3580,8 @@ function getInventoryFilterValues() {
     sku: document.getElementById("invFilterSku")?.value?.trim() || "",
     producto: document.getElementById("invFilterProducto")?.value?.trim() || "",
     ubicacion: document.getElementById("invFilterUbicacion")?.value?.trim() || "",
-    status: document.getElementById("invFilterStatus")?.value?.trim() || ""
+    status: document.getElementById("invFilterStatus")?.value?.trim() || "",
+    unpricedOnly: inventoryUnpricedOnly
   };
 }
 
@@ -3392,12 +3624,16 @@ function updateInventorySummary(rows) {
   if (elLocations) elLocations.textContent = String(kpi?.locations || locations.size);
   if (elMovements) elMovements.textContent = String(kpi?.movements ?? movementsCountCache ?? 0);
   if (elConflicts) elConflicts.textContent = String(pendingConflictsCache);
+  const visible = filterStockRows(list);
+  const counts = summarizeVisibleStock(visible);
+  const useOfficialTotals = !inventoryHasLocalFilters() && kpi;
+  const piezas = useOfficialTotals && kpi.qty != null ? Number(kpi.qty) : counts.piezas;
+  const saldos = useOfficialTotals && kpi.cubes != null ? Number(kpi.cubes) : counts.saldos;
   const elStockTotal = document.getElementById("sumStockTotal");
-  if (elStockTotal) {
-    const qty = kpi?.qty != null ? Number(kpi.qty) : list.length ? sumStockQty(list) : 0;
-    elStockTotal.textContent = qty ? formatQty(qty) : "0";
-  }
-  updateEconomicSummaryCards(filterStockRows(list));
+  const elStockCubes = document.getElementById("sumStockCubes");
+  if (elStockTotal) elStockTotal.textContent = piezas ? formatQty(piezas) : "0";
+  if (elStockCubes) elStockCubes.textContent = String(saldos || 0);
+  updateEconomicSummaryCards(visible);
   updateControlCenterKpis();
 }
 
@@ -3410,13 +3646,22 @@ function updateEconomicSummaryCards(rows) {
   const elUnvalued = document.getElementById("sumUnvaluedQty");
   const elCoverage = document.getElementById("sumEconomicCoverage");
   const hint = document.getElementById("inventoryValuePartialHint");
+  const countsEl = document.getElementById("inventoryUnvaluedCounts");
+  const counts = summarizeVisibleStock(rows);
   if (elValue) elValue.textContent = formatMxn(valuation.totalValueMxn);
   if (elValued) elValued.textContent = formatQty(valuation.qtyValued);
   if (elUnvalued) elUnvalued.textContent = formatQty(valuation.qtyUnvalued);
   if (elCoverage) elCoverage.textContent = `${valuation.coveragePct}%`;
+  if (countsEl) {
+    countsEl.textContent = `Hay ${formatQty(counts.unvaluedPiezas)} piezas y ${counts.unvaluedSaldos} saldos sin valor.`;
+  }
   if (hint) {
     const showHint = valuation.status === "PARTIAL" || (valuation.status === "NONE" && valuation.qtyTotal > 0);
     hint.classList.toggle("hidden", !showHint);
+  }
+  const unpricedBtn = document.getElementById("inventoryUnpricedFilterBtn");
+  if (unpricedBtn) {
+    unpricedBtn.textContent = inventoryUnpricedOnly ? "Mostrar todos los registros" : "Ver registros sin precio";
   }
 }
 
@@ -3451,7 +3696,8 @@ function filterStockRowsWithFilters(rows, filters) {
       skuOk &&
       matchesFilter(p.name, filters.producto) &&
       matchesFilter(row.location?.code, filters.ubicacion) &&
-      matchesFilter(inventoryStatusSearchBlob(row.status), filters.status)
+      matchesFilter(inventoryStatusSearchBlob(row.status), filters.status) &&
+      (!filters.unpricedOnly || rowHasUnvaluedPieces(row))
     );
   });
 }
@@ -4015,6 +4261,7 @@ function wireModals() {
     });
   }
   wireAssignmentTransferPanel();
+  wireLayerPricePanel();
   wireReqActionModal();
   const rStock = document.getElementById("reportsExportStock");
   const rStockX = document.getElementById("reportsExportStockXlsx");
@@ -4244,6 +4491,7 @@ function clearInventoryFilters() {
       if (el) el.value = "";
     }
   );
+  inventoryUnpricedOnly = false;
   applyInventoryFilters();
 }
 
@@ -4269,6 +4517,15 @@ function wireInventoryFilterInputs() {
   if (clearBtn && clearBtn.dataset.filterWired !== "1") {
     clearBtn.dataset.filterWired = "1";
     clearBtn.addEventListener("click", clearInventoryFilters);
+  }
+  const unpricedBtn = document.getElementById("inventoryUnpricedFilterBtn");
+  if (unpricedBtn && unpricedBtn.dataset.filterWired !== "1") {
+    unpricedBtn.dataset.filterWired = "1";
+    unpricedBtn.addEventListener("click", () => {
+      if (!canSeeEconomicValuation()) return;
+      inventoryUnpricedOnly = !inventoryUnpricedOnly;
+      applyInventoryFilters();
+    });
   }
 }
 

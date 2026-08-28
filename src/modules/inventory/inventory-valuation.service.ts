@@ -215,3 +215,50 @@ export function publicValuationForRole(
 ): InventoryValuation | undefined {
   return expose ? valuation : undefined;
 }
+
+export type StockCountSummary = {
+  saldos: number;
+  piezas: string;
+  unvaluedSaldos: number;
+  unvaluedPiezas: string;
+};
+
+export function summarizeVisibleStock(
+  rows: Array<{
+    qty?: Prisma.Decimal | string | number | null;
+    valuation?: { qtyUnvalued?: string | number | null } | null;
+  }>
+): StockCountSummary {
+  let saldos = 0;
+  let piezas = ZERO;
+  let unvaluedSaldos = 0;
+  let unvaluedPiezas = ZERO;
+  for (const row of rows) {
+    const qty = toDec(row.qty) ?? ZERO;
+    if (qty.lte(0)) continue;
+    saldos += 1;
+    piezas = piezas.plus(qty);
+    const unvalued = toDec(row.valuation?.qtyUnvalued);
+    if (unvalued != null && unvalued.gt(0)) {
+      unvaluedSaldos += 1;
+      unvaluedPiezas = unvaluedPiezas.plus(unvalued);
+    } else if (unvalued == null && row.valuation == null) {
+      unvaluedSaldos += 1;
+      unvaluedPiezas = unvaluedPiezas.plus(qty);
+    }
+  }
+  return {
+    saldos,
+    piezas: qtyStr(piezas),
+    unvaluedSaldos,
+    unvaluedPiezas: qtyStr(unvaluedPiezas)
+  };
+}
+
+export function rowHasUnvaluedPieces(row: {
+  valuation?: { qtyUnvalued?: string | number | null; status?: string | null } | null;
+}): boolean {
+  const unvalued = toDec(row.valuation?.qtyUnvalued);
+  if (unvalued != null) return unvalued.gt(0);
+  return row.valuation?.status === "NONE" || row.valuation?.status === "PARTIAL";
+}

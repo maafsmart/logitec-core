@@ -15,6 +15,7 @@ import {
 import { parseMexicoCityDateFilter } from "../../shared/mexico-city-date.js";
 import { canExposeEconomicValuation } from "./inventory-economic-access.js";
 import { calculateInventoryValuation } from "./inventory-valuation.service.js";
+import { LayerPriceError, updateInventoryLayerUnitPriceMxn } from "./inventory-layer-price.service.js";
 import { InventoryMutationError, mutateInventory } from "./inventory-mutation.service.js";
 import {
   assertCanTransferAssignment,
@@ -91,6 +92,7 @@ inventoryRouter.get("/summary", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", 
   const movementWhere: Prisma.InventoryMovementWhereInput = {
     AND: [clientMovementWhere(req.auth!), movementScopeWhere(scope)]
   };
+  const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
   const [cubes, qtyAgg, productIds, locationIds, projectIds, movements, catalogProducts, layers, serials, activeReservations, layersForValuation] = await Promise.all([
     prisma.inventory.count({ where: inventoryWhere }),
     prisma.inventory.aggregate({ where: inventoryWhere, _sum: { qty: true } }),
@@ -112,13 +114,14 @@ inventoryRouter.get("/summary", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", 
     prisma.inventoryReservation.count({
       where: { AND: [{ status: "ACTIVE" }, { inventory: clientInventoryWhere(req.auth!) }] }
     }),
-    prisma.inventoryLayer.findMany({
-      where: { AND: [clientLayerWhere(req.auth!), { qty: { gt: 0 }, inventory: inventoryWhere }] },
-      select: { qty: true, reservedQty: true, unitPriceMxn: true, unitPriceUsd: true }
-    })
+    exposeEconomic
+      ? prisma.inventoryLayer.findMany({
+          where: { AND: [clientLayerWhere(req.auth!), { qty: { gt: 0 }, inventory: inventoryWhere }] },
+          select: { qty: true, reservedQty: true, unitPriceMxn: true, unitPriceUsd: true }
+        })
+      : Promise.resolve([])
   ]);
   const distinctInventoryProducts = productIds.length;
-  const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
   const valuation = exposeEconomic ? calculateInventoryValuation(layersForValuation) : undefined;
   res.json({
     cubes,
@@ -214,7 +217,14 @@ inventoryRouter.get("/stock/:inventoryId/layers", requireRole(["ADMIN", "OPERATO
     include: { layers: { orderBy: { createdAt: "asc" } } }
   });
   if (!inventory) throw new HttpError(404, "Línea de inventario no encontrada.");
-  res.json(inventory.layers);
+  const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
+  res.json(
+    inventory.layers.map((layer) => {
+      if (exposeEconomic) return layer;
+      const { unitPriceMxn: _mxn, unitPriceUsd: _usd, ...rest } = layer;
+      return rest;
+    })
+  );
 });
 
 inventoryRouter.get("/products/:productId/layers", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
@@ -224,28 +234,61 @@ inventoryRouter.get("/products/:productId/layers", requireRole(["ADMIN", "OPERAT
     select: { id: true }
   });
   if (!product) throw new HttpError(404, "Producto no encontrado.");
+  const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
+  const layers = await prisma.inventoryLayer.findMany({
+    where: { AND: [{ inventory: { productId } }, clientLayerWhere(req.auth!)] },
+    orderBy: { createdAt: "asc" }
+  });
   res.json(
-    await prisma.inventoryLayer.findMany({
-      where: { AND: [{ inventory: { productId } }, clientLayerWhere(req.auth!)] },
-      orderBy: { createdAt: "asc" }
-    })
+    exposeEconomic
+      ? layers
+      : layers.map((layer) => {
+          const { unitPriceMxn: _mxn, unitPriceUsd: _usd, ...rest } = layer;
+          return rest;
+        })
   );
 });
 
+inventoryRouter.patch("/layers/:layerId/price", requireRole(["ADMIN"]), async (req, res) => {
+  if (!canExposeEconomicValuation(req.auth!.role)) {
+    throw new HttpError(403, "No autorizado para editar valuación económica.");
+  }
+  const layerId = z.string().min(1).parse(req.params.layerId);
+  const body = z
+    .object({
+      unitPriceMxn: z.union([z.string(), z.number()])
+    })
+    .parse(req.body ?? {});
+  try {
+    const result = await updateInventoryLayerUnitPriceMxn({
+      layerId,
+      unitPriceMxn: body.unitPriceMxn,
+      userId: req.auth!.userId
+    });
+    res.json(result);
+  } catch (error) {
+    if (error instanceof LayerPriceError) {
+      res.status(error.statusCode).json({ code: error.code, message: error.message });
+      return;
+    }
+    throw error;
+  }
+});
+
 inventoryRouter.get("/products/:productId/valuation", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  if (!canExposeEconomicValuation(req.auth!.role)) {
+    throw new HttpError(403, "No autorizado para consultar valuación económica.");
+  }
   const productId = z.string().min(1).parse(req.params.productId);
-  const layers = await prisma.inventoryLayer.findMany({
-    where: { AND: [{ inventory: { productId } }, clientLayerWhere(req.auth!)] },
-    select: { qty: true, reservedQty: true, unitPriceMxn: true, unitPriceUsd: true }
-  });
   const product = await prisma.product.findFirst({
     where: { AND: [{ id: productId }, clientProductWhere(req.auth!)] },
     select: { id: true }
   });
   if (!product) throw new HttpError(404, "Producto no encontrado.");
-  if (!canExposeEconomicValuation(req.auth!.role)) {
-    throw new HttpError(403, "No autorizado para consultar valuación económica.");
-  }
+  const layers = await prisma.inventoryLayer.findMany({
+    where: { AND: [{ inventory: { productId } }, clientLayerWhere(req.auth!)] },
+    select: { qty: true, reservedQty: true, unitPriceMxn: true, unitPriceUsd: true }
+  });
   res.json(calculateInventoryValuation(layers));
 });
 
@@ -290,6 +333,7 @@ inventoryRouter.get("/products/:productId/serials", requireRole(["ADMIN", "OPERA
 
 inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   const scope = inventoryScopeQuerySchema.parse(req.query);
+  const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
   const rows = await prisma.inventory.findMany({
     where: {
       AND: [clientInventoryWhere(req.auth!), inventoryScopeWhere(scope), { qty: { gt: 0 } }]
@@ -323,7 +367,6 @@ inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "C
     }
   });
 
-  const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
   res.json(
     rows.map((row) => {
       const { layers, ...rest } = row;
@@ -519,10 +562,19 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
     select: { code: true, label: true }
   });
   const statusLabels = new Map(statuses.map((status) => [status.code, status.label]));
+  const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
   res.json({
     items: rows.map((row) => {
       const requisition = row.requisitionLine?.requisition ?? null;
       const project = requisition?.project ?? row.product.customer ?? null;
+      const layer = row.inventoryLayer
+        ? exposeEconomic
+          ? row.inventoryLayer
+          : (() => {
+              const { unitPriceMxn: _mxn, unitPriceUsd: _usd, ...rest } = row.inventoryLayer;
+              return rest;
+            })()
+        : null;
       return {
         id: row.id,
         createdAt: row.createdAt,
@@ -562,7 +614,7 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
         toProject: row.toProject,
         fromLocation: row.fromLocation,
         toLocation: row.toLocation,
-        layer: row.inventoryLayer,
+        layer,
         serial: row.inventorySerial,
         user: row.user,
         requisition,
