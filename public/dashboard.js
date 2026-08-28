@@ -877,6 +877,37 @@ function activateModule(moduleName) {
   navigateTo(section, moduleName);
 }
 
+function canAdministerInventoryImport() {
+  return currentRole === "ADMIN";
+}
+
+/**
+ * Único acceso administrativo al importador vivo en Sistema → Configuración.
+ * No abre el modal legado ni dispara cargas. No sube ni confirma archivos.
+ */
+function openInventoryImportAssistant() {
+  if (!canAdministerInventoryImport()) return false;
+  closeModal("inventoryImportModal");
+  navigateTo("sistema", "config");
+  const panel = document.getElementById("importWizardPanel");
+  if (!panel) return false;
+  panel.style.display = "";
+  panel.classList.remove("hidden");
+  window.setTimeout(() => {
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    const focusEl = document.getElementById("importContext") || panel;
+    if (focusEl === panel && !panel.hasAttribute("tabindex")) {
+      panel.setAttribute("tabindex", "-1");
+    }
+    try {
+      focusEl.focus({ preventScroll: true });
+    } catch (_err) {
+      focusEl.focus();
+    }
+  }, 0);
+  return true;
+}
+
 /**
  * Deep-link: #module=inbound (también tolera #module=inbound&x=1).
  * Se aplica solo tras sesión/role listos.
@@ -4307,7 +4338,7 @@ function wireModals() {
   const openCat = document.getElementById("openCatalogImportBtn");
   if (openCat) openCat.addEventListener("click", () => openModal("catalogImportModal"));
   const openInv = document.getElementById("openInventoryImportBtn");
-  if (openInv) openInv.addEventListener("click", () => openModal("inventoryImportModal"));
+  if (openInv) openInv.addEventListener("click", () => openInventoryImportAssistant());
   const toggleMov = document.getElementById("toggleMovementsBtn");
   if (toggleMov) {
     toggleMov.addEventListener("click", () => {
@@ -8190,8 +8221,10 @@ function applyRoleNavigation(role) {
   movementForm.classList.toggle("hidden", role !== "ADMIN");
   const openCatBtn = document.getElementById("openCatalogImportBtn");
   const openInvBtn = document.getElementById("openInventoryImportBtn");
+  const bulkInboundOpenImportBtn = document.getElementById("bulkInboundOpenImportBtn");
   if (openCatBtn) openCatBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
   if (openInvBtn) openInvBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
+  if (bulkInboundOpenImportBtn) bulkInboundOpenImportBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
   physicalInventoryResetBtns.forEach((btn) => {
     btn.classList.toggle("hidden", role !== "ADMIN");
     btn.style.display = role === "ADMIN" ? "inline-block" : "none";
@@ -8976,14 +9009,7 @@ populateOperationalTypeSelects();
 
 document.getElementById("relocateSubmitBtn")?.addEventListener("click", () => void submitRelocate());
 document.getElementById("bulkInboundOpenImportBtn")?.addEventListener("click", () => {
-  if (typeof openModal === "function") openModal("inventoryImportModal");
-  else {
-    const modal = document.getElementById("inventoryImportModal");
-    if (modal) {
-      modal.classList.add("open");
-      modal.setAttribute("aria-hidden", "false");
-    }
-  }
+  openInventoryImportAssistant();
 });
 document.getElementById("taskCreateUserBtn")?.addEventListener("click", () => navigateTo("sistema", "users"));
 

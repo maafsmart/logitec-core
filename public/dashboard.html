@@ -3820,7 +3820,7 @@
               <button type="button" id="inventoryUnpricedFilterBtn" class="btn-secondary btn-compact">Ver registros sin precio</button>
             </div>
             <div class="page-toolbar">
-              <button type="button" id="openInventoryImportBtn" class="btn-primary">Importar inventario</button>
+              <button type="button" id="openInventoryImportBtn" class="btn-primary">Abrir asistente de importación</button>
               <button type="button" id="physicalInventoryResetBtn" class="btn-danger hidden">Borrar todo el inventario</button>
               <button type="button" id="exportStockBtn" class="btn-secondary">Exportar existencias CSV</button>
               <button type="button" id="exportStockFilteredBtn" class="btn-secondary">Exportar resultado filtrado</button>
@@ -4478,13 +4478,13 @@
             <div class="card-panel">
               <h4 class="secondary-panel-title">Carga masiva / archivo</h4>
               <p class="module-lead" style="margin-bottom:12px">
-                Usa la importación de inventario (CSV/Excel) para actualizar saldos y ubicaciones.
+                Abre el asistente de importación en Configuración (CSV/Excel) para actualizar saldos y ubicaciones.
                 No es una orden de surtido: <strong>aumenta existencias</strong>. Para salida usa
                 <strong>Órdenes de surtido / Requisiciones</strong>. Para una sola línea usa
                 <strong>Entradas / Recepción</strong>.
               </p>
               <div class="page-toolbar">
-                <button type="button" class="btn-primary btn-compact" id="bulkInboundOpenImportBtn">Abrir importación de inventario</button>
+                <button type="button" class="btn-primary btn-compact" id="bulkInboundOpenImportBtn">Abrir asistente de importación</button>
                 <button type="button" class="btn-secondary btn-compact" data-goto-module="inbound">Entrada unitaria</button>
               </div>
               <p class="assignee-hint">Entrada con escaneo masivo queda preparada como concepto para versiones futuras.</p>
@@ -4938,6 +4938,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=59"></script>
+    <script src="/dashboard.js?v=60"></script>
   </body>
 </html>
