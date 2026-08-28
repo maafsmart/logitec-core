@@ -3925,7 +3925,7 @@
             <div id="layerPricePanel" class="card-panel ops-form-panel hidden js-economic-card">
               <h4 class="secondary-panel-title">Asignar o editar precio MXN</h4>
               <p class="module-hint" style="margin:0 0 12px">
-                El precio se aplica a toda la capa seleccionada. No se modifican existencias, seriales, reservas ni asignaciones.
+                El precio se aplica a toda la capa seleccionada cuando ya tiene valor. Si la capa está sin precio, puedes valuar solo una cantidad. No se modifican existencias totales, seriales, reservas ni asignaciones.
               </p>
               <div class="form-grid">
                 <div class="field"><label>SKU</label><input id="priceSku" type="text" readonly /></div>
@@ -3939,10 +3939,26 @@
                 <div class="field"><label>Cantidad de la capa</label><input id="priceQty" type="text" readonly /></div>
                 <div class="field"><label>Piezas afectadas</label><input id="priceAffected" type="text" readonly /></div>
                 <div class="field"><label>Precio actual MXN</label><input id="priceCurrent" type="text" readonly /></div>
+                <div class="field price-split-only hidden">
+                  <label>Cantidad disponible sin precio</label>
+                  <input id="priceAvailableUnpriced" type="text" readonly />
+                </div>
+                <div class="field price-split-only hidden">
+                  <label for="priceQtyToValue">Cantidad a valuar</label>
+                  <input id="priceQtyToValue" type="text" inputmode="decimal" autocomplete="off" placeholder="Escribe la cantidad a valuar" value="" />
+                </div>
                 <div class="field">
-                  <label for="priceNew">Nuevo precio MXN</label>
+                  <label for="priceNew">Nuevo precio unitario MXN</label>
                   <input id="priceNew" type="text" inputmode="decimal" autocomplete="off" placeholder="Escribe el precio unitario MXN" value="" />
                   <p id="priceNewHint" class="price-new-help">Permite valores desde 0 y hasta 4 decimales.</p>
+                </div>
+                <div class="field price-split-only hidden">
+                  <label>Piezas que permanecerán sin precio</label>
+                  <input id="priceRemainingUnpriced" type="text" readonly />
+                </div>
+                <div class="field price-split-only hidden">
+                  <label>Valor que se agregará al inventario</label>
+                  <input id="priceAddedValue" type="text" readonly />
                 </div>
               </div>
               <p id="pricePreview" class="module-hint" style="margin:12px 0"></p>
@@ -4938,6 +4954,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=63"></script>
+    <script src="/dashboard.js?v=64"></script>
   </body>
 </html>

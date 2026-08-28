@@ -1665,6 +1665,69 @@ function layerPriceConfirmMessage(parsed, qty) {
   return `Se asignará un precio unitario de ${priceLabel} MXN a ${qty} piezas. ¿Deseas continuar?`;
 }
 
+function parseLayerQtyToValueInput(value) {
+  const raw = value == null ? "" : String(value).trim().replace(",", ".");
+  if (!raw) return { ok: false, empty: true, message: "Indica la cantidad a valuar." };
+  if (!/^\d+(\.\d{1,4})?$/.test(raw)) {
+    return {
+      ok: false,
+      empty: false,
+      message: "La cantidad debe ser mayor que 0 con hasta cuatro decimales."
+    };
+  }
+  const [whole, frac = ""] = raw.split(".");
+  const isZero = whole.replace(/^0+/, "") === "" && String(frac).replace(/0/g, "") === "";
+  if (isZero) {
+    return {
+      ok: false,
+      empty: false,
+      message: "La cantidad debe ser mayor que 0 con hasta cuatro decimales."
+    };
+  }
+  return { ok: true, empty: false, value: raw };
+}
+
+function decimal4ToScaled(raw) {
+  const [whole, frac = ""] = String(raw ?? "0").split(".");
+  const w = String(whole || "0").replace(/^0+(?=\d)/, "") || "0";
+  return BigInt(w) * 10000n + BigInt((String(frac) + "0000").slice(0, 4));
+}
+
+function scaledToDecimalString(scaled) {
+  const whole = scaled / 10000n;
+  const frac = (scaled % 10000n).toString().padStart(4, "0").replace(/0+$/, "");
+  return frac ? `${whole.toString()}.${frac}` : whole.toString();
+}
+
+function qtyFitsUnpricedLayer(layer, qtyRaw) {
+  if (!layer || !qtyRaw) return false;
+  const qty = decimal4ToScaled(qtyRaw);
+  const layerQty = decimal4ToScaled(String(layer.qty ?? "0"));
+  if (qty > layerQty) return false;
+  if (qty === layerQty) return true;
+  const available = layerQty - decimal4ToScaled(String(layer.reservedQty ?? "0"));
+  return qty <= available;
+}
+
+function layerPriceSplitConfirmMessage(priceParsed, qtyRaw, remainingRaw, totalRaw) {
+  const priceLabel = formatLayerPriceMxnExact(priceParsed.value);
+  return `Se asignará un precio unitario de ${priceLabel} MXN a ${formatQty(qtyRaw)} piezas. Quedarán ${formatQty(remainingRaw)} piezas sin precio. El saldo total de ${formatQty(totalRaw)} piezas no cambia. ¿Deseas continuar?`;
+}
+
+function decimal4ProductToMoney(qtyRaw, priceRaw) {
+  const product = decimal4ToScaled(qtyRaw) * decimal4ToScaled(priceRaw);
+  const cents = (product + 500000n) / 1000000n;
+  const whole = cents / 100n;
+  const frac = (cents % 100n).toString().padStart(2, "0");
+  return formatMxn(`${whole.toString()}.${frac}`);
+}
+
+function syncPriceSplitFieldsVisible(unpriced) {
+  document.querySelectorAll(".price-split-only").forEach((el) => {
+    el.classList.toggle("hidden", !unpriced);
+  });
+}
+
 function openInventoryDetail(row) {
   const p = row.product || {};
   const reserved = Number(row.reservedQty || 0);
@@ -2019,6 +2082,11 @@ function syncLayerPriceSaveButton() {
   if (!btn) return;
   const layer = selectedPriceLayer();
   const parsed = parseLayerPriceMxnInput(document.getElementById("priceNew")?.value);
+  if (!layerHasAssignedPrice(layer)) {
+    const qtyParsed = parseLayerQtyToValueInput(document.getElementById("priceQtyToValue")?.value);
+    btn.disabled = !(layer?.id && parsed.ok && qtyParsed.ok && qtyFitsUnpricedLayer(layer, qtyParsed.value));
+    return;
+  }
   btn.disabled = !(layer?.id && parsed.ok && layerPriceHasRealChange(layer, parsed));
 }
 
@@ -2026,9 +2094,12 @@ function resetNewPriceInput(layer) {
   const el = document.getElementById("priceNew");
   if (!el) return;
   el.value = "";
+  const qtyEl = document.getElementById("priceQtyToValue");
+  if (qtyEl) qtyEl.value = "";
   if (layerHasAssignedPrice(layer)) {
     el.value = String(layer.unitPriceMxn);
   }
+  syncPriceSplitFieldsVisible(!layerHasAssignedPrice(layer));
   syncLayerPriceSaveButton();
 }
 
@@ -2040,26 +2111,64 @@ function updateLayerPricePreview() {
   }
   const layer = selectedPriceLayer();
   const parsed = parseLayerPriceMxnInput(document.getElementById("priceNew")?.value);
+  const unpriced = !layerHasAssignedPrice(layer);
+  const qtyParsed = parseLayerQtyToValueInput(document.getElementById("priceQtyToValue")?.value);
+  const layerQty = layer ? String(layer.qty ?? "0") : "0";
+  const reserved = layer ? String(layer.reservedQty ?? "0") : "0";
+  const availableScaled = decimal4ToScaled(layerQty) - decimal4ToScaled(reserved);
+  const availableRaw = layer ? scaledToDecimalString(availableScaled < 0n ? 0n : availableScaled) : "";
   const qty = layer ? formatQty(layer.qty) : "—";
   const current = layerHasAssignedPrice(layer) ? formatMxn(layer.unitPriceMxn) : "Sin precio";
   const next = parsed.ok ? formatLayerPriceMxnExact(parsed.value) : parsed.empty ? "—" : "—";
-  preview.textContent = [
-    `SKU: ${layerPriceSource.product?.sku || "—"}`,
-    `Producto: ${layerPriceSource.product?.name || "—"}`,
-    `Asignación: ${inventoryProjectOrAssignmentLabel(layerPriceSource)}`,
-    `Ubicación: ${layerPriceSource.location?.code || "—"}`,
-    `Cantidad restante de la capa: ${qty} piezas`,
-    `Piezas afectadas: ${qty}`,
-    `Precio actual MXN: ${current}`,
-    `Nuevo precio MXN: ${next}`,
-    "El precio se asigna a la capa completa. No se modifican existencias."
-  ].join("\n");
+  let remainingRaw = layerQty;
+  let addedValue = "—";
+  let affected = qty;
+  if (unpriced && qtyParsed.ok && layer) {
+    const remainingScaled = decimal4ToScaled(layerQty) - decimal4ToScaled(qtyParsed.value);
+    remainingRaw = remainingScaled >= 0n ? scaledToDecimalString(remainingScaled) : "0";
+    affected = formatQty(qtyParsed.value);
+    if (parsed.ok) addedValue = decimal4ProductToMoney(qtyParsed.value, parsed.value);
+  } else if (!unpriced) {
+    remainingRaw = "0";
+  }
+  preview.textContent = unpriced
+    ? [
+        `SKU: ${layerPriceSource.product?.sku || "—"}`,
+        `Producto: ${layerPriceSource.product?.name || "—"}`,
+        `Asignación: ${inventoryProjectOrAssignmentLabel(layerPriceSource)}`,
+        `Ubicación: ${layerPriceSource.location?.code || "—"}`,
+        `Cantidad de la capa: ${qty} piezas`,
+        `Cantidad disponible sin precio: ${layer ? formatQty(availableRaw) : "—"}`,
+        `Cantidad a valuar: ${qtyParsed.ok ? formatQty(qtyParsed.value) : "—"}`,
+        `Piezas que permanecerán sin precio: ${qtyParsed.ok ? formatQty(remainingRaw) : "—"}`,
+        `Nuevo precio unitario MXN: ${next}`,
+        `Valor que se agregará al inventario: ${addedValue}`,
+        "El saldo total del cubo no cambia. No se modifican existencias, asignaciones ni movimientos."
+      ].join("\n")
+    : [
+        `SKU: ${layerPriceSource.product?.sku || "—"}`,
+        `Producto: ${layerPriceSource.product?.name || "—"}`,
+        `Asignación: ${inventoryProjectOrAssignmentLabel(layerPriceSource)}`,
+        `Ubicación: ${layerPriceSource.location?.code || "—"}`,
+        `Cantidad restante de la capa: ${qty} piezas`,
+        `Piezas afectadas: ${qty}`,
+        `Precio actual MXN: ${current}`,
+        `Nuevo precio MXN: ${next}`,
+        "El precio se asigna a la capa completa. No se modifican existencias."
+      ].join("\n");
   const qtyEl = document.getElementById("priceQty");
   const affectedEl = document.getElementById("priceAffected");
   const currentEl = document.getElementById("priceCurrent");
+  const availableEl = document.getElementById("priceAvailableUnpriced");
+  const remainingEl = document.getElementById("priceRemainingUnpriced");
+  const addedEl = document.getElementById("priceAddedValue");
   if (qtyEl) qtyEl.value = qty;
-  if (affectedEl) affectedEl.value = qty;
+  if (affectedEl) affectedEl.value = affected;
   if (currentEl) currentEl.value = current;
+  if (availableEl) availableEl.value = layer ? formatQty(availableRaw) : "";
+  if (remainingEl) remainingEl.value = unpriced && qtyParsed.ok ? formatQty(remainingRaw) : "";
+  if (addedEl) addedEl.value = unpriced ? addedValue : "";
+  syncPriceSplitFieldsVisible(unpriced);
   syncLayerPriceSaveButton();
 }
 
@@ -2108,6 +2217,8 @@ function closeLayerPricePanel() {
   layerPriceSource = null;
   const priceNew = document.getElementById("priceNew");
   if (priceNew) priceNew.value = "";
+  const qtyToValue = document.getElementById("priceQtyToValue");
+  if (qtyToValue) qtyToValue.value = "";
   const btn = document.getElementById("priceConfirmBtn");
   if (btn) btn.disabled = true;
   setPriceMessage("", true);
@@ -2126,24 +2237,62 @@ async function confirmLayerPriceUpdate() {
     syncLayerPriceSaveButton();
     return;
   }
-  if (!layerPriceHasRealChange(layer, parsed)) {
-    setPriceMessage("El precio no cambió. Escribe un valor diferente para guardar.", false);
+  const unpriced = !layerHasAssignedPrice(layer);
+  if (!unpriced) {
+    if (!layerPriceHasRealChange(layer, parsed)) {
+      setPriceMessage("El precio no cambió. Escribe un valor diferente para guardar.", false);
+      syncLayerPriceSaveButton();
+      return;
+    }
+    const qty = formatQty(layer.qty);
+    if (!window.confirm(layerPriceConfirmMessage(parsed, qty))) return;
+    const response = await authenticatedFetch(`/api/inventory/layers/${encodeURIComponent(layer.id)}/price`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ unitPriceMxn: parsed.value })
+    });
+    const data = await response?.json().catch(() => ({}));
+    if (!response?.ok) {
+      setPriceMessage(data.message || data.code || "No se pudo guardar el precio.", false);
+      return;
+    }
+    setPriceMessage(`Precio guardado. ${formatQty(data.qtyAffected || layer.qty)} piezas afectadas.`, true);
+    await loadStockStrip();
+    const updated = (Array.isArray(stockRowsCache) ? stockRowsCache : []).find((item) => item.id === layerPriceSource.id);
+    if (updated) {
+      layerPriceSource = updated;
+      fillLayerPriceFields(updated);
+    }
+    return;
+  }
+  const qtyParsed = parseLayerQtyToValueInput(document.getElementById("priceQtyToValue")?.value);
+  if (qtyParsed.empty || !qtyParsed.ok) {
+    setPriceMessage(qtyParsed.message || "Indica la cantidad a valuar.", false);
     syncLayerPriceSaveButton();
     return;
   }
-  const qty = formatQty(layer.qty);
-  if (!window.confirm(layerPriceConfirmMessage(parsed, qty))) return;
-  const response = await authenticatedFetch(`/api/inventory/layers/${encodeURIComponent(layer.id)}/price`, {
-    method: "PATCH",
+  if (!qtyFitsUnpricedLayer(layer, qtyParsed.value)) {
+    setPriceMessage("La cantidad a valuar no es válida para esta capa.", false);
+    syncLayerPriceSaveButton();
+    return;
+  }
+  const remainingScaled = decimal4ToScaled(String(layer.qty ?? "0")) - decimal4ToScaled(qtyParsed.value);
+  const remainingRaw = remainingScaled >= 0n ? scaledToDecimalString(remainingScaled) : "0";
+  if (!window.confirm(layerPriceSplitConfirmMessage(parsed, qtyParsed.value, remainingRaw, String(layer.qty)))) return;
+  const response = await authenticatedFetch(`/api/inventory/layers/${encodeURIComponent(layer.id)}/price-split`, {
+    method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ unitPriceMxn: parsed.value })
+    body: JSON.stringify({ qtyToValue: qtyParsed.value, unitPriceMxn: parsed.value })
   });
   const data = await response?.json().catch(() => ({}));
   if (!response?.ok) {
     setPriceMessage(data.message || data.code || "No se pudo guardar el precio.", false);
     return;
   }
-  setPriceMessage(`Precio guardado. ${formatQty(data.qtyAffected || layer.qty)} piezas afectadas.`, true);
+  setPriceMessage(
+    `Precio guardado. ${formatQty(data.qtyAffected || qtyParsed.value)} piezas valuadas. Remanente ${formatQty(data.qtyRemaining ?? remainingRaw)}.`,
+    true
+  );
   await loadStockStrip();
   const updated = (Array.isArray(stockRowsCache) ? stockRowsCache : []).find((item) => item.id === layerPriceSource.id);
   if (updated) {
@@ -2166,6 +2315,12 @@ function wireLayerPricePanel() {
     priceNew.dataset.wired = "1";
     priceNew.addEventListener("input", updateLayerPricePreview);
     priceNew.addEventListener("change", updateLayerPricePreview);
+  }
+  const qtyToValue = document.getElementById("priceQtyToValue");
+  if (qtyToValue && qtyToValue.dataset.wired !== "1") {
+    qtyToValue.dataset.wired = "1";
+    qtyToValue.addEventListener("input", updateLayerPricePreview);
+    qtyToValue.addEventListener("change", updateLayerPricePreview);
   }
   const confirmBtn = document.getElementById("priceConfirmBtn");
   if (confirmBtn && confirmBtn.dataset.wired !== "1") {

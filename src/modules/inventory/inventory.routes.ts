@@ -16,6 +16,7 @@ import { parseMexicoCityDateFilter } from "../../shared/mexico-city-date.js";
 import { canExposeEconomicValuation } from "./inventory-economic-access.js";
 import { calculateInventoryValuation } from "./inventory-valuation.service.js";
 import { LayerPriceError, updateInventoryLayerUnitPriceMxn } from "./inventory-layer-price.service.js";
+import { splitUnpricedInventoryLayerPrice } from "./inventory-layer-price-split.service.js";
 import { InventoryMutationError, mutateInventory } from "./inventory-mutation.service.js";
 import {
   assertCanTransferAssignment,
@@ -262,6 +263,34 @@ inventoryRouter.patch("/layers/:layerId/price", requireRole(["ADMIN"]), async (r
   try {
     const result = await updateInventoryLayerUnitPriceMxn({
       layerId,
+      unitPriceMxn: body.unitPriceMxn,
+      userId: req.auth!.userId
+    });
+    res.json(result);
+  } catch (error) {
+    if (error instanceof LayerPriceError) {
+      res.status(error.statusCode).json({ code: error.code, message: error.message });
+      return;
+    }
+    throw error;
+  }
+});
+
+inventoryRouter.post("/layers/:layerId/price-split", requireRole(["ADMIN"]), async (req, res) => {
+  if (!canExposeEconomicValuation(req.auth!.role)) {
+    throw new HttpError(403, "No autorizado para editar valuación económica.");
+  }
+  const layerId = z.string().min(1).parse(req.params.layerId);
+  const body = z
+    .object({
+      qtyToValue: z.union([z.string(), z.number()]),
+      unitPriceMxn: z.union([z.string(), z.number()])
+    })
+    .parse(req.body ?? {});
+  try {
+    const result = await splitUnpricedInventoryLayerPrice({
+      layerId,
+      qtyToValue: body.qtyToValue,
       unitPriceMxn: body.unitPriceMxn,
       userId: req.auth!.userId
     });
