@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import vm from "node:vm";
 import { Prisma } from "@prisma/client";
 import { canExposeEconomicValuation } from "../src/modules/inventory/inventory-economic-access.js";
 import {
@@ -246,7 +247,8 @@ test("HTML de existencias, proyectos y catálogo muestra la vista económica", (
   assert.match(html, /id="sumStockCubes"/);
   assert.match(html, /id="sumStockTotal"[\s\S]{0,120}Piezas/);
   assert.match(html, /id="sumStockCubes"[\s\S]{0,120}Saldos/);
-  assert.match(html, /dashboard\.js\?v=57/);
+  assert.match(html, /dashboard\.js\?v=58/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=57/);
   assert.doesNotMatch(html, /dashboard\.js\?v=56/);
 });
 
@@ -328,4 +330,95 @@ test("tras guardar precio se recalcan tarjetas y tabla sin recargar la página",
   assert.match(html, /Ver registros sin precio/);
   assert.match(html, /id="layerPricePanel"/);
   assert.match(js, /window\.confirm/);
+});
+
+function loadLayerPriceInputHelpers() {
+  const start = js.indexOf("function parseLayerPriceMxnInput");
+  const end = js.indexOf("function openInventoryDetail");
+  assert.ok(start >= 0 && end > start);
+  const sandbox = {};
+  vm.runInNewContext(js.slice(start, end), sandbox);
+  return sandbox;
+}
+
+test("precio null deja el campo vacío y nunca convierte vacío en cero", () => {
+  assert.equal(Number(""), 0);
+  const helpers = loadLayerPriceInputHelpers();
+  const empty = helpers.parseLayerPriceMxnInput("");
+  const blank = helpers.parseLayerPriceMxnInput("   ");
+  const missing = helpers.parseLayerPriceMxnInput(null);
+  assert.equal(empty.ok, false);
+  assert.equal(empty.empty, true);
+  assert.equal(blank.empty, true);
+  assert.equal(missing.empty, true);
+  assert.notEqual(empty.value, "0");
+  assert.equal(empty.value, undefined);
+  assert.equal(helpers.normalizeLayerPriceMxn(""), null);
+  assert.equal(helpers.layerHasAssignedPrice({ unitPriceMxn: null }), false);
+  assert.equal(helpers.layerHasAssignedPrice({ unitPriceMxn: "" }), false);
+  assert.match(js, /resetNewPriceInput/);
+  const resetStart = js.indexOf("function resetNewPriceInput");
+  const resetEnd = js.indexOf("function updateLayerPricePreview");
+  const resetBlock = js.slice(resetStart, resetEnd);
+  assert.match(resetBlock, /el\.value = ""/);
+  assert.match(resetBlock, /layerHasAssignedPrice\(layer\)/);
+  assert.doesNotMatch(resetBlock, /Number\(/);
+  assert.match(html, /id="priceNew"[^>]*placeholder="Escribe el precio unitario MXN"/);
+  assert.match(html, /id="priceNewHint"/);
+  assert.doesNotMatch(html, /id="priceNew"[^>]*placeholder="0\.0000"/);
+});
+
+test("campo vacío mantiene Guardar desactivado y cero escrito a mano es válido", () => {
+  const helpers = loadLayerPriceInputHelpers();
+  const zero = helpers.parseLayerPriceMxnInput("0");
+  const zeroPad = helpers.parseLayerPriceMxnInput("0.0000");
+  assert.equal(zero.ok, true);
+  assert.equal(zero.value, "0");
+  assert.equal(zeroPad.ok, true);
+  assert.equal(helpers.normalizeLayerPriceMxn("0"), "0.0000");
+  const nullLayer = { id: "l1", unitPriceMxn: null };
+  const valuedLayer = { id: "l2", unitPriceMxn: "12.5" };
+  assert.equal(helpers.layerPriceHasRealChange(nullLayer, zero), true);
+  assert.equal(helpers.layerPriceHasRealChange(valuedLayer, helpers.parseLayerPriceMxnInput("12.5")), false);
+  assert.equal(helpers.layerPriceHasRealChange(valuedLayer, helpers.parseLayerPriceMxnInput("12.5000")), false);
+  assert.equal(helpers.layerPriceHasRealChange(valuedLayer, helpers.parseLayerPriceMxnInput("12.51")), true);
+  assert.match(html, /id="priceConfirmBtn"[^>]*disabled/);
+  assert.match(js, /btn\.disabled = !\(layer\?\.id && parsed\.ok && layerPriceHasRealChange/);
+  const parseStart = js.indexOf("function parseLayerPriceMxnInput");
+  const parseEnd = js.indexOf("function normalizeLayerPriceMxn");
+  assert.doesNotMatch(js.slice(parseStart, parseEnd), /Number\(/);
+});
+
+test("Cancelar no hace PATCH y un precio existente exige un cambio real", () => {
+  const closeStart = js.indexOf("function closeLayerPricePanel");
+  const closeEnd = js.indexOf("async function confirmLayerPriceUpdate");
+  const closeBlock = js.slice(closeStart, closeEnd);
+  assert.ok(closeStart >= 0 && closeEnd > closeStart);
+  assert.doesNotMatch(closeBlock, /authenticatedFetch/);
+  assert.doesNotMatch(closeBlock, /PATCH/);
+  assert.doesNotMatch(closeBlock, /\/api\/inventory\/layers\//);
+  const confirmStart = js.indexOf("async function confirmLayerPriceUpdate");
+  const confirmEnd = js.indexOf("function wireLayerPricePanel");
+  const confirmBlock = js.slice(confirmStart, confirmEnd);
+  assert.match(confirmBlock, /layerPriceHasRealChange/);
+  assert.match(confirmBlock, /El precio no cambió/);
+  const fetchIdx = confirmBlock.indexOf("authenticatedFetch");
+  const changeIdx = confirmBlock.indexOf("layerPriceHasRealChange");
+  assert.ok(changeIdx >= 0 && fetchIdx > changeIdx);
+});
+
+test("la confirmación muestra el precio exacto y las piezas afectadas", () => {
+  const helpers = loadLayerPriceInputHelpers();
+  assert.equal(
+    helpers.layerPriceConfirmMessage(helpers.parseLayerPriceMxnInput("0"), "138"),
+    "Se asignará un precio unitario de $0.0000 MXN a 138 piezas. ¿Deseas continuar?"
+  );
+  assert.equal(
+    helpers.layerPriceConfirmMessage(helpers.parseLayerPriceMxnInput("0.0000"), "138"),
+    "Se asignará un precio unitario de $0.0000 MXN a 138 piezas. ¿Deseas continuar?"
+  );
+  assert.match(js, /window\.confirm\(layerPriceConfirmMessage\(parsed, qty\)\)/);
+  assert.throws(() => parseLayerUnitPriceMxn(""), LayerPriceError);
+  assert.throws(() => parseLayerUnitPriceMxn("   "), LayerPriceError);
+  assert.equal(parseLayerUnitPriceMxn(0).toString(), "0");
 });

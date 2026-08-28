@@ -3921,13 +3921,14 @@
                 <div class="field"><label>Precio actual MXN</label><input id="priceCurrent" type="text" readonly /></div>
                 <div class="field">
                   <label for="priceNew">Nuevo precio MXN</label>
-                  <input id="priceNew" type="text" inputmode="decimal" placeholder="0.0000" />
+                  <input id="priceNew" type="text" inputmode="decimal" autocomplete="off" placeholder="Escribe el precio unitario MXN" value="" />
+                  <p id="priceNewHint" class="module-hint" style="margin:6px 0 0">Escribe el precio unitario MXN</p>
                 </div>
               </div>
               <p id="pricePreview" class="module-hint" style="margin:12px 0"></p>
               <p id="priceMessage" class="ops-message"></p>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button type="button" id="priceConfirmBtn" class="btn-primary btn-compact">Guardar precio</button>
+                <button type="button" id="priceConfirmBtn" class="btn-primary btn-compact" disabled>Guardar precio</button>
                 <button type="button" id="priceCancelBtn" class="btn-secondary btn-compact">Cancelar</button>
               </div>
             </div>
@@ -4917,6 +4918,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=57"></script>
+    <script src="/dashboard.js?v=58"></script>
   </body>
 </html>

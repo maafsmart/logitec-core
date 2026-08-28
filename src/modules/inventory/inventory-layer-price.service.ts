@@ -16,10 +16,10 @@ export class LayerPriceError extends Error {
 const PRICE_PATTERN = /^\d+(\.\d{1,4})?$/;
 
 export function parseLayerUnitPriceMxn(value: unknown): Prisma.Decimal {
-  if (value == null || value === "") {
+  const raw = value == null ? "" : String(value).trim().replace(",", ".");
+  if (!raw) {
     throw new LayerPriceError("PRICE_REQUIRED", "Indica un precio en MXN.");
   }
-  const raw = String(value).trim().replace(",", ".");
   if (!PRICE_PATTERN.test(raw)) {
     throw new LayerPriceError(
       "INVALID_PRICE",
