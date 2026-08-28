@@ -143,6 +143,8 @@ let movementsRows = [];
 let currentUserId = null;
 let catalogApplyCompleted = false;
 let stockRowsCache = [];
+/** @type {Array<{ id?: string, code?: string, warehouse?: string, active?: boolean }>} */
+let relocateLocationsCache = [];
 let productsCache = [];
 let movementsCountCache = 0;
 let movementsRowsCache = [];
@@ -923,6 +925,11 @@ function navigateTo(sectionId, moduleName) {
   }
   if (showRelocate) {
     populateOperationalSelects();
+    void loadRelocateLocationsCatalog().then(() => {
+      if (typeof syncRelocateLocationSelects === "function") syncRelocateLocationSelects();
+      if (typeof syncRelocateFormState === "function") syncRelocateFormState();
+    });
+    if (typeof syncRelocateFormState === "function") syncRelocateFormState();
   }
   if (showProjects) renderProjectsModule();
   if (showWarehouses) renderWarehousesModule();
@@ -6514,7 +6521,7 @@ function fillInventoryStatusSelects() {
   const preferred = activeInventoryStatuses().some((row) => row.code === "AVAILABLE") ? "AVAILABLE" : "";
   fillInventoryStatusSelect("inboundStatus", { preferred });
   fillInventoryStatusSelect("outboundStatus", { preferred });
-  fillInventoryStatusSelect("relocateStatus", { includeEmpty: false, preferred });
+  fillInventoryStatusSelect("relocateStatus", { includeEmpty: true, emptyLabel: "— Seleccionar —" });
   fillInventoryStatusSelect("pickStatus", {
     includeEmpty: true,
     emptyLabel: "— Cualquiera (solo si hay una línea) —",
@@ -6899,6 +6906,495 @@ function syncInboundSubmitEnabled() {
   if (typeof updateInboundEntryValue === "function") updateInboundEntryValue();
 }
 
+function relocateWarehouseValue() {
+  return (
+    (typeof readSmartFieldValue === "function" ? readSmartFieldValue("relocateWarehouse") : "") ||
+    document.getElementById("relocateWarehouse")?.value?.trim() ||
+    ""
+  ).trim();
+}
+
+function relocateStatusValue() {
+  return String(document.getElementById("relocateStatus")?.value || "").trim();
+}
+
+function relocateFromValue() {
+  return (
+    (typeof readSmartFieldValue === "function" ? readSmartFieldValue("relocateFrom") : "") ||
+    document.getElementById("relocateFrom")?.value?.trim() ||
+    document.getElementById("relocateFromSelect")?.value?.trim() ||
+    ""
+  ).trim();
+}
+
+function relocateToValue() {
+  return (
+    (typeof readSmartFieldValue === "function" ? readSmartFieldValue("relocateTo") : "") ||
+    document.getElementById("relocateTo")?.value?.trim() ||
+    document.getElementById("relocateToSelect")?.value?.trim() ||
+    ""
+  ).trim();
+}
+
+function relocateHasBalanceSelection() {
+  return Boolean(document.getElementById("relocateInventoryId")?.value?.trim());
+}
+
+function relocateOriginContextReady() {
+  return Boolean(relocateWarehouseValue() && relocateStatusValue() && relocateFromValue());
+}
+
+function parseRelocateQty() {
+  const raw = document.getElementById("relocateQty")?.value;
+  if (raw == null || String(raw).trim() === "") return { empty: true, ok: false, value: null };
+  const normalized = String(raw).trim().replace(",", ".");
+  if (!/^\d+(\.\d+)?$/.test(normalized)) return { empty: false, ok: false, value: null };
+  const qty = Number(normalized);
+  if (!Number.isFinite(qty) || qty <= 0) return { empty: false, ok: false, value: null };
+  return { empty: false, ok: true, value: qty, raw: normalized };
+}
+
+function relocateAvailableQtyNumber() {
+  const raw = document.getElementById("relocateAvailableHint")?.dataset?.available;
+  if (raw == null || String(raw).trim() === "") return null;
+  const qty = Number(raw);
+  return Number.isFinite(qty) ? qty : null;
+}
+
+function relocateSelectedBalance() {
+  const skuEl = document.getElementById("relocateSku");
+  const data = skuEl?.dataset || {};
+  return {
+    inventoryId: document.getElementById("relocateInventoryId")?.value?.trim() || "",
+    layerId: document.getElementById("relocateLayerId")?.value?.trim() || "",
+    productId: document.getElementById("relocateProductId")?.value?.trim() || "",
+    sku: skuEl?.value?.trim() || data.relocateSku || "",
+    productName: data.relocateProductName || "",
+    assignmentLabel: data.relocateAssignmentLabel || "",
+    assignmentType: data.relocateAssignmentType || "",
+    locationCode: data.relocateLocation || "",
+    status: data.relocateStatus || "",
+    lotNumber: data.relocateLot || "",
+    layerCount: Number(data.relocateLayerCount || 0),
+    serialCount: Number(data.relocateSerialCount || 0),
+    availableQty: data.relocateAvailable || "",
+    qty: data.relocateQty || "",
+    reservedQty: data.relocateReserved || ""
+  };
+}
+
+function relocateSerialsBlockRelocate() {
+  return relocateSelectedBalance().serialCount > 0;
+}
+
+function relocateFormIsComplete() {
+  if (!relocateOriginContextReady()) return false;
+  if (!relocateHasBalanceSelection()) return false;
+  if (relocateSerialsBlockRelocate()) return false;
+  const dest = relocateToValue();
+  const origin = relocateFromValue();
+  if (!dest) return false;
+  if (dest.toUpperCase() === origin.toUpperCase()) return false;
+  const qty = parseRelocateQty();
+  if (qty.empty || !qty.ok) return false;
+  const available = relocateAvailableQtyNumber();
+  if (available == null || qty.value > available) return false;
+  return true;
+}
+
+function relocateLayerSummary(item) {
+  if (item?.lotNumber) return `Lote ${item.lotNumber}`;
+  const layers = Number(item?.layerCount || 0);
+  if (layers > 1) return `${layers} capas`;
+  return "Sin lote";
+}
+
+function buildRelocateSelectedCardHtml(item) {
+  const assignment = item.assignmentLabel || (item.assignmentType === "FREE_TO_SALE" ? "Free to Sale" : "Proyecto");
+  return `<div class="sku-selected-card-title">✓ Saldo seleccionado</div>
+    <dl class="sku-selected-card-meta">
+      <div><dt>SKU</dt><dd>${escCell(item.sku)}</dd></div>
+      <div><dt>Producto</dt><dd>${escCell(item.productName)}</dd></div>
+      <div><dt>Asignación</dt><dd>${escCell(assignment)}</dd></div>
+      <div><dt>Ubicación origen</dt><dd>${escCell(item.locationCode)}</dd></div>
+      <div><dt>Estatus</dt><dd>${escCell(typeof formatInventoryStatus === "function" ? formatInventoryStatus(item.status) : item.status)}</dd></div>
+      <div><dt>Cantidad disponible</dt><dd>${escCell(typeof formatQty === "function" ? formatQty(item.availableQty) : item.availableQty)}</dd></div>
+    </dl>
+    <button type="button" class="btn-secondary btn-compact sku-change-btn">Cambiar saldo/SKU</button>`;
+}
+
+function renderRelocateSelectedCard(item) {
+  const listEl = document.getElementById("relocateSkuSuggestions");
+  hideProductTypeaheadList(listEl);
+  let panel = document.getElementById("relocateSelectedCard");
+  if (!panel) {
+    const wrap = listEl?.parentElement;
+    panel = document.createElement("div");
+    panel.id = "relocateSelectedCard";
+    panel.className = "sku-selected-card";
+    listEl?.insertAdjacentElement("afterend", panel);
+    if (!listEl && wrap) wrap.appendChild(panel);
+  }
+  panel.classList.remove("hidden");
+  panel.hidden = false;
+  panel.innerHTML = buildRelocateSelectedCardHtml(item);
+  panel.querySelector(".sku-change-btn")?.addEventListener("click", () => {
+    beginRelocateSkuChange();
+  });
+}
+
+function hideRelocateSelectedCard() {
+  const panel = document.getElementById("relocateSelectedCard");
+  if (!panel) return;
+  panel.classList.add("hidden");
+  panel.hidden = true;
+  panel.innerHTML = "";
+}
+
+function beginRelocateSkuChange() {
+  const input = document.getElementById("relocateSku");
+  const listEl = document.getElementById("relocateSkuSuggestions");
+  clearRelocateBalanceFields(input, { keepSkuText: false });
+  hideRelocateSelectedCard();
+  hideProductTypeaheadList(listEl);
+  if (input && typeof input.focus === "function") input.focus();
+  syncRelocateFormState();
+}
+
+function clearRelocateBalanceFields(input, { keepSkuText = false } = {}) {
+  if (input) {
+    if (!keepSkuText) input.value = "";
+    if (input.dataset) {
+      delete input.dataset.skuSelectedId;
+      delete input.dataset.skuSelectedCode;
+      delete input.dataset.relocateSku;
+      delete input.dataset.relocateProductName;
+      delete input.dataset.relocateAssignmentLabel;
+      delete input.dataset.relocateAssignmentType;
+      delete input.dataset.relocateLocation;
+      delete input.dataset.relocateStatus;
+      delete input.dataset.relocateLot;
+      delete input.dataset.relocateLayerCount;
+      delete input.dataset.relocateSerialCount;
+      delete input.dataset.relocateAvailable;
+      delete input.dataset.relocateQty;
+      delete input.dataset.relocateReserved;
+    }
+  }
+  const productId = document.getElementById("relocateProductId");
+  if (productId) productId.value = "";
+  const inv = document.getElementById("relocateInventoryId");
+  if (inv) inv.value = "";
+  const layer = document.getElementById("relocateLayerId");
+  if (layer) layer.value = "";
+  clearRelocateDestination();
+}
+
+function clearRelocateDestination() {
+  const sel = document.getElementById("relocateToSelect");
+  const inp = document.getElementById("relocateTo");
+  if (sel) sel.value = "";
+  if (inp) inp.value = "";
+}
+
+function invalidateRelocateBalanceSelection(input) {
+  if (!input?.dataset?.skuSelectedId) return false;
+  if (input.value.trim() === (input.dataset.skuSelectedCode || "")) return false;
+  clearRelocateBalanceFields(input, { keepSkuText: true });
+  hideRelocateSelectedCard();
+  syncRelocateFormState();
+  return true;
+}
+
+function applyRelocateBalanceSelection(item) {
+  const input = document.getElementById("relocateSku");
+  const listEl = document.getElementById("relocateSkuSuggestions");
+  hideProductTypeaheadList(listEl);
+  if (input) {
+    input.value = item.sku || "";
+    input.dataset.skuSelectedId = `${item.inventoryId}:${item.layerId || ""}`;
+    input.dataset.skuSelectedCode = item.sku || "";
+    input.dataset.relocateSku = item.sku || "";
+    input.dataset.relocateProductName = item.productName || "";
+    input.dataset.relocateAssignmentLabel = item.assignmentLabel || "";
+    input.dataset.relocateAssignmentType = item.assignmentType || "";
+    input.dataset.relocateLocation = item.locationCode || "";
+    input.dataset.relocateStatus = item.status || "";
+    input.dataset.relocateLot = item.lotNumber || "";
+    input.dataset.relocateLayerCount = String(item.layerCount || 1);
+    input.dataset.relocateSerialCount = String(item.serialCount || 0);
+    input.dataset.relocateAvailable = String(item.availableQty || "");
+    input.dataset.relocateQty = String(item.qty || "");
+    input.dataset.relocateReserved = String(item.reservedQty || "");
+  }
+  const productId = document.getElementById("relocateProductId");
+  if (productId) productId.value = item.productId || "";
+  const inv = document.getElementById("relocateInventoryId");
+  if (inv) inv.value = item.inventoryId || "";
+  const layer = document.getElementById("relocateLayerId");
+  if (layer) layer.value = item.layerId || "";
+  renderRelocateSelectedCard(item);
+  syncRelocateLocationSelects();
+  syncRelocateFormState();
+}
+
+function relocateActiveLocationCodes(warehouse, { excludeCode } = {}) {
+  const wh = String(warehouse || "").trim().toUpperCase();
+  const exclude = String(excludeCode || "").trim().toUpperCase();
+  const fromCatalog = (Array.isArray(relocateLocationsCache) ? relocateLocationsCache : [])
+    .filter((loc) => loc && loc.active !== false)
+    .filter((loc) => !wh || String(loc.warehouse || "").toUpperCase() === wh)
+    .map((loc) => String(loc.code || "").trim())
+    .filter(Boolean);
+  const fromStock = (Array.isArray(stockRowsCache) ? stockRowsCache : [])
+    .filter((row) => !wh || String(row.location?.warehouse || row.warehouse || "").toUpperCase() === wh)
+    .map((row) => String(row.location?.code || row.locationCode || "").trim())
+    .filter(Boolean);
+  const codes = uniqueSortedStrings(fromCatalog.length ? fromCatalog : fromStock);
+  return codes.filter((code) => String(code).toUpperCase() !== exclude);
+}
+
+function fillRelocateLocationSelect(selectId, codes, { disabled = false, emptyLabel = "— Seleccionar —" } = {}) {
+  const sel = document.getElementById(selectId);
+  if (!(sel instanceof HTMLSelectElement)) return;
+  const prev = sel.value;
+  sel.innerHTML =
+    `<option value="">${escCell(emptyLabel)}</option>` +
+    codes.map((code) => `<option value="${escCell(code)}">${escCell(code)}</option>`).join("");
+  if (prev && codes.some((code) => code === prev)) sel.value = prev;
+  else sel.value = "";
+  sel.disabled = Boolean(disabled);
+  const inp = document.getElementById(selectId.replace(/Select$/, ""));
+  if (inp) {
+    inp.classList.add("hidden");
+    if (sel.value) inp.value = sel.value;
+    else inp.value = "";
+    inp.disabled = Boolean(disabled);
+  }
+}
+
+async function loadRelocateLocationsCatalog() {
+  try {
+    const response = await authenticatedFetch("/api/inventory/locations");
+    if (!response?.ok) return relocateLocationsCache;
+    const rows = await response.json();
+    relocateLocationsCache = Array.isArray(rows) ? rows : [];
+  } catch (_e) {
+    relocateLocationsCache = Array.isArray(relocateLocationsCache) ? relocateLocationsCache : [];
+  }
+  return relocateLocationsCache;
+}
+
+function syncRelocateLocationSelects() {
+  const warehouse = relocateWarehouseValue();
+  const originReady = Boolean(warehouse && relocateStatusValue());
+  const originCodes = originReady ? relocateActiveLocationCodes(warehouse) : [];
+  fillRelocateLocationSelect("relocateFromSelect", originCodes, {
+    disabled: !originReady,
+    emptyLabel: originReady ? "— Seleccionar —" : "— Selecciona almacén y estatus —"
+  });
+  const hasBalance = relocateHasBalanceSelection();
+  const origin = relocateFromValue();
+  const destCodes = hasBalance ? relocateActiveLocationCodes(warehouse, { excludeCode: origin }) : [];
+  fillRelocateLocationSelect("relocateToSelect", destCodes, {
+    disabled: !hasBalance,
+    emptyLabel: hasBalance ? "— Seleccionar —" : "— Selecciona un saldo —"
+  });
+}
+
+function updateRelocateAvailableHint() {
+  const hint = document.getElementById("relocateAvailableHint");
+  if (!hint) return;
+  if (!relocateHasBalanceSelection()) {
+    hint.dataset.available = "";
+    hint.textContent = "Disponible para reubicar: —";
+    return;
+  }
+  const selected = relocateSelectedBalance();
+  hint.dataset.available = String(selected.availableQty || "");
+  const qtyLabel =
+    typeof formatQty === "function" ? formatQty(selected.availableQty) : selected.availableQty || "—";
+  hint.textContent = `Disponible para reubicar: ${qtyLabel}`;
+}
+
+function syncRelocateSkuEnabled() {
+  const input = document.getElementById("relocateSku");
+  if (!(input instanceof HTMLInputElement)) return;
+  const ready = relocateOriginContextReady();
+  input.disabled = !ready;
+  input.placeholder = ready
+    ? "Buscar SKU, código de barras o nombre…"
+    : "Selecciona almacén, estatus y ubicación origen";
+  if (!ready) {
+    hideProductTypeaheadList(document.getElementById("relocateSkuSuggestions"));
+  }
+}
+
+function syncRelocateSubmitEnabled() {
+  const btn = document.getElementById("relocateSubmitBtn");
+  if (!btn) return;
+  btn.disabled = !relocateFormIsComplete();
+}
+
+function syncRelocateFormState() {
+  syncRelocateSkuEnabled();
+  updateRelocateAvailableHint();
+  syncRelocateSubmitEnabled();
+}
+
+function invalidateRelocateContextFromFilters() {
+  const input = document.getElementById("relocateSku");
+  clearRelocateBalanceFields(input, { keepSkuText: false });
+  hideRelocateSelectedCard();
+  hideProductTypeaheadList(document.getElementById("relocateSkuSuggestions"));
+  syncRelocateLocationSelects();
+  syncRelocateFormState();
+}
+
+function buildRelocateConfirmMessage(input) {
+  const qty = input.qty;
+  const sku = input.sku;
+  const product = input.productName ? ` (${input.productName})` : "";
+  const assignment = input.assignmentLabel || (input.assignmentType === "FREE_TO_SALE" ? "Free to Sale" : "Proyecto");
+  const lote = input.lotNumber
+    ? `lote ${input.lotNumber}`
+    : Number(input.layerCount) > 1
+      ? `${input.layerCount} capas`
+      : "sin lote";
+  const statusLabel =
+    typeof formatInventoryStatus === "function" ? formatInventoryStatus(input.status) : input.status;
+  return `Se reubicará ${qty} piezas del SKU ${sku}${product}, ${assignment}, almacén ${input.warehouse}, de ${input.fromLoc} a ${input.toLoc}, estatus ${statusLabel}, ${lote}. ¿Deseas continuar?`;
+}
+
+function showRelocateBalanceSuggestions(listEl, items, activeIdx, onPick) {
+  if (!listEl) return;
+  if (!items.length) {
+    listEl.innerHTML = `<div class="product-typeahead-empty">Sin saldos con disponibilidad en origen. Sigue escribiendo o cambia la ubicación.</div>`;
+    listEl.classList.remove("hidden");
+    listEl.hidden = false;
+    return;
+  }
+  listEl.innerHTML = items
+    .map((item, idx) => {
+      const assignment = item.assignmentLabel || "—";
+      const statusLabel =
+        typeof formatInventoryStatus === "function" ? formatInventoryStatus(item.status) : item.status;
+      const layer = relocateLayerSummary(item);
+      return `<button type="button" class="product-typeahead-item" role="option" data-pta-idx="${idx}" aria-selected="${
+        idx === activeIdx ? "true" : "false"
+      }">
+        <div class="pta-sku">${escCell(item.sku)}${item.barcode && item.barcode !== item.sku ? ` · ${escCell(item.barcode)}` : ""}</div>
+        <div class="pta-name">${escCell(item.productName || "—")}</div>
+        <div class="pta-meta">${escCell(assignment)} · ${escCell(item.locationCode)} · ${escCell(statusLabel)} · Física ${escCell(
+        typeof formatQty === "function" ? formatQty(item.qty) : item.qty
+      )} · Reservada ${escCell(
+        typeof formatQty === "function" ? formatQty(item.reservedQty) : item.reservedQty
+      )} · Disponible ${escCell(
+        typeof formatQty === "function" ? formatQty(item.availableQty) : item.availableQty
+      )} · ${escCell(layer)}</div>
+      </button>`;
+    })
+    .join("");
+  listEl.classList.remove("hidden");
+  listEl.hidden = false;
+  listEl.querySelectorAll("[data-pta-idx]").forEach((btn) => {
+    btn.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      const i = Number(btn.getAttribute("data-pta-idx"));
+      if (items[i]) onPick(items[i]);
+    });
+  });
+}
+
+async function searchRelocateBalanceSuggestions(query) {
+  if (!relocateOriginContextReady()) return [];
+  const params = new URLSearchParams({
+    warehouse: relocateWarehouseValue(),
+    location: relocateFromValue(),
+    status: relocateStatusValue()
+  });
+  if (query) params.set("q", query);
+  const response = await authenticatedFetch(`/api/inventory/relocate-balances?${params.toString()}`);
+  if (!response?.ok) return [];
+  const rows = await response.json();
+  return Array.isArray(rows) ? rows : [];
+}
+
+function wireRelocateBalanceTypeahead() {
+  const input = document.getElementById("relocateSku");
+  const listEl = document.getElementById("relocateSkuSuggestions");
+  if (!(input instanceof HTMLInputElement) || !listEl || input.dataset.relocatePtaWired === "1") return;
+  input.dataset.relocatePtaWired = "1";
+  input.setAttribute("autocomplete", "off");
+  const state = { items: [], active: -1, timer: null };
+
+  const close = () => {
+    hideProductTypeaheadList(listEl);
+    state.items = [];
+    state.active = -1;
+  };
+
+  const pick = (item) => {
+    if (state.timer) clearTimeout(state.timer);
+    close();
+    applyRelocateBalanceSelection(item);
+  };
+
+  const refresh = async () => {
+    if (!relocateOriginContextReady() || input.disabled) {
+      close();
+      return;
+    }
+    if (input.dataset.skuSelectedId && input.value.trim() === (input.dataset.skuSelectedCode || "")) {
+      close();
+      return;
+    }
+    const searchValue = input.value.trim();
+    state.items = await searchRelocateBalanceSuggestions(searchValue);
+    if (input.value.trim() !== searchValue) return;
+    state.active = state.items.length ? 0 : -1;
+    showRelocateBalanceSuggestions(listEl, state.items, state.active, pick);
+  };
+
+  input.addEventListener("input", () => {
+    invalidateRelocateBalanceSelection(input);
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = setTimeout(refresh, 120);
+  });
+  input.addEventListener("focus", () => {
+    if (input.disabled) return;
+    if (input.dataset.skuSelectedId && input.value.trim() === (input.dataset.skuSelectedCode || "")) {
+      close();
+      return;
+    }
+    refresh();
+  });
+  input.addEventListener("blur", () => {
+    setTimeout(close, 160);
+  });
+  input.addEventListener("keydown", (ev) => {
+    if (listEl.classList.contains("hidden") || !state.items.length) {
+      if (ev.key === "Escape") close();
+      return;
+    }
+    if (ev.key === "ArrowDown") {
+      ev.preventDefault();
+      state.active = Math.min(state.items.length - 1, state.active + 1);
+      showRelocateBalanceSuggestions(listEl, state.items, state.active, pick);
+    } else if (ev.key === "ArrowUp") {
+      ev.preventDefault();
+      state.active = Math.max(0, state.active - 1);
+      showRelocateBalanceSuggestions(listEl, state.items, state.active, pick);
+    } else if (ev.key === "Enter" && state.active >= 0 && state.items[state.active]) {
+      ev.preventDefault();
+      pick(state.items[state.active]);
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      close();
+    }
+  });
+}
+
 function hideSkuSelectedCard(listEl) {
   const wrap = listEl?.parentElement;
   if (!wrap || typeof wrap.querySelectorAll !== "function") return;
@@ -6936,6 +7432,8 @@ function clearSkuSelectionFields(prefix, input, { keepSkuText = false } = {}) {
     if (inv) inv.value = "";
     const layer = document.getElementById("relocateLayerId");
     if (layer) layer.value = "";
+    if (typeof clearRelocateDestination === "function") clearRelocateDestination();
+    if (typeof syncRelocateFormState === "function") syncRelocateFormState();
   }
   if (prefix === "inventory") {
     const prod = document.getElementById("invFilterProducto");
@@ -7500,8 +7998,7 @@ function wireAllProductTypeaheads() {
   [
     ["inboundSku", "inboundSkuSuggestions", "inbound", "catalog"],
     ["outboundSku", "outboundSkuSuggestions", "outbound", "both"],
-    ["reqSku", "reqSkuSuggestions", "req", "catalog"],
-    ["relocateSku", "relocateSkuSuggestions", "relocate", "catalog"]
+    ["reqSku", "reqSkuSuggestions", "req", "catalog"]
   ].forEach(([inputId, listId, prefix, mode]) => {
     const input = document.getElementById(inputId);
     const listEl = document.getElementById(listId);
@@ -7517,28 +8014,13 @@ function wireAllProductTypeaheads() {
       onSelect: (item) => {
         if (prefix === "outbound" && item.kind === "stock") {
           applyStockSuggestionToOps(prefix, item);
-        } else if (prefix === "relocate") {
-          input.value = item.sku || "";
-          const productId = document.getElementById("relocateProductId");
-          if (productId) productId.value = item.productId || "";
-          const locations = item.context?.inventory?.locations || [];
-          if (locations.length === 1) {
-            const row = locations[0];
-            const inv = document.getElementById("relocateInventoryId");
-            if (inv) inv.value = row.inventoryId || "";
-            setSmartFieldValue("relocateFrom", row.locationCode || "");
-            const statusEl = document.getElementById("relocateStatus");
-            if (statusEl && row.status) statusEl.value = row.status;
-            const layers = (item.context?.layers?.preview || []).filter((l) => l.inventoryId === row.inventoryId);
-            const layerEl = document.getElementById("relocateLayerId");
-            if (layerEl) layerEl.value = layers.length === 1 ? layers[0].id : "";
-          }
         } else {
           applyCatalogSuggestionToOps(prefix, item);
         }
       }
     });
   });
+  if (typeof wireRelocateBalanceTypeahead === "function") wireRelocateBalanceTypeahead();
 }
 
 function wireReqLineSkuTypeahead(input) {
@@ -7583,9 +8065,7 @@ function populateSmartOperationalFields() {
     ["incidentLocationSelect", "incidentLocation", locations, "", "Otra ubicación"],
     ["taskWarehouseSelect", "taskWarehouse", warehouses, "TULTITLAN24", "Otro almacén"],
     ["taskLocationSelect", "taskLocation", locations, "", "Otra ubicación"],
-    ["relocateWarehouseSelect", "relocateWarehouse", warehouses, "TULTITLAN24", "Otro almacén"],
-    ["relocateFromSelect", "relocateFrom", locations, "", "Otra ubicación origen"],
-    ["relocateToSelect", "relocateTo", locations, "", "Otra ubicación destino"]
+    ["relocateWarehouseSelect", "relocateWarehouse", warehouses, "TULTITLAN24", "Otro almacén"]
   ];
 
   for (const [selId, inpId, values, preferred, otherLabel] of pairs) {
@@ -7752,6 +8232,8 @@ function populateOperationalSelects() {
   fillSkuSelect("outboundSku", document.getElementById("outboundCustomer")?.value || "", "outboundProduct");
   fillSkuSelect("reqSku", document.getElementById("reqCustomer")?.value || "", null);
   populateSmartOperationalFields();
+  if (typeof syncRelocateLocationSelects === "function") syncRelocateLocationSelects();
+  if (typeof syncRelocateFormState === "function") syncRelocateFormState();
 }
 
 function setOpsMessage(elId, text, isOk) {
@@ -7948,70 +8430,79 @@ async function submitRelocate() {
   const msgId = "relocateMessage";
   const btn = document.getElementById("relocateSubmitBtn");
   setOpsMessage(msgId, "", true);
-  const sku = document.getElementById("relocateSku")?.value?.trim();
-  const productId = document.getElementById("relocateProductId")?.value?.trim();
-  const qty = Number(document.getElementById("relocateQty")?.value);
-  const fromLoc = readSmartFieldValue("relocateFrom");
-  const toLoc = readSmartFieldValue("relocateTo");
-  const stockStatus = document.getElementById("relocateStatus")?.value || "AVAILABLE";
+  const fromLoc = relocateFromValue();
+  const toLoc = relocateToValue();
+  const warehouse = relocateWarehouseValue();
+  const stockStatus = relocateStatusValue();
   const referenceRaw = document.getElementById("relocateReference")?.value?.trim();
   const notesExtra = document.getElementById("relocateNotes")?.value?.trim();
-  let inventoryId = document.getElementById("relocateInventoryId")?.value?.trim() || "";
-  let layerId = document.getElementById("relocateLayerId")?.value?.trim() || "";
+  const inventoryId = document.getElementById("relocateInventoryId")?.value?.trim() || "";
+  const layerId = document.getElementById("relocateLayerId")?.value?.trim() || "";
+  const selected = relocateSelectedBalance();
+  const qty = parseRelocateQty();
 
-  if (!sku) {
-    setOpsMessage(msgId, "Indica el SKU.", false);
+  if (!warehouse || !stockStatus || !fromLoc) {
+    setOpsMessage(msgId, "Selecciona almacén, estatus y ubicación origen.", false);
     return;
   }
-  if (!fromLoc || !toLoc) {
-    setOpsMessage(msgId, "Indica ubicación origen y destino.", false);
+  if (!inventoryId) {
+    setOpsMessage(msgId, "Selecciona un saldo real desde el buscador. No se reubica por texto de SKU.", false);
+    return;
+  }
+  if (selected.serialCount > 0) {
+    setOpsMessage(
+      msgId,
+      "La capa contiene series; requiere selección explícita de seriales. Esta reubicación no puede continuar.",
+      false
+    );
+    return;
+  }
+  if (!toLoc) {
+    setOpsMessage(msgId, "Selecciona la ubicación destino.", false);
     return;
   }
   if (fromLoc.toUpperCase() === toLoc.toUpperCase()) {
     setOpsMessage(msgId, "Origen y destino deben ser distintos.", false);
     return;
   }
-  if (!Number.isFinite(qty) || qty <= 0) {
+  if (qty.empty) {
+    setOpsMessage(msgId, "Indica la cantidad a reubicar.", false);
+    return;
+  }
+  if (!qty.ok) {
     setOpsMessage(msgId, "La cantidad debe ser mayor que 0.", false);
+    return;
+  }
+  const available = relocateAvailableQtyNumber();
+  if (available == null || qty.value > available) {
+    setOpsMessage(msgId, "La cantidad no puede superar la disponible no reservada.", false);
+    return;
+  }
+
+  const confirmMsg = buildRelocateConfirmMessage({
+    qty: qty.raw || qty.value,
+    sku: selected.sku,
+    productName: selected.productName,
+    assignmentLabel: selected.assignmentLabel,
+    assignmentType: selected.assignmentType,
+    warehouse,
+    fromLoc,
+    toLoc,
+    status: stockStatus,
+    lotNumber: selected.lotNumber,
+    layerCount: selected.layerCount
+  });
+  if (typeof window !== "undefined" && window.confirm && !window.confirm(confirmMsg)) {
+    syncRelocateSubmitEnabled();
     return;
   }
 
   if (btn) btn.disabled = true;
   try {
-    if (!inventoryId && productId) {
-      const context = await loadSkuContext(productId);
-      const matches = (context?.inventory?.locations || []).filter(
-        (row) =>
-          String(row.locationCode || "").toUpperCase() === fromLoc.toUpperCase() &&
-          String(row.status || "") === stockStatus
-      );
-      if (matches.length !== 1) {
-        setOpsMessage(
-          msgId,
-          matches.length
-            ? "Hay varias líneas en origen/estatus. Selecciona el SKU desde el buscador para fijar la línea."
-            : "No hay stock en la ubicación/estatus origen indicados.",
-          false
-        );
-        return;
-      }
-      inventoryId = matches[0].inventoryId;
-      const layers = (context?.layers?.preview || []).filter((l) => l.inventoryId === inventoryId && Number(l.qty) > 0);
-      if (layers.length === 1) layerId = layers[0].id;
-      else if (layers.length > 1 && !layerId) {
-        setOpsMessage(msgId, "Hay varias capas/lotes en origen. Indica la capa antes de reubicar.", false);
-        return;
-      }
-    }
-    if (!inventoryId) {
-      setOpsMessage(msgId, "Selecciona el SKU desde el buscador para resolver la línea de inventario origen.", false);
-      return;
-    }
-
     const body = {
       inventoryId,
       destinationLocation: toLoc,
-      quantity: qty,
+      quantity: qty.value,
       reference: referenceRaw || `RELOC-${Date.now()}`,
       notes: notesExtra || undefined
     };
@@ -8038,10 +8529,16 @@ async function submitRelocate() {
     if (notesEl) notesEl.value = "";
     const refEl = document.getElementById("relocateReference");
     if (refEl) refEl.value = "";
+    const skuEl = document.getElementById("relocateSku");
+    clearRelocateBalanceFields(skuEl, { keepSkuText: false });
+    hideRelocateSelectedCard();
+    await loadStockStrip();
+    await loadInventoryMovements();
+    syncRelocateLocationSelects();
   } catch (_e) {
     setOpsMessage(msgId, "Error de red al reubicar.", false);
   } finally {
-    if (btn) btn.disabled = false;
+    syncRelocateSubmitEnabled();
   }
 }
 
@@ -8851,6 +9348,30 @@ function wireOperationalForms() {
     inBtn.addEventListener("click", () => void submitOperationalMovement("in"));
   }
   syncInboundSubmitEnabled();
+  [
+    "relocateWarehouse",
+    "relocateWarehouseSelect",
+    "relocateStatus",
+    "relocateFrom",
+    "relocateFromSelect"
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.relocateFilterWired === "1") return;
+    el.dataset.relocateFilterWired = "1";
+    const onFilter = () => invalidateRelocateContextFromFilters();
+    el.addEventListener("change", onFilter);
+    el.addEventListener("input", onFilter);
+  });
+  ["relocateTo", "relocateToSelect", "relocateQty"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.relocateReadyWired === "1") return;
+    el.dataset.relocateReadyWired = "1";
+    el.addEventListener("input", () => syncRelocateSubmitEnabled());
+    el.addEventListener("change", () => syncRelocateSubmitEnabled());
+  });
+  if (typeof wireRelocateBalanceTypeahead === "function") wireRelocateBalanceTypeahead();
+  syncRelocateLocationSelects();
+  syncRelocateFormState();
   const outBtn = document.getElementById("outboundSubmitBtn");
   if (outBtn && outBtn.dataset.opsWired !== "1") {
     outBtn.dataset.opsWired = "1";

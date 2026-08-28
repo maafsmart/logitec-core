@@ -36,6 +36,7 @@ import {
 } from "./physical-reset.service.js";
 import { isForbiddenInventoryProjectRecord } from "./inventory-project-rules.js";
 import { createMovementSchema } from "./inventory-movement.schema.js";
+import { searchRelocateBalances } from "./inventory-relocate-search.service.js";
 
 const inventoryRouter = Router();
 
@@ -765,6 +766,27 @@ const relocateSchema = z.object({
   taskId: z.string().optional()
 });
 
+const relocateBalanceQuerySchema = z.object({
+  warehouse: z.string().trim().min(1).max(80),
+  location: z.string().trim().min(1).max(120),
+  status: z.string().trim().min(1).max(40),
+  q: z.string().trim().max(160).optional()
+});
+
+inventoryRouter.get("/relocate-balances", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
+  const query = relocateBalanceQuerySchema.parse(req.query);
+  const items = await searchRelocateBalances(
+    {
+      warehouse: query.warehouse,
+      locationCode: query.location,
+      status: query.status,
+      q: query.q
+    },
+    req.auth!
+  );
+  res.json(items);
+});
+
 const assignmentTransferSchema = z
   .object({
     sourceInventoryId: z.string().min(1),
@@ -795,8 +817,12 @@ inventoryRouter.post("/relocate", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"
     where: { code: body.destinationLocation.trim().toUpperCase() }
   });
   if (!destination) throw new HttpError(400, "La ubicación destino no existe.");
+  if (destination.active === false) throw new HttpError(400, "La ubicación destino no está activa.");
   if (destination.id === source.locationId) {
     throw new HttpError(400, "Origen y destino deben ser distintos.");
+  }
+  if (destination.warehouse !== source.location.warehouse) {
+    throw new HttpError(400, "El destino debe estar en el mismo almacén.");
   }
   try {
     const result = await mutateInventory({

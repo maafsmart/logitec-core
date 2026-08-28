@@ -676,6 +676,26 @@
         color: #fff;
         cursor: pointer;
       }
+      #relocateSubmitBtn:disabled,
+      #relocateSubmitBtn[disabled] {
+        background: #94a3b8 !important;
+        border: 1px solid #94a3b8 !important;
+        color: #fff !important;
+        cursor: not-allowed !important;
+        box-shadow: none !important;
+        opacity: 1;
+      }
+      #relocateSubmitBtn:disabled:hover,
+      #relocateSubmitBtn[disabled]:hover {
+        background: #94a3b8 !important;
+        border-color: #94a3b8 !important;
+        color: #fff !important;
+      }
+      #relocateSubmitBtn:not(:disabled) {
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+      }
       .price-new-help {
         margin: 4px 0 0;
         padding: 0;
@@ -4519,20 +4539,6 @@
               <h4 class="secondary-panel-title">Reubicación de inventario</h4>
               <div class="form-grid">
                 <div class="field">
-                  <label for="relocateSku">SKU / Código de barras</label>
-                  <div class="product-typeahead">
-                    <input id="relocateSku" type="text" placeholder="SKU o código" autocomplete="off" required />
-                    <div id="relocateSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
-                  </div>
-                  <input id="relocateProductId" type="hidden" />
-                  <input id="relocateInventoryId" type="hidden" />
-                  <input id="relocateLayerId" type="hidden" />
-                </div>
-                <div class="field">
-                  <label for="relocateQty">Cantidad</label>
-                  <input id="relocateQty" type="number" step="0.0001" min="0.0001" required />
-                </div>
-                <div class="field">
                   <label for="relocateWarehouse">Almacén</label>
                   <div class="smart-select-wrap">
                     <select id="relocateWarehouseSelect"><option value="">— Seleccionar —</option></select>
@@ -4541,21 +4547,46 @@
                 </div>
                 <div class="field">
                   <label for="relocateStatus">Estatus</label>
-                  <select id="relocateStatus"></select>
+                  <select id="relocateStatus">
+                    <option value="">— Seleccionar —</option>
+                  </select>
                 </div>
                 <div class="field">
                   <label for="relocateFrom">Ubicación origen</label>
                   <div class="smart-select-wrap">
-                    <select id="relocateFromSelect"><option value="">— Seleccionar —</option></select>
+                    <select id="relocateFromSelect" disabled><option value="">— Seleccionar —</option></select>
                     <input id="relocateFrom" type="text" class="smart-other-input hidden" placeholder="Origen" required />
                   </div>
                 </div>
                 <div class="field">
+                  <label for="relocateSku">SKU / Código de barras</label>
+                  <div class="product-typeahead" data-pta="relocate">
+                    <input
+                      id="relocateSku"
+                      type="text"
+                      placeholder="Selecciona almacén, estatus y ubicación origen"
+                      autocomplete="off"
+                      spellcheck="false"
+                      disabled
+                    />
+                    <div id="relocateSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                    <div id="relocateSelectedCard" class="sku-selected-card hidden" hidden></div>
+                  </div>
+                  <input id="relocateProductId" type="hidden" value="" />
+                  <input id="relocateInventoryId" type="hidden" value="" />
+                  <input id="relocateLayerId" type="hidden" value="" />
+                </div>
+                <div class="field">
                   <label for="relocateTo">Ubicación destino</label>
                   <div class="smart-select-wrap">
-                    <select id="relocateToSelect"><option value="">— Seleccionar —</option></select>
-                    <input id="relocateTo" type="text" class="smart-other-input hidden" placeholder="Destino" required />
+                    <select id="relocateToSelect" disabled><option value="">— Seleccionar —</option></select>
+                    <input id="relocateTo" type="text" class="smart-other-input hidden" placeholder="Destino" required disabled />
                   </div>
+                </div>
+                <div class="field">
+                  <label for="relocateQty">Cantidad</label>
+                  <input id="relocateQty" type="number" step="0.0001" min="0.0001" inputmode="decimal" required />
+                  <p id="relocateAvailableHint" class="price-new-help">Disponible para reubicar: —</p>
                 </div>
                 <div class="field full">
                   <label for="relocateReference">Referencia</label>
@@ -4567,7 +4598,7 @@
                 </div>
               </div>
               <p id="relocateMessage" class="ops-message"></p>
-              <button type="button" id="relocateSubmitBtn" class="btn-primary btn-compact">Reubicar inventario</button>
+              <button type="button" id="relocateSubmitBtn" class="btn-primary btn-compact" disabled>Reubicar inventario</button>
             </div>
           </div>
           <div id="moduleBulkInbound" class="module-pane hidden">
@@ -5038,6 +5069,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=67"></script>
+    <script src="/dashboard.js?v=68"></script>
   </body>
 </html>
