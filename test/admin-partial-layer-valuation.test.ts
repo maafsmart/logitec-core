@@ -519,6 +519,6 @@ test("endpoint, roles, PATCH intacto y UI de valuación parcial", () => {
   assert.match(msg, /Se asignará un precio unitario de \$\{priceLabel\} MXN a \$\{formatQty\(qtyRaw\)\} piezas/);
   assert.match(msg, /Quedarán \$\{formatQty\(remainingRaw\)\} piezas sin precio/);
   assert.match(msg, /El saldo total de \$\{formatQty\(totalRaw\)\} piezas no cambia/);
-  assert.match(html, /dashboard\.js\?v=68/);
+  assert.match(html, /dashboard\.js\?v=69/);
   assert.match(js, /logitec_active_nav/);
 });

@@ -141,7 +141,7 @@ test("el modal legado ya no es el camino de los botones visibles", () => {
 });
 
 test("la vista económica v65 y el asistente de Configuración se conservan", () => {
-  assert.match(html, /dashboard\.js\?v=68/);
+  assert.match(html, /dashboard\.js\?v=69/);
   assert.match(html, /id="sumStockTotal"/);
   assert.match(html, /id="sumStockCubes"/);
   assert.match(html, /js-economic-card/);

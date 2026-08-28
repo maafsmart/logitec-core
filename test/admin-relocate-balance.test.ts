@@ -4,12 +4,23 @@ import { test } from "node:test";
 import { Prisma } from "@prisma/client";
 import { InventoryMutationError } from "../src/modules/inventory/inventory-errors.js";
 import { mutateInventoryInTransaction } from "../src/modules/inventory/inventory-mutation.service.js";
-import { toRelocateBalanceSuggestions } from "../src/modules/inventory/inventory-relocate-search.service.js";
+import {
+  canonicalRelocateStatus,
+  filterRelocateInventories,
+  matchesRelocateProductQuery,
+  relocateLocationCodeMatches,
+  relocateWarehouseMatches,
+  toRelocateBalanceSuggestions
+} from "../src/modules/inventory/inventory-relocate-search.service.js";
 
 const html = readFileSync(new URL("../public/dashboard.html", import.meta.url), "utf8");
 const js = readFileSync(new URL("../public/dashboard.js", import.meta.url), "utf8");
 const routes = readFileSync(new URL("../src/modules/inventory/inventory.routes.ts", import.meta.url), "utf8");
 const mutationSrc = readFileSync(new URL("../src/modules/inventory/inventory-mutation.service.ts", import.meta.url), "utf8");
+const searchSrc = readFileSync(
+  new URL("../src/modules/inventory/inventory-relocate-search.service.ts", import.meta.url),
+  "utf8"
+);
 const thisFile = readFileSync(new URL(import.meta.url), "utf8");
 
 function d(n: string | number) {
@@ -361,7 +372,7 @@ function loadRelocateUi(document: unknown) {
   ].join("\n");
   return new Function(
     "document",
-    `${src}; return { relocateOriginContextReady, relocateHasBalanceSelection, parseRelocateQty, relocateFormIsComplete, buildRelocateConfirmMessage, relocateLayerSummary };`
+    `${src}; return { relocateOriginContextReady, relocateHasBalanceSelection, parseRelocateQty, relocateFormIsComplete, buildRelocateConfirmMessage, relocateLayerSummary, relocateStatusValue, relocateFromValue };`
   )(document);
 }
 
@@ -412,9 +423,9 @@ function makeRelocateDom(opts?: Record<string, string>) {
   };
 }
 
-test("dashboard.js usa cache-buster v=68 para reubicación", () => {
-  assert.match(html, /dashboard\.js\?v=68/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=67/);
+test("dashboard.js usa cache-buster v=69 para reubicación", () => {
+  assert.match(html, /dashboard\.js\?v=69/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=68/);
 });
 
 test("1 SKU nace desactivado sin origen", () => {
@@ -688,4 +699,158 @@ test("GET relocate-balances y POST relocate reutilizan el motor canónico", () =
   assert.match(post, /type: "RELOCATE"/);
   assert.match(post, /El destino debe estar en el mismo almacén/);
   assert.doesNotMatch(post, /ASSIGNMENT_TRANSFER/);
+});
+
+function an12BalanceRow(overrides: Record<string, unknown> = {}) {
+  return suggestionRow({
+    id: "inv-00262A",
+    qty: d("3"),
+    reservedQty: d("0"),
+    status: "AVAILABLE",
+    assignmentType: "FREE_TO_SALE",
+    projectId: null,
+    product: {
+      id: "prod-trp-23g",
+      sku: "00262A-00000B-000001",
+      barcode: null,
+      name: "TRP-23G-1E 23G, 1200M, Antenna"
+    },
+    location: { warehouse: "TULTITLAN24", code: "AN12-C" },
+    project: null,
+    layers: [
+      {
+        id: "layer-an12",
+        lotNumber: null,
+        qty: d("3"),
+        reservedQty: d("0"),
+        serialCount: 0
+      }
+    ],
+    ...overrides
+  });
+}
+
+const an12Query = {
+  warehouse: "TULTITLAN24",
+  locationCode: "AN12-C",
+  status: "AVAILABLE"
+};
+
+test("AN12-C: la consulta parcial 002 encuentra el saldo real", () => {
+  const rows = filterRelocateInventories([an12BalanceRow()], { ...an12Query, q: "002" });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.sku, "00262A-00000B-000001");
+  assert.equal(rows[0]?.locationCode, "AN12-C");
+  assert.equal(rows[0]?.availableQty, "3");
+});
+
+test("AN12-C: el SKU exacto encuentra el saldo real", () => {
+  const rows = filterRelocateInventories([an12BalanceRow()], {
+    ...an12Query,
+    q: "00262A-00000B-000001"
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.inventoryId, "inv-00262A");
+  assert.equal(rows[0]?.productName, "TRP-23G-1E 23G, 1200M, Antenna");
+  assert.equal(rows[0]?.assignmentLabel, "Free to Sale");
+  assert.equal(rows[0]?.qty, "3");
+  assert.equal(rows[0]?.reservedQty, "0");
+  assert.ok(matchesRelocateProductQuery(an12BalanceRow().product, "002"));
+  assert.ok(matchesRelocateProductQuery(an12BalanceRow().product, "00262A-00000B-000001"));
+});
+
+test("AN12-C: la UI envía AVAILABLE, no el texto Disponible", () => {
+  const available = loadRelocateUi(makeRelocateDom({ status: "AVAILABLE", from: "AN12-C" }).document);
+  assert.equal(available.relocateStatusValue(), "AVAILABLE");
+  assert.equal(available.relocateFromValue(), "AN12-C");
+  const translated = loadRelocateUi(makeRelocateDom({ status: "Disponible", from: "AN12-C" }).document);
+  assert.equal(translated.relocateStatusValue(), "AVAILABLE");
+  assert.equal(canonicalRelocateStatus("Disponible"), "AVAILABLE");
+  assert.equal(canonicalRelocateStatus("AVAILABLE"), "AVAILABLE");
+  const searchFn = sliceFunction(js, "searchRelocateBalanceSuggestions");
+  assert.match(searchFn, /status: relocateStatusValue\(\)/);
+  assert.doesNotMatch(searchFn, /formatInventoryStatus\(relocateStatusValue/);
+  assert.match(js, /option value="\$\{escCell\(code\)\}">\$\{escCell\(formatInventoryStatus\(code\)\)\}/);
+});
+
+test("AN12-C: el contrato usa código de ubicación, no locationId", () => {
+  assert.match(routes, /location: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(120\)/);
+  assert.match(routes, /locationCode: query\.location/);
+  const searchFn = sliceFunction(js, "searchRelocateBalanceSuggestions");
+  assert.match(searchFn, /warehouse: relocateWarehouseValue\(\)/);
+  assert.match(searchFn, /location: relocateFromValue\(\)/);
+  assert.doesNotMatch(searchFn, /locationId/);
+  assert.doesNotMatch(searchFn, /originLocation/);
+  assert.match(searchSrc, /code: \{ equals: locationCode, mode: "insensitive" \}/);
+  assert.match(searchSrc, /relocateWarehouseMatches\(location\.warehouse, warehouse\)/);
+  assert.doesNotMatch(searchSrc, /active:\s*true/);
+  assert.ok(relocateLocationCodeMatches("AN12-C", "an12-c"));
+  assert.ok(relocateWarehouseMatches("TULTITLAN24", "tultitlan24"));
+});
+
+test("AN12-C: la respuesta contiene inventoryId y la tarjeta se puede seleccionar", () => {
+  const rows = filterRelocateInventories([an12BalanceRow()], { ...an12Query, q: "002" });
+  assert.equal(rows[0]?.inventoryId, "inv-00262A");
+  assert.equal(rows[0]?.layerId, "layer-an12");
+  assert.equal(rows[0]?.status, "AVAILABLE");
+  const applySrc = sliceFunction(js, "applyRelocateBalanceSelection");
+  const apply = new Function(
+    "document",
+    `${applySrc}
+      function hideProductTypeaheadList() {}
+      function renderRelocateSelectedCard() {}
+      function syncRelocateLocationSelects() {}
+      function syncRelocateFormState() {}
+      return applyRelocateBalanceSelection;`
+  );
+  const dom = makeRelocateDom({ inventoryId: "", sku: "", from: "AN12-C" });
+  apply(dom.document)(rows[0]);
+  assert.equal(dom.values.relocateInventoryId.value, "inv-00262A");
+  assert.equal(dom.values.relocateSku.value, "00262A-00000B-000001");
+  assert.match(js, /Física \$\{escCell\(/);
+  assert.match(js, /Reservada \$\{escCell\(/);
+  assert.match(js, /Disponible \$\{escCell\(/);
+});
+
+test("AN12-C: otra ubicación no devuelve ese saldo", () => {
+  const rows = filterRelocateInventories([an12BalanceRow()], {
+    warehouse: "TULTITLAN24",
+    locationCode: "AN14-F",
+    status: "AVAILABLE",
+    q: "00262A-00000B-000001"
+  });
+  assert.equal(rows.length, 0);
+});
+
+test("AN12-C: reservedQty 3 deja disponibilidad 0 y lo excluye", () => {
+  const rows = filterRelocateInventories(
+    [
+      an12BalanceRow({
+        reservedQty: d("3"),
+        layers: [
+          {
+            id: "layer-an12",
+            lotNumber: null,
+            qty: d("3"),
+            reservedQty: d("3"),
+            serialCount: 0
+          }
+        ]
+      })
+    ],
+    { ...an12Query, q: "002" }
+  );
+  assert.equal(rows.length, 0);
+});
+
+test("AN12-C: no hay fallback al catálogo y no se muta inventario", () => {
+  const searchFn = sliceFunction(js, "searchRelocateBalanceSuggestions");
+  assert.match(searchFn, /\/api\/inventory\/relocate-balances\?/);
+  assert.doesNotMatch(searchFn, /\/api\/catalog\/products/);
+  assert.doesNotMatch(searchSrc, /searchSkuProducts/);
+  assert.doesNotMatch(searchSrc, /mutateInventory/);
+  assert.doesNotMatch(searchSrc, /prisma\.product\.findMany/);
+  assert.match(searchSrc, /clientInventoryWhere\(auth\)/);
+  assert.match(mutationSrc, /type === "RELOCATE"/);
+  assert.match(routes, /inventoryRouter\.post\("\/relocate"/);
 });

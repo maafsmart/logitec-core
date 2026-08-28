@@ -6915,7 +6915,10 @@ function relocateWarehouseValue() {
 }
 
 function relocateStatusValue() {
-  return String(document.getElementById("relocateStatus")?.value || "").trim();
+  const raw = String(document.getElementById("relocateStatus")?.value || "").trim();
+  if (!raw) return "";
+  if (raw.toUpperCase() === "DISPONIBLE") return "AVAILABLE";
+  return raw;
 }
 
 function relocateFromValue() {
@@ -7150,7 +7153,7 @@ function relocateActiveLocationCodes(warehouse, { excludeCode } = {}) {
     .filter((row) => !wh || String(row.location?.warehouse || row.warehouse || "").toUpperCase() === wh)
     .map((row) => String(row.location?.code || row.locationCode || "").trim())
     .filter(Boolean);
-  const codes = uniqueSortedStrings(fromCatalog.length ? fromCatalog : fromStock);
+  const codes = uniqueSortedStrings(fromCatalog.concat(fromStock));
   return codes.filter((code) => String(code).toUpperCase() !== exclude);
 }
 

@@ -2,6 +2,7 @@ import { Prisma, type InventoryAssignmentType } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import type { UserRole } from "../../middlewares/auth.middleware.js";
 import { clientInventoryWhere } from "../clients/client-scope.js";
+import { normalizeInventoryStatusCode } from "./inventory-status.js";
 
 type AuthContext = {
   role: UserRole;
@@ -91,6 +92,48 @@ function assignmentLabel(row: {
   return "Sin asignar";
 }
 
+export function canonicalRelocateStatus(raw: string): string {
+  const normalized = normalizeInventoryStatusCode(raw);
+  if (!normalized) return "";
+  if (normalized === "DISPONIBLE") return "AVAILABLE";
+  return normalized;
+}
+
+export function relocateWarehouseMatches(
+  locationWarehouse: string | null | undefined,
+  requested: string
+): boolean {
+  return String(locationWarehouse || "").trim().toUpperCase() === requested.trim().toUpperCase();
+}
+
+export function relocateLocationCodeMatches(
+  locationCode: string | null | undefined,
+  requested: string
+): boolean {
+  return String(locationCode || "").trim().toUpperCase() === requested.trim().toUpperCase();
+}
+
+function stripRelocateSearchNoise(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+export function matchesRelocateProductQuery(
+  product: { sku?: string | null; barcode?: string | null; name?: string | null },
+  q: string
+): boolean {
+  const query = String(q || "").trim();
+  if (!query) return true;
+  const needle = query.toUpperCase();
+  const strippedNeedle = stripRelocateSearchNoise(query);
+  return [product.sku, product.barcode, product.name].some((field) => {
+    const hay = String(field || "").toUpperCase();
+    if (!hay) return false;
+    if (hay.includes(needle)) return true;
+    if (strippedNeedle.length >= 2 && stripRelocateSearchNoise(hay).includes(strippedNeedle)) return true;
+    return false;
+  });
+}
+
 export function toRelocateBalanceSuggestions(rows: RelocateInventoryRow[]): RelocateBalanceSuggestion[] {
   const suggestions: RelocateBalanceSuggestion[] = [];
   for (const row of rows) {
@@ -145,41 +188,43 @@ export function toRelocateBalanceSuggestions(rows: RelocateInventoryRow[]): Relo
   return suggestions;
 }
 
+export function filterRelocateInventories(
+  rows: RelocateInventoryRow[],
+  query: RelocateBalanceSearchQuery
+): RelocateBalanceSuggestion[] {
+  const status = canonicalRelocateStatus(query.status);
+  return toRelocateBalanceSuggestions(
+    rows.filter(
+      (row) =>
+        relocateWarehouseMatches(row.location.warehouse, query.warehouse) &&
+        relocateLocationCodeMatches(row.location.code, query.locationCode) &&
+        canonicalRelocateStatus(row.status) === status &&
+        matchesRelocateProductQuery(row.product, query.q || "")
+    )
+  );
+}
+
 export async function searchRelocateBalances(
   query: RelocateBalanceSearchQuery,
   auth: AuthContext
 ): Promise<RelocateBalanceSuggestion[]> {
-  const warehouse = query.warehouse.trim().toUpperCase();
-  const locationCode = query.locationCode.trim().toUpperCase();
-  const status = query.status.trim();
+  const warehouse = query.warehouse.trim();
+  const locationCode = query.locationCode.trim();
+  const status = canonicalRelocateStatus(query.status);
   const q = (query.q || "").trim();
   const take = Math.min(Math.max(query.take ?? 40, 1), 80);
+  if (!warehouse || !locationCode || !status) return [];
 
   const location = await prisma.location.findFirst({
-    where: { code: locationCode, warehouse, active: true }
+    where: { code: { equals: locationCode, mode: "insensitive" } }
   });
-  if (!location) return [];
-
-  const productFilter: Prisma.ProductWhereInput | undefined = q
-    ? {
-        OR: [
-          { sku: { contains: q, mode: "insensitive" } },
-          { barcode: { contains: q, mode: "insensitive" } },
-          { name: { contains: q, mode: "insensitive" } }
-        ]
-      }
-    : undefined;
+  if (!location || !relocateWarehouseMatches(location.warehouse, warehouse)) return [];
 
   const rows = await prisma.inventory.findMany({
     where: {
-      AND: [
-        clientInventoryWhere(auth),
-        { locationId: location.id, status, qty: { gt: 0 } },
-        productFilter ? { product: productFilter } : {}
-      ]
+      AND: [clientInventoryWhere(auth), { locationId: location.id, qty: { gt: 0 } }]
     },
     orderBy: [{ product: { sku: "asc" } }, { assignmentKey: "asc" }, { id: "asc" }],
-    take,
     include: {
       product: { select: { id: true, sku: true, barcode: true, name: true } },
       location: { select: { warehouse: true, code: true } },
@@ -198,8 +243,13 @@ export async function searchRelocateBalances(
     }
   });
 
+  const matched = rows.filter(
+    (row) =>
+      canonicalRelocateStatus(row.status) === status && matchesRelocateProductQuery(row.product, q)
+  );
+
   return toRelocateBalanceSuggestions(
-    rows.map((row) => ({
+    matched.slice(0, take).map((row) => ({
       id: row.id,
       qty: row.qty,
       reservedQty: row.reservedQty,
