@@ -16,6 +16,8 @@ export { InventoryMutationError } from "./inventory-errors.js";
 
 type MutationType = "IN" | "OUT" | "ADJUST_SET" | "PICK" | "RELOCATE";
 
+export type RelocateAllocationMode = "FIFO";
+
 export type InventoryMutationInput = {
   type: MutationType;
   productId: string;
@@ -24,6 +26,7 @@ export type InventoryMutationInput = {
   status?: string;
   inventoryId?: string;
   layerId?: string;
+  allocationMode?: RelocateAllocationMode;
   qty: Prisma.Decimal;
   reference?: string | null;
   notes?: string | null;
@@ -134,15 +137,63 @@ export async function ensureInventory(
   }
 }
 
+function relocateUnreserved(qty: Prisma.Decimal, reservedQty: Prisma.Decimal) {
+  const available = qty.minus(reservedQty);
+  return available.lessThan(0) ? new Prisma.Decimal(0) : available;
+}
+
+function compareRelocateFifoLayers(
+  a: { id: string; receivedAt: Date | null; createdAt: Date },
+  b: { id: string; receivedAt: Date | null; createdAt: Date }
+) {
+  const aReceived = a.receivedAt ? a.receivedAt.getTime() : Number.POSITIVE_INFINITY;
+  const bReceived = b.receivedAt ? b.receivedAt.getTime() : Number.POSITIVE_INFINITY;
+  if (aReceived !== bReceived) return aReceived - bReceived;
+  const aCreated = a.createdAt.getTime();
+  const bCreated = b.createdAt.getTime();
+  if (aCreated !== bCreated) return aCreated - bCreated;
+  return a.id.localeCompare(b.id);
+}
+
+type RelocateFifoLayer = {
+  id: string;
+  qty: Prisma.Decimal;
+  reservedQty: Prisma.Decimal;
+  lotNumber: string | null;
+  receivedAt: Date | null;
+  createdAt: Date;
+  unitPriceMxn: Prisma.Decimal | null;
+  unitPriceUsd: Prisma.Decimal | null;
+  sourceReference: string | null;
+};
+
+export function planRelocateFifoAllocation(layers: RelocateFifoLayer[], requested: Prisma.Decimal) {
+  const allocations: Array<{ layer: RelocateFifoLayer; qty: Prisma.Decimal }> = [];
+  let remaining = requested;
+  for (const layer of [...layers].sort(compareRelocateFifoLayers)) {
+    if (remaining.lessThanOrEqualTo(0)) break;
+    const available = relocateUnreserved(layer.qty, layer.reservedQty);
+    if (available.lessThanOrEqualTo(0)) continue;
+    const take = available.lessThan(remaining) ? available : remaining;
+    allocations.push({ layer, qty: take });
+    remaining = remaining.minus(take);
+  }
+  return { allocations, remaining };
+}
+
+async function lockInventoryLayers(tx: Prisma.TransactionClient, inventoryId: string) {
+  await tx.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "InventoryLayer" WHERE "inventoryId" = ${inventoryId} ORDER BY "id" FOR UPDATE`
+  );
+}
+
 async function selectLayer(
   tx: Prisma.TransactionClient,
   inventoryId: string,
   layerId?: string,
   requirePositive = true
 ) {
-  await tx.$queryRaw(
-    Prisma.sql`SELECT "id" FROM "InventoryLayer" WHERE "inventoryId" = ${inventoryId} ORDER BY "id" FOR UPDATE`
-  );
+  await lockInventoryLayers(tx, inventoryId);
   const layers = await tx.inventoryLayer.findMany({
     where: {
       inventoryId,
@@ -395,7 +446,126 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
       throw new InventoryMutationError("INVENTORY_NOT_FOUND", "No se pudieron bloquear las líneas de reubicación.");
     }
 
-    const sourceLayer = await selectLayer(tx, sourceFresh.id, input.layerId);
+    const layerId = input.layerId?.trim() || "";
+    const allocationMode = input.allocationMode ? String(input.allocationMode).trim() : "";
+    if (layerId && allocationMode) {
+      throw new InventoryMutationError(
+        "LAYER_ALLOCATION_CONFLICT",
+        "No se puede indicar layerId y allocationMode al mismo tiempo."
+      );
+    }
+    if (allocationMode && allocationMode !== "FIFO") {
+      throw new InventoryMutationError("INVALID_ALLOCATION_MODE", "allocationMode debe ser FIFO.");
+    }
+
+    if (allocationMode === "FIFO") {
+      await lockInventoryLayers(tx, sourceFresh.id);
+      const sourceReloaded = await lockInventory(tx, sourceFresh.id);
+      const destReloaded = await lockInventory(tx, destFresh.id);
+      if (!sourceReloaded || !destReloaded) {
+        throw new InventoryMutationError("INVENTORY_NOT_FOUND", "No se pudieron releer las líneas de reubicación.");
+      }
+      if (sourceReloaded.locationId === destReloaded.locationId) {
+        throw new InventoryMutationError("SAME_LOCATION", "Origen y destino deben ser distintos.");
+      }
+      const inventoryAvailable = relocateUnreserved(sourceReloaded.qty, sourceReloaded.reservedQty);
+      if (inventoryAvailable.lessThan(input.qty)) {
+        throw new InventoryMutationError("INSUFFICIENT_STOCK", "La línea origen no tiene saldo suficiente no reservado.");
+      }
+
+      const layers = await tx.inventoryLayer.findMany({ where: { inventoryId: sourceReloaded.id } });
+      const planned = planRelocateFifoAllocation(layers, input.qty);
+      if (planned.remaining.greaterThan(0) || !planned.allocations.length) {
+        throw new InventoryMutationError("INSUFFICIENT_STOCK", "Las capas origen no tienen saldo suficiente no reservado.");
+      }
+
+      for (const slice of planned.allocations) {
+        await assertNoSerialAmbiguity(tx, slice.layer.id);
+      }
+
+      const before = sourceReloaded.qty;
+      const allocationAudit: Prisma.InputJsonValue[] = [];
+      let firstDestLayer: { id: string } | null = null;
+      let destAfter: { id: string; qty: Prisma.Decimal } | null = null;
+      for (const slice of planned.allocations) {
+        await decrementLayerAndParent(tx, sourceReloaded.id, slice.layer.id, slice.qty);
+        const destLayer = await tx.inventoryLayer.create({
+          data: {
+            inventoryId: destReloaded.id,
+            lotNumber: slice.layer.lotNumber,
+            qty: slice.qty,
+            reservedQty: 0,
+            receivedAt: slice.layer.receivedAt,
+            unitPriceMxn: slice.layer.unitPriceMxn,
+            unitPriceUsd: slice.layer.unitPriceUsd,
+            sourceReference: slice.layer.sourceReference,
+            sourceType: "RELOCATION"
+          }
+        });
+        destAfter = await incrementParent(tx, destReloaded.id, slice.qty);
+        if (!firstDestLayer) firstDestLayer = destLayer;
+        allocationAudit.push({
+          sourceLayerId: slice.layer.id,
+          destinationLayerId: destLayer.id,
+          qty: slice.qty.toString(),
+          lotNumber: slice.layer.lotNumber,
+          unitPriceMxn: slice.layer.unitPriceMxn == null ? null : slice.layer.unitPriceMxn.toString(),
+          unitPriceUsd: slice.layer.unitPriceUsd == null ? null : slice.layer.unitPriceUsd.toString(),
+          receivedAt: slice.layer.receivedAt ? slice.layer.receivedAt.toISOString() : null,
+          sourceReference: slice.layer.sourceReference
+        });
+      }
+      const sourceAfter = await tx.inventory.findUniqueOrThrow({ where: { id: sourceReloaded.id } });
+      const movement = await tx.inventoryMovement.create({
+        data: {
+          productId: input.productId,
+          type: "RELOCATE",
+          movementType: "RELOCATE",
+          stockStatus: sourceReloaded.status,
+          qty: input.qty,
+          warehouse: sourceReloaded.location.warehouse,
+          fromLocationId: sourceReloaded.locationId,
+          toLocationId: destReloaded.locationId,
+          inventoryLayerId: firstDestLayer?.id,
+          quantityBefore: before,
+          quantityAfter: sourceAfter.qty,
+          reference: input.reference ?? null,
+          notes: input.notes ?? null,
+          userId: input.userId,
+          taskId: input.taskId ?? null,
+          ...sameAssignmentFields(sourceAssignment)
+        }
+      });
+      await logActivity(
+        {
+          ...input.activity,
+          productId: input.productId,
+          customerId: sourceReloaded.product.customerId,
+          warehouse: sourceReloaded.location.warehouse,
+          location: `${sourceReloaded.location.code} → ${destReloaded.location.code}`,
+          qty: input.qty,
+          metadata: activityMetadata(input.activity, {
+            inventoryId: sourceReloaded.id,
+            destinationInventoryId: destReloaded.id,
+            allocationMode: "FIFO",
+            allocations: allocationAudit,
+            movementId: movement.id
+          })
+        },
+        tx
+      );
+      return {
+        inventory: sourceAfter,
+        layer: firstDestLayer,
+        movement,
+        before,
+        after: sourceAfter.qty,
+        destinationInventory: destAfter,
+        scanEvent: null
+      };
+    }
+
+    const sourceLayer = await selectLayer(tx, sourceFresh.id, layerId || undefined);
     await assertNoSerialAmbiguity(tx, sourceLayer.id);
     if (sourceLayer.qty.lessThan(input.qty)) {
       throw new InventoryMutationError("INSUFFICIENT_STOCK", "La capa origen no tiene saldo suficiente.");

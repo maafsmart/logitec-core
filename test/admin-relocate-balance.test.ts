@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { Prisma } from "@prisma/client";
 import { InventoryMutationError } from "../src/modules/inventory/inventory-errors.js";
-import { mutateInventoryInTransaction } from "../src/modules/inventory/inventory-mutation.service.js";
+import {
+  mutateInventoryInTransaction,
+  planRelocateFifoAllocation
+} from "../src/modules/inventory/inventory-mutation.service.js";
 import {
   canonicalRelocateStatus,
   filterRelocateInventories,
@@ -182,8 +185,11 @@ function createRelocateTx(opts?: {
       createdAt: Date;
     }>,
     movements: [] as Array<Record<string, unknown>>,
+    activities: [] as Array<Record<string, unknown>>,
     serialCount: opts?.serials ?? 0,
-    nextId: 1
+    nextId: 1,
+    destLayerCreates: 0,
+    failOnDestLayerCreate: 0
   };
   if (opts?.destExists) {
     state.inventories.push({
@@ -265,6 +271,10 @@ function createRelocateTx(opts?: {
           .filter((layer) => !where.qty?.gt || layer.qty.greaterThan(where.qty.gt))
           .map((layer) => ({ ...layer })),
       create: async ({ data }: { data: Record<string, unknown> }) => {
+        state.destLayerCreates += 1;
+        if (state.failOnDestLayerCreate > 0 && state.destLayerCreates >= state.failOnDestLayerCreate) {
+          throw new Error("simulated dest layer failure");
+        }
         const created = {
           id: `layer-${state.nextId++}`,
           inventoryId: String(data.inventoryId),
@@ -294,7 +304,10 @@ function createRelocateTx(opts?: {
         where.inventoryLayerId === "layer-src" ? state.serialCount : 0
     },
     activityLog: {
-      create: async () => ({ id: `act-${state.nextId++}` })
+      create: async ({ data }: { data?: Record<string, unknown> } = {}) => {
+        state.activities.push(data ?? {});
+        return { id: `act-${state.nextId++}` };
+      }
     },
     $queryRaw: async (query: unknown, ...values: unknown[]) => {
       const parts = sqlParts(query, values);
@@ -352,6 +365,85 @@ async function relocateQty(
     notes: "qa",
     activity: { type: "RELOCATE", subtype: "MANUAL_RELOCATE", userId: "admin-1", result: "OK" }
   });
+}
+
+async function relocateFifoQty(
+  tx: unknown,
+  qty: string,
+  extra: { destinationLocationId?: string } = {}
+) {
+  return mutateInventoryInTransaction(tx as never, {
+    type: "RELOCATE",
+    productId: "prod-1",
+    inventoryId: "inv-src",
+    allocationMode: "FIFO",
+    destinationLocationId: extra.destinationLocationId ?? "loc-2",
+    qty: d(qty),
+    userId: "admin-1",
+    reference: "RELOC-FIFO",
+    notes: "qa",
+    activity: { type: "RELOCATE", subtype: "MANUAL_RELOCATE", userId: "admin-1", result: "OK" }
+  });
+}
+
+function snapshotRelocateState(state: {
+  inventories: Array<{ qty: Prisma.Decimal; reservedQty: Prisma.Decimal } & Record<string, unknown>>;
+  layers: Array<{ qty: Prisma.Decimal; reservedQty: Prisma.Decimal; unitPriceMxn: Prisma.Decimal | null } & Record<string, unknown>>;
+  movements: Array<Record<string, unknown>>;
+}) {
+  return {
+    inventories: state.inventories.map((row) => ({ ...row, qty: d(row.qty), reservedQty: d(row.reservedQty) })),
+    layers: state.layers.map((layer) => ({
+      ...layer,
+      qty: d(layer.qty),
+      reservedQty: d(layer.reservedQty),
+      unitPriceMxn: layer.unitPriceMxn == null ? null : d(layer.unitPriceMxn)
+    })),
+    movements: state.movements.slice()
+  };
+}
+
+function restoreRelocateState(
+  state: { inventories: unknown[]; layers: unknown[]; movements: unknown[] },
+  snapshot: ReturnType<typeof snapshotRelocateState>
+) {
+  state.inventories.splice(0, state.inventories.length, ...snapshot.inventories);
+  state.layers.splice(0, state.layers.length, ...snapshot.layers);
+  state.movements.splice(0, state.movements.length, ...snapshot.movements);
+}
+
+function setFifoCube(
+  world: ReturnType<typeof createRelocateTx>,
+  layers: Array<{
+    id: string;
+    qty: string;
+    reserved?: string;
+    price?: string | null;
+    lot?: string | null;
+    receivedAt?: Date;
+    sourceReference?: string | null;
+  }>,
+  reservedQty = "0"
+) {
+  const src = world.state.inventories.find((row) => row.id === "inv-src");
+  assert.ok(src);
+  const total = layers.reduce((sum, layer) => sum.plus(d(layer.qty)), d("0"));
+  src.qty = total;
+  src.reservedQty = d(reservedQty);
+  const base = world.state.layers[0]!;
+  world.state.layers = layers.map((layer, index) => ({
+    ...base,
+    id: layer.id,
+    inventoryId: "inv-src",
+    qty: d(layer.qty),
+    reservedQty: d(layer.reserved ?? "0"),
+    lotNumber: layer.lot === undefined ? `L-${index + 1}` : layer.lot,
+    receivedAt: layer.receivedAt ?? new Date(`2026-01-${String(index + 1).padStart(2, "0")}T00:00:00Z`),
+    unitPriceMxn: layer.price === undefined ? base.unitPriceMxn : layer.price == null ? null : d(layer.price),
+    unitPriceUsd: null,
+    sourceReference: layer.sourceReference === undefined ? `REF-${index + 1}` : layer.sourceReference,
+    createdAt: new Date(`2026-01-${String(index + 1).padStart(2, "0")}T01:00:00Z`)
+  }));
 }
 
 function loadRelocateUi(document: unknown) {
@@ -423,9 +515,9 @@ function makeRelocateDom(opts?: Record<string, string>) {
   };
 }
 
-test("dashboard.js usa cache-buster v=69 para reubicación", () => {
-  assert.match(html, /dashboard\.js\?v=69/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=68/);
+test("dashboard.js usa cache-buster v=70 para reubicación", () => {
+  assert.match(html, /dashboard\.js\?v=70/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=69/);
 });
 
 test("1 SKU nace desactivado sin origen", () => {
@@ -489,10 +581,10 @@ test("4 distingue el mismo SKU por proyecto/asignación", () => {
 test("5 selección guarda inventoryId real", () => {
   assert.match(js, /function applyRelocateBalanceSelection\(/);
   assert.match(js, /inv\.value = item\.inventoryId/);
-  assert.match(js, /layer\.value = item\.layerId/);
+  assert.match(js, /layer\.value = ""/);
   const rows = toRelocateBalanceSuggestions([suggestionRow()]);
   assert.equal(rows[0]?.inventoryId, "inv-fts");
-  assert.equal(rows[0]?.layerId, "layer-1");
+  assert.equal(rows[0]?.layerId, "");
 });
 
 test("6 editar texto invalida la selección", () => {
@@ -644,7 +736,7 @@ test("19 comportamiento seguro con seriales", async () => {
       assert.equal(error.code, "SERIAL_SELECTION_REQUIRED");
     }
   );
-  assert.match(js, /La capa contiene series; requiere selección explícita de seriales/);
+  assert.match(js, /El saldo contiene series; requiere selección explícita de seriales/);
   const serialDom = makeRelocateDom({ serialCount: "2" });
   assert.equal(loadRelocateUi(serialDom.document).relocateFormIsComplete(), false);
 });
@@ -688,6 +780,7 @@ test("la tarjeta muestra saldo seleccionado y disponible", () => {
   assert.match(msg, /Free to Sale/);
   assert.match(msg, /AN14-F/);
   assert.match(msg, /AN15-A/);
+  assert.match(msg, /FIFO, lotes y precios/);
 });
 
 test("GET relocate-balances y POST relocate reutilizan el motor canónico", () => {
@@ -697,8 +790,11 @@ test("GET relocate-balances y POST relocate reutilizan el motor canónico", () =
   const post = routes.slice(postStart, postStart + 1800);
   assert.match(post, /mutateInventory\(/);
   assert.match(post, /type: "RELOCATE"/);
+  assert.match(post, /allocationMode: body\.allocationMode/);
   assert.match(post, /El destino debe estar en el mismo almacén/);
   assert.doesNotMatch(post, /ASSIGNMENT_TRANSFER/);
+  assert.match(js, /allocationMode: "FIFO"/);
+  assert.doesNotMatch(sliceFunction(js, "submitRelocate"), /body\.layerId/);
 });
 
 function an12BalanceRow(overrides: Record<string, unknown> = {}) {
@@ -791,7 +887,7 @@ test("AN12-C: el contrato usa código de ubicación, no locationId", () => {
 test("AN12-C: la respuesta contiene inventoryId y la tarjeta se puede seleccionar", () => {
   const rows = filterRelocateInventories([an12BalanceRow()], { ...an12Query, q: "002" });
   assert.equal(rows[0]?.inventoryId, "inv-00262A");
-  assert.equal(rows[0]?.layerId, "layer-an12");
+  assert.equal(rows[0]?.layerId, "");
   assert.equal(rows[0]?.status, "AVAILABLE");
   const applySrc = sliceFunction(js, "applyRelocateBalanceSelection");
   const apply = new Function(
@@ -854,3 +950,339 @@ test("AN12-C: no hay fallback al catálogo y no se muta inventario", () => {
   assert.match(mutationSrc, /type === "RELOCATE"/);
   assert.match(routes, /inventoryRouter\.post\("\/relocate"/);
 });
+
+function cubeSuggestion(layerCount: number, overrides: Record<string, unknown> = {}) {
+  return an12BalanceRow({
+    qty: d(String(layerCount)),
+    reservedQty: d("0"),
+    status: "OPERATIONS",
+    layers: Array.from({ length: layerCount }, (_, index) => ({
+      id: `layer-${index + 1}`,
+      lotNumber: `L-${index + 1}`,
+      qty: d("1"),
+      reservedQty: d("0"),
+      serialCount: 0
+    })),
+    ...overrides
+  });
+}
+
+test("FIFO 1: cuatro capas de 1 → una sugerencia con disponible 4", () => {
+  const rows = toRelocateBalanceSuggestions([cubeSuggestion(4)]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.inventoryId, "inv-00262A");
+  assert.equal(rows[0]?.qty, "4");
+  assert.equal(rows[0]?.reservedQty, "0");
+  assert.equal(rows[0]?.availableQty, "4");
+  assert.equal(rows[0]?.layerCount, 4);
+  assert.equal(rows[0]?.layerId, "");
+  const ui = loadRelocateUi(makeRelocateDom({ available: "4" }).document);
+  assert.equal(ui.relocateLayerSummary(rows[0]), "4 capas internas");
+  const cardDom = makeRelocateDom({ available: "4", qty: "4" });
+  assert.equal(loadRelocateUi(cardDom.document).relocateFormIsComplete(), true);
+  assert.match(js, /Ver detalle/);
+  assert.match(js, /capas internas/);
+});
+
+test("FIFO 2: veintinueve capas de 1 → una sugerencia con disponible 29", () => {
+  const rows = toRelocateBalanceSuggestions([cubeSuggestion(29)]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.availableQty, "29");
+  assert.equal(rows[0]?.layerCount, 29);
+  assert.equal(rows[0]?.layers.length, 29);
+});
+
+test("FIFO 3-8: reubicar 2 atraviesa dos capas y conserva atributos", async () => {
+  const world = createRelocateTx();
+  setFifoCube(world, [
+    { id: "layer-a", qty: "1", price: "100", lot: "L-A", sourceReference: "REF-A" },
+    { id: "layer-b", qty: "1", price: "110", lot: "L-B", sourceReference: "REF-B" },
+    { id: "layer-c", qty: "1", price: null, lot: "L-C", sourceReference: null }
+  ]);
+  const physicalBefore = world.state.inventories.reduce((sum, row) => sum.plus(row.qty), d("0"));
+  await relocateFifoQty(world.tx, "2");
+  const src = world.state.inventories.find((row) => row.id === "inv-src");
+  const dest = world.state.inventories.find((row) => row.locationId === "loc-2");
+  assert.equal(String(src?.qty), "1");
+  assert.equal(String(src?.reservedQty), "0");
+  assert.equal(String(world.state.layers.find((layer) => layer.id === "layer-a")?.qty), "0");
+  assert.equal(String(world.state.layers.find((layer) => layer.id === "layer-b")?.qty), "0");
+  assert.equal(String(world.state.layers.find((layer) => layer.id === "layer-c")?.qty), "1");
+  assert.equal(world.state.layers.find((layer) => layer.id === "layer-c")?.unitPriceMxn, null);
+  const destLayers = world.state.layers.filter((layer) => layer.inventoryId === dest?.id);
+  assert.equal(destLayers.length, 2);
+  assert.equal(String(destLayers[0]?.unitPriceMxn), "100");
+  assert.equal(String(destLayers[1]?.unitPriceMxn), "110");
+  assert.equal(destLayers[0]?.lotNumber, "L-A");
+  assert.equal(destLayers[1]?.lotNumber, "L-B");
+  assert.equal(destLayers[0]?.sourceReference, "REF-A");
+  assert.equal(destLayers[1]?.sourceReference, "REF-B");
+  assert.equal(
+    String(world.state.inventories.reduce((sum, row) => sum.plus(row.qty), d("0"))),
+    String(physicalBefore)
+  );
+  const meta = world.state.activities[0]?.metadata as { allocations?: Array<Record<string, unknown>> };
+  assert.equal(meta?.allocations?.length, 2);
+  assert.equal(meta?.allocations?.[0]?.qty, "1");
+  assert.equal(meta?.allocations?.[0]?.unitPriceMxn, "100");
+  assert.equal(meta?.allocations?.[1]?.unitPriceMxn, "110");
+});
+
+test("FIFO 4: reubicar toda la cantidad atraviesa todas las capas", async () => {
+  const world = createRelocateTx();
+  setFifoCube(world, [
+    { id: "layer-a", qty: "1", price: "0", lot: "Z" },
+    { id: "layer-b", qty: "1", price: "100", lot: "Y" },
+    { id: "layer-c", qty: "1", price: null, lot: "X" }
+  ]);
+  await relocateFifoQty(world.tx, "3");
+  assert.equal(String(world.state.inventories.find((row) => row.id === "inv-src")?.qty), "0");
+  const dest = world.state.inventories.find((row) => row.locationId === "loc-2");
+  const destLayers = world.state.layers.filter((layer) => layer.inventoryId === dest?.id);
+  assert.equal(destLayers.length, 3);
+  assert.equal(String(destLayers[0]?.unitPriceMxn), "0");
+  assert.equal(String(destLayers[1]?.unitPriceMxn), "100");
+  assert.equal(destLayers[2]?.unitPriceMxn, null);
+});
+
+test("FIFO 9: reservedQty nunca se mueve", async () => {
+  const world = createRelocateTx({ reserved: "1" });
+  setFifoCube(
+    world,
+    [
+      { id: "layer-a", qty: "1", reserved: "0" },
+      { id: "layer-b", qty: "1", reserved: "0" },
+      { id: "layer-c", qty: "1", reserved: "1" }
+    ],
+    "1"
+  );
+  await relocateFifoQty(world.tx, "3").then(
+    () => {
+      throw new Error("should not move reserved qty");
+    },
+    (error) => {
+      assert.ok(error instanceof InventoryMutationError);
+      assert.equal(error.code, "INSUFFICIENT_STOCK");
+    }
+  );
+  await relocateFifoQty(world.tx, "2");
+  assert.equal(String(world.state.inventories.find((row) => row.id === "inv-src")?.qty), "1");
+  assert.equal(String(world.state.inventories.find((row) => row.id === "inv-src")?.reservedQty), "1");
+  assert.equal(String(world.state.layers.find((layer) => layer.id === "layer-c")?.qty), "1");
+  assert.equal(String(world.state.layers.find((layer) => layer.id === "layer-c")?.reservedQty), "1");
+});
+
+test("FIFO 10: cantidad mayor a disponible se rechaza", async () => {
+  const world = createRelocateTx();
+  setFifoCube(world, [
+    { id: "layer-a", qty: "1" },
+    { id: "layer-b", qty: "1" }
+  ]);
+  await relocateFifoQty(world.tx, "3").then(
+    () => {
+      throw new Error("should reject over available");
+    },
+    (error) => {
+      assert.ok(error instanceof InventoryMutationError);
+      assert.equal(error.code, "INSUFFICIENT_STOCK");
+    }
+  );
+  const over = makeRelocateDom({ qty: "5", available: "4" });
+  assert.equal(loadRelocateUi(over.document).relocateFormIsComplete(), false);
+});
+
+test("FIFO 11-12: un solo RELOCATE y cero otros tipos", async () => {
+  const world = createRelocateTx();
+  setFifoCube(world, [
+    { id: "layer-a", qty: "1" },
+    { id: "layer-b", qty: "1" },
+    { id: "layer-c", qty: "1" }
+  ]);
+  await relocateFifoQty(world.tx, "2");
+  assert.equal(world.state.movements.length, 1);
+  assert.equal(world.state.movements[0]?.type, "RELOCATE");
+  assert.equal(world.state.movements[0]?.movementType, "RELOCATE");
+  assert.equal(String(world.state.movements[0]?.qty), "2");
+  assert.equal(
+    world.state.movements.filter((row) => ["IN", "OUT", "ADJUST_SET", "ASSIGNMENT_TRANSFER"].includes(String(row.type || row.movementType))).length,
+    0
+  );
+});
+
+test("FIFO 13: concurrencia y relectura bajo bloqueo", async () => {
+  const world = createRelocateTx();
+  setFifoCube(world, [
+    { id: "layer-a", qty: "1" },
+    { id: "layer-b", qty: "1" },
+    { id: "layer-c", qty: "1" }
+  ]);
+  await relocateFifoQty(world.tx, "2");
+  await relocateFifoQty(world.tx, "2").then(
+    () => {
+      throw new Error("second relocate should see remaining 1");
+    },
+    (error) => {
+      assert.ok(error instanceof InventoryMutationError);
+      assert.equal(error.code, "INSUFFICIENT_STOCK");
+    }
+  );
+  assert.match(mutationSrc, /lockInventoryLayers/);
+  assert.match(mutationSrc, /sourceReloaded/);
+});
+
+test("FIFO 14: rollback completo si falla cualquier tramo", async () => {
+  assert.match(mutationSrc, /prisma\.\$transaction\(\(tx\) => mutateInventoryInTransaction/);
+  const world = createRelocateTx();
+  setFifoCube(world, [
+    { id: "layer-a", qty: "1", price: "100" },
+    { id: "layer-b", qty: "1", price: "110" }
+  ]);
+  const snap = snapshotRelocateState(world.state);
+  world.state.failOnDestLayerCreate = 2;
+  await relocateFifoQty(world.tx, "2").then(
+    () => {
+      throw new Error("should fail on second dest layer");
+    },
+    (error) => {
+      assert.equal(String(error.message), "simulated dest layer failure");
+    }
+  );
+  restoreRelocateState(world.state, snap);
+  assert.equal(String(world.state.inventories.find((row) => row.id === "inv-src")?.qty), "2");
+  assert.equal(world.state.layers.filter((layer) => layer.inventoryId === "inv-src").length, 2);
+  assert.equal(world.state.movements.length, 0);
+});
+
+test("FIFO 15: seriales responden SERIAL_SELECTION_REQUIRED", async () => {
+  const world = createRelocateTx({ serials: 2 });
+  setFifoCube(world, [
+    { id: "layer-src", qty: "1" },
+    { id: "layer-b", qty: "1" }
+  ]);
+  await relocateFifoQty(world.tx, "1").then(
+    () => {
+      throw new Error("serialized fifo should fail");
+    },
+    (error) => {
+      assert.ok(error instanceof InventoryMutationError);
+      assert.equal(error.code, "SERIAL_SELECTION_REQUIRED");
+    }
+  );
+});
+
+test("FIFO 16: el flujo anterior con layerId sigue funcionando", async () => {
+  const world = createRelocateTx();
+  await relocateQty(world.tx, "4");
+  assert.equal(String(world.state.inventories.find((row) => row.id === "inv-src")?.qty), "6");
+  const destLayers = world.state.layers.filter((layer) => layer.inventoryId !== "inv-src");
+  assert.equal(destLayers.length, 1);
+  assert.equal(String(destLayers[0]?.qty), "4");
+});
+
+test("FIFO 17: consumidores anteriores sin allocationMode conservan AMBIGUOUS_LAYER", async () => {
+  const world = createRelocateTx();
+  setFifoCube(world, [
+    { id: "layer-a", qty: "1" },
+    { id: "layer-b", qty: "1" }
+  ]);
+  await mutateInventoryInTransaction(world.tx as never, {
+    type: "RELOCATE",
+    productId: "prod-1",
+    inventoryId: "inv-src",
+    destinationLocationId: "loc-2",
+    qty: d("1"),
+    userId: "admin-1",
+    activity: { type: "RELOCATE", subtype: "MANUAL_RELOCATE", userId: "admin-1", result: "OK" }
+  }).then(
+    () => {
+      throw new Error("should keep AMBIGUOUS_LAYER");
+    },
+    (error) => {
+      assert.ok(error instanceof InventoryMutationError);
+      assert.equal(error.code, "AMBIGUOUS_LAYER");
+    }
+  );
+  await mutateInventoryInTransaction(world.tx as never, {
+    type: "RELOCATE",
+    productId: "prod-1",
+    inventoryId: "inv-src",
+    layerId: "layer-a",
+    allocationMode: "FIFO",
+    destinationLocationId: "loc-2",
+    qty: d("1"),
+    userId: "admin-1",
+    activity: { type: "RELOCATE", subtype: "MANUAL_RELOCATE", userId: "admin-1", result: "OK" }
+  }).then(
+    () => {
+      throw new Error("should reject layerId + FIFO");
+    },
+    (error) => {
+      assert.ok(error instanceof InventoryMutationError);
+      assert.equal(error.code, "LAYER_ALLOCATION_CONFLICT");
+    }
+  );
+});
+
+test("FIFO 18: mismo SKU en proyectos distintos sigue separado", () => {
+  const rows = toRelocateBalanceSuggestions([
+    cubeSuggestion(2),
+    an12BalanceRow({
+      id: "inv-proj",
+      assignmentType: "PROJECT",
+      projectId: "proj-att",
+      project: { id: "proj-att", code: "ATT", name: "AT&T" },
+      qty: d("2"),
+      layers: [
+        { id: "layer-p1", lotNumber: "P", qty: d("1"), reservedQty: d("0"), serialCount: 0 },
+        { id: "layer-p2", lotNumber: "P", qty: d("1"), reservedQty: d("0"), serialCount: 0 }
+      ]
+    })
+  ]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0]?.assignmentLabel, "Free to Sale");
+  assert.equal(rows[1]?.assignmentLabel, "AT&T (ATT)");
+  assert.notEqual(rows[0]?.inventoryId, rows[1]?.inventoryId);
+});
+
+test("FIFO 19-20: destino excluye origen activo y cancelar no hace POST", () => {
+  assert.match(js, /relocateActiveLocationCodes\(warehouse, \{ excludeCode: origin \}\)/);
+  assert.match(js, /loc\.active !== false/);
+  assert.match(routes, /La ubicación destino no está activa/);
+  const src = sliceFunction(js, "submitRelocate");
+  const confirmIdx = src.indexOf("window.confirm");
+  const postIdx = src.indexOf('authenticatedFetch("/api/inventory/relocate"');
+  assert.ok(confirmIdx >= 0 && postIdx > confirmIdx);
+  assert.match(src, /allocationMode: "FIFO"/);
+});
+
+test("FIFO: receivedAt nulo va al final del orden", () => {
+  const planned = planRelocateFifoAllocation(
+    [
+      {
+        id: "new",
+        qty: d("1"),
+        reservedQty: d("0"),
+        lotNumber: "NEW",
+        receivedAt: null,
+        createdAt: new Date("2026-01-01T00:00:00Z"),
+        unitPriceMxn: d("1"),
+        unitPriceUsd: null,
+        sourceReference: null
+      },
+      {
+        id: "old",
+        qty: d("1"),
+        reservedQty: d("0"),
+        lotNumber: "OLD",
+        receivedAt: new Date("2025-01-01T00:00:00Z"),
+        createdAt: new Date("2026-01-02T00:00:00Z"),
+        unitPriceMxn: d("2"),
+        unitPriceUsd: null,
+        sourceReference: null
+      }
+    ],
+    d("1")
+  );
+  assert.equal(planned.allocations[0]?.layer.id, "old");
+});
+

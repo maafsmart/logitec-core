@@ -7006,14 +7006,33 @@ function relocateFormIsComplete() {
 }
 
 function relocateLayerSummary(item) {
-  if (item?.lotNumber) return `Lote ${item.lotNumber}`;
   const layers = Number(item?.layerCount || 0);
-  if (layers > 1) return `${layers} capas`;
+  if (layers > 1) return `${layers} capas internas`;
+  if (item?.lotNumber) return `Lote ${item.lotNumber}`;
   return "Sin lote";
+}
+
+function buildRelocateLayerDetailHtml(item) {
+  const layers = Array.isArray(item?.layers) ? item.layers : [];
+  if (!layers.length) return "";
+  const rows = layers
+    .map((layer, idx) => {
+      const lot = layer.lotNumber ? `Lote ${layer.lotNumber}` : "Sin lote";
+      const qty = typeof formatQty === "function" ? formatQty(layer.qty) : layer.qty;
+      const reserved = typeof formatQty === "function" ? formatQty(layer.reservedQty) : layer.reservedQty;
+      const available = typeof formatQty === "function" ? formatQty(layer.availableQty) : layer.availableQty;
+      return `<li>Capa ${idx + 1} · ${escCell(lot)} · Física ${escCell(String(qty))} · Reservada ${escCell(
+        String(reserved)
+      )} · Disponible ${escCell(String(available))}</li>`;
+    })
+    .join("");
+  return `<button type="button" class="btn-secondary btn-compact relocate-layers-toggle">Ver detalle</button>
+    <ul class="relocate-layers-detail hidden" hidden>${rows}</ul>`;
 }
 
 function buildRelocateSelectedCardHtml(item) {
   const assignment = item.assignmentLabel || (item.assignmentType === "FREE_TO_SALE" ? "Free to Sale" : "Proyecto");
+  const layerLabel = relocateLayerSummary(item);
   return `<div class="sku-selected-card-title">✓ Saldo seleccionado</div>
     <dl class="sku-selected-card-meta">
       <div><dt>SKU</dt><dd>${escCell(item.sku)}</dd></div>
@@ -7021,8 +7040,12 @@ function buildRelocateSelectedCardHtml(item) {
       <div><dt>Asignación</dt><dd>${escCell(assignment)}</dd></div>
       <div><dt>Ubicación origen</dt><dd>${escCell(item.locationCode)}</dd></div>
       <div><dt>Estatus</dt><dd>${escCell(typeof formatInventoryStatus === "function" ? formatInventoryStatus(item.status) : item.status)}</dd></div>
+      <div><dt>Física</dt><dd>${escCell(typeof formatQty === "function" ? formatQty(item.qty) : item.qty)}</dd></div>
+      <div><dt>Reservada</dt><dd>${escCell(typeof formatQty === "function" ? formatQty(item.reservedQty) : item.reservedQty)}</dd></div>
       <div><dt>Cantidad disponible</dt><dd>${escCell(typeof formatQty === "function" ? formatQty(item.availableQty) : item.availableQty)}</dd></div>
+      <div><dt>Capas</dt><dd>${escCell(layerLabel)}</dd></div>
     </dl>
+    ${buildRelocateLayerDetailHtml(item)}
     <button type="button" class="btn-secondary btn-compact sku-change-btn">Cambiar saldo/SKU</button>`;
 }
 
@@ -7043,6 +7066,14 @@ function renderRelocateSelectedCard(item) {
   panel.innerHTML = buildRelocateSelectedCardHtml(item);
   panel.querySelector(".sku-change-btn")?.addEventListener("click", () => {
     beginRelocateSkuChange();
+  });
+  panel.querySelector(".relocate-layers-toggle")?.addEventListener("click", (ev) => {
+    const detail = panel.querySelector(".relocate-layers-detail");
+    if (!detail) return;
+    const open = !detail.classList.contains("hidden");
+    detail.classList.toggle("hidden", open);
+    detail.hidden = open;
+    ev.currentTarget.textContent = open ? "Ver detalle" : "Ocultar detalle";
   });
 }
 
@@ -7115,7 +7146,7 @@ function applyRelocateBalanceSelection(item) {
   hideProductTypeaheadList(listEl);
   if (input) {
     input.value = item.sku || "";
-    input.dataset.skuSelectedId = `${item.inventoryId}:${item.layerId || ""}`;
+    input.dataset.skuSelectedId = item.inventoryId || "";
     input.dataset.skuSelectedCode = item.sku || "";
     input.dataset.relocateSku = item.sku || "";
     input.dataset.relocateProductName = item.productName || "";
@@ -7135,7 +7166,7 @@ function applyRelocateBalanceSelection(item) {
   const inv = document.getElementById("relocateInventoryId");
   if (inv) inv.value = item.inventoryId || "";
   const layer = document.getElementById("relocateLayerId");
-  if (layer) layer.value = item.layerId || "";
+  if (layer) layer.value = "";
   renderRelocateSelectedCard(item);
   syncRelocateLocationSelects();
   syncRelocateFormState();
@@ -7259,14 +7290,10 @@ function buildRelocateConfirmMessage(input) {
   const sku = input.sku;
   const product = input.productName ? ` (${input.productName})` : "";
   const assignment = input.assignmentLabel || (input.assignmentType === "FREE_TO_SALE" ? "Free to Sale" : "Proyecto");
-  const lote = input.lotNumber
-    ? `lote ${input.lotNumber}`
-    : Number(input.layerCount) > 1
-      ? `${input.layerCount} capas`
-      : "sin lote";
+  const lote = Number(input.layerCount) > 1 ? `${input.layerCount} capas internas` : input.lotNumber ? `lote ${input.lotNumber}` : "sin lote";
   const statusLabel =
     typeof formatInventoryStatus === "function" ? formatInventoryStatus(input.status) : input.status;
-  return `Se reubicará ${qty} piezas del SKU ${sku}${product}, ${assignment}, almacén ${input.warehouse}, de ${input.fromLoc} a ${input.toLoc}, estatus ${statusLabel}, ${lote}. ¿Deseas continuar?`;
+  return `Se reubicará ${qty} piezas del SKU ${sku}${product}, ${assignment}, almacén ${input.warehouse}, de ${input.fromLoc} a ${input.toLoc}, estatus ${statusLabel}, ${lote}. La cantidad se distribuirá automáticamente respetando FIFO, lotes y precios. ¿Deseas continuar?`;
 }
 
 function showRelocateBalanceSuggestions(listEl, items, activeIdx, onPick) {
@@ -8440,7 +8467,6 @@ async function submitRelocate() {
   const referenceRaw = document.getElementById("relocateReference")?.value?.trim();
   const notesExtra = document.getElementById("relocateNotes")?.value?.trim();
   const inventoryId = document.getElementById("relocateInventoryId")?.value?.trim() || "";
-  const layerId = document.getElementById("relocateLayerId")?.value?.trim() || "";
   const selected = relocateSelectedBalance();
   const qty = parseRelocateQty();
 
@@ -8455,7 +8481,7 @@ async function submitRelocate() {
   if (selected.serialCount > 0) {
     setOpsMessage(
       msgId,
-      "La capa contiene series; requiere selección explícita de seriales. Esta reubicación no puede continuar.",
+      "El saldo contiene series; requiere selección explícita de seriales. Esta reubicación no puede continuar.",
       false
     );
     return;
@@ -8504,12 +8530,12 @@ async function submitRelocate() {
   try {
     const body = {
       inventoryId,
+      allocationMode: "FIFO",
       destinationLocation: toLoc,
       quantity: qty.value,
       reference: referenceRaw || `RELOC-${Date.now()}`,
       notes: notesExtra || undefined
     };
-    if (layerId) body.layerId = layerId;
 
     const response = await authenticatedFetch("/api/inventory/relocate", {
       method: "POST",

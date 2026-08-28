@@ -756,15 +756,25 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
   }
 });
 
-const relocateSchema = z.object({
-  inventoryId: z.string().min(1),
-  layerId: z.string().min(1).optional(),
-  destinationLocation: z.string().min(1).max(120),
-  quantity: z.coerce.number().positive(),
-  reference: z.string().max(120).optional(),
-  notes: z.string().max(500).optional(),
-  taskId: z.string().optional()
-});
+const relocateSchema = z
+  .object({
+    inventoryId: z.string().min(1),
+    layerId: z.string().min(1).optional(),
+    allocationMode: z.enum(["FIFO"]).optional(),
+    destinationLocation: z.string().min(1).max(120),
+    quantity: z.coerce.number().positive(),
+    reference: z.string().max(120).optional(),
+    notes: z.string().max(500).optional(),
+    taskId: z.string().optional()
+  })
+  .superRefine((data, ctx) => {
+    if (data.layerId && data.allocationMode) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "No se puede indicar layerId y allocationMode al mismo tiempo."
+      });
+    }
+  });
 
 const relocateBalanceQuerySchema = z.object({
   warehouse: z.string().trim().min(1).max(80),
@@ -830,6 +840,7 @@ inventoryRouter.post("/relocate", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"
       productId: source.productId,
       inventoryId: source.id,
       layerId: body.layerId,
+      allocationMode: body.allocationMode,
       destinationLocationId: destination.id,
       qty: dec(body.quantity),
       reference: body.reference?.trim() || null,

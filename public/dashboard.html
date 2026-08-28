@@ -4534,7 +4534,7 @@
             <div class="card-panel ops-form-panel">
               <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong> · Control operativo de reubicación</p>
               <p class="module-lead" style="margin:0 0 12px">
-                Reubicación atómica: descuenta origen y acredita destino en una sola transacción, conservando lote/precio de la capa.
+                Reubicación atómica: descuenta origen y acredita destino en una sola transacción. Si el saldo tiene varias capas, la cantidad se asigna en FIFO conservando lote y precio de cada tramo.
               </p>
               <h4 class="secondary-panel-title">Reubicación de inventario</h4>
               <div class="form-grid">
@@ -5069,6 +5069,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=69"></script>
+    <script src="/dashboard.js?v=70"></script>
   </body>
 </html>

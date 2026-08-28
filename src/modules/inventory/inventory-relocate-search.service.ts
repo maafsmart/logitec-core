@@ -38,6 +38,14 @@ export type RelocateBalanceSuggestion = {
   lotNumber: string | null;
   layerCount: number;
   serialCount: number;
+  layers: Array<{
+    id: string;
+    lotNumber: string | null;
+    qty: string;
+    reservedQty: string;
+    availableQty: string;
+    receivedAt: string | null;
+  }>;
 };
 
 type RelocateLayerRow = {
@@ -46,6 +54,7 @@ type RelocateLayerRow = {
   qty: Prisma.Decimal;
   reservedQty: Prisma.Decimal;
   serialCount: number;
+  receivedAt?: Date | null;
 };
 
 type RelocateInventoryRow = {
@@ -142,48 +151,44 @@ export function toRelocateBalanceSuggestions(rows: RelocateInventoryRow[]): Relo
     const inventoryAvailable = unreserved(physical, dec(row.reservedQty));
     if (inventoryAvailable.lessThanOrEqualTo(0)) continue;
 
-    const positiveLayers = (row.layers || []).filter((layer) => dec(layer.qty).greaterThan(0));
+    const positiveLayers = (row.layers || []).filter((layer) => dec(layer.qty).greaterThan(0) && layer.id);
     const layerCount = positiveLayers.length || 1;
-    const layers = positiveLayers.length
-      ? positiveLayers
-      : [
-          {
-            id: "",
-            lotNumber: null,
-            qty: physical,
-            reservedQty: dec(row.reservedQty),
-            serialCount: 0
-          }
-        ];
-
-    for (const layer of layers) {
-      if (!layer.id) continue;
+    const serialCount = positiveLayers.reduce((sum, layer) => sum + Number(layer.serialCount || 0), 0);
+    const layerDetails = positiveLayers.map((layer) => {
       const layerAvailable = unreserved(dec(layer.qty), dec(layer.reservedQty));
-      const available = layerAvailable.lessThan(inventoryAvailable) ? layerAvailable : inventoryAvailable;
-      if (available.lessThanOrEqualTo(0)) continue;
-      suggestions.push({
-        inventoryId: row.id,
-        layerId: layer.id,
-        productId: row.product.id,
-        sku: row.product.sku,
-        barcode: row.product.barcode,
-        productName: row.product.name,
-        assignmentType: row.assignmentType,
-        assignmentLabel: assignmentLabel(row),
-        projectId: row.projectId,
-        projectCode: row.project?.code ?? null,
-        projectName: row.project?.name ?? null,
-        warehouse: row.location.warehouse,
-        locationCode: row.location.code,
-        status: row.status,
-        qty: physical.toString(),
-        reservedQty: dec(row.reservedQty).toString(),
-        availableQty: available.toString(),
+      return {
+        id: layer.id,
         lotNumber: layer.lotNumber ?? null,
-        layerCount,
-        serialCount: Number(layer.serialCount || 0)
-      });
-    }
+        qty: dec(layer.qty).toString(),
+        reservedQty: dec(layer.reservedQty).toString(),
+        availableQty: layerAvailable.toString(),
+        receivedAt: layer.receivedAt ? layer.receivedAt.toISOString() : null
+      };
+    });
+
+    suggestions.push({
+      inventoryId: row.id,
+      layerId: "",
+      productId: row.product.id,
+      sku: row.product.sku,
+      barcode: row.product.barcode,
+      productName: row.product.name,
+      assignmentType: row.assignmentType,
+      assignmentLabel: assignmentLabel(row),
+      projectId: row.projectId,
+      projectCode: row.project?.code ?? null,
+      projectName: row.project?.name ?? null,
+      warehouse: row.location.warehouse,
+      locationCode: row.location.code,
+      status: row.status,
+      qty: physical.toString(),
+      reservedQty: dec(row.reservedQty).toString(),
+      availableQty: inventoryAvailable.toString(),
+      lotNumber: layerCount === 1 ? positiveLayers[0]?.lotNumber ?? null : null,
+      layerCount,
+      serialCount,
+      layers: layerDetails
+    });
   }
   return suggestions;
 }
@@ -237,6 +242,7 @@ export async function searchRelocateBalances(
           lotNumber: true,
           qty: true,
           reservedQty: true,
+          receivedAt: true,
           _count: { select: { serials: true } }
         }
       }
@@ -261,10 +267,11 @@ export async function searchRelocateBalances(
       project: row.project,
       layers: row.layers.map((layer) => ({
         id: layer.id,
-        lotNumber: layer.lotNumber,
-        qty: layer.qty,
-        reservedQty: layer.reservedQty,
-        serialCount: layer._count.serials
+          lotNumber: layer.lotNumber,
+          qty: layer.qty,
+          reservedQty: layer.reservedQty,
+          serialCount: layer._count.serials,
+          receivedAt: layer.receivedAt
       }))
     }))
   );
