@@ -852,7 +852,7 @@ test("21 encabezado completo y cache-buster v72", () => {
   assert.match(html, /#moduleRequisitions \.req-stock-hint/);
   assert.match(html, /white-space:\s*normal/);
   assert.match(html, /max-height:\s*52px/);
-  assert.match(html, /dashboard\.js\?v=73/);
+  assert.match(html, /dashboard\.js\?v=74/);
   assert.doesNotMatch(html, /dashboard\.js\?v=72/);
 });
 

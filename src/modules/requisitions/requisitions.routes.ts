@@ -26,21 +26,25 @@ requisitionsRouter.use((req, _res, next) => {
 
 function mapError(res: import("express").Response, error: unknown) {
   if (error instanceof RequisitionError) {
-    const status = [
-      "AMBIGUOUS_STOCK",
-      "AMBIGUOUS_LAYER",
-      "INSUFFICIENT_FREE",
-      "OVER_LINE_RESERVE",
-      "INSUFFICIENT_RESERVATION",
-      "NO_STOCK",
-      "RESERVATION_PROJECT_MISMATCH",
-      "PICK_PROJECT_MISMATCH",
-      "LINE_MISMATCH",
-      "LAYER_ALLOCATION_CONFLICT",
-      "INVALID_ALLOCATION_MODE"
-    ].includes(error.code)
-      ? 409
-      : 400;
+    const status =
+      error.code === "PROJECT_NOT_FOUND"
+        ? 404
+        : [
+              "AMBIGUOUS_STOCK",
+              "AMBIGUOUS_LAYER",
+              "INSUFFICIENT_FREE",
+              "OVER_LINE_RESERVE",
+              "INSUFFICIENT_RESERVATION",
+              "NO_STOCK",
+              "RESERVATION_PROJECT_MISMATCH",
+              "PICK_PROJECT_MISMATCH",
+              "LINE_MISMATCH",
+              "LAYER_ALLOCATION_CONFLICT",
+              "INVALID_ALLOCATION_MODE",
+              "PROJECT_NOT_AVAILABLE"
+            ].includes(error.code)
+          ? 409
+          : 400;
     res.status(status).json({ code: error.code, message: error.message, details: error.details });
     return true;
   }

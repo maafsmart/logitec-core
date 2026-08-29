@@ -12,6 +12,7 @@ import {
   type InventoryAssignment
 } from "./inventory-assignment.js";
 import { InventoryMutationError } from "./inventory-errors.js";
+import { isForbiddenInventoryProjectRecord } from "./inventory-project-rules.js";
 import {
   decrementLayerAndParent,
   ensureInventory,
@@ -195,9 +196,14 @@ export async function transferAssignment(input: AssignmentTransferInput) {
       if (destinationAssignment.assignmentType === "PROJECT") {
         const project = await tx.customer.findUnique({
           where: { id: destinationAssignment.projectId! },
-          select: { id: true }
+          select: { id: true, code: true, name: true, active: true }
         });
-        if (!project) throw new InventoryMutationError("PROJECT_NOT_FOUND", "Proyecto destino no encontrado.");
+        if (!project || isForbiddenInventoryProjectRecord(project)) {
+          throw new InventoryMutationError("PROJECT_NOT_FOUND", "Proyecto destino no encontrado.");
+        }
+        if (!project.active) {
+          throw new InventoryMutationError("PROJECT_INACTIVE", "El proyecto destino no está activo.");
+        }
         await ensureCanonicalProductProject(tx, source.productId, destinationAssignment.projectId);
       }
 

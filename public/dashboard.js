@@ -411,6 +411,28 @@ function isForbiddenProjectLabel(value) {
   );
 }
 
+function isOperationalProjectRecord(project) {
+  if (!project) return false;
+  if (project.active === false) return false;
+  if (isForbiddenProjectLabel(project.code) || isForbiddenProjectLabel(project.name)) return false;
+  return Boolean(project.id || project.code);
+}
+
+function getOperationalProjectsForSelect(catalog) {
+  const rows = Array.isArray(catalog) ? catalog : Array.isArray(catalogProjectsCache) ? catalogProjectsCache : [];
+  return rows
+    .filter(isOperationalProjectRecord)
+    .map((project) => ({
+      id: project.id,
+      code: project.code,
+      name: project.name || project.code,
+      active: project.active,
+      clientId: project.clientId || project.client?.id || "",
+      client: project.client
+    }))
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es"));
+}
+
 function getAviatProjectFromRow(row) {
   if (row?.assignmentType === "FREE_TO_SALE" || row?.assignmentKey === "FREE_TO_SALE") {
     return { code: "", name: "FREE TO SALE" };
@@ -1767,8 +1789,7 @@ function realActiveProjectsForPriceRow(projects, row) {
   const clientId =
     row?.project?.client?.id || row?.product?.customer?.clientId || row?.product?.customer?.client?.id || "";
   return (Array.isArray(projects) ? projects : []).filter((project) => {
-    if (!project?.id || project.active === false) return false;
-    if (isForbiddenProjectLabel(project.code) || isForbiddenProjectLabel(project.name)) return false;
+    if (!isOperationalProjectRecord(project)) return false;
     if (clientId && project.clientId && project.clientId !== clientId) return false;
     if (clientId && project.client?.id && project.client.id !== clientId) return false;
     return true;
@@ -1992,7 +2013,7 @@ async function openAssignmentTransferPanel(row) {
     const projects = response?.ok ? await response.json() : [];
     destSel.innerHTML =
       '<option value="">— Seleccionar proyecto —</option>' +
-      (Array.isArray(projects) ? projects : [])
+      getOperationalProjectsForSelect(Array.isArray(projects) ? projects : [])
         .map((p) => `<option value="${escCell(p.id)}">${escCell(p.name)} (${escCell(p.code)})</option>`)
         .join("");
   }
@@ -3791,21 +3812,11 @@ function populatePickContextSelects() {
   const locSel = document.getElementById("pickLocation");
   if (projectSel) {
     const prev = projectSel.value;
-    const projects = new Map();
-    (Array.isArray(productsCache) ? productsCache : []).forEach((p) => {
-      const code = p?.customer?.code || "";
-      const name = p?.customer?.name || code;
-      if (code) projects.set(String(code).toUpperCase(), name || code);
-    });
-    (Array.isArray(stockRowsCache) ? stockRowsCache : []).forEach((row) => {
-      const pr = getAviatProjectFromRow(row);
-      if (pr.code) projects.set(String(pr.code).toUpperCase(), pr.name || pr.code);
-    });
+    const projects = getOperationalProjectsForSelect();
     projectSel.innerHTML =
       '<option value="">— Si hay varias líneas, elige proyecto —</option>' +
-      [...projects.entries()]
-        .sort((a, b) => String(a[1]).localeCompare(String(b[1]), "es"))
-        .map(([code, name]) => `<option value="${escCell(code)}">${escCell(name)} (${escCell(code)})</option>`)
+      projects
+        .map((p) => `<option value="${escCell(p.code)}">${escCell(p.name)} (${escCell(p.code)})</option>`)
         .join("");
     if (prev && [...projectSel.options].some((o) => o.value === prev)) projectSel.value = prev;
   }
@@ -6738,9 +6749,7 @@ function inboundSelectedSkuClientId() {
 
 function realActiveCatalogProjects(clientId) {
   const wanted = String(clientId || "").trim();
-  return (Array.isArray(catalogProjectsCache) ? catalogProjectsCache : []).filter((project) => {
-    if (!project?.id || project.active === false) return false;
-    if (isForbiddenProjectLabel(project.code) || isForbiddenProjectLabel(project.name)) return false;
+  return getOperationalProjectsForSelect().filter((project) => {
     if (wanted && project.clientId && project.clientId !== wanted) return false;
     if (wanted && project.client?.id && project.client.id !== wanted) return false;
     return true;
@@ -8100,7 +8109,7 @@ function wireReqLineSkuTypeahead(input) {
 function populateSmartOperationalFields() {
   const warehouses = getKnownWarehouses();
   const locations = getKnownLocations();
-  const projects = getKnownProjects();
+  const projects = getOperationalProjectsForSelect();
 
   const pairs = [
     ["inboundWarehouseSelect", "inboundWarehouse", warehouses, "TULTITLAN24", "Otro almacén"],
@@ -8205,7 +8214,7 @@ function fillCustomerSelect(selectId, clienteInputId) {
   const sel = document.getElementById(selectId);
   if (!sel) return;
   const prev = sel.value;
-  const customers = getCustomersForSelect();
+  const customers = getOperationalProjectsForSelect();
   let html =
     '<option value="">— Seleccionar proyecto —</option>' +
     customers.map((c) => `<option value="${escCell(c.code)}">${escCell(c.name)} (${escCell(c.code)})</option>`).join("");
@@ -9569,7 +9578,7 @@ function wireOperationalForms() {
       cust.addEventListener("change", () => {
         fillSkuSelect(skuId, cust.value, prodId);
         if (clienteId) {
-          const customers = getCustomersForSelect();
+          const customers = getOperationalProjectsForSelect();
           const match = customers.find((c) => c.code === cust.value);
           const inp = document.getElementById(clienteId);
           if (inp) inp.value = match?.name || "";

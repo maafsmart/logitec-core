@@ -5,6 +5,7 @@ import { logActivity } from "../activity/activity-log.service.js";
 import type { UserRole } from "../../middlewares/auth.middleware.js";
 import { assignmentFromInventory, outboundAssignmentFields } from "../inventory/inventory-assignment.js";
 import { InventoryMutationError } from "../inventory/inventory-errors.js";
+import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
 import { planRelocateFifoAllocation } from "../inventory/inventory-mutation.service.js";
 import { assertNoSerialAmbiguity } from "../inventory/inventory-serial-guard.js";
 
@@ -55,6 +56,29 @@ function taskPriority(priority: string): number {
   if (priority === "LOW") return 20;
   return 50;
 }
+
+type OperationalProjectRecord = {
+  id: string;
+  code: string;
+  name: string;
+  active?: boolean | null;
+};
+
+export function requireOperationalProject<T extends OperationalProjectRecord | null | undefined>(
+  project: T
+): asserts project is Exclude<T, null | undefined> {
+  if (!project) {
+    throw new RequisitionError("PROJECT_NOT_FOUND", "Proyecto no encontrado.");
+  }
+  if (project.active === false || isForbiddenInventoryProjectRecord(project)) {
+    throw new RequisitionError(
+      "PROJECT_NOT_AVAILABLE",
+      "El proyecto no está disponible para operaciones nuevas."
+    );
+  }
+}
+
+type RequisitionDb = Pick<typeof prisma, "customer" | "requisition" | "$transaction">;
 
 type StockBreakdown = {
   projectAvailable: Prisma.Decimal;
@@ -184,8 +208,8 @@ async function lockInventoryAndLayers(tx: Prisma.TransactionClient, inventoryId:
   );
 }
 
-async function loadRequisition(id: string) {
-  const row = await prisma.requisition.findUnique({
+async function loadRequisition(id: string, db: RequisitionDb = prisma) {
+  const row = await db.requisition.findUnique({
     where: { id },
     include: {
       project: { include: { client: true } },
@@ -402,22 +426,30 @@ export async function getRequisition(id: string) {
   return withReserveCubes(await withLineStock(serializeRequisition(await loadRequisition(id))));
 }
 
-export async function createRequisition(input: {
-  number: string;
-  projectCode: string;
-  priority?: string | number;
-  reference?: string | null;
-  notes?: string | null;
-  lines: Array<{ sku: string; requestedQty: number; lotNumber?: string | null }>;
-  userId: string;
-}) {
+export async function createRequisition(
+  input: {
+    number: string;
+    projectCode: string;
+    priority?: string | number;
+    reference?: string | null;
+    notes?: string | null;
+    lines: Array<{ sku: string; requestedQty: number; lotNumber?: string | null }>;
+    userId: string;
+  },
+  db: RequisitionDb = prisma
+) {
   if (!input.lines.length) throw new HttpError(400, "La requisición requiere al menos una línea.");
-  const project = await prisma.customer.findFirst({
-    where: { OR: [{ code: { equals: input.projectCode, mode: "insensitive" } }, { name: { equals: input.projectCode, mode: "insensitive" } }] }
+  const project = await db.customer.findFirst({
+    where: {
+      OR: [
+        { code: { equals: input.projectCode, mode: "insensitive" } },
+        { name: { equals: input.projectCode, mode: "insensitive" } }
+      ]
+    }
   });
-  if (!project) throw new HttpError(404, "Proyecto no encontrado.");
+  requireOperationalProject(project);
 
-  const created = await prisma.$transaction(async (tx) => createRequisitionInTransaction(tx, { ...input, project }));
+  const created = await db.$transaction(async (tx) => createRequisitionInTransaction(tx, { ...input, project }));
   return getRequisition(created);
 }
 
@@ -518,12 +550,16 @@ export async function addRequisitionLine(
   return getRequisition(requisitionId);
 }
 
-export async function submitRequisition(id: string, userId: string) {
-  const req = await prisma.requisition.findUnique({ where: { id }, include: { lines: true } });
+export async function submitRequisition(id: string, userId: string, db: RequisitionDb = prisma) {
+  const req = await db.requisition.findUnique({
+    where: { id },
+    include: { lines: true, project: true }
+  });
   if (!req) throw new HttpError(404, "Requisición no encontrada.");
   if (req.status !== "DRAFT") throw new HttpError(409, "Solo DRAFT puede enviarse.");
   if (!req.lines.length) throw new HttpError(400, "La requisición no tiene líneas.");
-  await prisma.requisition.update({ where: { id }, data: { status: "SUBMITTED" } });
+  requireOperationalProject(req.project);
+  await db.requisition.update({ where: { id }, data: { status: "SUBMITTED" } });
   await logActivity({
     type: "REQUISITION",
     subtype: "SUBMITTED",
@@ -536,9 +572,9 @@ export async function submitRequisition(id: string, userId: string) {
   return getRequisition(id);
 }
 
-export async function approveRequisition(id: string, userId: string, role: UserRole) {
+export async function approveRequisition(id: string, userId: string, role: UserRole, db: RequisitionDb = prisma) {
   if (role === "OPERATOR" || role === "CLIENT") throw new HttpError(403, "No autorizado para aprobar.");
-  const req = await loadRequisition(id);
+  const req = await loadRequisition(id, db);
   if (!["SUBMITTED", "APPROVED"].includes(req.status) && req.status !== "DRAFT") {
     // allow SUBMITTED primarily; DRAFT can be approved after auto-submit convenience? Spec: submit then approve.
   }
@@ -549,6 +585,9 @@ export async function approveRequisition(id: string, userId: string, role: UserR
     throw new HttpError(409, "Envía la requisición (SUBMITTED) antes de aprobar.");
   }
   if (!req.lines.length) throw new HttpError(400, "Sin líneas.");
+  if (req.status === "SUBMITTED") {
+    requireOperationalProject(req.project);
+  }
 
   await prisma.$transaction(async (tx) => {
     if (req.status !== "APPROVED") {

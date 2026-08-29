@@ -36,3 +36,11 @@ export function isForbiddenInventoryProjectRecord(record: { code?: unknown; name
   if (!record) return true;
   return isForbiddenInventoryProjectLabel(record.code) || isForbiddenInventoryProjectLabel(record.name);
 }
+
+export function isOperationalProjectRecord(
+  record: { code?: unknown; name?: unknown; active?: boolean | null } | null | undefined
+): boolean {
+  if (!record) return false;
+  if (record.active === false) return false;
+  return !isForbiddenInventoryProjectRecord(record);
+}
