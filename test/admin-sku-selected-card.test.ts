@@ -183,9 +183,9 @@ function loadSkuFns(document: unknown) {
   )(document);
 }
 
-test("dashboard.js usa cache-buster v=75 para la tarjeta de SKU", () => {
-  assert.match(html, /dashboard\.js\?v=75/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=65/);
+test("dashboard.js usa cache-buster v=76 para la tarjeta de SKU", () => {
+  assert.match(html, /dashboard\.js\?v=76/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=75/);
 });
 
 test("Registrar entrada nace deshabilitado y exige inboundProductId", () => {
@@ -229,15 +229,26 @@ test("hideProductTypeaheadList vacía y oculta las sugerencias", () => {
   assert.equal(dom.list.innerHTML, "");
 });
 
-test("la tarjeta compacta muestra SKU, producto, existencia, disponible y ubicación o saldos", () => {
+test("la tarjeta compacta muestra cliente, proyecto, disponible del proyecto y ubicación o saldos", () => {
   const src = [
+    "const PRIMARY_CLIENT_AVIAT_NAME = 'AVIAT';",
+    sliceFunction(js, "isForbiddenProjectLabel"),
+    sliceFunction(js, "isOperationalProjectRecord"),
+    sliceFunction(js, "canonicalClientDisplay"),
+    sliceFunction(js, "historicalNonOperationalAssignmentLabel"),
+    sliceFunction(js, "assignmentDisplayLabel"),
+    sliceFunction(js, "formatInventoryStatus"),
+    sliceFunction(js, "skuQtyNumber"),
+    sliceFunction(js, "skuSelectedLocationLabel"),
+    sliceFunction(js, "skuCardFocusFromContext"),
     sliceFunction(js, "escCell"),
     sliceFunction(js, "formatQty"),
-    sliceFunction(js, "skuSelectedLocationLabel"),
     sliceFunction(js, "buildSkuSelectedCardHtml")
   ].join("\n");
   const { skuSelectedLocationLabel, buildSkuSelectedCardHtml } = new Function(
-    `${src}; return { skuSelectedLocationLabel, buildSkuSelectedCardHtml };`
+    `function getInventoryScope(){ return globalThis.__skuScope || { projectId: "", assignmentType: "" }; }
+    function inventoryStatusRecord(){ return null; }
+    ${src}; return { skuSelectedLocationLabel, buildSkuSelectedCardHtml };`
   )();
 
   assert.equal(skuSelectedLocationLabel([]), "Sin existencia");
@@ -253,16 +264,22 @@ test("la tarjeta compacta muestra SKU, producto, existencia, disponible y ubicac
   const oneLoc = buildSkuSelectedCardHtml(
     {
       product: { sku: "2223158-4", name: "Equipo de radio" },
-      inventory: { totalQty: "12", totalUnreservedQty: "10", locations: [{ locationCode: "AN14-F", warehouse: "TULTITLAN24" }] }
+      inventory: {
+        totalQty: "12",
+        totalUnreservedQty: "10",
+        locations: [{ locationCode: "AN14-F", warehouse: "TULTITLAN24", qty: "12", reservedQty: "2", unreservedQty: "10" }]
+      }
     },
     "Capas: 3 · Valor MXN 1,000.00"
   );
   assert.match(oneLoc, /✓ SKU seleccionado/);
   assert.match(oneLoc, /<dt>SKU<\/dt><dd>2223158-4<\/dd>/);
   assert.match(oneLoc, /<dt>Producto<\/dt><dd>Equipo de radio<\/dd>/);
-  assert.match(oneLoc, /<dt>Existencia actual<\/dt>/);
-  assert.match(oneLoc, /<dt>Cantidad disponible<\/dt>/);
+  assert.match(oneLoc, /<dt>Cliente<\/dt>/);
+  assert.match(oneLoc, /<dt>Proyecto<\/dt>/);
+  assert.match(oneLoc, /<dt>Disponible en este proyecto<\/dt>/);
   assert.match(oneLoc, /<dt>Ubicación<\/dt><dd>AN14-F · TULTITLAN24<\/dd>/);
+  assert.match(oneLoc, /sku-selected-card-breakdown/);
   assert.match(oneLoc, />Cambiar SKU</);
   assert.match(oneLoc, /<details class="sku-selected-detail">/);
   assert.match(oneLoc, />Ver detalle</);

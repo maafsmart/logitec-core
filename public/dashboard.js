@@ -433,6 +433,42 @@ function getOperationalProjectsForSelect(catalog) {
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es"));
 }
 
+function historicalNonOperationalAssignmentLabel() {
+  return "Asignación histórica/no operativa";
+}
+
+function canonicalClientDisplay(source) {
+  const candidates = [
+    source?.client?.tradeName,
+    source?.client?.legalName,
+    source?.client?.name,
+    source?.tradeName,
+    source?.legalName
+  ];
+  for (const value of candidates) {
+    const label = String(value || "").trim();
+    if (label && !isForbiddenProjectLabel(label)) return label;
+  }
+  return PRIMARY_CLIENT_AVIAT_NAME;
+}
+
+function isSuggestedOperationalProject(item) {
+  if (!item) return false;
+  if (item.assignmentType === "FREE_TO_SALE") return false;
+  const project = {
+    id: item.projectId || item.project?.id || "",
+    code: item.projectCode || item.project?.code || "",
+    name: item.projectName || item.project?.name || ""
+  };
+  if (!project.code && !project.name && !project.id) return false;
+  return isOperationalProjectRecord(project);
+}
+
+function applyOperationalProjectToSelect(selectId, item) {
+  if (!isSuggestedOperationalProject(item)) return false;
+  return setSelectValueFlexible(selectId, item.projectCode || item.project?.code || "");
+}
+
 function getAviatProjectFromRow(row) {
   if (row?.assignmentType === "FREE_TO_SALE" || row?.assignmentKey === "FREE_TO_SALE") {
     return { code: "", name: "FREE TO SALE" };
@@ -1104,6 +1140,7 @@ async function authenticatedFetch(path, options = {}) {
   const response = await fetch(path, {
     method: "GET",
     ...options,
+    cache: options.cache || "no-store",
     headers: {
       Authorization: `Bearer ${token}`,
       ...(options.headers || {})
@@ -1497,10 +1534,17 @@ function isFreeToSaleRow(row) {
 
 function inventoryProjectOrAssignmentLabel(row) {
   if (isFreeToSaleRow(row)) return "Free to Sale";
-  if (row?.project?.name) {
-    return row.project.code ? `${row.project.name} (${row.project.code})` : row.project.name;
+  if (row?.historicalAssignment === "HISTORICAL_NON_OPERATIONAL") return historicalNonOperationalAssignmentLabel();
+  if (row?.project?.name || row?.project?.code) {
+    if (isForbiddenProjectLabel(row.project.code) || isForbiddenProjectLabel(row.project.name)) {
+      return historicalNonOperationalAssignmentLabel();
+    }
+    return row.project.code ? `${row.project.name || row.project.code} (${row.project.code})` : row.project.name;
   }
   const fallback = getAviatProjectDisplayFromRow(row);
+  if (!fallback || fallback === "—") {
+    return row?.assignmentType === "PROJECT" ? historicalNonOperationalAssignmentLabel() : "—";
+  }
   return fallback === "FREE TO SALE" ? "Free to Sale" : fallback;
 }
 
@@ -6151,7 +6195,7 @@ function openMovementDetail(row) {
   openDetailDrawer("Detalle de movimiento", [
     { label: "Movimiento", value: formatMovementTypeLabel(row.movement?.movementType || row.movement?.type) },
     { label: "Fecha / hora (Ciudad de México)", value: formatMexicoCityDateTime(row.createdAt) },
-    { label: "Cliente", value: row.client?.tradeName || row.client?.legalName || row.client?.name },
+    { label: "Cliente", value: canonicalClientDisplay(row) },
     { label: "Proyecto", value: transfer ? formatTransferAssignment(row) : row.project ? `${row.project.code} — ${row.project.name}` : "—" },
     { label: "SKU", value: row.product?.sku },
     { label: "Descripción", value: row.product?.name },
@@ -6663,23 +6707,34 @@ async function searchSkuSuggestions(query, opts = {}) {
         (link) => String(link.code || link.project?.code || "").toUpperCase() === customerCode
       );
     })
-    .map((product) => ({
+    .map((product) => {
+      const catalogOwnerCode = product.customer?.code || "";
+      const catalogOwnerName = product.customer?.name || catalogOwnerCode;
+      const catalogIsOperational = isOperationalProjectRecord({
+        code: catalogOwnerCode,
+        name: catalogOwnerName,
+        active: true
+      });
+      return {
       kind: "catalog",
       key: `catalog:${product.id}`,
       productId: product.id,
       sku: product.sku,
       barcode: product.barcode || "",
       productName: product.name || "",
-      projectCode: product.customer?.code || "",
-      projectName: product.customer?.name || product.customer?.code || "",
-      clientName: product.customer?.client?.tradeName || product.customer?.client?.legalName || product.customer?.client?.name || "",
+      projectCode: "",
+      projectName: "",
+      catalogOwnerCode: catalogIsOperational ? catalogOwnerCode : "",
+      catalogOwnerName: catalogIsOperational ? catalogOwnerName : "",
+      clientName: canonicalClientDisplay(product.customer),
       warehouse: "",
       location: "",
       status: "",
       qty: null,
       inventoryId: "",
       product
-    }));
+    };
+    });
 }
 
 async function loadSkuContext(productId) {
@@ -6691,13 +6746,23 @@ async function loadSkuContext(productId) {
 function assignmentDisplayLabel(row) {
   if (!row) return "—";
   if (row.assignmentType === "FREE_TO_SALE" || row.assignmentLabel === "FREE TO SALE" || row.assignmentLabel === "Free to Sale") return "Free to Sale";
+  if (row.historicalAssignment === "HISTORICAL_NON_OPERATIONAL") return historicalNonOperationalAssignmentLabel();
   if (row.project?.name) {
+    if (isForbiddenProjectLabel(row.project.code) || isForbiddenProjectLabel(row.project.name)) {
+      return historicalNonOperationalAssignmentLabel();
+    }
     return row.project.code ? `${row.project.name} (${row.project.code})` : row.project.name;
   }
   if (row.projectName) {
+    if (isForbiddenProjectLabel(row.projectCode) || isForbiddenProjectLabel(row.projectName)) {
+      return historicalNonOperationalAssignmentLabel();
+    }
     return row.projectCode ? `${row.projectName} (${row.projectCode})` : row.projectName;
   }
-  if (row.projectCode) return row.projectCode;
+  if (row.projectCode) {
+    if (isForbiddenProjectLabel(row.projectCode)) return historicalNonOperationalAssignmentLabel();
+    return row.projectCode;
+  }
   return row.assignmentType || "—";
 }
 
@@ -7452,12 +7517,17 @@ function wireRelocateBalanceTypeahead() {
 
 function hideSkuSelectedCard(listEl) {
   const wrap = listEl?.parentElement;
-  if (!wrap || typeof wrap.querySelectorAll !== "function") return;
-  wrap.querySelectorAll(".sku-selected-card, .sku-context-summary").forEach((panel) => {
-    panel.classList.add("hidden");
-    panel.hidden = true;
-    panel.innerHTML = "";
-  });
+  const hosts = [];
+  if (wrap && typeof wrap.querySelectorAll === "function") hosts.push(wrap);
+  const pageHost = document.getElementById("inventorySkuSelectedHost");
+  if (pageHost) hosts.push(pageHost);
+  for (const host of hosts) {
+    host.querySelectorAll(".sku-selected-card, .sku-context-summary").forEach((panel) => {
+      panel.classList.add("hidden");
+      panel.hidden = true;
+      panel.innerHTML = "";
+    });
+  }
 }
 
 function clearSkuSelectionFields(prefix, input, { keepSkuText = false } = {}) {
@@ -7525,10 +7595,12 @@ function invalidateSkuSelection(listEl, input) {
 
 function buildSkuContextDetailHtml(context, { pickingSelector = false } = {}) {
   const locations = Array.isArray(context?.inventory?.locations) ? context.inventory.locations : [];
-  const clientName = context.client?.tradeName || context.client?.legalName || context.client?.name || "—";
+  const clientName = canonicalClientDisplay(context);
   const project =
     context.stockAssignments?.label ||
-    (context.project ? `${context.project.name} (${context.project.code})` : "—");
+    (context.project && isOperationalProjectRecord(context.project)
+      ? `${context.project.name} (${context.project.code})`
+      : "—");
   const locationSummary = !locations.length
     ? "Sin existencia / ubicación."
     : locations.length === 1
@@ -7564,19 +7636,96 @@ function buildSkuContextDetailHtml(context, { pickingSelector = false } = {}) {
     ${locationRows ? `<ul style="margin:4px 0 0;padding-left:18px">${locationRows}</ul>` : ""}`;
 }
 
+function skuQtyNumber(value) {
+  const n = typeof value === "string" ? Number(value.replace(",", ".")) : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function skuCardFocusFromContext(context) {
+  const locations = Array.isArray(context?.inventory?.locations) ? context.inventory.locations : [];
+  const breakdown = context?.assignmentBreakdown || null;
+  const scopeId =
+    typeof getInventoryScope === "function" ? String(getInventoryScope()?.projectId || "").trim() : "";
+  const operationalLocations = locations.filter((row) => {
+    if (row?.assignmentType === "FREE_TO_SALE") return false;
+    if (row?.historicalAssignment === "HISTORICAL_NON_OPERATIONAL") return false;
+    return isOperationalProjectRecord(row?.project || { code: row?.projectCode, name: row?.projectName });
+  });
+  const scoped = scopeId
+    ? operationalLocations.filter((row) => String(row.project?.id || row.projectId || "") === scopeId)
+    : [];
+  let focusedRows = scoped.length ? scoped : operationalLocations;
+  if (!focusedRows.length) {
+    focusedRows = locations.filter((row) => row.assignmentType !== "FREE_TO_SALE");
+  }
+  if (!focusedRows.length) focusedRows = locations;
+  const project =
+    focusedRows[0]?.project ||
+    (scopeId && Array.isArray(breakdown?.projects)
+      ? breakdown.projects.find((row) => row.id === scopeId)
+      : null) ||
+    focusedRows[0] ||
+    null;
+  const qty = focusedRows.reduce((sum, row) => sum + skuQtyNumber(row.qty), 0);
+  const reservedQty = focusedRows.reduce((sum, row) => sum + skuQtyNumber(row.reservedQty), 0);
+  const unreservedQty = focusedRows.reduce((sum, row) => sum + skuQtyNumber(row.unreservedQty), 0);
+  const primaryLocation = focusedRows.length === 1 ? focusedRows[0] : null;
+  const fts = breakdown?.freeToSale || {
+    qty: locations.filter((row) => row.assignmentType === "FREE_TO_SALE").reduce((sum, row) => sum + skuQtyNumber(row.qty), 0)
+  };
+  const focusedId = project?.id || scopeId;
+  const otherOperational = (Array.isArray(breakdown?.projects) ? breakdown.projects : [])
+    .filter((row) => row.id && row.id !== focusedId)
+    .reduce((sum, row) => sum + skuQtyNumber(row.qty), 0);
+  const otherFromRows = operationalLocations
+    .filter((row) => String(row.project?.id || "") !== String(focusedId || ""))
+    .reduce((sum, row) => sum + skuQtyNumber(row.qty), 0);
+  return {
+    clientLabel: canonicalClientDisplay(context),
+    projectLabel: project?.name
+      ? project.code
+        ? `${project.name} (${project.code})`
+        : project.name
+      : focusedRows.length
+        ? assignmentDisplayLabel(focusedRows[0])
+        : "—",
+    projectNameShort: project?.name || (focusedRows[0] ? assignmentDisplayLabel(focusedRows[0]) : "Este proyecto"),
+    qty,
+    reservedQty,
+    unreservedQty,
+    locationLabel: primaryLocation
+      ? skuSelectedLocationLabel([primaryLocation])
+      : skuSelectedLocationLabel(focusedRows),
+    locationCaption: focusedRows.length === 1 ? "Ubicación" : "Saldos",
+    statusLabel: primaryLocation ? formatInventoryStatus(primaryLocation.status) : focusedRows.length ? `${focusedRows.length} cubos` : "—",
+    globalQty: skuQtyNumber(context?.inventory?.totalQty),
+    attQty: qty,
+    freeToSaleQty: skuQtyNumber(fts.qty),
+    otherProjectsQty: Array.isArray(breakdown?.projects) ? otherOperational : otherFromRows
+  };
+}
+
 function buildSkuSelectedCardHtml(context, detailHtml) {
   const product = context?.product || {};
-  const locations = Array.isArray(context?.inventory?.locations) ? context.inventory.locations : [];
-  const locationLabel = skuSelectedLocationLabel(locations);
-  const locationCaption = locations.length === 1 ? "Ubicación" : "Saldos";
+  const focus = skuCardFocusFromContext(context);
   return `<div class="sku-selected-card-title">✓ SKU seleccionado</div>
     <dl class="sku-selected-card-meta">
       <div><dt>SKU</dt><dd>${escCell(product.sku)}</dd></div>
       <div><dt>Producto</dt><dd>${escCell(product.name)}</dd></div>
-      <div><dt>Existencia actual</dt><dd>${escCell(formatQty(context?.inventory?.totalQty || 0))}</dd></div>
-      <div><dt>Cantidad disponible</dt><dd>${escCell(formatQty(context?.inventory?.totalUnreservedQty || 0))}</dd></div>
-      <div><dt>${escCell(locationCaption)}</dt><dd>${escCell(locationLabel)}</dd></div>
+      <div><dt>Cliente</dt><dd>${escCell(focus.clientLabel)}</dd></div>
+      <div><dt>Proyecto</dt><dd>${escCell(focus.projectLabel)}</dd></div>
+      <div><dt>Disponible en este proyecto</dt><dd>${escCell(formatQty(focus.qty))}</dd></div>
+      <div><dt>${escCell(focus.locationCaption)}</dt><dd>${escCell(focus.locationLabel)}</dd></div>
+      <div><dt>Estatus</dt><dd>${escCell(focus.statusLabel)}</dd></div>
+      <div><dt>Reservado</dt><dd>${escCell(formatQty(focus.reservedQty))}</dd></div>
+      <div><dt>No reservado</dt><dd>${escCell(formatQty(focus.unreservedQty))}</dd></div>
     </dl>
+    <div class="sku-selected-card-breakdown">
+      <div>Total global: ${escCell(formatQty(focus.globalQty))} <span class="sku-selected-card-breakdown-note">(informativo, no es el saldo del proyecto)</span></div>
+      <div>${escCell(focus.projectNameShort)}: ${escCell(formatQty(focus.attQty))} · Free to Sale: ${escCell(
+        formatQty(focus.freeToSaleQty)
+      )} · otros proyectos: ${escCell(formatQty(focus.otherProjectsQty))}</div>
+    </div>
     <button type="button" class="btn-secondary btn-compact sku-change-btn">Cambiar SKU</button>
     <details class="sku-selected-detail">
       <summary>Ver detalle</summary>
@@ -7589,12 +7738,16 @@ function renderSkuContext(listEl, context) {
   hideProductTypeaheadList(listEl);
   const wrap = listEl.parentElement;
   wrap?.querySelector(".sku-context-summary")?.remove();
-  let panel = wrap?.querySelector(".sku-selected-card");
-  if (!panel) {
+  const host =
+    (listEl.id === "invFilterSkuSuggestions" && document.getElementById("inventorySkuSelectedHost")) || wrap;
+  let panel = host?.querySelector(".sku-selected-card");
+  if (!panel && host) {
     panel = document.createElement("div");
     panel.className = "sku-selected-card";
-    listEl.insertAdjacentElement("afterend", panel);
+    if (host.id === "inventorySkuSelectedHost") host.appendChild(panel);
+    else listEl.insertAdjacentElement("afterend", panel);
   }
+  if (!panel) return;
   panel.classList.remove("hidden");
   panel.hidden = false;
   const locations = Array.isArray(context.inventory?.locations) ? context.inventory.locations : [];
@@ -7866,8 +8019,8 @@ function applyCatalogSuggestionToOps(prefix, item) {
     if (inboundAssignmentTypeValue() === "PROJECT") fillInboundProjectSelect();
     syncInboundSubmitEnabled();
   }
-  if (item.projectCode && prefix !== "inbound") {
-    setSelectValueFlexible(`${prefix}Customer`, item.projectCode);
+  if (isSuggestedOperationalProject(item) && prefix !== "inbound") {
+    applyOperationalProjectToSelect(`${prefix}Customer`, item);
     const cliente = document.getElementById(`${prefix}Cliente`);
     if (cliente) cliente.value = item.projectName || item.projectCode;
   }
@@ -7912,8 +8065,8 @@ function applyPickSuggestion(item) {
   if (selectedCube?.assignmentType === "FREE_TO_SALE") {
     const projectSel = document.getElementById("pickProject");
     if (projectSel) projectSel.value = "";
-  } else if (selectedCube?.projectCode) {
-    setSelectValueFlexible("pickProject", selectedCube.projectCode);
+  } else if (isSuggestedOperationalProject(selectedCube)) {
+    applyOperationalProjectToSelect("pickProject", selectedCube);
   }
   const locSource = selectedCube || item;
   if (locSource.warehouse) setSelectValueFlexible("pickWarehouse", locSource.warehouse);
@@ -7974,22 +8127,6 @@ function wireAllProductTypeaheads() {
         invSku.value = item.sku || "";
         const prod = document.getElementById("invFilterProducto");
         if (prod && item.productName) prod.value = item.productName;
-        if (item.projectCode) {
-          const code = document.getElementById("invFilterCustomer");
-          if (code) code.value = item.projectCode;
-        }
-        if (item.projectName) {
-          const name = document.getElementById("invFilterCliente");
-          if (name) name.value = item.projectName;
-        }
-        if (item.location) {
-          const loc = document.getElementById("invFilterUbicacion");
-          if (loc) loc.value = item.location;
-        }
-        if (item.status) {
-          const st = document.getElementById("invFilterStatus");
-          if (st) st.value = formatInventoryStatus(item.status);
-        }
         applyInventoryFilters();
       }
     });
@@ -8097,8 +8234,8 @@ function wireReqLineSkuTypeahead(input) {
     getCustomerCode: () => document.getElementById("reqCustomer")?.value?.trim() || "",
     onSelect: (item) => {
       input.value = item.sku || "";
-      if (item.projectCode) {
-        setSelectValueFlexible("reqCustomer", item.projectCode);
+      if (isSuggestedOperationalProject(item)) {
+        applyOperationalProjectToSelect("reqCustomer", item);
         const cliente = document.getElementById("reqCliente");
         if (cliente) cliente.value = item.projectName || item.projectCode;
       }
@@ -9239,7 +9376,7 @@ function renderRequisitionDetail(row) {
   const fields = [
     { label: "Folio", value: row.number || "—" },
     { label: "Proyecto", value: projectLabel },
-    { label: "Cliente", value: row.client?.tradeName || row.client?.legalName || row.client?.name || "—" },
+    { label: "Cliente", value: canonicalClientDisplay(row) },
     { label: "Estado", value: row.status || "—" },
     { label: "Prioridad", value: row.priorityLabel || row.priority || "—" },
     { label: "Estado de surtido", value: row.fulfillmentStatus || "—" }

@@ -109,7 +109,7 @@ test("el predictor SKU funciona en Free to Sale y en Proyecto y no infiere proye
   const predictSrc = sliceFunction(js, "inboundTypeaheadProjectCode");
   assert.match(predictSrc, /inboundAssignmentTypeValue\(\) !== "PROJECT"/);
   const applySrc = sliceFunction(js, "applyCatalogSuggestionToOps");
-  assert.match(applySrc, /item\.projectCode && prefix !== "inbound"/);
+  assert.match(applySrc, /isSuggestedOperationalProject\(item\) && prefix !== "inbound"/);
 });
 
 test("Registrar entrada se desactiva con datos incompletos y exige SKU del sistema", () => {

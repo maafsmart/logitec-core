@@ -5,6 +5,7 @@ import { clientInventoryWhere, clientProductWhere } from "../clients/client-scop
 import type { UserRole } from "../../middlewares/auth.middleware.js";
 import { calculateInventoryValuation, summarizeStockAssignments } from "../inventory/inventory-valuation.service.js";
 import { canExposeEconomicValuation } from "../inventory/inventory-economic-access.js";
+import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
 
 type AuthContext = {
   role: UserRole;
@@ -30,6 +31,29 @@ const productInclude = {
 
 function normalized(value: string | null | undefined): string {
   return (value || "").trim().toLocaleLowerCase();
+}
+
+function mapSkuClient(
+  client: { id: string; name: string; legalName: string | null; tradeName: string | null } | null | undefined
+) {
+  if (!client) return null;
+  if (isForbiddenInventoryProjectRecord({ code: client.name, name: client.tradeName || client.legalName || client.name })) {
+    return null;
+  }
+  return {
+    id: client.id,
+    name: client.name,
+    tradeName: client.tradeName,
+    legalName: client.legalName
+  };
+}
+
+function qtyTriplet(qty: Prisma.Decimal, reservedQty: Prisma.Decimal) {
+  return {
+    qty: qty.toString(),
+    reservedQty: reservedQty.toString(),
+    unreservedQty: qty.minus(reservedQty).toString()
+  };
 }
 
 function matchScore(product: {
@@ -194,21 +218,22 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
   const locations = product.inventories.map((inventory) => {
     const qty = inventory.qty;
     const reservedQty = inventory.reservedQty;
+    const operationalProject =
+      inventory.assignmentType === "PROJECT" &&
+      inventory.project &&
+      !isForbiddenInventoryProjectRecord(inventory.project)
+        ? { id: inventory.project.id, code: inventory.project.code, name: inventory.project.name }
+        : null;
     return {
       inventoryId: inventory.id,
       assignmentType: inventory.assignmentType,
       assignmentKey: inventory.assignmentKey,
-      project: inventory.project
-        ? { id: inventory.project.id, code: inventory.project.code, name: inventory.project.name }
-        : null,
-      client: inventory.project?.client
-        ? {
-            id: inventory.project.client.id,
-            name: inventory.project.client.name,
-            tradeName: inventory.project.client.tradeName,
-            legalName: inventory.project.client.legalName
-          }
-        : null,
+      project: operationalProject,
+      historicalAssignment:
+        inventory.assignmentType === "PROJECT" && inventory.project && !operationalProject
+          ? "HISTORICAL_NON_OPERATIONAL"
+          : null,
+      client: mapSkuClient(inventory.project?.client),
       warehouse: inventory.location.warehouse,
       locationId: inventory.location.id,
       locationCode: inventory.location.code,
@@ -223,6 +248,46 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
     (total, inventory) => total.plus(inventory.reservedQty),
     new Prisma.Decimal(0)
   );
+  const projectQty = new Map<
+    string,
+    { id: string; code: string; name: string; qty: Prisma.Decimal; reservedQty: Prisma.Decimal }
+  >();
+  let freeToSaleQty = new Prisma.Decimal(0);
+  let freeToSaleReserved = new Prisma.Decimal(0);
+  let otherQty = new Prisma.Decimal(0);
+  let otherReserved = new Prisma.Decimal(0);
+  for (const inventory of product.inventories) {
+    if (inventory.assignmentType === "FREE_TO_SALE") {
+      freeToSaleQty = freeToSaleQty.plus(inventory.qty);
+      freeToSaleReserved = freeToSaleReserved.plus(inventory.reservedQty);
+      continue;
+    }
+    if (inventory.assignmentType === "PROJECT" && inventory.project && !isForbiddenInventoryProjectRecord(inventory.project)) {
+      const current = projectQty.get(inventory.project.id) || {
+        id: inventory.project.id,
+        code: inventory.project.code,
+        name: inventory.project.name,
+        qty: new Prisma.Decimal(0),
+        reservedQty: new Prisma.Decimal(0)
+      };
+      current.qty = current.qty.plus(inventory.qty);
+      current.reservedQty = current.reservedQty.plus(inventory.reservedQty);
+      projectQty.set(inventory.project.id, current);
+      continue;
+    }
+    otherQty = otherQty.plus(inventory.qty);
+    otherReserved = otherReserved.plus(inventory.reservedQty);
+  }
+  const operationalClient =
+    mapSkuClient(
+      product.inventories.find(
+        (inventory) =>
+          inventory.assignmentType === "PROJECT" &&
+          inventory.project &&
+          !isForbiddenInventoryProjectRecord(inventory.project) &&
+          inventory.project.client
+      )?.project?.client
+    ) || mapSkuClient(product.customer?.client);
   const layers = product.inventories.flatMap((inventory) =>
     inventory.layers.map((layer) => ({
       id: layer.id,
@@ -258,18 +323,27 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
       serialControlled: product.serialControlled,
       lotControlled: product.lotControlled
     },
-    client: product.customer?.client
-      ? {
-          id: product.customer.client.id,
-          name: product.customer.client.name,
-          tradeName: product.customer.client.tradeName,
-          legalName: product.customer.client.legalName
-        }
-      : null,
-    project: product.customer
-      ? { id: product.customer.id, code: product.customer.code, name: product.customer.name }
-      : null,
+    client: operationalClient,
+    project: null,
+    catalogOwner:
+      product.customer && !isForbiddenInventoryProjectRecord(product.customer)
+        ? { id: product.customer.id, code: product.customer.code, name: product.customer.name }
+        : product.customer
+          ? { id: product.customer.id, code: product.customer.code, name: product.customer.name, historical: true }
+          : null,
     stockAssignments,
+    assignmentBreakdown: {
+      projects: [...projectQty.values()]
+        .sort((a, b) => a.name.localeCompare(b.name, "es"))
+        .map((row) => ({
+          id: row.id,
+          code: row.code,
+          name: row.name,
+          ...qtyTriplet(row.qty, row.reservedQty)
+        })),
+      freeToSale: qtyTriplet(freeToSaleQty, freeToSaleReserved),
+      other: qtyTriplet(otherQty, otherReserved)
+    },
     inventory: {
       totalQty: totalQty.toString(),
       totalReservedQty: totalReservedQty.toString(),

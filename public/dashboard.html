@@ -378,6 +378,16 @@
         background: #ecfdf5;
         color: #065f46;
         box-shadow: 0 1px 0 rgba(5, 150, 105, 0.12);
+        width: 100%;
+        min-width: min(100%, 28rem);
+        max-width: 100%;
+        box-sizing: border-box;
+        overflow: hidden;
+      }
+      .sku-selected-host {
+        width: 100%;
+        min-width: 0;
+        margin: 0 0 12px;
       }
       .sku-selected-card.hidden {
         display: none !important;
@@ -390,7 +400,7 @@
       }
       .sku-selected-card-meta {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
         gap: 6px 12px;
         margin: 0 0 8px;
       }
@@ -407,6 +417,20 @@
         font-weight: 650;
         color: #134e4a;
         word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+      .sku-selected-card-breakdown {
+        margin: 0 0 8px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.72);
+        font-size: 0.78rem;
+        line-height: 1.4;
+        color: #3f5d54;
+      }
+      .sku-selected-card-breakdown-note {
+        color: #64748b;
+        font-weight: 500;
       }
       .sku-selected-card .sku-change-btn {
         margin: 0 0 4px;
@@ -426,6 +450,16 @@
         padding-top: 6px;
         border-top: 1px dashed rgba(5, 150, 105, 0.35);
         line-height: 1.4;
+        max-height: 160px;
+        overflow: auto;
+      }
+      .filter-strip .field.compact:has(.sku-selected-card),
+      .filter-strip .field.compact:has(.product-typeahead .sku-selected-card),
+      .form-grid .field:has(.sku-selected-card) {
+        flex: 1 1 100%;
+        min-width: min(100%, 28rem);
+        max-width: 100%;
+        grid-column: 1 / -1;
       }
       .assignee-hint {
         margin: 4px 0 0;
@@ -3170,6 +3204,15 @@
           padding: 4px 8px 6px;
         }
       }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact .sku-selected-card,
+      html[data-ui-version="compact-workspace-v1"] body.workspace-comfortable .sku-selected-card {
+        min-width: min(100%, 28rem);
+        width: 100%;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact .sku-selected-card-meta,
+      html[data-ui-version="compact-workspace-v1"] body.workspace-comfortable .sku-selected-card-meta {
+        grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+      }
       /* ===== /compact-workspace-v1 ===== */
     </style>
   </head>
@@ -4065,6 +4108,7 @@
                   </div>
                   <button type="button" id="inventoryClearFiltersBtn" class="btn-secondary btn-compact">Limpiar filtros</button>
                 </div>
+                <div id="inventorySkuSelectedHost" class="sku-selected-host"></div>
               </div>
               <p id="inventoryTableCount" class="operational-table-meta">Mostrando 0 de 0 saldos</p>
               <div id="inventoryList">Cargando...</div>
@@ -5167,6 +5211,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=75"></script>
+    <script src="/dashboard.js?v=76"></script>
   </body>
 </html>
