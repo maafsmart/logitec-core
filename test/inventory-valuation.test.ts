@@ -198,15 +198,15 @@ test("filtro por proyecto solo valúa las capas de ese proyecto", () => {
   assert.notEqual(alfa.qtyTotal, all.qtyTotal);
 });
 
-test("permiso económico solo ADMIN", () => {
+test("valuación visible para todos los roles operativos autenticados", () => {
   assert.equal(canExposeEconomicValuation("ADMIN"), true);
-  assert.equal(canExposeEconomicValuation("OPERATOR"), false);
-  assert.equal(canExposeEconomicValuation("SUPERVISOR"), false);
-  assert.equal(canExposeEconomicValuation("CLIENT"), false);
+  assert.equal(canExposeEconomicValuation("OPERATOR"), true);
+  assert.equal(canExposeEconomicValuation("SUPERVISOR"), true);
+  assert.equal(canExposeEconomicValuation("CLIENT"), true);
   assert.equal(canExposeEconomicValuation(null), false);
   const valuation = calculateInventoryValuation([layer({ qty: 1, unitPriceMxn: "3" })]);
   assert.equal(publicValuationForRole(valuation, canExposeEconomicValuation("ADMIN"))?.totalValueMxn, "3.00");
-  assert.equal(publicValuationForRole(valuation, canExposeEconomicValuation("OPERATOR")), undefined);
+  assert.equal(publicValuationForRole(valuation, canExposeEconomicValuation("OPERATOR"))?.totalValueMxn, "3.00");
 });
 
 test("la valuación no altera las cantidades de entrada (508/23207 no se reescriben)", () => {
@@ -226,7 +226,8 @@ test("la valuación no altera las cantidades de entrada (508/23207 no se reescri
 
 test("dashboard exporta columnas económicas y no trata Free to Sale como proyecto", () => {
   assert.match(js, /canSeeEconomicValuation/);
-  assert.match(js, /currentRole === "ADMIN"/);
+  assert.match(js, /\["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"\]\.includes\(currentRole\)/);
+  assert.match(js, /function canEditEconomicValuation\(\)/);
   assert.match(js, /valor_unitario_promedio_mxn/);
   assert.match(js, /valor_total_mxn/);
   assert.match(js, /estado_valuacion/);
@@ -273,6 +274,16 @@ test("Piezas es la suma de qty y Saldos es el conteo de cubos con qty>0", () => 
   assert.equal(summary.piezas, "150.5");
   assert.equal(summary.unvaluedSaldos, 2);
   assert.equal(summary.unvaluedPiezas, "45.5");
+  assert.match(html, /id="ccKpiStock"[\s\S]{0,120}Piezas de inventario/);
+  assert.doesNotMatch(html, /id="ccKpiStock"[\s\S]{0,120}Saldos de inventario/);
+  assert.match(js, /const stockTotal = kpi\?\.qty/);
+});
+
+test("CLIENT carga existencias, movimientos y valuación sin habilitar edición", () => {
+  assert.ok((js.match(/\["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"\]\.includes\(currentRole\)/g) || []).length >= 2);
+  assert.match(js, /\["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"\]\.includes\(currentRole\)/);
+  assert.match(js, /function canEditEconomicValuation\(\)\s*\{\s*return currentRole === "ADMIN"/);
+  assert.match(html, /js-economic-edit/);
 });
 
 test("precio cero es valor asignado y null es ausencia de precio", () => {
@@ -316,8 +327,8 @@ test("ADMIN puede editar precio; OPERATOR y CLIENT quedan rechazados", () => {
   assert.match(patchBlock, /requireRole\(\["ADMIN"\]\)/);
   assert.doesNotMatch(patchBlock, /OPERATOR/);
   assert.doesNotMatch(patchBlock, /CLIENT/);
-  assert.match(stockRoutes, /unitPriceMxn: _mxn/);
-  assert.match(stockRoutes, /unitPriceUsd: _usd/);
+  assert.match(js, /if \(canEditEconomicValuation\(\)\)/);
+  assert.match(html, /js-economic-edit/);
 });
 
 test("tras guardar precio se recalcan tarjetas y tabla sin recargar la página", () => {

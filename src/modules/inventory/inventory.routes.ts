@@ -5,6 +5,7 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
 import {
+  assertAccessibleInventory,
   assertAccessibleLayer,
   assertAccessibleMovement,
   assertAccessibleSerial,
@@ -13,7 +14,9 @@ import {
   clientMovementWhere,
   clientProductWhere,
   clientSerialWhere,
+  clientTaskWhere,
   isClientRole,
+  operationalClientId,
   requireOperationalClient,
   scopedInventoryWhere,
   scopedMovementWhere
@@ -261,6 +264,7 @@ inventoryRouter.patch("/layers/:layerId/price", requireRole(["ADMIN"]), async (r
     throw new HttpError(403, "No autorizado para editar valuación económica.");
   }
   const layerId = z.string().min(1).parse(req.params.layerId);
+  await assertAccessibleLayer(req.auth!, layerId, prisma);
   const body = z
     .object({
       unitPriceMxn: z.union([z.string(), z.number()])
@@ -287,6 +291,7 @@ inventoryRouter.post("/layers/:layerId/price-split", requireRole(["ADMIN"]), asy
     throw new HttpError(403, "No autorizado para editar valuación económica.");
   }
   const layerId = z.string().min(1).parse(req.params.layerId);
+  await assertAccessibleLayer(req.auth!, layerId, prisma);
   const body = z
     .object({
       qtyToValue: z.union([z.string(), z.number()]),
@@ -315,6 +320,7 @@ inventoryRouter.post("/layers/:layerId/value-and-assign", requireRole(["ADMIN"])
     throw new HttpError(403, "No autorizado para editar valuación económica.");
   }
   const layerId = z.string().min(1).parse(req.params.layerId);
+  await assertAccessibleLayer(req.auth!, layerId, prisma);
   const body = z
     .object({
       qtyToValue: z.union([z.string(), z.number()]),
@@ -790,6 +796,7 @@ inventoryRouter.get("/layers/:layerId", requireRole(["ADMIN", "OPERATOR", "SUPER
 
 inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
   const body = createMovementSchema.parse(req.body);
+  const activeClientId = operationalClientId(req.auth!);
   if (
     body.type === "IN" &&
     inboundUnitPriceWasProvided((req.body as { unitPriceMxn?: unknown } | undefined)?.unitPriceMxn) &&
@@ -824,7 +831,7 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
     const location = await resolveLocationByCode(body.location, body.warehouse);
     if (!location) throw new HttpError(400, "La ubicación indicada no existe.");
     const stockRows = await prisma.inventory.findMany({
-      where: { productId: product.id, locationId: location.id, status: stockStatus }
+      where: { productId: product.id, locationId: location.id, status: stockStatus, clientId: activeClientId }
     });
     if (stockRows.length > 1) {
       throw new HttpError(409, "Hay varias asignaciones para esa ubicación/estado; indica inventoryId.");
@@ -835,6 +842,22 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
   }
   if (body.type !== "IN" && !inventoryId) {
     throw new HttpError(400, "OUT/ADJUST_SET requieren inventoryId o ubicación existente con saldo.");
+  }
+  if (body.type !== "IN" && inventoryId) {
+    await assertAccessibleInventory(req.auth!, inventoryId, prisma);
+  }
+  if (body.layerId) await assertAccessibleLayer(req.auth!, body.layerId, prisma);
+  if (body.taskId?.trim()) {
+    const task = await prisma.task.findFirst({
+      where: {
+        AND: [
+          { id: body.taskId.trim() },
+          clientTaskWhere({ ...req.auth!, userId: req.auth!.userId })
+        ]
+      },
+      select: { id: true }
+    });
+    if (!task) throw new HttpError(404, "Tarea no encontrada.", "TASK_NOT_FOUND");
   }
 
   try {
@@ -855,7 +878,7 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
       unitPriceUsd: body.unitPriceUsd == null ? null : dec(body.unitPriceUsd),
       assignmentType: body.assignmentType,
       projectId: body.projectId === undefined ? undefined : body.projectId,
-      clientId: body.clientId === undefined ? undefined : body.clientId,
+      clientId: body.type === "IN" ? activeClientId : undefined,
       activity: {
         type: body.type === "IN" ? "RECEIVE" : body.type === "OUT" ? "OUTBOUND" : "ADJUSTMENT",
         subtype: body.type === "IN" ? "MANUAL_IN" : body.type === "OUT" ? "MANUAL_OUT" : "MANUAL_ADJUSTMENT",
@@ -940,8 +963,9 @@ const assignmentTransferSchema = z
 
 inventoryRouter.post("/relocate", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
   const body = relocateSchema.parse(req.body);
-  const source = await prisma.inventory.findUnique({
-    where: { id: body.inventoryId },
+  await assertAccessibleInventory(req.auth!, body.inventoryId, prisma);
+  const source = await prisma.inventory.findFirst({
+    where: { id: body.inventoryId, clientId: operationalClientId(req.auth!) },
     include: { product: true, location: true }
   });
   if (!source) throw new HttpError(404, "Línea de inventario origen no encontrada.");
@@ -992,6 +1016,7 @@ inventoryRouter.post("/relocate", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"
 inventoryRouter.post("/assignment-transfer", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
   assertCanTransferAssignment(req.auth!.role);
   const body = assignmentTransferSchema.parse(req.body);
+  await assertAccessibleInventory(req.auth!, body.sourceInventoryId, prisma);
   try {
     const result = await transferAssignment({
       sourceInventoryId: body.sourceInventoryId,

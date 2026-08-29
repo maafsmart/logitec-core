@@ -6,6 +6,19 @@ const sql = readFileSync(
   new URL("../prisma/migrations/20260829020000_inventory_client_ownership/migration.sql", import.meta.url),
   "utf8"
 );
+const schema = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
+
+test("registros operativos auxiliares reciben ownership obligatorio", () => {
+  for (const model of ["Comment", "Task", "Incident"]) {
+    assert.match(sql, new RegExp(`ALTER TABLE "${model}" ADD COLUMN "clientId" TEXT`));
+    assert.match(sql, new RegExp(`ALTER TABLE "${model}" ALTER COLUMN "clientId" SET NOT NULL`));
+    assert.match(sql, new RegExp(`${model}_clientId_fkey`));
+    assert.match(sql, new RegExp(`${model}_clientId_idx`));
+    const block = schema.slice(schema.indexOf(`model ${model} {`), schema.indexOf("\nmodel ", schema.indexOf(`model ${model} {`) + 1));
+    assert.match(block, /clientId\s+String\s*$/m);
+    assert.match(block, /onDelete: Restrict/);
+  }
+});
 
 type ClientRow = { id: string; code: string; name: string; tradeName?: string | null; legalName?: string | null };
 type ProjectRow = { id: string; code: string; clientId: string | null };

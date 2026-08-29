@@ -3,7 +3,12 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
-import { requireNonClient, requireOperationalClient } from "../clients/client-scope.js";
+import {
+  clientProductWhere,
+  operationalClientId,
+  requireNonClient,
+  requireOperationalClient
+} from "../clients/client-scope.js";
 
 const incidentsRouter = Router();
 
@@ -34,9 +39,13 @@ incidentsRouter.get("/", async (req, res) => {
   requireNonClient(req.auth!);
   const role = req.auth!.role;
   const isElevated = role === "ADMIN" || role === "SUPERVISOR";
+  const clientId = operationalClientId(req.auth!);
 
   const incidents = await prisma.incident.findMany({
-    where: isElevated ? {} : { reportedById: req.auth!.userId },
+    where: {
+      clientId,
+      ...(isElevated ? {} : { reportedById: req.auth!.userId })
+    },
     orderBy: { createdAt: "desc" },
     take: 100,
     include: {
@@ -57,13 +66,18 @@ incidentsRouter.post("/", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]), asyn
   const rawProductRef = (data.productId || data.productSku || "").trim();
 
   if (rawProductRef) {
-    const byId = await prisma.product.findUnique({ where: { id: rawProductRef } });
+    const byId = await prisma.product.findFirst({
+      where: { AND: [{ id: rawProductRef }, clientProductWhere(req.auth!)] }
+    });
     if (byId) {
       productId = byId.id;
     } else {
       const bySku = await prisma.product.findFirst({
         where: {
-          OR: [{ sku: rawProductRef }, { barcode: rawProductRef }]
+          AND: [
+            { OR: [{ sku: rawProductRef }, { barcode: rawProductRef }] },
+            clientProductWhere(req.auth!)
+          ]
         }
       });
       if (bySku) {
@@ -87,6 +101,7 @@ incidentsRouter.post("/", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]), asyn
         warehouse: data.warehouse?.trim() || null,
         location: data.location?.trim() || null,
         productId,
+        clientId: operationalClientId(req.auth!),
         notes
       },
       include: {
@@ -107,7 +122,9 @@ incidentsRouter.patch("/:id", requireRole(["ADMIN", "SUPERVISOR"]), async (req, 
   const id = z.string().min(1).parse(req.params.id);
   const data = updateIncidentSchema.parse(req.body);
 
-  const existing = await prisma.incident.findUnique({ where: { id } });
+  const existing = await prisma.incident.findFirst({
+    where: { id, clientId: operationalClientId(req.auth!) }
+  });
   if (!existing) {
     throw new HttpError(404, "Incidencia no encontrada.");
   }

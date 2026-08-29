@@ -3,7 +3,17 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
-import { clientScanWhere, isClientRole, requireOperationalClient } from "../clients/client-scope.js";
+import { HttpError } from "../../shared/http-error.js";
+import {
+  assertAccessibleInventory,
+  assertAccessibleLayer,
+  assertAccessibleRequisition,
+  assertAccessibleSerial,
+  clientScanWhere,
+  clientTaskWhere,
+  isClientRole,
+  requireOperationalClient
+} from "../clients/client-scope.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { InventoryMutationError, mutateInventory } from "../inventory/inventory-mutation.service.js";
 import { RequisitionError, consumeReservationPick, getEligiblePickSerials } from "../requisitions/requisition.service.js";
@@ -179,18 +189,42 @@ pickingRouter.post("/scan", async (req, res) => {
     const serialIds = Array.isArray(serialIdsOpt)
       ? serialIdsOpt.map((id) => String(id || "").trim()).filter(Boolean)
       : [];
-    if (inventoryId) {
-      const cube = await prisma.inventory.findFirst({
-        where: { id: inventoryId },
-        select: { id: true, clientId: true }
+    if (inventoryId) await assertAccessibleInventory(req.auth!, inventoryId, prisma);
+    if (layerId) await assertAccessibleLayer(req.auth!, layerId, prisma);
+    for (const serialId of serialIds) {
+      await assertAccessibleSerial(req.auth!, serialId, prisma);
+    }
+    if (requisitionLineId) {
+      const line = await prisma.requisitionLine.findUnique({
+        where: { id: requisitionLineId },
+        include: { requisition: { include: { project: true } } }
       });
-      if (cube && cube.clientId !== operationalClientId) {
-        res.status(409).json({
-          code: "CROSS_CLIENT_OPERATION",
-          message: "La operación no pertenece al cliente activo."
-        });
-        return;
+      await assertAccessibleRequisition(req.auth!, line?.requisition);
+    }
+    if (reservationId) {
+      const reservation = await prisma.inventoryReservation.findUnique({
+        where: { id: reservationId },
+        include: {
+          inventory: { select: { clientId: true } },
+          requisitionLine: {
+            include: { requisition: { include: { project: true } } }
+          }
+        }
+      });
+      if (!reservation) throw new HttpError(404, "Reserva no encontrada.");
+      if (reservation.inventory.clientId !== operationalClientId) {
+        throw new HttpError(409, "La operación no pertenece al cliente activo.", "CROSS_CLIENT_OPERATION");
       }
+      await assertAccessibleRequisition(req.auth!, reservation.requisitionLine.requisition);
+    }
+    if (taskId) {
+      const task = await prisma.task.findFirst({
+        where: {
+          AND: [{ id: taskId }, clientTaskWhere({ ...req.auth!, userId: req.auth!.userId })]
+        },
+        select: { id: true }
+      });
+      if (!task) throw new HttpError(404, "Tarea no encontrada.", "TASK_NOT_FOUND");
     }
     const statusFilter = statusInput?.trim()
       ? await assertActiveInventoryStatus(statusInput)
@@ -565,6 +599,10 @@ pickingRouter.post("/scan", async (req, res) => {
         message: "Datos de picking inválidos.",
         issues: error.issues
       });
+      return;
+    }
+    if (error instanceof HttpError) {
+      res.status(error.statusCode).json({ message: error.message, code: error.code });
       return;
     }
     console.error("[picking/scan]", error);

@@ -619,11 +619,15 @@ export async function setLocationActive(db: MasterDataDb, id: string, active: bo
   return db.location.update({ where: { id }, data: { active } });
 }
 
-export async function warehouseOperationalStats(db: MasterDataDb, warehouse: { id: string; code: string }) {
+export async function warehouseOperationalStats(
+  db: MasterDataDb,
+  warehouse: { id: string; code: string },
+  clientId: string
+) {
   const [locationCount, qtyAgg] = await Promise.all([
     db.location.count({ where: { warehouseId: warehouse.id } }),
     db.inventory.aggregate({
-      where: { location: { warehouseId: warehouse.id }, qty: { gt: 0 } },
+      where: { clientId, location: { warehouseId: warehouse.id }, qty: { gt: 0 } },
       _sum: { qty: true, reservedQty: true }
     })
   ]);

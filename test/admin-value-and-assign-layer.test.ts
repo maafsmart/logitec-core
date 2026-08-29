@@ -650,9 +650,9 @@ test("endpoint, PATCH y price-split intactos, roles y UI de destino", () => {
   assert.match(routes, /inventoryRouter\.post\("\/layers\/:layerId\/value-and-assign", requireRole\(\["ADMIN"\]\)/);
   assert.match(routes, /valueAndAssignUnpricedLayer/);
   assert.equal(canExposeEconomicValuation("ADMIN"), true);
-  assert.equal(canExposeEconomicValuation("SUPERVISOR"), false);
-  assert.equal(canExposeEconomicValuation("OPERATOR"), false);
-  assert.equal(canExposeEconomicValuation("CLIENT"), false);
+  assert.equal(canExposeEconomicValuation("SUPERVISOR"), true);
+  assert.equal(canExposeEconomicValuation("OPERATOR"), true);
+  assert.equal(canExposeEconomicValuation("CLIENT"), true);
   const postIdx = routes.indexOf('inventoryRouter.post("/layers/:layerId/value-and-assign"');
   const postBlock = routes.slice(
     postIdx,

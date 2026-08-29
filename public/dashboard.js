@@ -300,11 +300,6 @@ const productWarehouse = document.getElementById("productWarehouse");
 const productsList = document.getElementById("productsList");
 const clientsList = document.getElementById("clientsList");
 const inventoryList = document.getElementById("inventoryList");
-const importSection = document.getElementById("importSection");
-const importCsv = document.getElementById("importCsv");
-const importBtn = document.getElementById("importBtn");
-const importResult = document.getElementById("importResult");
-const reconcileFullInventoryChk = document.getElementById("reconcileFullInventory");
 const inventoryMovementsList = document.getElementById("inventoryMovementsList");
 const catalogImportSection = document.getElementById("catalogImportSection");
 const catalogImportCsv = document.getElementById("catalogImportCsv");
@@ -313,8 +308,6 @@ const catalogPreviewBtn = document.getElementById("catalogPreviewBtn");
 const catalogApplyBtn = document.getElementById("catalogApplyBtn");
 const catalogImportFile = document.getElementById("catalogImportFile");
 const catalogImportFileStatus = document.getElementById("catalogImportFileStatus");
-const inventoryImportFile = document.getElementById("inventoryImportFile");
-const inventoryImportFileStatus = document.getElementById("inventoryImportFileStatus");
 const moduleTraceability = document.getElementById("moduleTraceability");
 const moduleTasks = document.getElementById("moduleTasks");
 const moduleIncidents = document.getElementById("moduleIncidents");
@@ -1363,7 +1356,6 @@ function canAdministerInventoryImport() {
  */
 function openInventoryImportAssistant() {
   if (!canAdministerInventoryImport()) return false;
-  closeModal("inventoryImportModal");
   navigateTo("inventario", "inventory");
   const panel = document.getElementById("importWizardPanel");
   if (!panel) return false;
@@ -1863,6 +1855,10 @@ function inventoryAssignmentLabel(row) {
 }
 
 function canSeeEconomicValuation() {
+  return ["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"].includes(currentRole);
+}
+
+function canEditEconomicValuation() {
   return currentRole === "ADMIN";
 }
 
@@ -1872,10 +1868,13 @@ function applyEconomicVisibility() {
     if (el.id === "layerPricePanel") return;
     el.classList.toggle("hidden", !show);
   });
+  document.querySelectorAll(".js-economic-edit").forEach((el) => {
+    el.classList.toggle("hidden", !canEditEconomicValuation());
+  });
   const hint = document.getElementById("inventoryValuePartialHint");
   if (hint && !show) hint.classList.add("hidden");
   const pricePanel = document.getElementById("layerPricePanel");
-  if (pricePanel && !show) pricePanel.classList.add("hidden");
+  if (pricePanel && !canEditEconomicValuation()) pricePanel.classList.add("hidden");
 }
 
 function isFreeToSaleRow(row) {
@@ -2288,7 +2287,7 @@ function openInventoryDetail(row) {
       }
     });
   }
-  if (canSeeEconomicValuation()) {
+  if (canEditEconomicValuation()) {
     actions.unshift({
       id: "edit-price",
       label: "Asignar o editar precio",
@@ -2697,7 +2696,7 @@ function fillLayerPriceFields(row) {
 }
 
 async function openLayerPricePanel(row) {
-  if (!canSeeEconomicValuation()) return;
+  if (!canEditEconomicValuation()) return;
   layerPriceSource = row;
   const panel = document.getElementById("layerPricePanel");
   if (!panel) return;
@@ -2733,7 +2732,7 @@ function closeLayerPricePanel() {
 }
 
 async function confirmLayerPriceUpdate() {
-  if (!canSeeEconomicValuation() || !layerPriceSource) return;
+  if (!canEditEconomicValuation() || !layerPriceSource) return;
   const layer = selectedPriceLayer();
   if (!layer?.id) {
     setPriceMessage("Selecciona una capa.", false);
@@ -5154,7 +5153,7 @@ function wireModals() {
   document.querySelectorAll("[data-close-modal]").forEach((btn) => {
     btn.addEventListener("click", () => closeModal(btn.getAttribute("data-close-modal")));
   });
-  ["catalogImportModal", "inventoryImportModal", "reqActionModal"].forEach((id) => {
+  ["catalogImportModal", "reqActionModal"].forEach((id) => {
     const overlay = document.getElementById(id);
     if (!overlay || overlay.dataset.modalWired === "1") return;
     overlay.dataset.modalWired = "1";
@@ -7290,7 +7289,7 @@ async function loadInventoryKpis() {
 
 async function loadStockStrip() {
   if (!inventoryList && !ccInventoryList) return;
-  if (currentRole !== "ADMIN" && currentRole !== "OPERATOR" && currentRole !== "SUPERVISOR") {
+  if (!["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"].includes(currentRole)) {
     stockRowsCache = [];
     inventoryKpiCache = null;
     updateInventorySummary([]);
@@ -7340,7 +7339,7 @@ async function loadStockStrip() {
 
 async function loadInventoryMovements() {
   if (!inventoryMovementsList) return;
-  if (currentRole !== "ADMIN" && currentRole !== "OPERATOR" && currentRole !== "SUPERVISOR") {
+  if (!["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"].includes(currentRole)) {
     movementsCountCache = 0;
     updateInventorySummary(stockRowsCache);
     inventoryMovementsList.innerHTML = "";
@@ -9553,7 +9552,7 @@ async function submitOperationalMovement(kind) {
       syncInboundSubmitEnabled();
       return;
     }
-    if (typeof canSeeEconomicValuation === "function" && !canSeeEconomicValuation() && !price.empty) {
+    if (typeof canEditEconomicValuation === "function" && !canEditEconomicValuation() && !price.empty) {
       setOpsMessage(msgId, "Solo ADMIN puede asignar precio unitario MXN en la entrada.", false);
       syncInboundSubmitEnabled();
       return;
@@ -9595,7 +9594,7 @@ async function submitOperationalMovement(kind) {
       if (inboundAssignmentType === "FREE_TO_SALE") payload.clientId = inboundSelectedOwnerClientId();
       if (lote) payload.lotNumber = lote;
       const price = parseInboundUnitPriceMxn();
-      if (!price.empty && price.value != null && (typeof canSeeEconomicValuation !== "function" || canSeeEconomicValuation())) {
+      if (!price.empty && price.value != null && (typeof canEditEconomicValuation !== "function" || canEditEconomicValuation())) {
         payload.unitPriceMxn = price.value;
       }
     }
@@ -11196,85 +11195,6 @@ function wireOperationalForms() {
   wireAllProductTypeaheads();
 }
 
-async function runImport() {
-  if (importResult) {
-    importResult.textContent = "";
-    importResult.classList.remove("import-processing", "error");
-  }
-  const csv = importCsv.value.trim();
-  if (!csv) {
-    if (importResult) importResult.textContent = "Pega el contenido CSV.";
-    return;
-  }
-
-  setButtonLoading(importBtn, true, "Procesando inventario...", "Cargar inventario");
-  setImportProcessingMessage(
-    importResult,
-    "Procesando inventario, no cierres esta pantalla. Puede tardar unos segundos.",
-    true
-  );
-
-  try {
-    const reconcileFullInventory = reconcileFullInventoryChk?.checked === true;
-    const response = await authenticatedFetch("/api/inventory/import", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ csv, reconcileFullInventory })
-    });
-    if (!response) {
-      if (importResult) importResult.textContent = "Sesión expirada. Vuelve a iniciar sesión.";
-      return;
-    }
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (importResult) {
-        importResult.classList.remove("import-processing");
-        renderOperationalMessage(importResult, {
-          short: data.message || "Error al cargar inventario. Revisa el CSV e intenta de nuevo.",
-          details: Array.isArray(data.errors)
-            ? data.errors.map((e) => `${e.sku}: ${e.message}`).join("\n")
-            : data.message || "",
-          isError: true
-        });
-      }
-      return;
-    }
-    const errLines = Array.isArray(data.errors)
-      ? data.errors.map((e) => `${e.sku}: ${e.message}`)
-      : [];
-    const received = data.receivedRows ?? data.applied ?? 0;
-    const created = data.created ?? 0;
-    const updated = data.updated ?? 0;
-    const unchanged = data.unchanged ?? 0;
-    const zeroed = data.zeroed ?? 0;
-    const omitted = data.omitted ?? data.skipped ?? 0;
-    if (importResult) {
-      importResult.classList.remove("import-processing");
-      const short = `Inventario procesado: ${received} recibidos, ${created} creados, ${updated} actualizados, ${unchanged} sin cambios, ${zeroed} a cero, ${omitted} omitidos.${errLines.length ? ` ${errLines.length} detalle(s).` : ""}`;
-      renderOperationalMessage(importResult, {
-        short,
-        details: errLines.length
-          ? errLines.join("\n")
-          : `Recibidos: ${received}\nCreados: ${created}\nActualizados: ${updated}\nSin cambios: ${unchanged}\nAjustados a cero: ${zeroed}\nOmitidos: ${omitted}`,
-        downloadRows: errLines.length ? errLines.map((detail) => ({ detail })) : null,
-        downloadName: "logitec_inventario_detalle"
-      });
-      if (errLines.length) pendingConflictsCache = errLines.length;
-    }
-    importCsv.value = "";
-    if (reconcileFullInventoryChk) reconcileFullInventoryChk.checked = false;
-    await loadStockStrip();
-    await loadInventoryMovements();
-  } catch (_e) {
-    if (importResult) {
-      importResult.classList.remove("import-processing");
-      importResult.textContent = "Error de red al cargar inventario. Verifica conexión e intenta de nuevo.";
-    }
-  } finally {
-    setButtonLoading(importBtn, false, "Procesando inventario...", "Cargar inventario");
-  }
-}
-
 async function loadCatalogData() {
   await loadInventoryStatusCatalog();
   await loadProductsRows();
@@ -11385,7 +11305,6 @@ function applyRoleNavigation(role) {
   document.querySelectorAll(".js-assignment-opt[data-assignment='FREE_TO_SALE']").forEach((btn) => {
     btn.style.display = "";
   });
-  if (importSection) importSection.classList.remove("hidden");
   if (catalogImportSection) catalogImportSection.classList.remove("hidden");
   const inventoryOpsNavPanel = document.getElementById("inventoryOpsNavPanel");
   if (inventoryOpsNavPanel) inventoryOpsNavPanel.classList.toggle("hidden", role !== "ADMIN");
@@ -13540,7 +13459,6 @@ masterModal()?.addEventListener("click", (event) => {
 changePasswordForm.addEventListener("submit", changePassword);
 createProductForm.addEventListener("submit", createProduct);
 scanForm.addEventListener("submit", scanCode);
-importBtn.addEventListener("click", runImport);
 catalogPreviewBtn.addEventListener("click", () => runCatalogImport("preview"));
 catalogApplyBtn.addEventListener("click", () => runCatalogImport("apply"));
 if (catalogImportFile) {
@@ -13553,14 +13471,6 @@ if (catalogImportFile) {
 }
 if (catalogImportCsv) {
   catalogImportCsv.addEventListener("input", resetCatalogApplyState);
-}
-if (inventoryImportFile) {
-  inventoryImportFile.addEventListener("change", (event) => {
-    const input = event.target;
-    const file = input instanceof HTMLInputElement ? input.files?.[0] : null;
-    void loadImportFileIntoTextarea(file, importCsv, inventoryImportFileStatus, "Cargar inventario", "inventory");
-    if (input instanceof HTMLInputElement) input.value = "";
-  });
 }
 if (traceLoadBtn) traceLoadBtn.addEventListener("click", () => void loadTraceability());
 document.getElementById("movementMoreBtn")?.addEventListener("click", () => {
@@ -13812,7 +13722,6 @@ initGridDensity();
 wireGridToolbars();
 updateAppDateTime();
 setInterval(updateAppDateTime, 60000);
-if (importResult) wireOperationalMessageClicks(importResult);
 if (catalogImportResult) wireOperationalMessageClicks(catalogImportResult);
 void loadEnvironmentBadge();
 clientContextSearch?.addEventListener("input", () => {

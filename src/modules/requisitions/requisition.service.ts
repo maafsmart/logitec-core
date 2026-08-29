@@ -437,12 +437,14 @@ export async function createRequisition(
     notes?: string | null;
     lines: Array<{ sku: string; requestedQty: number; lotNumber?: string | null }>;
     userId: string;
+    clientId: string;
   },
   db: RequisitionDb = prisma
 ) {
   if (!input.lines.length) throw new HttpError(400, "La requisición requiere al menos una línea.");
   const project = await db.customer.findFirst({
     where: {
+      clientId: input.clientId,
       OR: [
         { code: { equals: input.projectCode, mode: "insensitive" } },
         { name: { equals: input.projectCode, mode: "insensitive" } }
@@ -605,6 +607,7 @@ export async function approveRequisition(id: string, userId: string, role: UserR
           status: "PENDING",
           createdById: userId,
           approvedById: userId,
+          clientId: req.project.clientId,
           warehouse: "TULTITLAN24",
           priority: taskPriority(req.priority),
           reference: req.number,

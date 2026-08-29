@@ -271,12 +271,25 @@ catalogRouter.get("/customers/:id", async (req, res) => {
 catalogRouter.put("/customers/:id", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   const data = updateCustomerSchema.parse(req.body);
-  res.json(await updateProjectRecord(prisma as never, id, data));
+  const existing = await prisma.customer.findFirst({
+    where: { AND: [{ id }, clientCustomerWhere(req.auth!)] },
+    select: { id: true }
+  });
+  if (!existing) throw new HttpError(404, "Proyecto no encontrado.");
+  res.json(await updateProjectRecord(prisma as never, id, {
+    ...data,
+    clientId: req.auth!.operationalClientId!
+  }));
 });
 
 catalogRouter.patch("/customers/:id/active", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   const { active } = z.object({ active: z.coerce.boolean() }).parse(req.body);
+  const existing = await prisma.customer.findFirst({
+    where: { AND: [{ id }, clientCustomerWhere(req.auth!)] },
+    select: { id: true }
+  });
+  if (!existing) throw new HttpError(404, "Proyecto no encontrado.");
   res.json(await setProjectActive(prisma as never, id, active));
 });
 
@@ -305,7 +318,8 @@ catalogRouter.delete("/customers/:id", requireRole(["ADMIN"]), async (_req, _res
 });
 
 catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) => {
-  const { csv, mode, autoCreateCustomers, clientId: ownerClientId } = catalogImportSchema.parse(req.body);
+  const { csv, mode, autoCreateCustomers } = catalogImportSchema.parse(req.body);
+  const ownerClientId = req.auth!.operationalClientId!;
 
   const lines = csv
     .split(/\r?\n/)
@@ -360,21 +374,21 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
       continue;
     }
 
-    let customer = await prisma.customer.findUnique({ where: { code: customerCode } });
+    let customer = await prisma.customer.findFirst({
+      where: { code: customerCode, clientId: ownerClientId }
+    });
     if (!customer) {
       customer = await prisma.customer.findFirst({
-        where: { name: { equals: customerDisplayName || customerInput, mode: "insensitive" } }
+        where: {
+          name: { equals: customerDisplayName || customerInput, mode: "insensitive" },
+          clientId: ownerClientId
+        }
       });
     }
     if (!customer && mode === "apply" && autoCreateCustomers) {
       if (!customerCode || customerCode === "LOGITEC") {
         unknownCustomers.add(customerInput || customerCode || "(vacío)");
         preview.push({ sku, action: "SKIP", reason: "CUSTOMER vacío o reservado; no se crea automáticamente." });
-        skipped += 1;
-        continue;
-      }
-      if (!ownerClientId) {
-        preview.push({ sku, action: "SKIP", reason: "proyecto nuevo requiere cliente propietario" });
         skipped += 1;
         continue;
       }

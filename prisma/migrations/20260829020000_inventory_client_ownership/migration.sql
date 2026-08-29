@@ -167,6 +167,36 @@ ALTER TABLE "ActivityLog"
   FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 CREATE INDEX "ActivityLog_clientId_idx" ON "ActivityLog"("clientId");
 
+ALTER TABLE "Comment" ADD COLUMN "clientId" TEXT;
+UPDATE "Comment"
+SET "clientId" = (SELECT id FROM _aviat_owner)
+WHERE "clientId" IS NULL;
+ALTER TABLE "Comment" ALTER COLUMN "clientId" SET NOT NULL;
+ALTER TABLE "Comment"
+  ADD CONSTRAINT "Comment_clientId_fkey"
+  FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+CREATE INDEX "Comment_clientId_idx" ON "Comment"("clientId");
+
+ALTER TABLE "Task" ADD COLUMN "clientId" TEXT;
+UPDATE "Task"
+SET "clientId" = (SELECT id FROM _aviat_owner)
+WHERE "clientId" IS NULL;
+ALTER TABLE "Task" ALTER COLUMN "clientId" SET NOT NULL;
+ALTER TABLE "Task"
+  ADD CONSTRAINT "Task_clientId_fkey"
+  FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+CREATE INDEX "Task_clientId_idx" ON "Task"("clientId");
+
+ALTER TABLE "Incident" ADD COLUMN "clientId" TEXT;
+UPDATE "Incident"
+SET "clientId" = (SELECT id FROM _aviat_owner)
+WHERE "clientId" IS NULL;
+ALTER TABLE "Incident" ALTER COLUMN "clientId" SET NOT NULL;
+ALTER TABLE "Incident"
+  ADD CONSTRAINT "Incident_clientId_fkey"
+  FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+CREATE INDEX "Incident_clientId_idx" ON "Incident"("clientId");
+
 ALTER TABLE "Location" ADD COLUMN "warehouseId" TEXT;
 
 UPDATE "Location" AS loc

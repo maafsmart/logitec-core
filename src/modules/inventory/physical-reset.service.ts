@@ -205,15 +205,7 @@ async function collectOperationalCounts(
     tx.scanEvent.count({ where: clientWhere }),
     tx.activityLog.count({ where: clientWhere }),
     tx.requisition.count({ where: projectWhere }),
-    tx.task.count({
-      where: {
-        OR: [
-          { requisition: projectWhere },
-          { inventoryMovements: { some: clientWhere } },
-          { scanEvents: { some: clientWhere } }
-        ]
-      }
-    }),
+    tx.task.count({ where: clientWhere }),
     tx.productProject.count({ where: { project: { clientId } } }),
     tx.importBatch.count({ where: clientWhere })
   ]);
@@ -366,13 +358,7 @@ export async function applyPhysicalInventoryPurge(
     before.importBatches === 0;
 
   const aviatTaskIds = await tx.task.findMany({
-    where: {
-      OR: [
-        { requisition: projectWhere },
-        { inventoryMovements: { some: clientWhere } },
-        { scanEvents: { some: clientWhere } }
-      ]
-    },
+    where: clientWhere,
     select: { id: true }
   });
   const taskIdList = aviatTaskIds.map((row) => row.id);

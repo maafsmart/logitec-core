@@ -16,10 +16,15 @@ const missing = readFileSync(
 const bulk = readFileSync(new URL("../src/modules/imports/import-execute-bulk.service.ts", import.meta.url), "utf8");
 const scope = readFileSync(new URL("../src/modules/clients/client-scope.ts", import.meta.url), "utf8");
 
-test("migración ImportBatch.clientId exige AVIAT único y no infiere por SKU", () => {
-  assert.match(sql, /AVIAT_CLIENT_NOT_UNIQUE/);
+test("migración ImportBatch.clientId no usa ADMIN como sustituto del tenant", () => {
+  assert.match(sql, /IMPORT_BATCH_CLIENT_AMBIGUOUS/);
+  assert.match(sql, /COUNT\(DISTINCT NULLIF\(TRIM\(r\.normalized->>'clientId'\)/);
+  assert.match(sql, /IMPORT_BATCH_PROJECT_CLIENT_MISMATCH/);
+  assert.match(sql, /u\.role <> 'ADMIN'/);
+  assert.match(sql, /HAVING COUNT\(\*\) = 1/);
+  assert.match(sql, /BOOL_AND/);
   assert.match(sql, /UPPER\(TRIM\("code"\)\) = 'AVIAT'/);
-  assert.match(sql, /IMPORT_BATCH_CLIENT_BACKFILL_FAILED/);
+  assert.doesNotMatch(sql, /u\.role = 'ADMIN'[\s\S]{0,200}SET "clientId"/);
   assert.match(sql, /ALTER COLUMN "clientId" SET NOT NULL/);
   assert.match(sql, /ImportBatch_clientId_fkey/);
   assert.match(sql, /ON DELETE RESTRICT/);
@@ -27,6 +32,22 @@ test("migración ImportBatch.clientId exige AVIAT único y no infiere por SKU", 
   assert.doesNotMatch(sql, /product\.customer/i);
   assert.doesNotMatch(sql, /FROM "Product"/);
   assert.doesNotMatch(sql, /InventoryStock/);
+});
+
+test("el fallback legado solo existe para un catálogo con un único Client AVIAT", () => {
+  const canUseLegacyFallback = (clients: Array<{ code: string; name: string }>) =>
+    clients.length === 1 &&
+    [clients[0]!.code, clients[0]!.name].some((value) => value.trim().toUpperCase() === "AVIAT");
+
+  assert.equal(canUseLegacyFallback([{ code: "AVIAT", name: "AVIAT" }]), true);
+  assert.equal(
+    canUseLegacyFallback([
+      { code: "AVIAT", name: "AVIAT" },
+      { code: "OTHER", name: "Otro" }
+    ]),
+    false
+  );
+  assert.equal(canUseLegacyFallback([{ code: "OTHER", name: "Otro" }]), false);
 });
 
 test("schema ImportBatch.clientId es obligatorio y está en Client", () => {

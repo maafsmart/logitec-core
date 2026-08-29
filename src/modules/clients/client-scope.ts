@@ -102,16 +102,7 @@ export function clientReservationWhere(auth: AuthContext): Prisma.InventoryReser
 }
 
 export function clientTaskWhere(auth: AuthContext): Prisma.TaskWhereInput {
-  const clientId = operationalClientId(auth);
-  const userId = auth.userId;
-  return {
-    OR: [
-      { requisition: { project: { clientId } } },
-      ...(userId
-        ? [{ AND: [{ requisitionId: null }, { OR: [{ assignedToId: userId }, { createdById: userId }] }] }]
-        : [{ requisition: { project: { clientId } } }])
-    ]
-  };
+  return { clientId: operationalClientId(auth) };
 }
 
 /**
@@ -330,13 +321,12 @@ export async function assertAccessibleRequisition(
 
 export async function assertAccessibleTask(
   auth: AuthContext,
-  task: { id?: string; requisition?: { project?: { clientId?: string | null } | null } | null } | null | undefined
+  task: { id?: string; clientId?: string | null } | null | undefined
 ): Promise<void> {
   if (!task) {
     throw new HttpError(404, "Tarea no encontrada.", "TASK_NOT_FOUND");
   }
-  const owner = task.requisition?.project?.clientId;
-  if (owner && owner !== operationalClientId(auth)) {
+  if (task.clientId !== operationalClientId(auth)) {
     throw new HttpError(409, "La operación no pertenece al cliente activo.", "CROSS_CLIENT_OPERATION");
   }
 }

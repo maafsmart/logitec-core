@@ -47,12 +47,15 @@ model Comment {
   entityType  String?
   entityId    String?
   userId      String
+  clientId    String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   createdBy   User     @relation(fields: [userId], references: [id])
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
   @@index([entityType, entityId])
   @@index([userId])
+  @@index([clientId])
 }
 
 model Product {
@@ -203,6 +206,9 @@ model Client {
   scanEvents     ScanEvent[]
   activityLogs   ActivityLog[]
   importBatches  ImportBatch[]
+  comments       Comment[]
+  tasks          Task[]
+  incidents      Incident[]
 }
 
 model Customer {
@@ -538,6 +544,7 @@ model Task {
   reference     String?
   notes         String?
   requisitionId String?
+  clientId      String
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -545,6 +552,7 @@ model Task {
   createdBy     User?    @relation("TaskCreated", fields: [createdById], references: [id], onDelete: SetNull)
   approvedBy    User?    @relation("TaskApproved", fields: [approvedById], references: [id], onDelete: SetNull)
   requisition   Requisition? @relation(fields: [requisitionId], references: [id], onDelete: SetNull)
+  client        Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
   activityLogs         ActivityLog[]
   inventoryMovements   InventoryMovement[]
@@ -554,6 +562,7 @@ model Task {
   @@index([assignedToId])
   @@index([warehouse])
   @@index([requisitionId])
+  @@index([clientId])
 }
 
 model Incident {
@@ -565,6 +574,7 @@ model Incident {
   warehouse     String?
   location      String?
   productId     String?
+  clientId      String
   notes         String
   resolution    String?
   createdAt     DateTime  @default(now())
@@ -573,7 +583,9 @@ model Incident {
   reportedBy    User      @relation("IncidentReporter", fields: [reportedById], references: [id], onDelete: Restrict)
   reviewedBy    User?     @relation("IncidentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   product       Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  client        Client    @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
   @@index([status, createdAt])
   @@index([reportedById])
+  @@index([clientId])
 }

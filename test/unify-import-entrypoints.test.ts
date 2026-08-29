@@ -34,7 +34,6 @@ function countId(source: string, id: string): number {
 const assistantFn = sliceFunction(js, "openInventoryImportAssistant");
 const roleFn = sliceFunction(js, "canAdministerInventoryImport");
 const applyRoleFn = sliceFunction(js, "applyRoleNavigation");
-const runImportFn = sliceFunction(js, "runImport");
 const configSlice = html.slice(html.indexOf('id="moduleConfig"'), html.indexOf("        </main>"));
 const inventorySlice = html.slice(html.indexOf('id="moduleInventory"'), html.indexOf('id="moduleConfig"'));
 
@@ -61,7 +60,8 @@ test("ningún acceso visible abre el modal legado ni llama al endpoint deshabili
     /getElementById\("openInventoryImportBtn"\)[\s\S]{0,260}openModal\("inventoryImportModal"\)/
   );
   assert.doesNotMatch(assistantFn, /openModal\("inventoryImportModal"\)/);
-  assert.match(assistantFn, /closeModal\("inventoryImportModal"\)/);
+  assert.doesNotMatch(html, /id="inventoryImportModal"/);
+  assert.doesNotMatch(js, /function runImport\(/);
   assert.doesNotMatch(assistantFn, /\/api\/inventory\/import/);
   assert.doesNotMatch(assistantFn, /authenticatedFetch\(\s*["'`]\/api\/inventory\/import/);
 });
@@ -116,10 +116,9 @@ test("abrir el asistente no escribe ni modifica inventario", () => {
   assert.match(assistantFn, /navigateTo\(\s*"inventario"\s*,\s*"inventory"\s*\)/);
 });
 
-test("el modal legado ya no es el camino de los botones visibles", () => {
-  assert.match(html, /id="inventoryImportModal"/);
-  assert.match(runImportFn, /\/api\/inventory\/import/);
-  assert.doesNotMatch(js, /openInventoryImportBtn[\s\S]{0,400}runImport/);
+test("el modal legado y su wiring fueron eliminados", () => {
+  assert.doesNotMatch(html, /inventoryImportModal|id="importBtn"|id="importCsv"/);
+  assert.doesNotMatch(js, /inventoryImportModal|runImport|\/api\/inventory\/import/);
 });
 
 test("la vista económica y el asistente único en Existencias se conservan", () => {

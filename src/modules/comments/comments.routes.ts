@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth } from "../../middlewares/auth.middleware.js";
-import { requireNonClient, requireOperationalClient } from "../clients/client-scope.js";
+import { operationalClientId, requireNonClient, requireOperationalClient } from "../clients/client-scope.js";
 
 const commentsRouter = Router();
 
@@ -21,7 +21,8 @@ commentsRouter.post("/", requireAuth, requireOperationalClient, async (req, res)
       body: data.body,
       entityType: data.entityType,
       entityId: data.entityId,
-      userId: req.auth!.userId
+      userId: req.auth!.userId,
+      clientId: operationalClientId(req.auth!)
     }
   });
 
@@ -34,6 +35,7 @@ commentsRouter.get("/", requireAuth, requireOperationalClient, async (req, res) 
 
   const comments = await prisma.comment.findMany({
     where: {
+      clientId: operationalClientId(req.auth!),
       entityType: entityType as string | undefined,
       entityId: entityId as string | undefined
     },

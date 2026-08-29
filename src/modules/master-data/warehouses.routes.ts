@@ -3,7 +3,12 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
-import { clientInventoryWhere, isClientScopedRole, requireOperationalClient } from "../clients/client-scope.js";
+import {
+  clientInventoryWhere,
+  isClientScopedRole,
+  operationalClientId,
+  requireOperationalClient
+} from "../clients/client-scope.js";
 import {
   createWarehouseRecord,
   setWarehouseActive,
@@ -51,7 +56,7 @@ warehousesRouter.get("/", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIEN
   const withStats = await Promise.all(
     rows.map(async (row) => ({
       ...row,
-      stats: await warehouseOperationalStats(prisma as never, row)
+      stats: await warehouseOperationalStats(prisma as never, row, operationalClientId(req.auth!))
     }))
   );
   res.json(withStats);
@@ -75,7 +80,7 @@ warehousesRouter.get("/:id", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CL
   }
   res.json({
     ...warehouse,
-    stats: await warehouseOperationalStats(prisma as never, warehouse)
+    stats: await warehouseOperationalStats(prisma as never, warehouse, operationalClientId(req.auth!))
   });
 });
 

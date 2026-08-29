@@ -1,8 +1,16 @@
 import { Router } from "express";
 import { z } from "zod";
+import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
-import { assertAccessibleRequisition, clientRequisitionWhere, requireOperationalClient } from "../clients/client-scope.js";
+import {
+  assertAccessibleInventory,
+  assertAccessibleLayer,
+  assertAccessibleRequisition,
+  clientRequisitionWhere,
+  operationalClientId,
+  requireOperationalClient
+} from "../clients/client-scope.js";
 import {
   RequisitionError,
   addRequisitionLine,
@@ -20,6 +28,12 @@ const requisitionsRouter = Router();
 
 requisitionsRouter.use(requireAuth);
 requisitionsRouter.use(requireOperationalClient);
+
+async function loadAccessibleRequisition(req: import("express").Request, id: string) {
+  const requisition = await getRequisition(id);
+  await assertAccessibleRequisition(req.auth!, requisition);
+  return requisition;
+}
 
 function mapError(res: import("express").Response, error: unknown) {
   if (error instanceof RequisitionError) {
@@ -82,7 +96,11 @@ requisitionsRouter.post("/", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), a
           .min(1)
       })
       .parse(req.body);
-    const created = await createRequisition({ ...body, userId: req.auth!.userId });
+    const created = await createRequisition({
+      ...body,
+      userId: req.auth!.userId,
+      clientId: operationalClientId(req.auth!)
+    });
     res.status(201).json(created);
   } catch (error) {
     if (mapError(res, error)) return;
@@ -92,7 +110,9 @@ requisitionsRouter.post("/", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), a
 
 requisitionsRouter.post("/:id/submit", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
   try {
-    res.json(await submitRequisition(z.string().min(1).parse(req.params.id), req.auth!.userId));
+    const id = z.string().min(1).parse(req.params.id);
+    await loadAccessibleRequisition(req, id);
+    res.json(await submitRequisition(id, req.auth!.userId));
   } catch (error) {
     if (mapError(res, error)) return;
     throw error;
@@ -101,7 +121,9 @@ requisitionsRouter.post("/:id/submit", requireRole(["ADMIN", "SUPERVISOR", "OPER
 
 requisitionsRouter.post("/:id/approve", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
   try {
-    res.json(await approveRequisition(z.string().min(1).parse(req.params.id), req.auth!.userId, req.auth!.role));
+    const id = z.string().min(1).parse(req.params.id);
+    await loadAccessibleRequisition(req, id);
+    res.json(await approveRequisition(id, req.auth!.userId, req.auth!.role));
   } catch (error) {
     if (mapError(res, error)) return;
     throw error;
@@ -110,7 +132,9 @@ requisitionsRouter.post("/:id/approve", requireRole(["ADMIN", "SUPERVISOR"]), as
 
 requisitionsRouter.post("/:id/cancel", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
   try {
-    res.json(await cancelRequisition(z.string().min(1).parse(req.params.id), req.auth!.userId, req.auth!.role));
+    const id = z.string().min(1).parse(req.params.id);
+    await loadAccessibleRequisition(req, id);
+    res.json(await cancelRequisition(id, req.auth!.userId, req.auth!.role));
   } catch (error) {
     if (mapError(res, error)) return;
     throw error;
@@ -126,6 +150,7 @@ requisitionsRouter.post("/:id/lines", requireRole(["ADMIN", "SUPERVISOR", "OPERA
         requestedQty: z.coerce.number().positive()
       })
       .parse(req.body);
+    await loadAccessibleRequisition(req, id);
     res.status(201).json(await addRequisitionLine(id, body, req.auth!.userId));
   } catch (error) {
     if (mapError(res, error)) return;
@@ -149,9 +174,13 @@ requisitionsRouter.post("/:id/lines/:lineId/reservations", requireRole(["ADMIN",
       res.status(400).json({ message: "qty o quantity es requerido." });
       return;
     }
+    const requisitionId = z.string().min(1).parse(req.params.id);
+    await loadAccessibleRequisition(req, requisitionId);
+    if (body.inventoryId) await assertAccessibleInventory(req.auth!, body.inventoryId, prisma);
+    if (body.layerId) await assertAccessibleLayer(req.auth!, body.layerId, prisma);
     res.status(201).json(
       await reserveLine({
-        requisitionId: z.string().min(1).parse(req.params.id),
+        requisitionId,
         lineId: z.string().min(1).parse(req.params.lineId),
         qty,
         inventoryId: body.inventoryId,
@@ -174,9 +203,19 @@ requisitionsRouter.post("/reservations/:reservationId/release", requireRole(["AD
         qty: z.coerce.number().positive().optional()
       })
       .parse(req.body ?? {});
+    const reservationId = z.string().min(1).parse(req.params.reservationId);
+    const reservation = await prisma.inventoryReservation.findUnique({
+      where: { id: reservationId },
+      include: {
+        requisitionLine: {
+          include: { requisition: { include: { project: true } } }
+        }
+      }
+    });
+    await assertAccessibleRequisition(req.auth!, reservation?.requisitionLine.requisition);
     res.json(
       await releaseReservation(
-        z.string().min(1).parse(req.params.reservationId),
+        reservationId,
         req.auth!.userId,
         req.auth!.role,
         body.qty
@@ -197,9 +236,7 @@ requisitionsRouter.patch("/:id", requireRole(["ADMIN", "SUPERVISOR"]), async (re
       priority: z.enum(["LOW", "NORMAL", "HIGH"]).optional()
     })
     .parse(req.body);
-  const { prisma } = await import("../../db/prisma.js");
-  const existing = await prisma.requisition.findUnique({ where: { id } });
-  if (!existing) throw new HttpError(404, "Requisición no encontrada.");
+  const existing = await loadAccessibleRequisition(req, id);
   if (["CANCELLED", "COMPLETED"].includes(existing.status)) {
     throw new HttpError(409, "No se puede editar una requisición cerrada.");
   }

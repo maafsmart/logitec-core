@@ -181,6 +181,19 @@ const movements = [
     fromAssignmentType: "PROJECT"
   }
 ];
+const importBatches = [
+  {
+    id: "import-c2",
+    clientId: CLIENT2.id,
+    createdById: users.admin.id,
+    context: "INVENTORY",
+    status: "READY",
+    invalidRows: 0,
+    metadata: {},
+    rows: []
+  }
+];
+let foreignImportMutations = 0;
 const scans: Array<Record<string, unknown>> = [
   { id: "scan-aviat", clientId: AVIAT.id, scannedCode: "SKU-SHARED-1", result: "OK", userId: "u-sup", createdAt: new Date() },
   { id: "scan-c2", clientId: CLIENT2.id, scannedCode: "SKU-SHARED-1", result: "OK", userId: "u-cli-2", createdAt: new Date() }
@@ -337,15 +350,33 @@ before(async () => {
       return true;
     });
   });
-  stub("product", "findFirst", async ({ where }: { where: { active?: boolean; OR?: Array<{ sku?: string; barcode?: string }> } }) => {
-    const sku = where.OR?.find((part) => part.sku)?.sku;
+  stub("product", "findFirst", async ({ where }: { where: { sku?: string; active?: boolean; OR?: Array<{ sku?: string; barcode?: string }> } }) => {
+    const sku = where.sku || where.OR?.find((part) => part.sku)?.sku;
     if (sku && sku.toUpperCase() === "SKU-SHARED-1") {
       return { id: "prod-1", sku: "SKU-SHARED-1", barcode: null, name: "Radio", warehouse: "WH-A", customerId: "proj-att", customer: { id: "proj-att", code: "ATT", name: "AT&T" } };
     }
     return null;
   });
   stub("product", "findMany", async () => []);
+  stub("importBatch", "findFirst", async ({ where }: { where?: { id?: string; clientId?: string } }) =>
+    importBatches.find((row) =>
+      (!where?.id || row.id === where.id) &&
+      (!where?.clientId || row.clientId === where.clientId)
+    ) || null
+  );
+  stub("importBatch", "findMany", async ({ where }: { where?: { clientId?: string } }) =>
+    importBatches.filter((row) => !where?.clientId || row.clientId === where.clientId)
+  );
+  stub("importBatch", "updateMany", async () => {
+    foreignImportMutations += 1;
+    return { count: 0 };
+  });
+  stub("importBatch", "deleteMany", async () => {
+    foreignImportMutations += 1;
+    return { count: 0 };
+  });
   stub("activityLog", "create", async () => ({ id: "act-1" }));
+  stub("inventoryStatusDefinition", "findFirst", async () => ({ code: "AVAILABLE", active: true }));
   stub("inventoryStatusDefinition", "findMany", async () => [{ code: "AVAILABLE", sortOrder: 1 }]);
 
   server = http.createServer(app);
@@ -462,6 +493,48 @@ test("HTTP IDs ajenos de cubo, capa, serie, movimiento y proyecto", async () => 
   assert.equal(movement.status, 409);
 });
 
+test("HTTP IDs conocidos no permiten mutar inventario, capas ni asignaciones de otro cliente", async () => {
+  const token = tokenFor(users.admin, AVIAT.id);
+  const movement = await request("/api/inventory/movements", {
+    method: "POST",
+    token,
+    body: {
+      sku: "SKU-SHARED-1",
+      type: "OUT",
+      quantity: 1,
+      status: "AVAILABLE",
+      inventoryId: "inv-c2"
+    }
+  });
+  const relocate = await request("/api/inventory/relocate", {
+    method: "POST",
+    token,
+    body: {
+      inventoryId: "inv-c2",
+      destinationLocation: "AN2-A",
+      quantity: 1
+    }
+  });
+  const transfer = await request("/api/inventory/assignment-transfer", {
+    method: "POST",
+    token,
+    body: {
+      sourceInventoryId: "inv-c2",
+      qty: 1,
+      destinationAssignmentType: "FREE_TO_SALE"
+    }
+  });
+  const price = await request("/api/inventory/layers/layer-c2/price", {
+    method: "PATCH",
+    token,
+    body: { unitPriceMxn: 10 }
+  });
+  assert.deepEqual(
+    [movement.status, relocate.status, transfer.status, price.status],
+    [409, 409, 409, 409]
+  );
+});
+
 test("HTTP scans guardan clientId y Cliente 2 no es visible para AVIAT", async () => {
   const token = tokenFor(users.supervisor);
   const unknown = await request("/api/picking/scan", {
@@ -495,4 +568,38 @@ test("HTTP export de movimientos usa cliente operativo, no product.customer", as
   assert.match(exported.text, /AVIAT/);
   assert.doesNotMatch(exported.text, /Cliente 2/);
   assert.doesNotMatch(exported.text, /product\.customer/);
+});
+
+test("HTTP ADMIN en AVIAT no puede leer ni mutar ImportBatch de otro cliente por ID conocido", async () => {
+  const token = tokenFor(users.admin, AVIAT.id);
+  const responses = await Promise.all([
+    request("/api/imports/import-c2", { token }),
+    request("/api/imports/import-c2/normalized.csv", { token }),
+    request("/api/imports/import-c2/select-sheet", {
+      method: "POST",
+      token,
+      body: { sheetName: "Inventario" }
+    }),
+    request("/api/imports/import-c2/confirm", { method: "POST", token, body: {} }),
+    request("/api/imports/import-c2/cancel", { method: "POST", token, body: {} }),
+    request("/api/imports/import-c2/review/ignore", {
+      method: "POST",
+      token,
+      body: { sourceRows: [1] }
+    })
+  ]);
+  assert.deepEqual(responses.map((response) => response.status), [404, 404, 404, 404, 404, 404]);
+  assert.equal(foreignImportMutations, 0);
+  assert.deepEqual(importBatches.map((batch) => ({ ...batch })), [
+    {
+      id: "import-c2",
+      clientId: CLIENT2.id,
+      createdById: users.admin.id,
+      context: "INVENTORY",
+      status: "READY",
+      invalidRows: 0,
+      metadata: {},
+      rows: []
+    }
+  ]);
 });

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
-import { clientTaskWhere, requireOperationalClient } from "../clients/client-scope.js";
+import { clientTaskWhere, operationalClientId, requireOperationalClient } from "../clients/client-scope.js";
 
 const tasksRouter = Router();
 
@@ -31,6 +31,19 @@ const updateTaskSchema = z.object({
 
 tasksRouter.use(requireAuth);
 tasksRouter.use(requireOperationalClient);
+
+async function assertAssignableUser(userId: string | null | undefined, clientId: string) {
+  if (!userId) return;
+  const user = await prisma.user.findFirst({
+    where: {
+      id: userId,
+      isActive: true,
+      OR: [{ clientId }, { role: "ADMIN" }]
+    },
+    select: { id: true }
+  });
+  if (!user) throw new HttpError(404, "Responsable no encontrado para el cliente activo.");
+}
 
 tasksRouter.get("/", async (req, res) => {
   const userId = req.auth!.userId;
@@ -63,12 +76,14 @@ tasksRouter.post("/", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (r
   const userId = req.auth!.userId;
 
   let assignedToId = data.assignedToId || null;
+  const activeClientId = operationalClientId(req.auth!);
   if (role === "OPERATOR") {
     // OPERADOR solo puede asignarse a sí mismo (o dejar sin asignar).
     if (assignedToId && assignedToId !== userId) {
       throw new HttpError(403, "No puedes asignar tareas a otros usuarios.");
     }
   }
+  await assertAssignableUser(assignedToId, activeClientId);
 
   let status = data.status;
   if (assignedToId && status === "PENDING") {
@@ -81,6 +96,7 @@ tasksRouter.post("/", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (r
       status,
       assignedToId,
       createdById: userId,
+      clientId: activeClientId,
       warehouse: data.warehouse?.trim() || null,
       priority: data.priority,
       reference: data.reference?.trim() || null,
@@ -101,7 +117,9 @@ tasksRouter.patch("/:id", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), asyn
   const role = req.auth!.role;
   const userId = req.auth!.userId;
 
-  const existing = await prisma.task.findUnique({ where: { id } });
+  const existing = await prisma.task.findFirst({
+    where: { AND: [{ id }, clientTaskWhere({ ...req.auth!, userId })] }
+  });
   if (!existing) {
     throw new HttpError(404, "Tarea no encontrada.");
   }
@@ -132,6 +150,7 @@ tasksRouter.patch("/:id", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), asyn
   } = {};
 
   if (body.assignedToId !== undefined) {
+    await assertAssignableUser(body.assignedToId, operationalClientId(req.auth!));
     data.assignedToId = body.assignedToId;
     if (body.assignedToId && (!body.status || body.status === "PENDING")) {
       data.status = "ASSIGNED";
@@ -162,7 +181,11 @@ tasksRouter.patch("/:id/status", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]
     })
     .parse(req.body);
 
-  const existing = await prisma.task.findUnique({ where: { id } });
+  const existing = await prisma.task.findFirst({
+    where: {
+      AND: [{ id }, clientTaskWhere({ ...req.auth!, userId: req.auth!.userId })]
+    }
+  });
   if (!existing) {
     throw new HttpError(404, "Tarea no encontrada.");
   }

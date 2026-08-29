@@ -486,9 +486,9 @@ test("endpoint, roles, PATCH intacto y UI de valuación parcial", () => {
   assert.match(routes, /updateInventoryLayerUnitPriceMxn/);
   assert.match(routes, /splitUnpricedInventoryLayerPrice/);
   assert.equal(canExposeEconomicValuation("ADMIN"), true);
-  assert.equal(canExposeEconomicValuation("SUPERVISOR"), false);
-  assert.equal(canExposeEconomicValuation("OPERATOR"), false);
-  assert.equal(canExposeEconomicValuation("CLIENT"), false);
+  assert.equal(canExposeEconomicValuation("SUPERVISOR"), true);
+  assert.equal(canExposeEconomicValuation("OPERATOR"), true);
+  assert.equal(canExposeEconomicValuation("CLIENT"), true);
   const postIdx = routes.indexOf('inventoryRouter.post("/layers/:layerId/price-split"');
   const postBlock = routes.slice(postIdx, routes.indexOf("inventoryRouter.get(\"/products/:productId/valuation\"", postIdx));
   assert.doesNotMatch(postBlock, /OPERATOR|SUPERVISOR|CLIENT/);

@@ -298,7 +298,12 @@ function createFakeTx(seed?: Partial<{
         const clientId = clientIdFromWhere(where);
         return clientId ? state.tasks.filter((row) => !row.clientId || row.clientId === clientId).length : state.tasks.length;
       },
-      findMany: async () => state.tasks.map((row) => ({ id: row.id })),
+      findMany: async ({ where }: { where?: unknown } = {}) => {
+        const clientId = clientIdFromWhere(where);
+        return state.tasks
+          .filter((row) => !clientId || row.clientId === clientId)
+          .map((row) => ({ id: row.id }));
+      },
       updateMany: async () => emptyCount,
       deleteMany: async ({ where }: { where?: { id?: { in: string[] } } }) => {
         if (where?.id?.in) {
@@ -467,6 +472,35 @@ test("elimina el inventario operativo de AVIAT y conserva catálogos y el otro c
       { id: "m-1", clientId: AVIAT_ID, taskId: "t-1" },
       { id: "m-other", clientId: OTHER_ID, taskId: null }
     ],
+    reservations: [
+      { id: "r-1", clientId: AVIAT_ID, status: "ACTIVE" },
+      { id: "r-other", clientId: OTHER_ID, status: "ACTIVE" }
+    ],
+    scans: [
+      { id: "sc-1", clientId: AVIAT_ID },
+      { id: "sc-other", clientId: OTHER_ID }
+    ],
+    activity: [
+      { id: "a-1", clientId: AVIAT_ID },
+      { id: "a-other", clientId: OTHER_ID }
+    ],
+    requisitions: [
+      { id: "rq-1", clientId: AVIAT_ID },
+      { id: "rq-other", clientId: OTHER_ID }
+    ],
+    tasks: [
+      { id: "t-1", clientId: AVIAT_ID },
+      { id: "t-other", clientId: OTHER_ID }
+    ],
+    productProjects: [
+      { id: "pp-1", clientId: AVIAT_ID },
+      { id: "pp-other", clientId: OTHER_ID }
+    ],
+    customers: [
+      { id: "proj-att", clientId: AVIAT_ID, code: "ATT", name: "AT&T" },
+      { id: "proj-logitec", clientId: AVIAT_ID, code: "LOGITEC", name: "LOGITEC" },
+      { id: "proj-other", clientId: OTHER_ID, code: "OTHER-PROJECT", name: "Other Project" }
+    ],
     clients: [
       { id: AVIAT_ID, code: "AVIAT", name: "AVIAT", tradeName: "AVIAT", legalName: "AVIAT" },
       { id: OTHER_ID, code: "CLI2", name: "Cliente 2", tradeName: "Cliente 2", legalName: "Cliente 2" }
@@ -482,12 +516,20 @@ test("elimina el inventario operativo de AVIAT y conserva catálogos y el otro c
   assert.equal(state.inventory.find((row) => row.id === "inv-other")?.clientId, OTHER_ID);
   assert.equal(state.serials.find((row) => row.id === "s-other")?.serialNumber, "OTHER");
   assert.equal(state.movements.find((row) => row.id === "m-other")?.clientId, OTHER_ID);
+  assert.equal(state.layers.some((row) => row.id === "ly-other"), true);
+  assert.equal(state.reservations.some((row) => row.id === "r-other"), true);
+  assert.equal(state.scans.some((row) => row.id === "sc-other"), true);
+  assert.equal(state.activity.some((row) => row.id === "a-other"), true);
+  assert.equal(state.requisitions.some((row) => row.id === "rq-other"), true);
+  assert.equal(state.tasks.some((row) => row.id === "t-other"), true);
+  assert.equal(state.productProjects.some((row) => row.id === "pp-other"), true);
   assert.equal(state.products.length, 1);
   assert.equal(state.deleted.product, 0);
   assert.equal(state.deleted.location, 0);
   assert.equal(state.deleted.user, 0);
   assert.equal(state.customers.some((row) => row.code === "ATT"), true);
   assert.equal(state.customers.some((row) => row.code === "LOGITEC"), false);
+  assert.equal(state.customers.some((row) => row.code === "OTHER-PROJECT"), true);
   assert.equal(state.logs[0]!.subtype, "PHYSICAL_RESET");
 
   const second = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: AVIAT_ID });
@@ -517,17 +559,16 @@ test("conserva InventoryStock y las importaciones de otro cliente", async () => 
       { id: OTHER_ID, code: "CLI2", name: "Cliente 2", tradeName: "Cliente 2", legalName: "Cliente 2" }
     ]
   });
+  const stockBefore = cloneRows(state.stock);
+  const otherImportsBefore = cloneRows(
+    state.importBatches.filter((row) => row.clientId === OTHER_ID)
+  );
   const result = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: AVIAT_ID });
   assert.equal(result.legacyStockPurged, 0);
   assert.equal(result.legacyStockZeroed, 0);
   assert.equal(result.importBatchesPurged, 1);
-  assert.equal(state.stock.length, 2);
-  assert.equal(state.stock.some((row) => row.id === "st-shared"), true);
-  assert.equal(state.stock.some((row) => row.id === "st-other"), true);
-  assert.deepEqual(
-    state.importBatches.map((row) => row.id).sort(),
-    ["ib-admin-other", "ib-other"]
-  );
+  assert.deepEqual(state.stock, stockBefore);
+  assert.deepEqual(state.importBatches, otherImportsBefore);
   assert.equal(state.inventory.find((row) => row.id === "inv-other")?.clientId, OTHER_ID);
 });
 

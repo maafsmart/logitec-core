@@ -184,7 +184,7 @@ test("CLIENT no autoriza inventario ni movimientos con product.customer", () => 
   assert.equal(inventoryWhere.includes("assignmentType"), false);
   assert.deepEqual(clientCustomerWhere(aviatAuth), { clientId: "client-aviat" });
   assert.deepEqual(clientRequisitionWhere(aviatAuth), { project: { clientId: "client-aviat" } });
-  assert.ok(Array.isArray(clientTaskWhere(aviatAuth).OR));
+  assert.deepEqual(clientTaskWhere(aviatAuth), { clientId: "client-aviat" });
   assert.deepEqual(clientScanWhere(aviatAuth), { clientId: "client-aviat" });
   assert.deepEqual(clientSerialWhere(aviatAuth), { clientId: "client-aviat" });
   assert.deepEqual(clientActivityWhere(aviatAuth), { clientId: "client-aviat" });

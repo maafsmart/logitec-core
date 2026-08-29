@@ -3522,7 +3522,7 @@
               </div>
               <div class="kpi-card ok">
                 <span class="kpi-value" id="ccKpiStock">—</span>
-                <span class="kpi-label">Saldos de inventario</span>
+                <span class="kpi-label">Piezas de inventario</span>
               </div>
               <div class="kpi-card">
                 <span class="kpi-value" id="ccKpiMovements">—</span>
@@ -4719,7 +4719,7 @@
                   <label for="inboundQty">Cantidad</label>
                   <input id="inboundQty" type="number" step="0.0001" min="0.0001" required />
                 </div>
-                <div class="field js-economic-card hidden">
+                <div class="field js-economic-card js-economic-edit hidden">
                   <label for="inboundUnitPriceMxn">Precio unitario MXN (opcional)</label>
                   <input id="inboundUnitPriceMxn" type="text" inputmode="decimal" autocomplete="off" placeholder="Sin precio por ahora" value="" />
                 </div>
@@ -5354,37 +5354,6 @@
             <div class="field full" style="margin-top:10px">
               <label for="catalogImportCsv">Datos CSV</label>
               <textarea id="catalogImportCsv" rows="5" placeholder="customer,sku,name,barcode"></textarea>
-            </div>
-          </details>
-        </div>
-      </div>
-    </div>
-
-    <div id="inventoryImportModal" class="modal-overlay" aria-hidden="true">
-      <div class="modal-panel" role="dialog" aria-labelledby="inventoryImportTitle">
-        <div class="modal-header">
-          <h3 id="inventoryImportTitle">Importar inventario desde Excel</h3>
-          <button type="button" class="modal-close" data-close-modal="inventoryImportModal" aria-label="Cerrar">×</button>
-        </div>
-        <div id="importSection">
-          <p class="import-help">Selecciona archivo <strong>.xlsx</strong> o <strong>.csv</strong>. <a class="btn-template" href="/plantilla_inventario.csv" download="plantilla_inventario.csv">Descargar plantilla</a></p>
-          <div class="field full">
-            <label for="inventoryImportFile">Archivo de inventario</label>
-            <input id="inventoryImportFile" class="file-input" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
-          </div>
-          <div id="inventoryImportFileStatus" class="file-status"></div>
-          <div id="importResult" style="min-height:1.2em;margin:12px 0"></div>
-          <div id="reconcileInventoryWrap" class="field full">
-            <label for="reconcileFullInventory"><input id="reconcileFullInventory" type="checkbox" /> Reconciliar como inventario físico completo</label>
-          </div>
-          <div class="import-actions">
-            <button type="button" id="importBtn" class="btn-success">Cargar inventario</button>
-          </div>
-          <details class="import-details">
-            <summary>Ver detalles técnicos / pegar CSV</summary>
-            <div class="field full" style="margin-top:10px">
-              <label for="importCsv">Datos CSV</label>
-              <textarea id="importCsv" rows="5" placeholder="sku,warehouse,location,quantity"></textarea>
             </div>
           </details>
         </div>

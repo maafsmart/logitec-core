@@ -119,6 +119,7 @@ export async function executeImportBatch(input: {
           reference: lines[0]!.normalized.reference ? String(lines[0]!.normalized.reference) : null,
           notes: lines[0]!.normalized.notes ? String(lines[0]!.normalized.notes) : null,
           userId: input.userId,
+          clientId: input.clientId,
           lines: lines.map((line) => ({
             sku: String(line.normalized.sku),
             requestedQty: Number(line.normalized.qty || 0)
