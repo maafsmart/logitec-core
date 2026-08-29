@@ -86,7 +86,7 @@ export async function updateInventoryLayerUnitPriceMxn(input: {
         reference: layer.inventory.product.sku,
         userId: input.userId,
         productId: layer.inventory.product.id,
-        customerId: layer.inventory.projectId || layer.inventory.product.customerId,
+        customerId: layer.inventory.projectId,
         warehouse: layer.inventory.location.warehouse,
         location: layer.inventory.location.code,
         qty: layer.qty,

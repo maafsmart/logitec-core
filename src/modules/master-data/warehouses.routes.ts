@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
-import { clientInventoryWhere, isClientRole } from "../clients/client-scope.js";
+import { clientInventoryWhere, isClientScopedRole, requireOperationalClient } from "../clients/client-scope.js";
 import {
   createWarehouseRecord,
   setWarehouseActive,
@@ -31,10 +31,11 @@ const createWarehouseSchema = warehouseFieldsSchema.extend({
 });
 
 warehousesRouter.use(requireAuth);
+warehousesRouter.use(requireOperationalClient);
 
 warehousesRouter.get("/", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   let where: { id?: { in: string[] } } = {};
-  if (isClientRole(req.auth!)) {
+  if (isClientScopedRole(req.auth!.role)) {
     const visible = await prisma.location.findMany({
       where: { inventories: { some: clientInventoryWhere(req.auth!) } },
       distinct: ["warehouseId"],
@@ -66,7 +67,7 @@ warehousesRouter.get("/:id", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CL
   const id = z.string().min(1).parse(req.params.id);
   const warehouse = await prisma.warehouse.findUnique({ where: { id } });
   if (!warehouse) throw new HttpError(404, "Almacén no encontrado.");
-  if (isClientRole(req.auth!)) {
+  if (isClientScopedRole(req.auth!.role)) {
     const visible = await prisma.location.count({
       where: { warehouseId: warehouse.id, inventories: { some: clientInventoryWhere(req.auth!) } }
     });

@@ -35,10 +35,18 @@ const userSelect = {
 } as const;
 
 async function resolveClientId(role: string, clientId: string | null | undefined): Promise<string | null> {
-  if (role !== "CLIENT") return null;
+  if (role === "ADMIN") {
+    const id = clientId?.trim();
+    if (!id) return null;
+    const client = await prisma.client.findUnique({ where: { id }, select: { id: true, active: true } });
+    if (!client?.active) {
+      throw new HttpError(400, "El cliente asignado no existe o está inactivo.");
+    }
+    return client.id;
+  }
   const id = clientId?.trim();
   if (!id) {
-    throw new HttpError(400, "Los usuarios CLIENT requieren un cliente asignado.");
+    throw new HttpError(400, `Los usuarios ${role} requieren un cliente asignado.`, "USER_CLIENT_REQUIRED");
   }
   const client = await prisma.client.findUnique({ where: { id }, select: { id: true, active: true } });
   if (!client?.active) {
@@ -107,11 +115,17 @@ usersRouter.patch("/:id", requireAuth, requireRole(["ADMIN"]), async (req, res) 
 
 // Responsables para asignación de tareas (ADMIN / SUPERVISOR)
 // Listado mínimo: no expone passwordHash ni abre CRUD completo.
-usersRouter.get("/assignees", requireAuth, requireRole(["ADMIN", "SUPERVISOR"]), async (_req, res) => {
+usersRouter.get("/assignees", requireAuth, requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
+  const scopeClientId = req.auth!.role === "SUPERVISOR" ? req.auth!.clientId : req.auth!.operationalClientId;
   const users = await prisma.user.findMany({
     where: {
       isActive: true,
-      role: { in: ["ADMIN", "SUPERVISOR", "OPERATOR"] }
+      role: { in: ["ADMIN", "SUPERVISOR", "OPERATOR"] },
+      ...(scopeClientId
+        ? { OR: [{ clientId: scopeClientId }, { role: "ADMIN" }] }
+        : req.auth!.role === "ADMIN"
+          ? {}
+          : { id: { in: [] } })
     },
     orderBy: [{ role: "asc" }, { fullName: "asc" }],
     select: {

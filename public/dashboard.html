@@ -3257,10 +3257,75 @@
       html[data-ui-version="compact-workspace-v1"] body.workspace-comfortable .sku-selected-card-meta {
         grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
       }
+      .client-context-gate {
+        position: fixed;
+        inset: 0;
+        z-index: 400;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 48px 16px 24px;
+        background: rgba(232, 242, 252, 0.96);
+        overflow: auto;
+      }
+      .client-context-gate.hidden { display: none !important; }
+      .client-context-panel {
+        width: min(960px, 100%);
+        background: var(--panel-solid);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 12px 32px rgba(15, 76, 129, 0.12);
+      }
+      .client-context-panel h2 { margin: 0 0 8px; }
+      .client-context-toolbar {
+        display: flex;
+        gap: 8px;
+        margin: 16px 0;
+        flex-wrap: wrap;
+      }
+      .client-context-toolbar input {
+        flex: 1;
+        min-width: 220px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      .client-context-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 12px;
+      }
+      .client-context-card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px;
+        background: var(--panel);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .client-context-card h3 { margin: 0; font-size: 1rem; }
+      .client-context-actions { display: flex; gap: 8px; margin-top: 8px; }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact .client-context-panel {
+        padding: 16px;
+      }
       /* ===== /compact-workspace-v1 ===== */
     </style>
   </head>
   <body class="workspace-compact">
+    <div id="clientContextGate" class="client-context-gate hidden" hidden>
+      <div class="client-context-panel">
+        <h2>Seleccionar cliente</h2>
+        <p class="subtitle">Elige el cliente operativo antes de abrir Inventario, Operación o Control.</p>
+        <div class="client-context-toolbar">
+          <input id="clientContextSearch" type="search" placeholder="Buscar cliente..." autocomplete="off" />
+          <button type="button" class="btn-primary btn-compact" id="clientContextAddBtn">Agregar cliente</button>
+        </div>
+        <p id="clientContextStatus" class="filter-hint"></p>
+        <div id="clientContextCards" class="client-context-cards"></div>
+      </div>
+    </div>
     <div class="app-shell">
       <header class="app-topbar">
         <div class="app-brand">
@@ -3269,7 +3334,8 @@
         </div>
         <div class="app-topbar-meta">
           <div class="aviat-context-bar">
-            <span>Cliente: <strong data-aviat-primary-label>—</strong></span>
+            <span>Cliente activo: <strong data-aviat-primary-label>—</strong></span>
+            <button type="button" id="changeClientBtn" class="btn-secondary btn-compact hidden">Cambiar cliente</button>
             <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
             <span>Asignación: <strong data-aviat-assignment-label>Todas</strong></span>
           </div>
@@ -3420,10 +3486,10 @@
             </div>
             <p id="aviatScopeControl" class="operational-table-meta" style="margin:0 0 10px;font-weight:600">Proyecto: Todos los proyectos · Asignación: Todas</p>
             <div class="inventory-scope-bar" data-inventory-scope>
-              <div class="field compact js-admin-client-filter">
+              <div class="field compact js-admin-client-filter hidden">
                 <label>Cliente</label>
-                <select class="js-inventory-client-select">
-                  <option value="">Todos los clientes</option>
+                <select class="js-inventory-client-select" disabled>
+                  <option value="">Cliente del contexto</option>
                 </select>
               </div>
               <div class="field compact">
@@ -4053,10 +4119,10 @@
             </div>
             <p id="aviatScopeInventory" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Proyecto: Todos los proyectos · Asignación: Todas</p>
             <div class="inventory-scope-bar" data-inventory-scope>
-              <div class="field compact js-admin-client-filter">
+              <div class="field compact js-admin-client-filter hidden">
                 <label>Cliente</label>
-                <select class="js-inventory-client-select">
-                  <option value="">Todos los clientes</option>
+                <select class="js-inventory-client-select" disabled>
+                  <option value="">Cliente del contexto</option>
                 </select>
               </div>
               <div class="field compact">
@@ -4854,10 +4920,10 @@
             </div>
             <div class="card-panel">
               <div class="inventory-scope-bar" data-inventory-scope>
-                <div class="field compact js-admin-client-filter">
+                <div class="field compact js-admin-client-filter hidden">
                   <label>Cliente</label>
-                  <select class="js-inventory-client-select">
-                    <option value="">Todos los clientes</option>
+                  <select class="js-inventory-client-select" disabled>
+                    <option value="">Cliente del contexto</option>
                   </select>
                 </div>
                 <div class="field compact">
@@ -5326,6 +5392,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=81"></script>
+    <script src="/dashboard.js?v=82"></script>
   </body>
 </html>

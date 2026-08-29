@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
-import { clientScanWhere, isClientRole } from "../clients/client-scope.js";
+import { clientScanWhere, isClientRole, requireOperationalClient } from "../clients/client-scope.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { InventoryMutationError, mutateInventory } from "../inventory/inventory-mutation.service.js";
 import { RequisitionError, consumeReservationPick, getEligiblePickSerials } from "../requisitions/requisition.service.js";
@@ -76,14 +76,16 @@ function mapCandidate(row: {
 }
 
 pickingRouter.use(requireAuth);
+pickingRouter.use(requireOperationalClient);
 
 pickingRouter.get("/scans", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   const isAdmin = req.auth!.role === "ADMIN";
-  const where = isAdmin
-    ? {}
-    : isClientRole(req.auth!)
-      ? clientScanWhere(req.auth!)
-      : { userId: req.auth!.userId };
+  const where = {
+    AND: [
+      clientScanWhere(req.auth!),
+      isAdmin || isClientRole(req.auth!) ? {} : { userId: req.auth!.userId }
+    ]
+  };
 
   const scans = await prisma.scanEvent.findMany({
     where,
@@ -163,6 +165,7 @@ pickingRouter.post("/scan", async (req, res) => {
     } = parsed;
 
     const taskId = taskIdOpt?.trim() || null;
+    const operationalClientId = req.auth!.operationalClientId!;
     const normalizedCode = code.trim();
     const pickQty = dec(qtyRaw ?? 1);
     const normalizedWarehouse = warehouseInput?.trim().toUpperCase() || null;
@@ -176,6 +179,19 @@ pickingRouter.post("/scan", async (req, res) => {
     const serialIds = Array.isArray(serialIdsOpt)
       ? serialIdsOpt.map((id) => String(id || "").trim()).filter(Boolean)
       : [];
+    if (inventoryId) {
+      const cube = await prisma.inventory.findFirst({
+        where: { id: inventoryId },
+        select: { id: true, clientId: true }
+      });
+      if (cube && cube.clientId !== operationalClientId) {
+        res.status(409).json({
+          code: "CROSS_CLIENT_OPERATION",
+          message: "La operación no pertenece al cliente activo."
+        });
+        return;
+      }
+    }
     const statusFilter = statusInput?.trim()
       ? await assertActiveInventoryStatus(statusInput)
       : null;
@@ -334,7 +350,8 @@ pickingRouter.post("/scan", async (req, res) => {
           userId: req.auth!.userId,
           warehouse: normalizedWarehouse,
           location: normalizedLocation,
-          taskId
+          taskId,
+          clientId: operationalClientId
         },
         select: { id: true, result: true, scannedCode: true, createdAt: true }
       });
@@ -343,6 +360,7 @@ pickingRouter.post("/scan", async (req, res) => {
         subtype: "PICK_ERROR_UNKNOWN_PRODUCT",
         reference: normalizedCode,
         userId: req.auth!.userId,
+        clientId: operationalClientId,
         warehouse: normalizedWarehouse,
         location: normalizedLocation,
         qty: null,
@@ -360,6 +378,7 @@ pickingRouter.post("/scan", async (req, res) => {
     // Localizar cubos con stock libre. El alcance de proyecto es Inventory.assignment*, no Product.customerId.
     const stockWhere: Prisma.InventoryWhereInput = {
       productId: product.id,
+      clientId: operationalClientId,
       qty: { gt: new Prisma.Decimal(0) },
       ...(statusFilter ? { status: statusFilter } : {}),
       ...(inventoryId ? { id: inventoryId } : {}),
@@ -408,7 +427,7 @@ pickingRouter.post("/scan", async (req, res) => {
           warehouse: normalizedWarehouse || product.warehouse,
           location: normalizedLocation,
           taskId,
-          clientId: null
+          clientId: operationalClientId
         },
         select: { id: true, result: true, scannedCode: true, createdAt: true }
       });
@@ -418,14 +437,15 @@ pickingRouter.post("/scan", async (req, res) => {
         reference: normalizedCode,
         userId: req.auth!.userId,
         productId: product.id,
-        customerId: product.customerId,
+        clientId: operationalClientId,
+        customerId: null,
         warehouse: normalizedWarehouse || product.warehouse,
         location: normalizedLocation,
         qty: null,
         result: "ERROR_NO_STOCK",
         metadata: {
           scanEventId: scanEvent.id,
-          projectCode: product.customer?.code || null,
+          projectCode: null,
           filters: {
             warehouse: normalizedWarehouse,
             location: normalizedLocation,
@@ -444,8 +464,8 @@ pickingRouter.post("/scan", async (req, res) => {
           id: product.id,
           sku: product.sku,
           name: product.name,
-          projectCode: product.customer?.code || null,
-          projectName: product.customer?.name || null
+          projectCode: null,
+          projectName: null
         },
         scanEvent
       });

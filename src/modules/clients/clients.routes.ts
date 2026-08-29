@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
-import { isClientRole, scopedClientId } from "./client-scope.js";
+import { isClientScopedRole } from "./client-scope.js";
 import { createClientRecord, setClientActive, updateClientRecord } from "../master-data/master-data.service.js";
 import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
 
@@ -80,7 +80,7 @@ clientsRouter.use(requireAuth);
 
 clientsRouter.get("/", async (req, res) => {
   const clients = await prisma.client.findMany({
-    where: isClientRole(req.auth!) ? { id: scopedClientId(req.auth!) } : {},
+    where: req.auth!.role === "ADMIN" ? {} : { id: req.auth!.clientId || "" },
     orderBy: [{ active: "desc" }, { name: "asc" }],
     take: 200,
     select: {
@@ -109,7 +109,7 @@ clientsRouter.post("/", requireRole(["ADMIN"]), async (req, res) => {
 
 clientsRouter.get("/:id", async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
-  if (isClientRole(req.auth!) && id !== scopedClientId(req.auth!)) {
+  if (isClientScopedRole(req.auth!.role) && id !== req.auth!.clientId) {
     throw new HttpError(404, "Cliente no encontrado.");
   }
   const client = await prisma.client.findUnique({
@@ -138,7 +138,7 @@ clientsRouter.get("/:id", async (req, res) => {
 
 clientsRouter.get("/:id/projects", async (req, res) => {
   const clientId = z.string().min(1).parse(req.params.id);
-  if (isClientRole(req.auth!) && clientId !== scopedClientId(req.auth!)) {
+  if (isClientScopedRole(req.auth!.role) && clientId !== req.auth!.clientId) {
     throw new HttpError(404, "Cliente no encontrado.");
   }
   const client = await prisma.client.findUnique({

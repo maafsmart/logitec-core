@@ -31,6 +31,7 @@ export async function executeImportBatch(input: {
   context: ImportContext;
   rows: ExecRow[];
   userId: string;
+  clientId: string;
   inventoryMode?: "APPEND" | "RECONCILE";
   batchId?: string;
   metadata?: Record<string, unknown>;
@@ -140,31 +141,9 @@ export async function executeImportBatch(input: {
     for (const row of valid) {
       const n = row.normalized;
       try {
-        let clientId = n.clientId ? String(n.clientId) : null;
-        if (!clientId) {
-          const rawName = String(n.client || n.tradeName || n.legalName || "Cliente");
-          const code = rawName.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 60) || "CLIENTE";
-          const existingClient = await prisma.client.findUnique({ where: { code } });
-          if (existingClient) {
-            clientId = existingClient.id;
-          } else {
-            const created = await prisma.client.create({
-              data: {
-                code,
-                name: rawName,
-                tradeName: n.tradeName ? String(n.tradeName) : null,
-                legalName: n.legalName ? String(n.legalName) : null,
-                rfc: n.rfc ? String(n.rfc) : null,
-                email: n.email ? String(n.email) : null,
-                phone: n.phone ? String(n.phone) : null,
-                notes: n.notes ? String(n.notes) : null,
-                active: true
-              }
-            });
-            clientId = created.id;
-          }
-        }
+        const clientId = input.clientId;
         const projectCode = String(n.project || "").toUpperCase().replace(/\s+/g, "_").slice(0, 60);
+        if (!projectCode) throw new Error("PROJECT_REQUIRED");
         const existing = await prisma.customer.findUnique({ where: { code: projectCode } });
         if (!existing) {
           await prisma.customer.create({
@@ -175,14 +154,15 @@ export async function executeImportBatch(input: {
               active: true
             }
           });
-        } else if (!existing.clientId) {
-          await prisma.customer.update({ where: { id: existing.id }, data: { clientId } });
+        } else if (existing.clientId !== clientId) {
+          throw new Error("PROJECT_WRONG_CLIENT");
         }
         await logActivity({
           type: "IMPORT",
           subtype: "CLIENTS_PROJECTS",
           reference: projectCode,
           userId: input.userId,
+          clientId,
           result: "OK"
         });
         results.push({ sourceRow: row.sourceRow, ok: true });

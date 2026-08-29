@@ -138,13 +138,11 @@ test("F5 restaura Inventario → Existencias", () => {
 
 test("una selección durante una inicialización lenta no es reemplazada por Inicio", () => {
   const applyIdx = validateSessionSrc.indexOf("applySessionRoute()");
-  const catalogIdx = validateSessionSrc.indexOf("loadCatalogData");
-  const stockIdx = validateSessionSrc.indexOf("loadStockStrip");
-  assert.ok(applyIdx >= 0 && catalogIdx > applyIdx, "applySessionRoute must run before data load");
-  assert.ok(stockIdx > applyIdx);
-  assert.doesNotMatch(validateSessionSrc.slice(catalogIdx), /navigateTo\(/);
-  assert.doesNotMatch(validateSessionSrc.slice(catalogIdx), /applyDefaultLandingRoute/);
-  assert.doesNotMatch(validateSessionSrc.slice(catalogIdx), /applySessionRoute/);
+  const workspaceIdx = validateSessionSrc.indexOf("loadOperationalWorkspace");
+  assert.ok(applyIdx >= 0 && workspaceIdx > applyIdx, "applySessionRoute must run before data load");
+  assert.match(js, /async function loadOperationalWorkspace/);
+  assert.match(js, /loadCatalogData/);
+  assert.match(js, /loadStockStrip/);
   assert.match(js, /noteUserNavChoice\(section, mod\)/);
   const rt = makeRuntime({
     role: "ADMIN",
@@ -195,7 +193,7 @@ test("la corrección no realiza escrituras de inventario", () => {
   assert.doesNotMatch(persistSrc, /\/api\/inventory/);
   assert.doesNotMatch(applySessionSrc, /\/api\/inventory/);
   assert.doesNotMatch(forceLogoutSrc, /\/api\//);
-  assert.match(html, /dashboard\.js\?v=81/);
+  assert.match(html, /dashboard\.js\?v=82/);
   assert.doesNotMatch(html, /dashboard\.js\?v=66/);
   assert.doesNotMatch(html, /dashboard\.js\?v=65/);
   assert.doesNotMatch(html, /dashboard\.js\?v=64/);

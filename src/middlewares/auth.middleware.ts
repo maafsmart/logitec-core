@@ -7,10 +7,15 @@ import { prisma } from "../db/prisma.js";
 export type UserRole = "ADMIN" | "OPERATOR" | "SUPERVISOR" | "CLIENT";
 const userRoles: readonly UserRole[] = ["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"];
 
-type AuthPayload = JwtPayload & {
+function isBoundClientRole(role: string): boolean {
+  return role === "SUPERVISOR" || role === "OPERATOR" || role === "CLIENT";
+}
+
+export type AuthPayload = JwtPayload & {
   sub: string;
   role: UserRole;
   email: string;
+  operationalClientId?: string;
 };
 
 declare global {
@@ -21,9 +26,30 @@ declare global {
         role: UserRole;
         email: string;
         clientId: string | null;
+        operationalClientId: string | null;
+        operationalClientInvalid?: boolean;
       };
     }
   }
+}
+
+export function signAccessToken(input: {
+  userId: string;
+  role: UserRole;
+  email: string;
+  operationalClientId?: string | null;
+}): string {
+  const payload: { role: UserRole; email: string; operationalClientId?: string } = {
+    role: input.role,
+    email: input.email
+  };
+  if (input.role === "ADMIN" && input.operationalClientId) {
+    payload.operationalClientId = input.operationalClientId;
+  }
+  return jwt.sign(payload, env.JWT_SECRET, {
+    subject: input.userId,
+    expiresIn: "8h"
+  });
 }
 
 export async function requireAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
@@ -54,14 +80,36 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
     if (!userRoles.includes(user.role as UserRole)) {
       throw new HttpError(403, "Rol de usuario no autorizado");
     }
-    if (user.role === "CLIENT" && (!user.clientId || !user.client?.active)) {
-      throw new HttpError(403, "Usuario CLIENT sin cliente activo asignado");
+    const role = user.role as UserRole;
+    if (isBoundClientRole(role) && (!user.clientId || !user.client?.active)) {
+      throw new HttpError(403, "El usuario no tiene un cliente activo asignado.", "USER_CLIENT_REQUIRED");
     }
+
+    let operationalClientId: string | null = isBoundClientRole(role) ? user.clientId : null;
+    let operationalClientInvalid = false;
+    if (role === "ADMIN") {
+      const claimed = typeof decoded.operationalClientId === "string" ? decoded.operationalClientId.trim() : "";
+      if (claimed) {
+        const contextClient = await prisma.client.findUnique({
+          where: { id: claimed },
+          select: { id: true, active: true }
+        });
+        if (contextClient?.active) {
+          operationalClientId = contextClient.id;
+        } else {
+          operationalClientInvalid = true;
+          operationalClientId = null;
+        }
+      }
+    }
+
     req.auth = {
       userId: user.id,
-      role: user.role as UserRole,
+      role,
       email: user.email,
-      clientId: user.clientId
+      clientId: user.clientId,
+      operationalClientId,
+      operationalClientInvalid
     };
     next();
   } catch (error) {

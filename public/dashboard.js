@@ -1,4 +1,234 @@
-const token = localStorage.getItem("token");
+function currentAccessToken() {
+  return localStorage.getItem("token") || "";
+}
+let clientContextEpoch = 0;
+let operationalClient = null;
+let awaitingAdminClient = false;
+let clientContextCatalog = [];
+const ADMIN_GLOBAL_MODULES = new Set(["users", "clients", "account", "config"]);
+const clientContextGate = document.getElementById("clientContextGate");
+const clientContextCards = document.getElementById("clientContextCards");
+const clientContextSearch = document.getElementById("clientContextSearch");
+const clientContextStatus = document.getElementById("clientContextStatus");
+const clientContextAddBtn = document.getElementById("clientContextAddBtn");
+const changeClientBtn = document.getElementById("changeClientBtn");
+
+function isBoundOperationalRole(role) {
+  return role === "SUPERVISOR" || role === "OPERATOR" || role === "CLIENT";
+}
+
+function isAdminGlobalModule(moduleName) {
+  return ADMIN_GLOBAL_MODULES.has(String(moduleName || ""));
+}
+
+function persistAccessToken(value) {
+  if (!value) return;
+  localStorage.setItem("token", value);
+}
+
+function bumpClientContextEpoch() {
+  clientContextEpoch += 1;
+}
+
+function closeAllOperationalSurfaces() {
+  document.querySelectorAll(".modal-overlay.open").forEach((el) => {
+    el.classList.remove("open");
+    el.setAttribute("aria-hidden", "true");
+  });
+  if (typeof closeDetailDrawer === "function") closeDetailDrawer();
+  if (typeof closeMovementsPanel === "function") closeMovementsPanel();
+  document.querySelectorAll(".js-pick-candidates, #pickCandidates, #scanResult").forEach((el) => {
+    if (el) el.innerHTML = "";
+  });
+}
+
+function clearOperationalClientState() {
+  bumpClientContextEpoch();
+  inventoryScope = { projectId: "", assignmentType: "" };
+  adminSelectedClientId = "";
+  stockRowsCache = [];
+  inventoryProjectsCache = [];
+  inventoryKpiCache = null;
+  movementsRows = [];
+  movementsRowsCache = [];
+  movementsCountCache = 0;
+  movementsNextCursor = null;
+  productsCache = [];
+  catalogProjectsCache = [];
+  relocateLocationsCache = [];
+  warehousesCatalogCache = [];
+  locationsCatalogCache = [];
+  pendingConflictsCache = 0;
+  inventorySkuSelectedContext = null;
+  inventorySkuSelectedListEl = null;
+  requisitionSkuSelectedContext = null;
+  requisitionSkuSelectedListEl = null;
+  currentImportId = null;
+  importResumeActive = null;
+  if (typeof clearInventorySkuSelectedContext === "function") clearInventorySkuSelectedContext();
+  closeAllOperationalSurfaces();
+  document.querySelectorAll("form").forEach((form) => {
+    if (form.id === "loginForm" || form.id === "createUserForm") return;
+    try {
+      form.reset();
+    } catch (_e) {
+      /* ignore */
+    }
+  });
+  if (typeof clearInventoryWorkspaceState === "function") clearInventoryWorkspaceState();
+  if (typeof updateInventoryScopeUi === "function") updateInventoryScopeUi();
+}
+
+function setAdminClientGateVisible(visible) {
+  if (!clientContextGate) return;
+  clientContextGate.classList.toggle("hidden", !visible);
+  clientContextGate.toggleAttribute("hidden", !visible);
+}
+
+function updateActiveClientChrome() {
+  document.querySelectorAll("[data-aviat-primary-label]").forEach((el) => {
+    el.textContent = owningClientDisplayName();
+  });
+  if (changeClientBtn) {
+    changeClientBtn.classList.toggle("hidden", currentRole !== "ADMIN");
+    changeClientBtn.textContent = operationalClient ? "Cambiar cliente" : "Seleccionar cliente";
+  }
+}
+
+function renderClientContextCards(query = "") {
+  if (!clientContextCards) return;
+  const needle = String(query || "").trim().toLowerCase();
+  const rows = (clientContextCatalog || []).filter((row) => {
+    if (!needle) return true;
+    return [row.code, row.name, row.tradeName, row.legalName]
+      .map((value) => String(value || "").toLowerCase())
+      .some((value) => value.includes(needle));
+  });
+  if (!rows.length) {
+    clientContextCards.innerHTML = '<p class="subtitle">No hay clientes para mostrar.</p>';
+    return;
+  }
+  clientContextCards.innerHTML = rows
+    .map((row) => {
+      const active = row.active !== false;
+      const projects = Number(row._count?.projects ?? row.projectCount ?? 0);
+      const enterDisabled = active ? "" : " disabled";
+      return `<article class="client-context-card" data-client-id="${escCell(row.id)}">
+        <h3>${escCell(row.tradeName || row.name)}</h3>
+        <p><strong>${escCell(row.code)}</strong></p>
+        <p>${escCell(row.legalName || "—")}</p>
+        <p>${active ? "Activo" : "Inactivo"} · ${escCell(String(projects))} proyectos</p>
+        <div class="client-context-actions">
+          <button type="button" class="btn-primary btn-compact" data-enter-client="${escCell(row.id)}"${enterDisabled}>Entrar</button>
+          <button type="button" class="btn-secondary btn-compact" data-manage-client="${escCell(row.id)}">Administrar</button>
+        </div>
+      </article>`;
+    })
+    .join("");
+}
+
+async function loadAdminClientCatalog() {
+  if (clientContextStatus) clientContextStatus.textContent = "Cargando clientes…";
+  const response = await authenticatedFetch("/api/clients");
+  if (!response) {
+    if (clientContextStatus) clientContextStatus.textContent = "No se pudieron cargar los clientes.";
+    return;
+  }
+  if (!response.ok) {
+    if (clientContextStatus) clientContextStatus.textContent = "No se pudieron cargar los clientes.";
+    return;
+  }
+  const rows = await response.json().catch(() => []);
+  clientContextCatalog = Array.isArray(rows) ? rows : [];
+  renderClientContextCards(clientContextSearch?.value || "");
+  if (clientContextStatus) {
+    clientContextStatus.textContent = clientContextCatalog.length
+      ? `${clientContextCatalog.length} cliente(s). Solo los activos pueden abrirse operativamente.`
+      : "No hay clientes registrados.";
+  }
+}
+
+async function showAdminClientPicker(reason) {
+  awaitingAdminClient = true;
+  operationalClient = null;
+  setAdminClientGateVisible(true);
+  updateActiveClientChrome();
+  if (clientContextStatus) {
+    clientContextStatus.textContent =
+      reason === "invalid"
+        ? "El cliente seleccionado no existe o está inactivo. Elige otro."
+        : "Selecciona un cliente activo para abrir Inventario, Operación o Control.";
+  }
+  await loadAdminClientCatalog();
+}
+
+function hideAdminClientPicker() {
+  awaitingAdminClient = false;
+  setAdminClientGateVisible(false);
+}
+
+async function selectOperationalClient(clientId) {
+  const response = await authenticatedFetch("/api/auth/select-client", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientId })
+  });
+  if (!response) return;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (clientContextStatus) {
+      clientContextStatus.textContent = data.message || "No se pudo seleccionar el cliente.";
+    }
+    if (data.code === "CLIENT_CONTEXT_INVALID") {
+      await loadAdminClientCatalog();
+    }
+    return;
+  }
+  persistAccessToken(data.accessToken);
+  clearOperationalClientState();
+  operationalClient = data.operationalClient || data.client || null;
+  hideAdminClientPicker();
+  updateActiveClientChrome();
+  await loadOperationalWorkspace();
+  applySessionRoute();
+}
+
+async function clearAdminOperationalClient() {
+  const response = await authenticatedFetch("/api/auth/clear-client", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}"
+  });
+  if (response?.ok) {
+    const data = await response.json().catch(() => ({}));
+    persistAccessToken(data.accessToken);
+  }
+  operationalClient = null;
+  clearOperationalClientState();
+  await showAdminClientPicker();
+}
+
+async function loadOperationalWorkspace() {
+  if (currentRole === "ADMIN" && !operationalClient) {
+    await showAdminClientPicker();
+    await loadUsersModule(currentRole);
+    return;
+  }
+  hideAdminClientPicker();
+  updateActiveClientChrome();
+  await loadUsersModule(currentRole);
+  await loadCatalogData();
+  await loadRealClientsQuiet().catch(() => {});
+  updateInventoryScopeUi();
+  if (currentRole === "ADMIN" || currentRole === "OPERATOR" || currentRole === "SUPERVISOR") {
+    await loadStockStrip();
+    await loadInventoryMovements();
+    await loadScanEvents();
+  } else if (scanEventsList) {
+    scanEventsList.innerHTML =
+      '<p class="subtitle" style="margin:0">El historial de picking no aplica a tu rol.</p>';
+  }
+}
 const statusBox = document.getElementById("statusBox");
 const usersSummary = document.getElementById("usersSummary");
 const logoutBtn = document.getElementById("logoutBtn");
@@ -254,8 +484,7 @@ function inventoryScopeQueryString() {
     params.set("assignmentType", scope.assignmentType);
   }
   const qs = params.toString();
-  const clientId = selectedAdminClientId();
-  if (clientId) params.set("clientId", clientId);
+  const clientId = "";
   const withClient = params.toString();
   return withClient ? `?${withClient}` : "";
 }
@@ -296,23 +525,8 @@ function getAviatExportBasename(kind) {
 function fillInventoryProjectSelects() {
   const scope = getInventoryScope();
   const isClient = typeof currentRole !== "undefined" && currentRole === "CLIENT";
-  document.querySelectorAll(".js-inventory-client-select").forEach((sel) => {
-    const wrap = sel.closest(".js-admin-client-filter") || sel.parentElement;
-    if (wrap) wrap.classList.toggle("hidden", isClient);
-    if (isClient) return;
-    const clients = (realClientsCache || []).filter(
-      (row) => row.active !== false && !isForbiddenProjectLabel(row.code) && !isForbiddenProjectLabel(row.name)
-    );
-    const current = selectedAdminClientId();
-    sel.innerHTML =
-      `<option value="">Todos los clientes</option>` +
-      clients
-        .map(
-          (client) =>
-            `<option value="${escCell(client.id)}">${escCell(client.tradeName || client.name)} (${escCell(client.code)})</option>`
-        )
-        .join("");
-    sel.value = current && clients.some((client) => client.id === current) ? current : "";
+  document.querySelectorAll(".js-admin-client-filter").forEach((wrap) => {
+    wrap.classList.add("hidden");
   });
   const options = [`<option value="">${isClient ? "Todos los proyectos de mi cliente" : "Todos los proyectos"}</option>`]
     .concat(
@@ -525,31 +739,17 @@ function historicalNonOperationalAssignmentLabel() {
 }
 
 function owningClientDisplayName() {
-  if (currentRole === "CLIENT") {
-    const client = currentUserClient;
-    return String(client?.tradeName || client?.legalName || client?.name || "").trim() || "Mi cliente";
-  }
-  if (adminSelectedClientId) {
-    const client = realClientsCache.find((row) => row.id === adminSelectedClientId);
-    return String(client?.tradeName || client?.name || "").trim() || "Cliente seleccionado";
-  }
-  return "Todos los clientes";
+  const client = operationalClient || (currentRole === "CLIENT" || currentRole === "SUPERVISOR" || currentRole === "OPERATOR" ? currentUserClient : null);
+  return String(client?.tradeName || client?.legalName || client?.name || "").trim() || (awaitingAdminClient ? "Seleccionar cliente" : "—");
 }
 
 function owningClientExportToken() {
-  if (currentRole === "CLIENT") {
-    return String(currentUserClient?.code || currentUserClient?.name || "CLIENT").replace(/[^\w]+/g, "_");
-  }
-  if (adminSelectedClientId) {
-    const client = realClientsCache.find((row) => row.id === adminSelectedClientId);
-    return String(client?.code || client?.name || "CLIENT").replace(/[^\w]+/g, "_");
-  }
-  return "ALL_CLIENTS";
+  const client = operationalClient || currentUserClient;
+  return String(client?.code || client?.name || "CLIENT").replace(/[^\w]+/g, "_");
 }
 
 function selectedAdminClientId() {
-  if (typeof currentRole !== "undefined" && currentRole === "CLIENT") return "";
-  return String(adminSelectedClientId || "").trim();
+  return "";
 }
 
 function canonicalClientDisplay(source) {
@@ -914,7 +1114,7 @@ function forceLogout() {
   window.location.replace("/login.html");
 }
 
-if (!token) {
+if (!currentAccessToken()) {
   forceLogout();
 }
 
@@ -1004,6 +1204,10 @@ function navigateTo(sectionId, moduleName) {
   }
   if (mod && !allowed.includes(mod)) {
     mod = getDefaultModuleForSection(section);
+  }
+  if (currentRole === "ADMIN" && awaitingAdminClient && mod && !isAdminGlobalModule(mod)) {
+    void showAdminClientPicker();
+    return;
   }
   if (!mod || !allowed.includes(mod)) {
     // Sin módulo permitido en la sección: solo limpia y muestra tarjetas.
@@ -1262,19 +1466,41 @@ function wireHashModuleNavigation() {
 }
 
 async function authenticatedFetch(path, options = {}) {
+  const epoch = clientContextEpoch;
   const response = await fetch(path, {
     method: "GET",
     ...options,
     cache: options.cache || "no-store",
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${currentAccessToken()}`,
       ...(options.headers || {})
     }
   });
 
+  if (epoch !== clientContextEpoch) {
+    return null;
+  }
+
   if (response.status === 401) {
     forceLogout();
     return null;
+  }
+
+  if (response.status === 403) {
+    const payload = await response.clone().json().catch(() => ({}));
+    if (payload.code === "CLIENT_CONTEXT_REQUIRED" || payload.code === "CLIENT_CONTEXT_INVALID") {
+      if (currentRole === "ADMIN") {
+        operationalClient = null;
+        void showAdminClientPicker(payload.code === "CLIENT_CONTEXT_INVALID" ? "invalid" : "required");
+      }
+      return null;
+    }
+    if (payload.code === "USER_CLIENT_REQUIRED") {
+      if (statusBox) {
+        statusBox.innerHTML = '<span class="error">El usuario no tiene un cliente asignado.</span>';
+      }
+      return null;
+    }
   }
 
   return response;
@@ -7350,19 +7576,12 @@ async function searchSkuSuggestions(query, opts = {}) {
   return (Array.isArray(rows) ? rows : [])
     .filter((product) => {
       if (!customerCode) return true;
-      if (String(product.customer?.code || "").toUpperCase() === customerCode) return true;
+      if (String(product.client?.code || "").toUpperCase() === customerCode) return true;
       return (Array.isArray(product.productProjects) ? product.productProjects : []).some(
         (link) => String(link.code || link.project?.code || "").toUpperCase() === customerCode
       );
     })
     .map((product) => {
-      const catalogOwnerCode = product.customer?.code || "";
-      const catalogOwnerName = product.customer?.name || catalogOwnerCode;
-      const catalogIsOperational = isOperationalProjectRecord({
-        code: catalogOwnerCode,
-        name: catalogOwnerName,
-        active: true
-      });
       return {
       kind: "catalog",
       key: `catalog:${product.id}`,
@@ -7372,9 +7591,9 @@ async function searchSkuSuggestions(query, opts = {}) {
       productName: product.name || "",
       projectCode: "",
       projectName: "",
-      catalogOwnerCode: catalogIsOperational ? catalogOwnerCode : "",
-      catalogOwnerName: catalogIsOperational ? catalogOwnerName : "",
-      clientName: canonicalClientDisplay(product.customer),
+      catalogOwnerCode: "",
+      catalogOwnerName: "",
+      clientName: product.client?.tradeName || product.client?.name || owningClientDisplayName(),
       warehouse: "",
       location: "",
       status: "",
@@ -7490,24 +7709,27 @@ function fillInboundProjectSelect() {
 }
 
 function inboundSelectedOwnerClientId() {
+  const fromContext =
+    (typeof operationalClient !== "undefined" && operationalClient && operationalClient.id) ||
+    (typeof currentUserClient !== "undefined" && currentUserClient && currentUserClient.id) ||
+    "";
+  if (fromContext) return String(fromContext).trim();
   return String(document.getElementById("inboundClientId")?.value || "").trim();
 }
 
 function fillInboundClientSelect() {
   const sel = document.getElementById("inboundClientId");
+  const clientField = document.getElementById("inboundClientField");
+  const locked = Boolean(typeof operationalClient !== "undefined" && operationalClient && operationalClient.id);
+  if (locked && clientField?.classList?.add) clientField.classList.add("hidden");
   if (!(sel instanceof HTMLSelectElement)) return;
-  const prev = sel.value;
-  const clients = (realClientsCache || []).filter((row) => row.active !== false && !isForbiddenProjectLabel(row.code) && !isForbiddenProjectLabel(row.name));
-  sel.innerHTML =
-    '<option value="">— Seleccionar cliente —</option>' +
-    clients
-      .map(
-        (client) =>
-          `<option value="${escCell(client.id)}">${escCell(client.tradeName || client.name)} (${escCell(client.code)})</option>`
-      )
-      .join("");
-  if (prev && clients.some((client) => client.id === prev)) sel.value = prev;
-  else if (clients.length === 1) sel.value = clients[0].id;
+  if (!locked) return;
+  const ownerId = inboundSelectedOwnerClientId();
+  const owner = operationalClient || currentUserClient;
+  sel.innerHTML = ownerId
+    ? `<option value="${escCell(ownerId)}" selected>${escCell(owner?.tradeName || owner?.name || owner?.code || ownerId)}</option>`
+    : '<option value="">—</option>';
+  sel.value = ownerId;
 }
 
 function syncInboundAssignmentUi() {
@@ -7515,8 +7737,12 @@ function syncInboundAssignmentUi() {
   const projectField = document.getElementById("inboundProjectField");
   const clientField = document.getElementById("inboundClientField");
   const sel = document.getElementById("inboundProjectId");
-  if (projectField) projectField.classList.toggle("hidden", type !== "PROJECT");
-  if (clientField) clientField.classList.toggle("hidden", type !== "FREE_TO_SALE");
+  if (projectField?.classList?.toggle) projectField.classList.toggle("hidden", type !== "PROJECT");
+  const locked = Boolean(typeof operationalClient !== "undefined" && operationalClient && operationalClient.id);
+  if (clientField?.classList) {
+    if (locked && clientField.classList.add) clientField.classList.add("hidden");
+    else if (clientField.classList.toggle) clientField.classList.toggle("hidden", type !== "FREE_TO_SALE");
+  }
   if (sel && type !== "PROJECT") sel.value = "";
   fillInboundClientSelect();
   if (type === "PROJECT") fillInboundProjectSelect();
@@ -9315,9 +9541,8 @@ async function submitOperationalMovement(kind) {
     setOpsMessage(msgId, "SKU inexistente en catálogo.", false);
     return;
   }
-  if (kind !== "in" && customerCode && product.customer?.code !== customerCode) {
-    setOpsMessage(msgId, "El SKU no pertenece al customer seleccionado.", false);
-    return;
+  if (kind !== "in" && customerCode) {
+    /* El propietario operativo lo decide el cubo, no product.customer. */
   }
 
   const reference = buildOpsReference(lote, referenceRaw, kind);
@@ -11157,7 +11382,7 @@ function applyRoleNavigation(role) {
   createProductForm.classList.toggle("hidden", role !== "ADMIN");
   if (createCustomerForm) createCustomerForm.classList.add("hidden");
   const newClientField = document.getElementById("newClientField");
-  if (newClientField) newClientField.classList.toggle("hidden", document.getElementById("newRole")?.value !== "CLIENT");
+  if (newClientField) newClientField.classList.toggle("hidden", !isBoundOperationalRole(document.getElementById("newRole")?.value));
   document.querySelectorAll(".js-assignment-opt[data-assignment='FREE_TO_SALE']").forEach((btn) => {
     btn.style.display = "";
   });
@@ -11411,11 +11636,11 @@ async function createUser(event) {
     email: newEmail.value.trim(),
     password: newPassword.value,
     role: newRole.value,
-    clientId: newRole.value === "CLIENT" ? document.getElementById("newClientId")?.value || null : null
+    clientId: isBoundOperationalRole(newRole.value) ? document.getElementById("newClientId")?.value || null : null
   };
 
-  if (payload.role === "CLIENT" && !payload.clientId) {
-    createUserError.textContent = "Los usuarios CLIENT requieren un cliente asignado.";
+  if (isBoundOperationalRole(payload.role) && !payload.clientId) {
+    createUserError.textContent = "Los usuarios SUPERVISOR, OPERATOR y CLIENT requieren un cliente asignado.";
     createUserBtn.disabled = false;
     return;
   }
@@ -11800,7 +12025,7 @@ async function scanCode(event) {
 
     // authenticatedFetch solo devuelve null en 401 (logout real por token).
     if (!response) {
-      setScanResult("Sesión no válida. Vuelve a iniciar sesión.", "error");
+      setScanResult(awaitingAdminClient ? "Selecciona un cliente antes de operar." : "No se pudo completar el picking.", "error");
       resetPickingFlow();
       return;
     }
@@ -11895,6 +12120,8 @@ async function validateSession() {
       : user.clientId
         ? { id: user.clientId }
         : null;
+    operationalClient = user.operationalClient || (isBoundOperationalRole(currentRole) ? currentUserClient : null);
+    awaitingAdminClient = currentRole === "ADMIN" && !operationalClient;
     applyRoleNavigation(currentRole);
     applyEconomicVisibility();
     void initLabResetAvailability();
@@ -11909,19 +12136,16 @@ async function validateSession() {
     currentUserRoleText.textContent = currentRole;
     if (scanHint) scanHint.textContent = "";
     wireHashModuleNavigation();
-    applySessionRoute();
-    await loadUsersModule(currentRole);
-    await loadCatalogData();
-    await loadRealClientsQuiet().catch(() => {});
-    updateInventoryScopeUi();
-    if (currentRole === "ADMIN" || currentRole === "OPERATOR" || currentRole === "SUPERVISOR") {
-      await loadStockStrip();
-      await loadInventoryMovements();
-      await loadScanEvents();
-    } else if (scanEventsList) {
-      scanEventsList.innerHTML =
-        '<p class="subtitle" style="margin:0">El historial de picking no aplica a tu rol.</p>';
+    updateActiveClientChrome();
+    if (awaitingAdminClient) {
+      applySessionRoute();
+      await showAdminClientPicker();
+      await loadUsersModule(currentRole);
+      return;
     }
+    hideAdminClientPicker();
+    applySessionRoute();
+    await loadOperationalWorkspace();
   } catch (_error) {
     if (statusBox) statusBox.innerHTML = '<span class="error">Error de red validando sesion.</span>';
     if (currentUserEmail) currentUserEmail.textContent = "No disponible";
@@ -13012,7 +13236,7 @@ document.getElementById("importUploadBtn")?.addEventListener("click", () => {
     body.append("inventoryMode", document.getElementById("importInventoryMode")?.value || "APPEND");
     const priceCurrency = document.getElementById("importPriceCurrency")?.value;
     if (priceCurrency) body.append("priceCurrency", priceCurrency);
-    const authToken = localStorage.getItem("token");
+    const authToken = currentAccessToken();
     const response = await fetch("/api/imports/upload", {
       method: "POST",
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
@@ -13287,7 +13511,7 @@ syncImportWizardUi();
 
 createUserForm.addEventListener("submit", createUser);
 newRole?.addEventListener("change", () => {
-  document.getElementById("newClientField")?.classList.toggle("hidden", newRole.value !== "CLIENT");
+  document.getElementById("newClientField")?.classList.toggle("hidden", !isBoundOperationalRole(newRole.value));
 });
 if (createCustomerForm) createCustomerForm.addEventListener("submit", createCustomer);
 document.querySelectorAll("[data-master-create]").forEach((btn) => {
@@ -13511,4 +13735,29 @@ setInterval(updateAppDateTime, 60000);
 if (importResult) wireOperationalMessageClicks(importResult);
 if (catalogImportResult) wireOperationalMessageClicks(catalogImportResult);
 void loadEnvironmentBadge();
+clientContextSearch?.addEventListener("input", () => {
+  renderClientContextCards(clientContextSearch.value);
+});
+clientContextAddBtn?.addEventListener("click", () => {
+  setAdminClientGateVisible(false);
+  navigateTo("inventario", "clients");
+});
+clientContextCards?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const enterId = target.getAttribute("data-enter-client");
+  if (enterId) {
+    void selectOperationalClient(enterId);
+    return;
+  }
+  const manageId = target.getAttribute("data-manage-client");
+  if (manageId) {
+    setAdminClientGateVisible(false);
+    navigateTo("inventario", "clients");
+  }
+});
+changeClientBtn?.addEventListener("click", () => {
+  if (operationalClient) void clearAdminOperationalClient();
+  else void showAdminClientPicker();
+});
 validateSession();

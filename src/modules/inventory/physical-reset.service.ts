@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
-import { logActivity } from "../activity/activity-log.service.js";
+import { logClientActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
 
 export const PHYSICAL_RESET_CONFIRMATION = "BORRAR INVENTARIO";
@@ -51,36 +51,34 @@ function decimalText(value: Prisma.Decimal | null | undefined): string {
 
 export async function applyPhysicalInventoryPurge(
   tx: Prisma.TransactionClient,
-  actor: { userId: string }
+  actor: { userId: string; clientId: string }
 ): Promise<PhysicalResetResult> {
-  const [qtyAgg, reservedAgg, inventoryCount, layerCount, serialCount, reservationCount, stockCount] = await Promise.all([
-    tx.inventory.aggregate({ _sum: { qty: true } }),
-    tx.inventory.aggregate({ _sum: { reservedQty: true } }),
-    tx.inventory.count(),
-    tx.inventoryLayer.count(),
-    tx.inventorySerial.count(),
-    tx.inventoryReservation.count(),
-    tx.inventoryStock.count()
+  const clientWhere = { clientId: actor.clientId };
+  const [qtyAgg, reservedAgg, inventoryCount, layerCount, serialCount, reservationCount] = await Promise.all([
+    tx.inventory.aggregate({ where: clientWhere, _sum: { qty: true } }),
+    tx.inventory.aggregate({ where: clientWhere, _sum: { reservedQty: true } }),
+    tx.inventory.count({ where: clientWhere }),
+    tx.inventoryLayer.count({ where: { inventory: clientWhere } }),
+    tx.inventorySerial.count({ where: clientWhere }),
+    tx.inventoryReservation.count({ where: { inventory: clientWhere } })
   ]);
 
-  const alreadyEmpty =
-    inventoryCount === 0 && layerCount === 0 && serialCount === 0 && reservationCount === 0 && stockCount === 0;
+  const alreadyEmpty = inventoryCount === 0 && layerCount === 0 && serialCount === 0 && reservationCount === 0;
 
-  const reservations = await tx.inventoryReservation.deleteMany();
-  const serials = await tx.inventorySerial.deleteMany();
-  const layers = await tx.inventoryLayer.deleteMany();
-  const inventories = await tx.inventory.deleteMany();
-  const stock = await tx.inventoryStock.deleteMany();
+  const reservations = await tx.inventoryReservation.deleteMany({ where: { inventory: clientWhere } });
+  const serials = await tx.inventorySerial.deleteMany({ where: clientWhere });
+  const layers = await tx.inventoryLayer.deleteMany({ where: { inventory: clientWhere } });
+  const inventories = await tx.inventory.deleteMany({ where: clientWhere });
+  const stock = { count: 0 };
 
-  const [afterInventory, afterLayers, afterSerials, afterReservations, afterStock] = await Promise.all([
-    tx.inventory.count(),
-    tx.inventoryLayer.count(),
-    tx.inventorySerial.count(),
-    tx.inventoryReservation.count(),
-    tx.inventoryStock.count()
+  const [afterInventory, afterLayers, afterSerials, afterReservations] = await Promise.all([
+    tx.inventory.count({ where: clientWhere }),
+    tx.inventoryLayer.count({ where: { inventory: clientWhere } }),
+    tx.inventorySerial.count({ where: clientWhere }),
+    tx.inventoryReservation.count({ where: { inventory: clientWhere } })
   ]);
 
-  if (afterInventory !== 0 || afterLayers !== 0 || afterSerials !== 0 || afterReservations !== 0 || afterStock !== 0) {
+  if (afterInventory !== 0 || afterLayers !== 0 || afterSerials !== 0 || afterReservations !== 0) {
     throw new HttpError(500, "El inventario operativo no quedó vacío. Se revirtió la operación.");
   }
 
@@ -103,12 +101,13 @@ export async function applyPhysicalInventoryPurge(
     alreadyZero: false
   };
 
-  await logActivity(
+  await logClientActivity(
     {
       type: "INVENTORY",
       subtype: "PHYSICAL_RESET",
       reference: "physical-inventory-reset",
       userId: actor.userId,
+      clientId: actor.clientId,
       qty: result.qtyCleared,
       result: result.result,
       metadata: {
@@ -132,13 +131,13 @@ export async function applyPhysicalInventoryPurge(
 /** @deprecated Use applyPhysicalInventoryPurge. Kept so existing callers keep compiling during the cutover. */
 export async function applyPhysicalInventoryZero(
   tx: Prisma.TransactionClient,
-  actor: { userId: string }
+  actor: { userId: string; clientId: string }
 ): Promise<PhysicalResetResult> {
   return applyPhysicalInventoryPurge(tx, actor);
 }
 
 export async function executePhysicalInventoryReset(
-  actor: { userId: string },
+  actor: { userId: string; clientId: string },
   db: PhysicalResetDb = prisma
 ): Promise<PhysicalResetResult> {
   if (physicalResetInFlight) {

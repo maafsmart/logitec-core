@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
-import { clientTaskWhere, isClientRole } from "../clients/client-scope.js";
+import { clientTaskWhere, requireOperationalClient } from "../clients/client-scope.js";
 
 const tasksRouter = Router();
 
@@ -30,18 +30,19 @@ const updateTaskSchema = z.object({
 });
 
 tasksRouter.use(requireAuth);
+tasksRouter.use(requireOperationalClient);
 
 tasksRouter.get("/", async (req, res) => {
-  const role = req.auth!.role;
   const userId = req.auth!.userId;
-
-  const where = isClientRole(req.auth!)
-    ? clientTaskWhere(req.auth!)
-    : role === "ADMIN" || role === "SUPERVISOR"
-      ? {}
-      : {
-          OR: [{ assignedToId: userId }, { createdById: userId }]
-        };
+  const where =
+    req.auth!.role === "OPERATOR"
+      ? {
+          AND: [
+            clientTaskWhere({ ...req.auth!, userId }),
+            { OR: [{ assignedToId: userId }, { createdById: userId }] }
+          ]
+        }
+      : clientTaskWhere({ ...req.auth!, userId });
 
   const tasks = await prisma.task.findMany({
     where,

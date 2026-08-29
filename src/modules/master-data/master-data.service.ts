@@ -519,7 +519,7 @@ export async function createLocationRecord(db: MasterDataDb, input: LocationWrit
   const warehouse = warehouseRow.code;
   const code = composeLocationCode({ ...input, warehouse });
   const duplicate = await db.location.findFirst({
-    where: { OR: [{ code }, { warehouseId: warehouseRow.id, code }] }
+    where: { warehouseId: warehouseRow.id, code }
   });
   if (duplicate) {
     conflict(MASTER_DEACTIVATE_CODES.DUPLICATE_CODE, `Ya existe una ubicación con código ${code}.`);
@@ -578,7 +578,7 @@ export async function updateLocationRecord(db: MasterDataDb, id: string, input: 
       : existing.code;
   if (code !== existing.code || warehouseRow.id !== existing.warehouseId) {
     const duplicate = await db.location.findFirst({
-      where: { AND: [{ OR: [{ code }, { warehouseId: warehouseRow.id, code }] }, { id: { not: id } }] }
+      where: { AND: [{ warehouseId: warehouseRow.id, code }, { id: { not: id } }] }
     });
     if (duplicate) conflict(MASTER_DEACTIVATE_CODES.DUPLICATE_CODE, `Ya existe una ubicación con código ${code}.`);
   }

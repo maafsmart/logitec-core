@@ -2,9 +2,9 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
-import { logActivity } from "../activity/activity-log.service.js";
+import { logClientActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
-import { clientCustomerWhere, clientInventoryWhere, clientProductWhere, isClientRole } from "../clients/client-scope.js";
+import { clientCustomerWhere, clientInventoryWhere, clientProductWhere, isClientRole, requireOperationalClient } from "../clients/client-scope.js";
 import {
   MASTER_DEACTIVATE_CODES,
   createProjectRecord,
@@ -126,6 +126,7 @@ function normalizeCustomerCode(nameOrCode: string): string {
 }
 
 catalogRouter.use(requireAuth);
+catalogRouter.use(requireOperationalClient);
 
 catalogRouter.get("/products/search", async (req, res) => {
   const query = z.string().trim().min(1).max(160).parse(req.query.q);
@@ -135,8 +136,7 @@ catalogRouter.get("/products/search", async (req, res) => {
 
 catalogRouter.get("/products/:id/context", async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
-  const clientId = z.string().min(1).optional().parse(req.query.clientId);
-  res.json(await getSkuContext(id, req.auth!, clientId));
+  res.json(await getSkuContext(id, req.auth!));
 });
 
 catalogRouter.get("/products", async (req, res) => {
@@ -145,8 +145,12 @@ catalogRouter.get("/products", async (req, res) => {
     orderBy: { createdAt: "desc" },
     take: 400,
     include: {
-      customer: {
-        select: { code: true, name: true }
+      productProjects: {
+        where: { active: true },
+        select: {
+          projectId: true,
+          project: { select: { id: true, code: true, name: true } }
+        }
       }
     }
   });
@@ -195,8 +199,8 @@ catalogRouter.post("/products", requireRole(["ADMIN"]), async (req, res) => {
   const data = createProductSchema.parse(req.body);
   let customerId: string | null = null;
   if (data.customerCode?.trim()) {
-    const customer = await prisma.customer.findUnique({
-      where: { code: data.customerCode.trim().toUpperCase() }
+    const customer = await prisma.customer.findFirst({
+      where: { code: data.customerCode.trim().toUpperCase(), clientId: req.auth!.operationalClientId! }
     });
     if (!customer) {
       throw new HttpError(400, `Customer no existe: ${data.customerCode}`);
@@ -217,13 +221,14 @@ catalogRouter.post("/products", requireRole(["ADMIN"]), async (req, res) => {
     }
   });
   await ensureCanonicalProductProject(prisma, product.id, product.customerId);
-  await logActivity({
+  await logClientActivity({
     type: "PRODUCT_CREATE",
     subtype: "MANUAL",
     reference: product.sku,
     userId: req.auth!.userId,
     productId: product.id,
     customerId: product.customerId,
+    clientId: req.auth!.operationalClientId!,
     warehouse: product.warehouse,
     metadata: { sku: product.sku, barcode: product.barcode }
   });
@@ -244,7 +249,10 @@ catalogRouter.get("/customers", async (req, res) => {
 
 catalogRouter.post("/customers", requireRole(["ADMIN"]), async (req, res) => {
   const data = createCustomerSchema.parse(req.body);
-  const customer = await createProjectRecord(prisma as never, data);
+  const customer = await createProjectRecord(prisma as never, {
+    ...data,
+    clientId: req.auth!.operationalClientId!
+  });
   res.status(201).json(customer);
 });
 
@@ -433,11 +441,12 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
   }
 
   if (mode === "apply") {
-    await logActivity({
+    await logClientActivity({
       type: "IMPORT",
       subtype: "CSV_CATALOG",
       reference: "catalog_bulk",
       userId: req.auth!.userId,
+      clientId: req.auth!.operationalClientId!,
       metadata: {
         created,
         updated,

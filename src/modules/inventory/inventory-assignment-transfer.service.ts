@@ -336,7 +336,7 @@ export async function transferAssignment(input: AssignmentTransferInput) {
           reference: input.reference ?? source.product.sku,
           userId: input.userId,
           productId: source.productId,
-          customerId: destinationAssignment.projectId ?? sourceAssignment.projectId ?? source.product.customerId,
+          customerId: destinationAssignment.projectId ?? sourceAssignment.projectId ?? null,
           clientId: source.clientId,
           warehouse: source.location.warehouse,
           location: source.location.code,

@@ -17,7 +17,7 @@ export type LogActivityInput = {
   taskId?: string | null;
 };
 
-export async function logActivity(input: LogActivityInput, tx?: Prisma.TransactionClient): Promise<void> {
+async function writeActivity(input: LogActivityInput, tx?: Prisma.TransactionClient): Promise<void> {
   let qty: Prisma.Decimal | null = null;
   if (input.qty !== undefined && input.qty !== null) {
     qty = new Prisma.Decimal(String(input.qty));
@@ -41,4 +41,25 @@ export async function logActivity(input: LogActivityInput, tx?: Prisma.Transacti
     data.metadata = input.metadata;
   }
   await (tx ?? prisma).activityLog.create({ data });
+}
+
+/** Operational activity. Always stores the owning client. */
+export async function logClientActivity(
+  input: LogActivityInput & { clientId: string },
+  tx?: Prisma.TransactionClient
+): Promise<void> {
+  await writeActivity(input, tx);
+}
+
+/** Truly global ADMIN activity (create client, manage users). Never appears in client traceability. */
+export async function logGlobalAdminActivity(
+  input: Omit<LogActivityInput, "clientId"> & { clientId?: null },
+  tx?: Prisma.TransactionClient
+): Promise<void> {
+  await writeActivity({ ...input, clientId: null }, tx);
+}
+
+/** @deprecated Prefer logClientActivity or logGlobalAdminActivity. */
+export async function logActivity(input: LogActivityInput, tx?: Prisma.TransactionClient): Promise<void> {
+  await writeActivity(input, tx);
 }

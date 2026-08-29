@@ -360,7 +360,7 @@ export async function executeInventoryImportBulk(input: {
           reference: row.sku,
           userId: input.userId,
           productId: row.productId,
-          customerId: product.customerId,
+          customerId: row.assignment.projectId,
           clientId: row.assignment.clientId,
           warehouse: location.warehouse,
           location: location.code,

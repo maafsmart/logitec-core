@@ -395,7 +395,7 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
       {
         ...input.activity,
         productId: input.productId,
-        customerId: inventory.product.customerId,
+        customerId: inventory.projectId,
         clientId: assignment.clientId,
         warehouse: inventory.location.warehouse,
         location: inventory.location.code,
@@ -550,7 +550,7 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
         {
           ...input.activity,
           productId: input.productId,
-          customerId: sourceReloaded.product.customerId,
+          customerId: sourceReloaded.projectId,
           clientId: sourceAssignment.clientId,
           warehouse: sourceReloaded.location.warehouse,
           location: `${sourceReloaded.location.code} → ${destReloaded.location.code}`,
@@ -625,7 +625,7 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
       {
         ...input.activity,
         productId: input.productId,
-        customerId: sourceFresh.product.customerId,
+        customerId: sourceFresh.projectId,
         clientId: sourceAssignment.clientId,
         warehouse: sourceFresh.location.warehouse,
         location: `${sourceFresh.location.code} → ${destFresh.location.code}`,
@@ -710,7 +710,7 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
       {
         ...input.activity,
         productId: input.productId,
-        customerId: inventory.product.customerId,
+        customerId: inventory.projectId,
         clientId: inventory.clientId,
         warehouse: inventory.location.warehouse,
         location: inventory.location.code,
@@ -766,7 +766,7 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
     {
       ...input.activity,
       productId: input.productId,
-      customerId: inventory.product.customerId,
+      customerId: inventory.projectId,
       clientId: inventory.clientId,
       warehouse: inventory.location.warehouse,
       location: inventory.location.code,

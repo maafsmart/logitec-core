@@ -5,7 +5,8 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import {
   clientProductWhere,
-  isClientRole,
+  clientRequisitionWhere,
+  requireOperationalClient,
   scopedInventoryWhere,
   scopedMovementWhere
 } from "../clients/client-scope.js";
@@ -25,13 +26,13 @@ function toCsv(headers: string[], rows: Array<Array<unknown>>): string {
 }
 
 exportsRouter.use(requireAuth);
+exportsRouter.use(requireOperationalClient);
 
 exportsRouter.get("/inventory.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"]), async (req, res) => {
-  const clientId = z.string().min(1).optional().parse(req.query.clientId);
   const rows = await prisma.inventory.findMany({
-    where: scopedInventoryWhere(req.auth!, clientId),
+    where: scopedInventoryWhere(req.auth!),
     include: {
-      product: { include: { customer: { include: { client: true } } } },
+      product: { select: { sku: true, name: true } },
       location: true,
       client: true,
       project: { include: { client: true } },
@@ -46,7 +47,7 @@ exportsRouter.get("/inventory.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATO
       r.client?.tradeName || r.client?.name || r.project?.client?.tradeName || r.project?.client?.name || "",
       r.assignmentType === "FREE_TO_SALE"
         ? "FREE TO SALE"
-        : r.project?.code || r.product.customer?.code || r.assignmentKey,
+        : r.project?.code || r.assignmentKey,
       r.product.sku,
       r.product.name,
       r.location.code,
@@ -85,7 +86,7 @@ exportsRouter.get("/movements.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATO
   const rows = await prisma.inventoryMovement.findMany({
     where: {
       AND: [
-        scopedMovementWhere(req.auth!, query.clientId),
+        scopedMovementWhere(req.auth!),
         ...(Object.keys(createdAt).length ? [{ createdAt }] : []),
         ...(query.sku ? [{ product: { sku: { equals: query.sku, mode: "insensitive" as const } } }] : []),
         ...(query.movementType
@@ -94,8 +95,10 @@ exportsRouter.get("/movements.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATO
       ]
     },
     include: {
-      product: { include: { customer: { include: { client: true } } } },
+      product: { select: { sku: true, name: true } },
       client: true,
+      fromProject: { select: { code: true } },
+      toProject: { select: { code: true } },
       fromLocation: true,
       toLocation: true,
       user: true,
@@ -110,7 +113,9 @@ exportsRouter.get("/movements.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATO
     rows.map((r) => [
       r.createdAt.toISOString(),
       r.client?.tradeName || r.client?.name || "",
-      r.product.customer?.code || "",
+      r.toAssignmentType === "FREE_TO_SALE" || r.fromAssignmentType === "FREE_TO_SALE"
+        ? "FREE TO SALE"
+        : r.toProject?.code || r.fromProject?.code || "",
       r.product.sku,
       r.movementType,
       r.qty.toString(),
@@ -131,11 +136,8 @@ exportsRouter.get("/movements.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATO
 });
 
 exportsRouter.get("/requisitions.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
-  if (isClientRole(req.auth!)) {
-    res.status(403).json({ message: "CLIENT no exporta requisiciones administrativas." });
-    return;
-  }
   const rows = await prisma.requisition.findMany({
+    where: clientRequisitionWhere(req.auth!),
     include: {
       project: { include: { client: true } },
       lines: { include: { product: true } },
@@ -172,7 +174,6 @@ exportsRouter.get("/requisitions.csv", requireRole(["ADMIN", "SUPERVISOR", "OPER
 exportsRouter.get("/products.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"]), async (req, res) => {
   const rows = await prisma.product.findMany({
     where: clientProductWhere(req.auth!),
-    include: { customer: { include: { client: true } } },
     orderBy: { createdAt: "desc" },
     take: 20000
   });
@@ -184,8 +185,8 @@ exportsRouter.get("/products.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
       r.name,
       r.description || "",
       r.unit,
-      r.customer?.code || "",
-      r.customer?.client?.tradeName || r.customer?.client?.name || "",
+      "",
+      "",
       r.serialControlled,
       r.lotControlled,
       r.warehouse
@@ -197,11 +198,10 @@ exportsRouter.get("/products.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
 });
 
 exportsRouter.get("/inventory.xlsx", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"]), async (req, res) => {
-  const clientId = z.string().min(1).optional().parse(req.query.clientId);
   const inventories = await prisma.inventory.findMany({
-    where: scopedInventoryWhere(req.auth!, clientId),
+    where: scopedInventoryWhere(req.auth!),
     include: {
-      product: { include: { customer: { include: { client: true } } } },
+      product: { select: { sku: true, name: true } },
       location: true,
       client: true,
       project: { include: { client: true } },
@@ -210,10 +210,12 @@ exportsRouter.get("/inventory.xlsx", requireRole(["ADMIN", "SUPERVISOR", "OPERAT
     take: 20000
   });
   const movements = await prisma.inventoryMovement.findMany({
-    where: scopedMovementWhere(req.auth!, clientId),
+    where: scopedMovementWhere(req.auth!),
     include: {
-      product: { include: { customer: { include: { client: true } } } },
+      product: { select: { sku: true, name: true } },
       client: true,
+      fromProject: { select: { code: true } },
+      toProject: { select: { code: true } },
       fromLocation: true,
       toLocation: true,
       user: true,
@@ -235,7 +237,7 @@ exportsRouter.get("/inventory.xlsx", requireRole(["ADMIN", "SUPERVISOR", "OPERAT
     const project =
       inv.assignmentType === "FREE_TO_SALE"
         ? "FREE TO SALE"
-        : inv.project?.code || inv.product.customer?.code || inv.assignmentKey;
+        : inv.project?.code || inv.assignmentKey;
     const key = `${client}|${project}`;
     const current = summaryMap.get(key) || { client, project, qty: 0, reserved: 0, mxn: 0, usd: 0, missing: 0 };
     current.qty += Number(inv.qty);
@@ -298,8 +300,11 @@ exportsRouter.get("/inventory.xlsx", requireRole(["ADMIN", "SUPERVISOR", "OPERAT
     XLSX.utils.json_to_sheet(
       movements.map((m) => ({
         Fecha: m.createdAt.toISOString(),
-        Cliente: m.product.customer?.client?.tradeName || m.product.customer?.client?.name || "",
-        Proyecto: m.product.customer?.code || "",
+        Cliente: m.client?.tradeName || m.client?.name || "",
+        Proyecto:
+          m.toAssignmentType === "FREE_TO_SALE" || m.fromAssignmentType === "FREE_TO_SALE"
+            ? "FREE TO SALE"
+            : m.toProject?.code || m.fromProject?.code || "",
         SKU: m.product.sku,
         Tipo: m.movementType,
         Qty: Number(m.qty),

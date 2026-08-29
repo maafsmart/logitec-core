@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { HttpError } from "../src/shared/http-error.js";
 import {
-  adminClientMovementFilter,
   clientActivityWhere,
   clientCustomerWhere,
   clientInventoryWhere,
@@ -125,15 +124,25 @@ function makeDb() {
         locations.find((row) => row.id === where.id || row.code === where.code) || null,
       findFirst: async ({ where }: any) =>
         locations.find((row) => {
+          if (where?.AND) {
+            const parts = Array.isArray(where.AND) ? where.AND : [where.AND];
+            const combined = Object.assign({}, ...parts);
+            if (combined.warehouseId && combined.code) {
+              if (combined.id?.not && row.id === combined.id.not) return false;
+              return row.warehouseId === combined.warehouseId && row.code === combined.code;
+            }
+          }
+          if (where?.warehouseId && where?.code) {
+            if (where.id?.not && row.id === where.id.not) return false;
+            return row.warehouseId === where.warehouseId && row.code === where.code;
+          }
           if (where?.OR) {
             return where.OR.some(
               (clause: any) =>
-                (clause.code && row.code === clause.code) ||
-                (clause.warehouseId && clause.code && row.warehouseId === clause.warehouseId && row.code === clause.code)
+                clause.warehouseId && clause.code && row.warehouseId === clause.warehouseId && row.code === clause.code
             );
           }
           if (where?.id) return row.id === where.id;
-          if (where?.code) return row.code === where.code;
           return false;
         }) || null,
       create: async ({ data }: any) => {
@@ -175,7 +184,7 @@ test("CLIENT no autoriza inventario ni movimientos con product.customer", () => 
   assert.equal(inventoryWhere.includes("assignmentType"), false);
   assert.deepEqual(clientCustomerWhere(aviatAuth), { clientId: "client-aviat" });
   assert.deepEqual(clientRequisitionWhere(aviatAuth), { project: { clientId: "client-aviat" } });
-  assert.ok(clientTaskWhere(aviatAuth).requisition);
+  assert.ok(Array.isArray(clientTaskWhere(aviatAuth).OR));
   assert.deepEqual(clientScanWhere(aviatAuth), { clientId: "client-aviat" });
   assert.deepEqual(clientSerialWhere(aviatAuth), { clientId: "client-aviat" });
   assert.deepEqual(clientActivityWhere(aviatAuth), { clientId: "client-aviat" });
@@ -184,8 +193,9 @@ test("CLIENT no autoriza inventario ni movimientos con product.customer", () => 
 test("cambiar clientId en query no amplía el alcance CLIENT", () => {
   assert.equal(effectiveRequestedClientId(aviatAuth, "client-2"), undefined);
   assert.equal(effectiveRequestedClientId(aviatAuth, "client-aviat"), undefined);
-  assert.equal(effectiveRequestedClientId(adminAuth, "client-2"), "client-2");
-  const adminFilter = JSON.stringify(adminClientMovementFilter("client-2"));
+  assert.equal(effectiveRequestedClientId(adminAuth, "client-2"), undefined);
+  const adminAviat = { role: "ADMIN" as const, clientId: null, operationalClientId: "client-2" };
+  const adminFilter = JSON.stringify(clientMovementWhere(adminAviat));
   assert.equal(adminFilter.includes('"customer":{"clientId"'), false);
   assert.match(adminFilter, /"clientId":"client-2"/);
 });
@@ -240,6 +250,11 @@ test("catálogos de almacén y ubicación, duplicado y bloqueo con inventario", 
     () => createLocationRecord(db as never, { warehouse: "TULTITLAN24", code: "AN22-A" }),
     (error: unknown) => error instanceof HttpError && error.code === MASTER_DEACTIVATE_CODES.DUPLICATE_CODE
   );
+  const warehouseB = await createWarehouseRecord(db as never, { code: "TULTITLAN25", name: "Tultitlán 25" });
+  const locationB = await createLocationRecord(db as never, { warehouse: "TULTITLAN25", code: "AN22-A" });
+  assert.equal(locationB.code, "AN22-A");
+  assert.equal(locationB.warehouseId, warehouseB.id);
+  assert.notEqual(locationB.warehouseId, location.warehouseId);
   db._setInventory(4);
   await assert.rejects(
     () => setLocationActive(db as never, location.id, false),
@@ -257,11 +272,11 @@ test("catálogos de almacén y ubicación, duplicado y bloqueo con inventario", 
 
 test("rutas CLIENT auditadas quedan protegidas en servidor", () => {
   assert.match(inventorySrc, /clientInventoryWhere/);
-  assert.match(inventorySrc, /effectiveRequestedClientId/);
+  assert.match(inventorySrc, /requireOperationalClient/);
   assert.doesNotMatch(inventorySrc, /product:\s*\{\s*customer:\s*\{\s*clientId: query\.clientId/);
   assert.match(catalogSrc, /createProjectRecord/);
   assert.match(catalogSrc, /clientCustomerWhere/);
-  assert.match(clientsSrc, /scopedClientId/);
+  assert.match(clientsSrc, /isClientScopedRole/);
   assert.match(requisitionsSrc, /CLIENT/);
   assert.match(requisitionsSrc, /clientRequisitionWhere/);
   assert.match(requisitionsSrc, /assertAccessibleRequisition/);
@@ -272,8 +287,8 @@ test("rutas CLIENT auditadas quedan protegidas en servidor", () => {
   assert.match(exportsSrc, /scopedMovementWhere/);
   assert.match(exportsSrc, /clientProductWhere/);
   assert.match(appSrc, /\/api\/warehouses/);
-  assert.match(usersSrc, /Los usuarios CLIENT requieren un cliente asignado/);
-  assert.match(skuSearchSrc, /isClientRole\(auth\)/);
+  assert.match(usersSrc, /requieren un cliente asignado/);
+  assert.match(skuSearchSrc, /operationalClientId\(auth\)/);
   assert.match(catalogSrc, /PHYSICAL_DELETE_DISABLED/);
 });
 
@@ -286,9 +301,9 @@ test("Crear producto manual no crea inventario ficticio", () => {
   assert.doesNotMatch(block, /qty:\s*1/);
 });
 
-test("frontend Clientes, catálogos y cache-buster v=81", () => {
-  assert.match(html, /dashboard\.js\?v=81/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=79/);
+test("frontend Clientes, catálogos y cache-buster v=82", () => {
+  assert.match(html, /dashboard\.js\?v=82/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=81/);
   assert.match(html, /id="btnClients"/);
   assert.match(html, /data-inv-master-tab="clients"/);
   assert.match(html, /id="clientsAddBtn"/);
@@ -299,17 +314,22 @@ test("frontend Clientes, catálogos y cache-buster v=81", () => {
   assert.match(html, /id="masterDataModal"/);
   assert.match(html, /id="inboundClientField"/);
   assert.match(html, /class="js-inventory-client-select"/);
+  assert.match(html, /id="clientContextGate"/);
+  assert.match(html, /Seleccionar cliente/);
   assert.match(js, /CLIENT: "inventory"/);
   assert.match(js, /openClientForm/);
   assert.match(js, /openProjectForm/);
   assert.match(js, /loadWarehousesModule/);
   assert.match(js, /loadLocationsModule/);
   assert.match(js, /Todos los proyectos de mi cliente/);
-  assert.match(js, /Los usuarios CLIENT requieren un cliente asignado/);
+  assert.match(js, /SUPERVISOR, OPERATOR y CLIENT requieren un cliente asignado/);
   assert.match(js, /owningClientDisplayName/);
   assert.match(js, /inboundSelectedOwnerClientId/);
   assert.match(js, /payload\.clientId = inboundSelectedOwnerClientId/);
+  assert.match(js, /clientContextEpoch/);
+  assert.match(js, /clearOperationalClientState/);
   assert.doesNotMatch(js, /btn\.style\.display = role === "CLIENT" \? "none"/);
+  assert.doesNotMatch(js, /Todos los clientes/);
 });
 
 test("cambiar cliente de proyecto con historial queda bloqueado", async () => {

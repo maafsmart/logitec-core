@@ -21,6 +21,7 @@ import { requisitionsRouter } from "./modules/requisitions/requisitions.routes.j
 import { tasksRouter } from "./modules/tasks/tasks.routes.js";
 import { traceabilityRouter } from "./modules/traceability/traceability.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
+import { errorHandler } from "./middlewares/error.middleware.js";
 
 export const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -61,3 +62,5 @@ app.use(express.static("public"));
 app.get(/^\/(?!api|health).*/, (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
+
+app.use(errorHandler);

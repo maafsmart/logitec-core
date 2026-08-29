@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
-import { requireNonClient } from "../clients/client-scope.js";
+import { requireNonClient, requireOperationalClient } from "../clients/client-scope.js";
 
 const incidentsRouter = Router();
 
@@ -28,6 +28,7 @@ const updateIncidentSchema = z.object({
 });
 
 incidentsRouter.use(requireAuth);
+incidentsRouter.use(requireOperationalClient);
 
 incidentsRouter.get("/", async (req, res) => {
   requireNonClient(req.auth!);

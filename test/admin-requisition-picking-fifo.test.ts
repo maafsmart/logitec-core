@@ -1256,7 +1256,7 @@ test("33 separación visual Picking de requisición / Picking libre", () => {
 });
 
 test("34 cache-buster v78", () => {
-  assert.match(html, /dashboard\.js\?v=81/);
+  assert.match(html, /dashboard\.js\?v=82/);
   assert.doesNotMatch(html, /dashboard\.js\?v=77/);
 });
 

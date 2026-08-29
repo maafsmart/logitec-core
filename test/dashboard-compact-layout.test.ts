@@ -99,8 +99,8 @@ test("densidad inicial es compact y hay migración versionada", () => {
   assert.match(html, /data-grid-density="compact"/);
 });
 
-test("dashboard.js usa v=81", () => {
-  assert.match(html, /dashboard\.js\?v=81/);
+test("dashboard.js usa v=82", () => {
+  assert.match(html, /dashboard\.js\?v=82/);
   assert.doesNotMatch(html, /dashboard\.js\?v=71/);
   assert.doesNotMatch(html, /dashboard\.js\?v=70/);
   assert.doesNotMatch(html, /dashboard\.js\?v=66/);

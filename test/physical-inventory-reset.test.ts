@@ -204,19 +204,19 @@ test("elimina físicamente existencias, incluidas qty=0, y conserva catálogos y
       { id: "ly-0", qty: d(0), reservedQty: d(0) }
     ]
   });
-  const first = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1" });
+  const first = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: "client-aviat" });
   assert.equal(first.result, "PURGED");
   assert.equal(first.alreadyZero, false);
   assert.equal(first.inventoriesPurged, 2);
   assert.equal(first.layersPurged, 2);
   assert.equal(first.serialsPurged, 1);
   assert.equal(first.reservationsPurged, 1);
-  assert.equal(first.legacyStockPurged, 1);
+  assert.equal(first.legacyStockPurged, 0);
   assert.equal(state.inventory.length, 0);
   assert.equal(state.layers.length, 0);
   assert.equal(state.serials.length, 0);
   assert.equal(state.reservations.length, 0);
-  assert.equal(state.stock.length, 0);
+  assert.equal(state.stock.length, 1);
   assert.equal(state.movements.length, 1);
   assert.equal(state.products.length, 1);
   assert.equal(state.locations.length, 1);
@@ -230,7 +230,7 @@ test("elimina físicamente existencias, incluidas qty=0, y conserva catálogos y
   assert.equal(state.logs[0]!.subtype, "PHYSICAL_RESET");
   assert.equal(state.logs[0]!.result, "PURGED");
 
-  const second = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1" });
+  const second = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: "client-aviat" });
   assert.equal(second.result, "PURGED");
   assert.equal(second.alreadyEmpty, true);
   assert.equal(second.inventoriesPurged, 0);
@@ -269,7 +269,7 @@ test("un fallo intermedio hace rollback y no deja seriales a medias", async () =
       }
     }
   };
-  await assert.rejects(() => executePhysicalInventoryReset({ userId: "admin-1" }, db as never), /audit-fail/);
+  await assert.rejects(() => executePhysicalInventoryReset({ userId: "admin-1", clientId: "client-aviat" }, db as never), /audit-fail/);
   assert.equal(state.inventory.length, 1);
   assert.equal(String(state.inventory[0]!.qty), "10");
   assert.equal(state.serials[0]!.serialNumber, "1659");
@@ -306,11 +306,11 @@ test("impide una segunda solicitud simultánea", async () => {
       };
     }
   };
-  const first = executePhysicalInventoryReset({ userId: "admin-1" }, db as never);
+  const first = executePhysicalInventoryReset({ userId: "admin-1", clientId: "client-aviat" }, db as never);
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(isPhysicalResetInFlight(), true);
   await assert.rejects(
-    () => executePhysicalInventoryReset({ userId: "admin-2" }, db as never),
+    () => executePhysicalInventoryReset({ userId: "admin-2", clientId: "client-aviat" }, db as never),
     (error: unknown) => error instanceof HttpError && error.statusCode === 409
   );
   release();
@@ -320,7 +320,7 @@ test("impide una segunda solicitud simultánea", async () => {
 
 test("después del reset los seriales de la carga borrada no bloquean una recarga", async () => {
   const { state, tx } = createFakeTx();
-  await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1" });
+  await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: "client-aviat" });
   const serialSet = new Set(state.serials.map((row) => row.serialNumber.toUpperCase()));
   assert.equal(serialSet.has("1659"), false);
   assert.equal(state.serials.length, 0);

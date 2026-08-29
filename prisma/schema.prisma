@@ -159,11 +159,11 @@ model ScanEvent {
   location    String?
   createdAt   DateTime @default(now())
   taskId      String?
-  clientId    String?
+  clientId    String
   user        User     @relation(fields: [userId], references: [id])
   product     Product? @relation(fields: [productId], references: [id])
   task        Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  client      Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
   @@index([userId, createdAt])
   @@index([scannedCode])
@@ -258,7 +258,7 @@ model Location {
   rack             String
   level            String
   position         String
-  code             String              @unique
+  code             String
   description      String?
   notes            String?
   active           Boolean             @default(true)

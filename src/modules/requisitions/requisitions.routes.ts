@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
-import { assertAccessibleRequisition, clientRequisitionWhere, isClientRole } from "../clients/client-scope.js";
+import { assertAccessibleRequisition, clientRequisitionWhere, requireOperationalClient } from "../clients/client-scope.js";
 import {
   RequisitionError,
   addRequisitionLine,
@@ -19,6 +19,7 @@ import {
 const requisitionsRouter = Router();
 
 requisitionsRouter.use(requireAuth);
+requisitionsRouter.use(requireOperationalClient);
 
 function mapError(res: import("express").Response, error: unknown) {
   if (error instanceof RequisitionError) {

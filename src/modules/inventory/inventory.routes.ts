@@ -13,8 +13,8 @@ import {
   clientMovementWhere,
   clientProductWhere,
   clientSerialWhere,
-  effectiveRequestedClientId,
   isClientRole,
+  requireOperationalClient,
   scopedInventoryWhere,
   scopedMovementWhere
 } from "../clients/client-scope.js";
@@ -68,7 +68,21 @@ function dec(n: string | number): Prisma.Decimal {
   return new Prisma.Decimal(String(n));
 }
 
+async function resolveLocationByCode(code: string, warehouse?: string | null) {
+  const normalized = code.trim().toUpperCase();
+  const warehouseCode = warehouse?.trim().toUpperCase() || "";
+  if (warehouseCode) {
+    return prisma.location.findFirst({ where: { code: normalized, warehouse: warehouseCode } });
+  }
+  const matches = await prisma.location.findMany({ where: { code: normalized }, take: 2 });
+  if (matches.length > 1) {
+    throw new HttpError(409, "Hay varias ubicaciones con ese código. Indica el almacén.", "AMBIGUOUS_LOCATION");
+  }
+  return matches[0] || null;
+}
+
 inventoryRouter.use(requireAuth);
+inventoryRouter.use(requireOperationalClient);
 
 inventoryRouter.get("/statuses", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (_req, res) => {
   res.json(await prisma.inventoryStatusDefinition.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }));
@@ -77,10 +91,10 @@ inventoryRouter.get("/statuses", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR",
 inventoryRouter.get("/summary", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   const scope = inventoryScopeQuerySchema.parse(req.query);
   const inventoryWhere: Prisma.InventoryWhereInput = {
-    AND: [scopedInventoryWhere(req.auth!, scope.clientId), inventoryScopeWhere(scope), { qty: { gt: 0 } }]
+    AND: [scopedInventoryWhere(req.auth!), inventoryScopeWhere(scope), { qty: { gt: 0 } }]
   };
   const movementWhere: Prisma.InventoryMovementWhereInput = {
-    AND: [scopedMovementWhere(req.auth!, scope.clientId), movementScopeWhere(scope)]
+    AND: [scopedMovementWhere(req.auth!), movementScopeWhere(scope)]
   };
   const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
   const [cubes, qtyAgg, productIds, locationIds, projectIds, movements, catalogProducts, layers, serials, activeReservations, layersForValuation] = await Promise.all([
@@ -98,11 +112,11 @@ inventoryRouter.get("/summary", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", 
     prisma.inventoryMovement.count({ where: movementWhere }),
     prisma.product.count({ where: clientProductWhere(req.auth!) }),
     prisma.inventoryLayer.count({
-      where: { AND: [clientLayerWhere(req.auth!), { qty: { gt: 0 } }] }
+      where: { AND: [{ qty: { gt: 0 } }, { inventory: inventoryWhere }] }
     }),
     prisma.inventorySerial.count({ where: clientSerialWhere(req.auth!) }),
     prisma.inventoryReservation.count({
-      where: { AND: [{ status: "ACTIVE" }, { inventory: clientInventoryWhere(req.auth!) }] }
+      where: { AND: [{ status: "ACTIVE" }, { inventory: inventoryWhere }] }
     }),
     exposeEconomic
       ? prisma.inventoryLayer.findMany({
@@ -134,7 +148,7 @@ inventoryRouter.get("/projects", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR",
     by: ["projectId"],
     where: {
       AND: [
-        scopedInventoryWhere(req.auth!, scope.clientId),
+        scopedInventoryWhere(req.auth!),
         { assignmentType: "PROJECT", projectId: { not: null }, qty: { gt: 0 } }
       ]
     },
@@ -154,7 +168,7 @@ inventoryRouter.get("/projects", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR",
     ? await prisma.inventory.findMany({
         where: {
           AND: [
-            scopedInventoryWhere(req.auth!, scope.clientId),
+            scopedInventoryWhere(req.auth!),
             { assignmentType: "PROJECT", projectId: { in: ids }, qty: { gt: 0 } }
           ]
         },
@@ -390,7 +404,7 @@ inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "C
   const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
   const rows = await prisma.inventory.findMany({
     where: {
-      AND: [scopedInventoryWhere(req.auth!, scope.clientId), inventoryScopeWhere(scope), { qty: { gt: 0 } }]
+      AND: [scopedInventoryWhere(req.auth!), inventoryScopeWhere(scope), { qty: { gt: 0 } }]
     },
     orderBy: [{ location: { warehouse: "asc" } }, { updatedAt: "desc" }],
     take: 20000,
@@ -443,9 +457,9 @@ inventoryRouter.get("/locations", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
   const rows = await prisma.location.findMany({
     where: {
       AND: [
-        isClientRole(req.auth!)
-          ? { inventories: { some: clientInventoryWhere(req.auth!) } }
-          : {},
+        req.auth!.role === "ADMIN"
+          ? {}
+          : { inventories: { some: clientInventoryWhere(req.auth!) } },
         query.includeInactive ? {} : { active: true },
         query.warehouse
           ? {
@@ -558,7 +572,7 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
     dateFilter.lte = date;
   }
   const conditions: Prisma.InventoryMovementWhereInput[] = [
-    scopedMovementWhere(req.auth!, query.clientId),
+    scopedMovementWhere(req.auth!),
     ...(Object.keys(dateFilter).length ? [{ createdAt: dateFilter }] : []),
     ...(query.sku ? [{ product: { sku: { equals: query.sku, mode: "insensitive" as const } } }] : []),
     ...(query.productId ? [{ productId: query.productId }] : []),
@@ -629,17 +643,10 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
           sku: true,
           barcode: true,
           name: true,
-          description: true,
-          customer: {
-            select: {
-              id: true,
-              code: true,
-              name: true,
-              client: { select: { id: true, name: true, legalName: true, tradeName: true } }
-            }
-          }
+          description: true
         }
       },
+      client: { select: { id: true, code: true, name: true, legalName: true, tradeName: true } },
       user: { select: { id: true, fullName: true, email: true } },
       fromLocation: { select: { id: true, code: true, warehouse: true } },
       toLocation: { select: { id: true, code: true, warehouse: true } },
@@ -675,7 +682,11 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
   res.json({
     items: rows.map((row) => {
       const requisition = row.requisitionLine?.requisition ?? null;
-      const project = requisition?.project ?? row.product.customer ?? null;
+      const project =
+        requisition?.project ??
+        row.toProject ??
+        row.fromProject ??
+        null;
       const layer = row.inventoryLayer
         ? exposeEconomic
           ? row.inventoryLayer
@@ -688,7 +699,7 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
         id: row.id,
         createdAt: row.createdAt,
         qty: row.qty.toString(),
-        client: row.product.customer?.client ?? null,
+        client: row.client ?? null,
         project,
         product: {
           id: row.product.id,
@@ -804,11 +815,11 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
   let locationId: string | undefined;
   if (body.type === "IN") {
     if (!body.location) throw new HttpError(400, "La entrada requiere una ubicación explícita.");
-    const location = await prisma.location.findUnique({ where: { code: body.location.trim().toUpperCase() } });
+    const location = await resolveLocationByCode(body.location, body.warehouse);
     if (!location) throw new HttpError(400, "La ubicación indicada no existe.");
     locationId = location.id;
   } else if (!inventoryId && body.location) {
-    const location = await prisma.location.findUnique({ where: { code: body.location.trim().toUpperCase() } });
+    const location = await resolveLocationByCode(body.location, body.warehouse);
     if (!location) throw new HttpError(400, "La ubicación indicada no existe.");
     const stockRows = await prisma.inventory.findMany({
       where: { productId: product.id, locationId: location.id, status: stockStatus }
@@ -932,9 +943,7 @@ inventoryRouter.post("/relocate", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"
     include: { product: true, location: true }
   });
   if (!source) throw new HttpError(404, "Línea de inventario origen no encontrada.");
-  const destination = await prisma.location.findUnique({
-    where: { code: body.destinationLocation.trim().toUpperCase() }
-  });
+  const destination = await resolveLocationByCode(body.destinationLocation, source.location.warehouse);
   if (!destination) throw new HttpError(400, "La ubicación destino no existe.");
   if (destination.active === false) throw new HttpError(400, "La ubicación destino no está activa.");
   if (destination.id === source.locationId) {
@@ -1022,7 +1031,10 @@ inventoryRouter.post("/assignment-transfer", requireRole(["ADMIN", "SUPERVISOR"]
 inventoryRouter.post("/physical/reset", requireRole(["ADMIN"]), async (req, res) => {
   const body = z.object({ confirmation: z.string().optional() }).parse(req.body ?? {});
   assertPhysicalResetConfirmation(body.confirmation);
-  const result = await executePhysicalInventoryReset({ userId: req.auth!.userId });
+  const result = await executePhysicalInventoryReset({
+    userId: req.auth!.userId,
+    clientId: req.auth!.operationalClientId!
+  });
   res.json(result);
 });
 

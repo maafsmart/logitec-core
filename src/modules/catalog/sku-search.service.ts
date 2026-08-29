@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { HttpError } from "../../shared/http-error.js";
-import { clientProductWhere, clientSerialWhere, isClientRole, scopedInventoryWhere } from "../clients/client-scope.js";
+import { clientProductWhere, clientSerialWhere, operationalClientId, scopedInventoryWhere } from "../clients/client-scope.js";
 import type { UserRole } from "../../middlewares/auth.middleware.js";
 import { calculateInventoryValuation, summarizeStockAssignments } from "../inventory/inventory-valuation.service.js";
 import { canExposeEconomicValuation } from "../inventory/inventory-economic-access.js";
@@ -10,6 +10,7 @@ import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-projec
 type AuthContext = {
   role: UserRole;
   clientId: string | null;
+  operationalClientId?: string | null;
 };
 
 const productInclude = {
@@ -24,7 +25,7 @@ const productInclude = {
     where: { active: true },
     select: {
       projectId: true,
-      project: { select: { id: true, code: true, name: true } }
+      project: { select: { id: true, code: true, name: true, clientId: true } }
     }
   }
 } as const;
@@ -61,26 +62,17 @@ function matchScore(product: {
   barcode: string | null;
   name: string;
   description: string | null;
-  customer: { code: string; name: string; client: { name: string; legalName: string | null; tradeName: string | null } | null } | null;
 }, query: string): number {
   const exact = [product.sku, product.barcode].some((value) => normalized(value) === query);
   if (exact) return 1000;
   const starts = [product.sku, product.barcode].some((value) => normalized(value).startsWith(query));
   if (starts) return 800;
   if (normalized(product.name).startsWith(query)) return 600;
-  if (normalized(product.customer?.code).startsWith(query) || normalized(product.customer?.name).startsWith(query)) return 500;
-  if (
-    normalized(product.customer?.client?.tradeName).startsWith(query) ||
-    normalized(product.customer?.client?.legalName).startsWith(query) ||
-    normalized(product.customer?.client?.name).startsWith(query)
-  ) return 450;
   return 100;
 }
 
 export async function searchSkuProducts(query: string, auth: AuthContext, take = 30) {
-  if (isClientRole(auth) && !auth.clientId) {
-    throw new HttpError(403, "Usuario CLIENT sin cliente asignado.");
-  }
+  operationalClientId(auth);
   const q = query.trim();
   if (!q) return [];
   const where: Prisma.ProductWhereInput = {
@@ -93,39 +85,14 @@ export async function searchSkuProducts(query: string, auth: AuthContext, take =
           { name: { contains: q, mode: "insensitive" } },
           { description: { contains: q, mode: "insensitive" } },
           {
-            customer: {
-              OR: [
-                { code: { contains: q, mode: "insensitive" } },
-                { name: { contains: q, mode: "insensitive" } },
-                {
-                  client: {
-                    OR: [
-                      { name: { contains: q, mode: "insensitive" } },
-                      { legalName: { contains: q, mode: "insensitive" } },
-                      { tradeName: { contains: q, mode: "insensitive" } }
-                    ]
-                  }
-                }
-              ]
-            }
-          },
-          {
             productProjects: {
               some: {
                 active: true,
                 project: {
+                  clientId: auth.operationalClientId || auth.clientId || undefined,
                   OR: [
                     { code: { contains: q, mode: "insensitive" } },
-                    { name: { contains: q, mode: "insensitive" } },
-                    {
-                      client: {
-                        OR: [
-                          { name: { contains: q, mode: "insensitive" } },
-                          { legalName: { contains: q, mode: "insensitive" } },
-                          { tradeName: { contains: q, mode: "insensitive" } }
-                        ]
-                      }
-                    }
+                    { name: { contains: q, mode: "insensitive" } }
                   ]
                 }
               }
@@ -154,35 +121,26 @@ export async function searchSkuProducts(query: string, auth: AuthContext, take =
       name: product.name,
       description: product.description,
       unit: product.unit,
-      customer: product.customer
-        ? {
-            id: product.customer.id,
-            code: product.customer.code,
-            name: product.customer.name,
-            client: product.customer.client
-          }
-        : null,
-      productProjects: product.productProjects.map((link) => ({
-        projectId: link.projectId,
-        code: link.project.code,
-        name: link.project.name
-      }))
+      customer: null,
+      productProjects: product.productProjects
+        .filter((link) => {
+          const owner = auth.operationalClientId || auth.clientId;
+          return !owner || link.project.clientId === owner;
+        })
+        .map((link) => ({
+          projectId: link.projectId,
+          code: link.project.code,
+          name: link.project.name
+        }))
     }));
 }
 
-export async function getSkuContext(productId: string, auth: AuthContext, requestedClientId?: string | null) {
+export async function getSkuContext(productId: string, auth: AuthContext) {
   const product = await prisma.product.findFirst({
     where: { AND: [{ id: productId }, clientProductWhere(auth)] },
     include: {
-      customer: {
-        include: {
-          client: {
-            select: { id: true, name: true, legalName: true, tradeName: true, active: true }
-          }
-        }
-      },
       inventories: {
-        where: scopedInventoryWhere(auth, requestedClientId),
+        where: scopedInventoryWhere(auth),
         orderBy: [{ location: { warehouse: "asc" } }, { location: { code: "asc" } }],
         include: {
           location: { select: { id: true, code: true, warehouse: true } },
@@ -333,12 +291,7 @@ export async function getSkuContext(productId: string, auth: AuthContext, reques
     },
     client: operationalClient,
     project: null,
-    catalogOwner:
-      product.customer && !isForbiddenInventoryProjectRecord(product.customer)
-        ? { id: product.customer.id, code: product.customer.code, name: product.customer.name }
-        : product.customer
-          ? { id: product.customer.id, code: product.customer.code, name: product.customer.name, historical: true }
-          : null,
+    catalogOwner: null,
     stockAssignments,
     assignmentBreakdown: {
       projects: [...projectQty.values()]

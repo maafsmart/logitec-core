@@ -1,11 +1,11 @@
 import bcrypt from "bcryptjs";
 import { Router } from "express";
-import jwt from "jsonwebtoken";
 import { z } from "zod";
-import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
-import { requireAuth } from "../../middlewares/auth.middleware.js";
+import { requireAuth, requireRole, signAccessToken } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
+import { isClientScopedRole } from "../clients/client-scope.js";
+import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
 
 const authRouter = Router();
 
@@ -17,6 +17,55 @@ const changePasswordSchema = z.object({
   currentPassword: z.string().min(6),
   newPassword: z.string().min(6)
 });
+const selectClientSchema = z.object({
+  clientId: z.string().min(1)
+});
+
+const clientPublicSelect = {
+  id: true,
+  code: true,
+  name: true,
+  tradeName: true,
+  legalName: true,
+  active: true
+} as const;
+
+function serializeUser(
+  user: {
+    id: string;
+    email: string;
+    fullName: string;
+    role: string;
+    clientId: string | null;
+    client: {
+      id: string;
+      code: string;
+      name: string;
+      tradeName: string | null;
+      legalName: string | null;
+      active: boolean;
+    } | null;
+  },
+  operationalClient: {
+    id: string;
+    code: string;
+    name: string;
+    tradeName: string | null;
+    legalName: string | null;
+    active: boolean;
+  } | null
+) {
+  return {
+    id: user.id,
+    email: user.email,
+    fullName: user.fullName,
+    role: user.role,
+    clientId: user.clientId,
+    client: user.client,
+    operationalClientId: operationalClient?.id ?? null,
+    operationalClient
+  };
+}
 
 authRouter.post("/login", async (req, res) => {
   const { email: rawEmail, password } = loginSchema.parse(req.body);
@@ -24,9 +73,9 @@ authRouter.post("/login", async (req, res) => {
 
   const user = await prisma.user.findUnique({
     where: { email },
-    include: { client: { select: { id: true, code: true, name: true, tradeName: true, active: true } } }
+    include: { client: { select: clientPublicSelect } }
   });
-  if (!user?.isActive || (user.role === "CLIENT" && (!user.clientId || !user.client?.active))) {
+  if (!user?.isActive) {
     throw new HttpError(401, "Credenciales invalidas");
   }
 
@@ -35,28 +84,21 @@ authRouter.post("/login", async (req, res) => {
     throw new HttpError(401, "Credenciales invalidas");
   }
 
-  const token = jwt.sign(
-    {
-      role: user.role,
-      email: user.email
-    },
-    env.JWT_SECRET,
-    {
-      subject: user.id,
-      expiresIn: "8h"
-    }
-  );
+  if (isClientScopedRole(user.role) && (!user.clientId || !user.client?.active)) {
+    throw new HttpError(403, "El usuario no tiene un cliente activo asignado.", "USER_CLIENT_REQUIRED");
+  }
+
+  const operationalClient = isClientScopedRole(user.role) ? user.client : null;
+  const accessToken = signAccessToken({
+    userId: user.id,
+    role: user.role as "ADMIN" | "OPERATOR" | "SUPERVISOR" | "CLIENT",
+    email: user.email,
+    operationalClientId: operationalClient?.id ?? null
+  });
 
   res.json({
-    accessToken: token,
-    user: {
-      id: user.id,
-      email: user.email,
-      fullName: user.fullName,
-      role: user.role,
-      clientId: user.clientId,
-      client: user.client
-    }
+    accessToken,
+    user: serializeUser(user, operationalClient)
   });
 });
 
@@ -71,7 +113,7 @@ authRouter.get("/me", requireAuth, async (req, res) => {
       clientId: true,
       isActive: true,
       createdAt: true,
-      client: { select: { id: true, code: true, name: true, tradeName: true, active: true } }
+      client: { select: clientPublicSelect }
     }
   });
 
@@ -79,7 +121,64 @@ authRouter.get("/me", requireAuth, async (req, res) => {
     throw new HttpError(404, "Usuario no encontrado");
   }
 
-  res.json(user);
+  let operationalClient = null;
+  if (req.auth!.operationalClientId) {
+    operationalClient = await prisma.client.findUnique({
+      where: { id: req.auth!.operationalClientId },
+      select: clientPublicSelect
+    });
+  } else if (isClientScopedRole(user.role)) {
+    operationalClient = user.client;
+  }
+
+  res.json({
+    ...user,
+    operationalClientId: operationalClient?.id ?? null,
+    operationalClient,
+    operationalClientInvalid: Boolean(req.auth!.operationalClientInvalid)
+  });
+});
+
+authRouter.post("/select-client", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
+  const { clientId } = selectClientSchema.parse(req.body);
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: { ...clientPublicSelect, _count: { select: { projects: true } } }
+  });
+  if (!client || isForbiddenInventoryProjectRecord({ code: client.code, name: client.name })) {
+    throw new HttpError(403, "El cliente seleccionado no existe o está inactivo.", "CLIENT_CONTEXT_INVALID");
+  }
+  if (!client.active) {
+    throw new HttpError(403, "El cliente seleccionado no existe o está inactivo.", "CLIENT_CONTEXT_INVALID");
+  }
+  const accessToken = signAccessToken({
+    userId: req.auth!.userId,
+    role: "ADMIN",
+    email: req.auth!.email,
+    operationalClientId: client.id
+  });
+  res.json({
+    accessToken,
+    client,
+    operationalClient: {
+      id: client.id,
+      code: client.code,
+      name: client.name,
+      tradeName: client.tradeName,
+      legalName: client.legalName,
+      active: client.active
+    }
+  });
+});
+
+authRouter.post("/clear-client", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
+  const accessToken = signAccessToken({
+    userId: req.auth!.userId,
+    role: "ADMIN",
+    email: req.auth!.email,
+    operationalClientId: null
+  });
+  res.json({ accessToken, operationalClient: null, operationalClientId: null });
 });
 
 authRouter.post("/change-password", requireAuth, async (req, res) => {

@@ -126,35 +126,34 @@ function matchesClient(row: { clientId: string }, where: { clientId?: string }) 
 function accessDb(world: ReturnType<typeof twoClientWorld>) {
   return {
     inventory: {
-      findFirst: async ({ where }: { where: { AND?: Array<{ id?: string; clientId?: string }> } }) => {
-        const id = where.AND?.find((part) => part.id)?.id;
-        const clientId = where.AND?.find((part) => part.clientId)?.clientId;
-        return world.inventories.find((row) => row.id === id && (!clientId || row.clientId === clientId)) || null;
+      findFirst: async ({ where }: { where: { id?: string; AND?: Array<{ id?: string; clientId?: string }> } }) => {
+        const id = where.id || where.AND?.find((part) => part.id)?.id;
+        return world.inventories.find((row) => row.id === id) || null;
       }
     },
     inventoryLayer: {
-      findFirst: async ({ where }: { where: { AND?: Array<{ id?: string; inventory?: { clientId?: string } }> } }) => {
-        const id = where.AND?.find((part) => part.id)?.id;
-        const clientId = where.AND?.find((part) => part.inventory)?.inventory?.clientId;
+      findFirst: async ({
+        where
+      }: {
+        where: { id?: string; AND?: Array<{ id?: string }> };
+      }) => {
+        const id = where.id || where.AND?.find((part) => part.id)?.id;
         const layer = world.layers.find((row) => row.id === id);
         if (!layer) return null;
         const inv = world.inventories.find((row) => row.id === layer.inventoryId);
-        if (clientId && inv?.clientId !== clientId) return null;
-        return { id: layer.id };
+        return { id: layer.id, inventory: { clientId: inv?.clientId || "" } };
       }
     },
     inventorySerial: {
-      findFirst: async ({ where }: { where: { AND?: Array<{ id?: string; clientId?: string }> } }) => {
-        const id = where.AND?.find((part) => part.id)?.id;
-        const clientId = where.AND?.find((part) => part.clientId)?.clientId;
-        return world.serials.find((row) => row.id === id && (!clientId || row.clientId === clientId)) || null;
+      findFirst: async ({ where }: { where: { id?: string; AND?: Array<{ id?: string; clientId?: string }> } }) => {
+        const id = where.id || where.AND?.find((part) => part.id)?.id;
+        return world.serials.find((row) => row.id === id) || null;
       }
     },
     inventoryMovement: {
-      findFirst: async ({ where }: { where: { AND?: Array<{ id?: string; clientId?: string }> } }) => {
-        const id = where.AND?.find((part) => part.id)?.id;
-        const clientId = where.AND?.find((part) => part.clientId)?.clientId;
-        return world.movements.find((row) => row.id === id && (!clientId || row.clientId === clientId)) || null;
+      findFirst: async ({ where }: { where: { id?: string; AND?: Array<{ id?: string; clientId?: string }> } }) => {
+        const id = where.id || where.AND?.find((part) => part.id)?.id;
+        return world.movements.find((row) => row.id === id) || null;
       }
     }
   };
@@ -220,23 +219,23 @@ test("IDs ajenos y spoof de clientId no revelan datos", async () => {
   const db = accessDb(world);
   await assert.rejects(
     () => assertAccessibleInventory(aviatAuth, "inv-c2-fts", db),
-    (error: unknown) => error instanceof HttpError && error.statusCode === 404
+    (error: unknown) => error instanceof HttpError && error.statusCode === 409 && error.code === "CROSS_CLIENT_OPERATION"
   );
   await assert.rejects(
     () => assertAccessibleLayer(aviatAuth, "layer-c2-fts", db),
-    (error: unknown) => error instanceof HttpError && error.statusCode === 404
+    (error: unknown) => error instanceof HttpError && error.statusCode === 409 && error.code === "CROSS_CLIENT_OPERATION"
   );
   await assert.rejects(
     () => assertAccessibleSerial(aviatAuth, "ser-c2", db),
-    (error: unknown) => error instanceof HttpError && error.statusCode === 404
+    (error: unknown) => error instanceof HttpError && error.statusCode === 409 && error.code === "CROSS_CLIENT_OPERATION"
   );
   await assert.rejects(
     () => assertAccessibleMovement(aviatAuth, "mov-c2", db),
-    (error: unknown) => error instanceof HttpError && error.statusCode === 404
+    (error: unknown) => error instanceof HttpError && error.statusCode === 409 && error.code === "CROSS_CLIENT_OPERATION"
   );
   await assert.rejects(
     () => assertAccessibleRequisition(aviatAuth, world.requisitions[1]),
-    (error: unknown) => error instanceof HttpError && error.statusCode === 404
+    (error: unknown) => error instanceof HttpError && error.statusCode === 409 && error.code === "CROSS_CLIENT_OPERATION"
   );
   await assertAccessibleInventory(aviatAuth, "inv-aviat-fts", db);
   await assertAccessibleSerial(aviatAuth, "ser-aviat", db);
@@ -259,12 +258,18 @@ test("serie surtida conserva propietario y no se filtra por SKU compartido", () 
 
 test("ADMIN filtra AVIAT y Cliente 2 sin mezclar cubos; la vista global los identifica", () => {
   const world = twoClientWorld();
-  const aviatFilter = scopedInventoryWhere(adminAuth, aviat.id);
-  const c2Filter = scopedInventoryWhere(adminAuth, client2.id);
+  const adminAviat = { role: "ADMIN" as const, clientId: null, operationalClientId: aviat.id };
+  const adminC2 = { role: "ADMIN" as const, clientId: null, operationalClientId: client2.id };
+  const aviatFilter = scopedInventoryWhere(adminAviat);
+  const c2Filter = scopedInventoryWhere(adminC2);
   const aviatRows = world.inventories.filter((row) => row.clientId === aviat.id);
   const c2Rows = world.inventories.filter((row) => row.clientId === client2.id);
   assert.match(JSON.stringify(aviatFilter), /"clientId":"client-aviat"/);
   assert.match(JSON.stringify(c2Filter), /"clientId":"client-2"/);
+  assert.throws(
+    () => scopedInventoryWhere(adminAuth),
+    (error: unknown) => error instanceof HttpError && error.code === "CLIENT_CONTEXT_REQUIRED"
+  );
   assert.equal(aviatRows.some((row) => row.assignmentType === "FREE_TO_SALE"), true);
   assert.equal(c2Rows.some((row) => row.assignmentType === "FREE_TO_SALE"), true);
   const summary = summarizeStockAssignments(
@@ -317,7 +322,7 @@ test("rutas de detalle, exportaciones y UI no autorizan por product.customer", (
   assert.match(inventorySrc, /assertAccessibleMovement/);
   assert.match(exportsSrc, /scopedInventoryWhere/);
   assert.match(exportsSrc, /scopedMovementWhere/);
-  assert.match(html, /dashboard\.js\?v=81/);
+  assert.match(html, /dashboard\.js\?v=82/);
   assert.match(js, /owningClientDisplayName/);
   assert.doesNotMatch(js, /Inventario de \$\{PRIMARY_CLIENT_AVIAT_NAME\}/);
 });

@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
+import { requireOperationalClient } from "../clients/client-scope.js";
 import { buildSuggestedMapping, type CanonicalField, type ImportContext } from "./import-mapping.js";
 import { parseUpload } from "./import-parse.service.js";
 import { buildInventoryReconcileDiff, validateMappedRows } from "./import-validate.service.js";
@@ -55,6 +56,7 @@ async function loadBatch(id: string) {
 }
 
 importsRouter.use(requireAuth);
+importsRouter.use(requireOperationalClient);
 
 importsRouter.get("/", requireRole(["ADMIN", "SUPERVISOR"]), async (_req, res) => {
   const rows = await prisma.importBatch.findMany({
@@ -219,7 +221,8 @@ importsRouter.post("/:id/validate", requireRole(["ADMIN"]), async (req, res) => 
   const validated = await validateMappedRows(batch.context as ImportContext, sourceRows, mapping, {
     inventoryMode: meta.inventoryMode,
     priceCurrency: meta.priceCurrency,
-    correctionsBySourceRow
+    correctionsBySourceRow,
+    clientId: req.auth!.operationalClientId!
   });
   const existingBySource = new Map(existingRows.map((row) => [row.sourceRow, row]));
   const now = new Date();
@@ -266,7 +269,7 @@ importsRouter.post("/:id/validate", requireRole(["ADMIN"]), async (req, res) => 
   }
   const reconcileDiff =
     batch.context === "INVENTORY" && meta.inventoryMode === "RECONCILE"
-      ? await buildInventoryReconcileDiff(validated.rows)
+      ? await buildInventoryReconcileDiff(validated.rows, req.auth!.operationalClientId!)
       : null;
   const missingLocationSummary = validated.rows.reduce<Record<string, { code: string; sourceRows: number[]; records: number }>>(
     (summary, row) => {
@@ -620,6 +623,7 @@ importsRouter.post("/:id/confirm", requireRole(["ADMIN"]), async (req, res) => {
       context: batch.context as ImportContext,
       rows: execRows,
       userId: req.auth!.userId,
+      clientId: req.auth!.operationalClientId!,
       inventoryMode: meta.inventoryMode,
       batchId: id,
       metadata: meta

@@ -87,7 +87,8 @@ export async function validateMappedRows(
     inventoryMode?: "APPEND" | "RECONCILE";
     priceCurrency?: "MXN" | "USD";
     correctionsBySourceRow?: Map<number, Record<string, unknown>>;
-  } = {}
+    clientId: string;
+  }
 ) {
   const fields = CONTEXT_FIELDS[context];
   const statuses = await prisma.inventoryStatusDefinition.findMany({ select: { code: true } });
@@ -107,6 +108,7 @@ export async function validateMappedRows(
   const locations = await prisma.location.findMany({ select: { id: true, code: true, active: true } });
   const locationByCode = new Map(locations.map((l) => [l.code.toUpperCase(), l]));
   const projects = await prisma.customer.findMany({
+    where: { clientId: options.clientId },
     select: { id: true, code: true, name: true, clientId: true, client: { select: { id: true, name: true, tradeName: true } } }
   });
   const projectByCode = new Map(projects.map((p) => [p.code.toUpperCase(), p]));
@@ -115,9 +117,6 @@ export async function validateMappedRows(
     const key = normalizeImportLabel(project.name);
     projectsByName.set(key, [...(projectsByName.get(key) || []), project]);
   }
-  const clients = await prisma.client.findMany({
-    select: { id: true, code: true, name: true, tradeName: true, legalName: true }
-  });
   const existingSerials = await prisma.inventorySerial.findMany({ select: { serialNumber: true, imei: true, productId: true } });
   const serialSet = new Set(existingSerials.map((s) => s.serialNumber.toUpperCase()));
   const imeiSet = new Set(existingSerials.filter((s) => s.imei).map((s) => s.imei!.toUpperCase()));
@@ -139,6 +138,7 @@ export async function validateMappedRows(
     if (isInventoryImport) {
       normalized.sourceCustomer = sourceCustomer;
     }
+    normalized.clientId = options.clientId;
 
     for (const required of fields.required) {
       if (!asText(mapped[required])) {
@@ -217,7 +217,7 @@ export async function validateMappedRows(
         normalized.serialControlled = product.serialControlled;
         normalized.lotControlled = product.lotControlled;
         if (!isInventoryImport) {
-          normalized.projectId = product.customerId;
+          normalized.projectId = null;
         }
         if (context === "PRODUCTS") normalized.action = "UPDATE";
       }
@@ -315,6 +315,15 @@ export async function validateMappedRows(
         } else if (isForbiddenInventoryProjectRecord(project)) {
           applyUnassignedNormalized(normalized);
         } else {
+          if (project.clientId !== options.clientId) {
+            errors.push({
+              field: "project",
+              value: projectCode,
+              code: "PROJECT_WRONG_CLIENT",
+              message: "El proyecto no pertenece al cliente activo.",
+              severity: "ERROR"
+            });
+          }
           normalized.assignmentType = "PROJECT";
           normalized.projectId = project.id;
           normalized.projectCode = project.code;
@@ -372,39 +381,10 @@ export async function validateMappedRows(
     }
 
     const clientName = asText(mapped.client);
-    if (clientName && !normalized.clientId) {
-      const byCode = clients.filter((c) => c.code.toUpperCase() === clientName.toUpperCase());
-      const matches = byCode.length
-        ? byCode
-        : clients.filter((c) => {
-            const names = [c.name, c.tradeName, c.legalName].filter(Boolean).map((n) => n!.toUpperCase());
-            return names.includes(clientName.toUpperCase());
-          });
-      if (matches.length === 1) {
-        normalized.clientId = matches[0]!.id;
-        normalized.clientName = matches[0]!.tradeName || matches[0]!.name;
-      } else if (matches.length > 1) {
-        errors.push({ field: "client", value: clientName, code: "CLIENT_AMBIGUOUS", message: "Cliente ambiguo.", severity: "ERROR" });
-      } else if (context === "CLIENTS_PROJECTS") {
-        warnings.push({ field: "client", value: clientName, code: "NEW_CLIENT", message: "Cliente nuevo propuesto.", severity: "WARNING" });
-        normalized.action = "CREATE";
-      } else {
-        warnings.push({ field: "client", value: clientName, code: "CLIENT_UNRESOLVED", message: "Cliente no resuelto.", severity: "WARNING" });
-      }
+    if (clientName) {
+      normalized.clientName = clientName;
     }
-    if (
-      isInventoryImport &&
-      (normalized.assignmentType === "FREE_TO_SALE" || normalized.assignmentType === "LEGACY_UNASSIGNED") &&
-      !normalized.clientId
-    ) {
-      errors.push({
-        field: "client",
-        value: clientName,
-        code: "CLIENT_REQUIRED",
-        message: "Free to Sale y existencias sin proyecto requieren un cliente propietario explícito.",
-        severity: "ERROR"
-      });
-    }
+    normalized.clientId = options.clientId;
 
     const serialInput = asText(mapped.serialNumber).toUpperCase();
     const serial = asRealSerial(mapped.serialNumber);
@@ -500,11 +480,13 @@ export async function validateMappedRows(
 }
 
 export async function buildInventoryReconcileDiff(
-  rows: Array<{ normalized: Record<string, unknown>; errors: Issue[] }>
+  rows: Array<{ normalized: Record<string, unknown>; errors: Issue[] }>,
+  clientId: string
 ) {
   const current = await prisma.inventory.findMany({
+    where: { clientId },
     include: {
-      product: { select: { sku: true, customer: { select: { code: true } } } },
+      product: { select: { sku: true } },
       project: { select: { code: true, name: true } },
       location: { select: { code: true } },
       layers: { select: { lotNumber: true, qty: true } }
@@ -514,7 +496,7 @@ export async function buildInventoryReconcileDiff(
   const assignmentLabel = (inv: (typeof current)[number]) => {
     if (inv.assignmentType === "FREE_TO_SALE") return FREE_TO_SALE_LABEL;
     if (inv.assignmentType === "LEGACY_UNASSIGNED") return "LEGACY_UNASSIGNED";
-    return inv.project?.code || inv.product.customer?.code || "";
+    return inv.project?.code || "";
   };
   for (const inv of current) {
     const project = assignmentLabel(inv);
