@@ -498,14 +498,30 @@ function createPickWorld(opts?: { layerCount?: number; requestedQty?: string }) 
           return true;
         }).map((row) => ({ ...row })),
       update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
-        state.serialUpdateCount += 1;
-        if (state.failOnSerialUpdate > 0 && state.serialUpdateCount >= state.failOnSerialUpdate) {
-          throw new Error("simulated serial update failure");
-        }
         const row = state.serials.find((item) => item.id === where.id);
         if (!row) throw new Error("serial not found");
         if (data.inventoryLayerId !== undefined) row.inventoryLayerId = data.inventoryLayerId as string | null;
         return { ...row };
+      },
+      updateMany: async ({
+        where,
+        data
+      }: {
+        where: { id: string; inventoryLayerId?: string | null };
+        data: Record<string, unknown>;
+      }) => {
+        state.serialUpdateCount += 1;
+        if (state.failOnSerialUpdate > 0 && state.serialUpdateCount >= state.failOnSerialUpdate) {
+          return { count: 0 };
+        }
+        const row = state.serials.find((item) => {
+          if (item.id !== where.id) return false;
+          if (where.inventoryLayerId !== undefined && item.inventoryLayerId !== where.inventoryLayerId) return false;
+          return true;
+        });
+        if (!row) return { count: 0 };
+        if (data.inventoryLayerId !== undefined) row.inventoryLayerId = data.inventoryLayerId as string | null;
+        return { count: 1 };
       }
     },
     $queryRaw: async (query: unknown, ...values: unknown[]) => {
@@ -1402,14 +1418,19 @@ test("fallo al actualizar la segunda serie produce rollback restaurable", async 
       throw new Error("second serial must fail");
     },
     (error) => {
-      assert.ok(error instanceof Error);
+      assert.ok(error instanceof RequisitionError);
+      assert.equal(error.code, "SERIAL_NOT_IN_RESERVED_LAYER");
     }
   );
   restoreWorld(world.state, before);
   assert.equal(String(world.state.inventories[0]?.qty), "3");
+  assert.equal(String(world.state.inventories[0]?.reservedQty), "2");
   assert.equal(world.state.movements.length, 0);
   assert.equal(world.state.serials.find((row) => row.id === "ser-old")?.inventoryLayerId, "layer-01");
+  assert.equal(world.state.serials.find((row) => row.id === "ser-new")?.inventoryLayerId, "layer-02");
   assert.equal(world.state.scanEvents.length, 0);
+  assert.ok(!world.state.activities.some((row) => row.subtype === "PICK_SUCCESS"));
+  assert.ok(!world.state.activities.some((row) => row.subtype === "PICK_RESERVED_FIFO_SUCCESS"));
 });
 
 test("producto serialControlled sin series bloquea con SERIALS_MISSING_ON_LAYER", async () => {
@@ -1446,4 +1467,124 @@ test("cancelación no modifica series", async () => {
   assert.equal(world.state.serials.find((row) => row.id === "ser-old")?.inventoryLayerId, "layer-01");
   assert.equal(world.state.serials.find((row) => row.id === "ser-new")?.inventoryLayerId, "layer-02");
   assert.equal(world.state.serials.length, 2);
+});
+
+function flattenPlan(plan: unknown) {
+  return new Function(
+    `${sliceFunction(js, "flattenEligiblePickSerials")}; return flattenEligiblePickSerials;`
+  )()(plan) as Array<{ id: string }>;
+}
+
+test("dos reservas qty 1 sobre la misma capa se surten con dos series", async () => {
+  const world = createPickWorld({ layerCount: 1, requestedQty: "2" });
+  setLayers(world, [{ id: "layer-01", qty: "2" }]);
+  await reserveFifo(world, "1");
+  await reserveFifo(world, "1");
+  assert.equal(world.state.reservations.length, 2);
+  assert.ok(world.state.reservations.every((row) => row.inventoryLayerId === "layer-01"));
+  seedSerials(world, [
+    { id: "ser-a", layerId: "layer-01", serialNumber: "SN-A", imei: null },
+    { id: "ser-b", layerId: "layer-01", serialNumber: "SN-B", imei: null }
+  ]);
+  const picked = await pickFifo(world, "2", { serialIds: ["ser-a", "ser-b"] });
+  assert.equal(picked.movements.length, 2);
+  assert.ok(picked.movements.every((row) => String(row.qty) === "1"));
+  assert.ok(picked.movements.every((row) => row.inventorySerialId));
+  assert.ok(world.state.reservations.every((row) => row.status === "CONSUMED"));
+  assert.equal(String(world.state.inventories[0]?.qty), "0");
+  assert.equal(String(world.state.inventories[0]?.reservedQty), "0");
+  assert.equal(String(world.state.layers[0]?.qty), "0");
+  assert.equal(world.state.serials.find((row) => row.id === "ser-a")?.inventoryLayerId, null);
+  assert.equal(world.state.serials.find((row) => row.id === "ser-b")?.inventoryLayerId, null);
+  assert.equal(world.state.scanEvents.length, 1);
+  assert.equal(world.state.scanEvents[0]?.result, "OK");
+});
+
+test("GET de dos reservas en la misma capa no duplica series utilizables", async () => {
+  const world = createPickWorld({ layerCount: 1, requestedQty: "2" });
+  setLayers(world, [{ id: "layer-01", qty: "2" }]);
+  await reserveFifo(world, "1");
+  await reserveFifo(world, "1");
+  seedSerials(world, [
+    { id: "ser-a", layerId: "layer-01", serialNumber: "SN-A", imei: null },
+    { id: "ser-b", layerId: "layer-01", serialNumber: "SN-B", imei: null }
+  ]);
+  const plan = await getEligiblePickSerials(
+    { requisitionId: "req-1", lineId: "line-1", inventoryId: "inv-proj", quantity: 2 },
+    world.tx as never
+  );
+  assert.equal(plan.serialRequired, true);
+  assert.equal(plan.quantity, "2");
+  const usable = flattenPlan(plan);
+  assert.equal(usable.length, 2);
+  assert.equal(new Set(usable.map((row) => row.id)).size, 2);
+  assert.deepEqual(usable.map((row) => row.id).sort(), ["ser-a", "ser-b"]);
+});
+
+test("capa qty 2 con una sola serie y serialControlled false bloquea GET y POST", async () => {
+  const world = createPickWorld({ layerCount: 1, requestedQty: "2" });
+  setLayers(world, [{ id: "layer-01", qty: "2" }]);
+  await reserveFifo(world, "2");
+  seedSerials(world, [{ id: "ser-only", layerId: "layer-01", serialNumber: "SN-ONLY", imei: null }]);
+  const before = snapshotWorld(world.state);
+  await getEligiblePickSerials(
+    { requisitionId: "req-1", lineId: "line-1", inventoryId: "inv-proj", quantity: 2 },
+    world.tx as never
+  ).then(
+    () => {
+      throw new Error("GET must fail");
+    },
+    (error) => {
+      assert.ok(error instanceof RequisitionError);
+      assert.equal(error.code, "SERIALS_MISSING_ON_LAYER");
+    }
+  );
+  await expectFifoPickError(world, "2", { serialIds: ["ser-only"] }, "SERIALS_MISSING_ON_LAYER");
+  assert.equal(String(world.state.inventories[0]?.qty), String(before.inventories[0]?.qty));
+  assert.equal(world.state.serials[0]?.inventoryLayerId, "layer-01");
+});
+
+test("capa qty 2 con una sola serie y serialControlled true bloquea GET y POST", async () => {
+  const world = createPickWorld({ layerCount: 1, requestedQty: "2" });
+  world.product.serialControlled = true;
+  setLayers(world, [{ id: "layer-01", qty: "2" }]);
+  await reserveFifo(world, "2");
+  seedSerials(world, [{ id: "ser-only", layerId: "layer-01", serialNumber: "SN-ONLY", imei: null }]);
+  await getEligiblePickSerials(
+    { requisitionId: "req-1", lineId: "line-1", inventoryId: "inv-proj", quantity: 2 },
+    world.tx as never
+  ).then(
+    () => {
+      throw new Error("GET must fail");
+    },
+    (error) => {
+      assert.ok(error instanceof RequisitionError);
+      assert.equal(error.code, "SERIALS_MISSING_ON_LAYER");
+    }
+  );
+  await expectFifoPickError(world, "2", { serialIds: ["ser-only"] }, "SERIALS_MISSING_ON_LAYER");
+});
+
+test("tramo serializado con cantidad fraccionaria se rechaza sin mutar", async () => {
+  const world = createPickWorld({ layerCount: 1, requestedQty: "2" });
+  setLayers(world, [{ id: "layer-01", qty: "2" }]);
+  await reserveFifo(world, "1.5");
+  await reserveFifo(world, "0.5");
+  seedSerials(world, [
+    { id: "ser-a", layerId: "layer-01", serialNumber: "SN-A", imei: null },
+    { id: "ser-b", layerId: "layer-01", serialNumber: "SN-B", imei: null }
+  ]);
+  await getEligiblePickSerials(
+    { requisitionId: "req-1", lineId: "line-1", inventoryId: "inv-proj", quantity: 2 },
+    world.tx as never
+  ).then(
+    () => {
+      throw new Error("GET must fail");
+    },
+    (error) => {
+      assert.ok(error instanceof RequisitionError);
+      assert.equal(error.code, "SERIAL_QTY_NOT_INTEGER");
+    }
+  );
+  await expectFifoPickError(world, "2", { serialIds: ["ser-a", "ser-b"] }, "SERIAL_QTY_NOT_INTEGER");
 });

@@ -1197,15 +1197,27 @@ type PickSerialRow = {
   imei: string | null;
 };
 
+function requiredQtyByLayer(
+  allocations: Array<{ reservation: PickFifoReservation; qty: Prisma.Decimal }>
+) {
+  const required = new Map<string, Prisma.Decimal>();
+  for (const slice of allocations) {
+    const layerId = slice.reservation.inventoryLayerId;
+    if (!layerId) {
+      throw new RequisitionError("LAYER_REQUIRED", "Una reserva FIFO no tiene capa.");
+    }
+    required.set(layerId, (required.get(layerId) || new Prisma.Decimal(0)).plus(slice.qty));
+  }
+  return required;
+}
+
 function assignSerialsToFifoSlices(
   serials: PickSerialRow[],
   productId: string,
   allocations: Array<{ reservation: PickFifoReservation; qty: Prisma.Decimal }>
 ) {
-  const planLayerIds = allocations
-    .map((slice) => slice.reservation.inventoryLayerId)
-    .filter((id): id is string => Boolean(id));
-  const planSet = new Set(planLayerIds);
+  const required = requiredQtyByLayer(allocations);
+  const planSet = new Set(required.keys());
   for (const serial of serials) {
     if (serial.productId !== productId) {
       throw new RequisitionError("SERIAL_PRODUCT_MISMATCH", "La serie no pertenece al SKU de la línea.");
@@ -1220,23 +1232,34 @@ function assignSerialsToFifoSlices(
       );
     }
   }
-  const grouped = new Map<string, PickSerialRow[]>();
-  for (const layerId of planLayerIds) grouped.set(layerId, []);
+  const poolByLayer = new Map<string, PickSerialRow[]>();
+  for (const layerId of required.keys()) poolByLayer.set(layerId, []);
   for (const serial of serials) {
-    const list = grouped.get(serial.inventoryLayerId!) || [];
-    list.push(serial);
-    grouped.set(serial.inventoryLayerId!, list);
+    poolByLayer.get(serial.inventoryLayerId!)!.push(serial);
   }
-  return allocations.map((slice) => {
-    const layerId = slice.reservation.inventoryLayerId!;
-    const have = [...(grouped.get(layerId) || [])].sort((a, b) => a.id.localeCompare(b.id));
-    if (have.length !== Number(slice.qty)) {
+  for (const [layerId, need] of required) {
+    const pool = [...(poolByLayer.get(layerId) || [])].sort((a, b) => a.id.localeCompare(b.id));
+    if (!need.isInteger() || pool.length !== Number(need)) {
       throw new RequisitionError(
         "SERIAL_FIFO_LAYER_MISMATCH",
         "Las series no respetan el orden FIFO de las capas reservadas."
       );
     }
-    return { slice, serials: have };
+    poolByLayer.set(layerId, pool);
+  }
+  return allocations.map((slice) => {
+    const layerId = slice.reservation.inventoryLayerId!;
+    const need = Number(slice.qty);
+    const pool = poolByLayer.get(layerId) || [];
+    if (!slice.qty.isInteger() || pool.length < need) {
+      throw new RequisitionError(
+        "SERIAL_FIFO_LAYER_MISMATCH",
+        "Las series no respetan el orden FIFO de las capas reservadas."
+      );
+    }
+    const taken = pool.splice(0, need);
+    poolByLayer.set(layerId, pool);
+    return { slice, serials: taken };
   });
 }
 
@@ -1245,39 +1268,46 @@ function classifyFifoSerialization(
   serialCounts: Map<string, number>,
   serialControlled: boolean
 ) {
-  const layerIds = allocations
-    .map((slice) => slice.reservation.inventoryLayerId)
-    .filter((id): id is string => Boolean(id));
-  if (layerIds.length !== allocations.length) {
-    throw new RequisitionError("LAYER_REQUIRED", "Una reserva FIFO no tiene capa.");
-  }
-  const serialized = layerIds.filter((id) => (serialCounts.get(id) || 0) > 0);
-  const unserialized = layerIds.filter((id) => (serialCounts.get(id) || 0) === 0);
+  const required = requiredQtyByLayer(allocations);
+  const uniqueLayerIds = [...required.keys()];
+  const serialized = uniqueLayerIds.filter((id) => (serialCounts.get(id) || 0) > 0);
+  const unserialized = uniqueLayerIds.filter((id) => (serialCounts.get(id) || 0) === 0);
   if (serialized.length && unserialized.length) {
     throw new RequisitionError(
       "MIXED_SERIALIZATION_NOT_SUPPORTED",
       "No se puede surtir un plan FIFO que mezcla capas serializadas y no serializadas."
     );
   }
-  if (serialControlled) {
+  const serializedLayers = serialControlled ? uniqueLayerIds : serialized;
+  for (const layerId of serializedLayers) {
+    const need = required.get(layerId)!;
+    if (!need.isInteger()) {
+      throw new RequisitionError(
+        "SERIAL_QTY_NOT_INTEGER",
+        "La cantidad serializada de la capa debe ser un entero."
+      );
+    }
     for (const slice of allocations) {
-      const layerId = slice.reservation.inventoryLayerId!;
-      if ((serialCounts.get(layerId) || 0) === 0) {
+      if (slice.reservation.inventoryLayerId !== layerId) continue;
+      if (!slice.qty.isInteger()) {
         throw new RequisitionError(
-          "SERIALS_MISSING_ON_LAYER",
-          "El producto es serializado y la capa no tiene series registradas."
-        );
-      }
-      if (new Prisma.Decimal(serialCounts.get(layerId) || 0).lessThan(slice.qty)) {
-        throw new RequisitionError(
-          "SERIALS_MISSING_ON_LAYER",
-          "El producto es serializado y la capa no tiene series suficientes para el tramo FIFO."
+          "SERIAL_QTY_NOT_INTEGER",
+          "Cada tramo FIFO serializado debe ser una cantidad entera."
         );
       }
     }
+    const have = serialCounts.get(layerId) || 0;
+    if (new Prisma.Decimal(have).lessThan(need)) {
+      throw new RequisitionError(
+        "SERIALS_MISSING_ON_LAYER",
+        serialControlled
+          ? "El producto es serializado y la capa no tiene series suficientes para el tramo FIFO."
+          : "La capa serializada no tiene series suficientes para el tramo FIFO."
+      );
+    }
   }
   return {
-    layerIds,
+    layerIds: uniqueLayerIds,
     serialRequired: serialized.length > 0 || serialControlled
   };
 }
@@ -1638,10 +1668,16 @@ async function finishSerializedFifoPick(
     const sliceSerialIds: string[] = [];
     const sliceMovementIds: string[] = [];
     for (const serial of serials) {
-      await tx.inventorySerial.update({
-        where: { id: serial.id },
+      const updated = await tx.inventorySerial.updateMany({
+        where: { id: serial.id, inventoryLayerId: layerId },
         data: { inventoryLayerId: null }
       });
+      if (updated.count !== 1) {
+        throw new RequisitionError(
+          "SERIAL_NOT_IN_RESERVED_LAYER",
+          "La serie no está en las capas reservadas de este cubo."
+        );
+      }
       const quantityBefore = runningQty;
       runningQty = runningQty.minus(1);
       const movement = await tx.inventoryMovement.create({

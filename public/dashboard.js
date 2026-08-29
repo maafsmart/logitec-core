@@ -9019,12 +9019,16 @@ function flattenEligiblePickSerials(plan) {
   const layers = Array.isArray(plan?.layers) ? plan.layers : [];
   /** @type {Array<{ id: string, serialNumber: string, imei: string | null, inventoryLayerId: string, lotNumber: string | null, receivedAt: string | null }>} */
   const rows = [];
+  const seen = new Set();
   for (const layer of layers) {
     const serials = Array.isArray(layer?.serials) ? layer.serials : [];
     for (const serial of serials) {
       if (!serial?.id) continue;
+      const id = String(serial.id);
+      if (seen.has(id)) continue;
+      seen.add(id);
       rows.push({
-        id: String(serial.id),
+        id,
         serialNumber: String(serial.serialNumber || ""),
         imei: serial.imei ? String(serial.imei) : null,
         inventoryLayerId: String(layer.inventoryLayerId || ""),
@@ -9049,26 +9053,50 @@ function hideReqActionSerialField() {
   if (counter) counter.textContent = "0 de 0";
 }
 
+function reservedPickCurrentQty() {
+  return reqQtyNumber(document.getElementById("reqActionQty")?.value);
+}
+
+function reservedPickPlanMatchesQty(plan, qty) {
+  if (!plan || qty == null) return false;
+  const planQty = Number(plan.quantity);
+  return Number.isFinite(planQty) && planQty === Number(qty);
+}
+
 function reservedPickSerialNeeded() {
   if (reqActionContext?.mode !== "pick" || !reqActionContext?.serialPlan?.serialRequired) return 0;
-  const qty = Number(reqActionContext.serialPlan.quantity);
+  const qty = reservedPickCurrentQty();
+  if (!reservedPickPlanMatchesQty(reqActionContext.serialPlan, qty)) return 0;
   return Number.isFinite(qty) && qty > 0 ? qty : 0;
 }
 
 function updateReservedPickConfirmState() {
   const btn = document.getElementById("reqActionConfirmBtn");
   if (!btn) return;
-  if (reqActionContext?.busy) {
+  if (reqActionContext?.mode !== "pick") {
+    btn.disabled = Boolean(reqActionContext?.busy);
+    return;
+  }
+  if (reqActionContext?.busy || reqActionContext?.serialLoading || reqActionContext?.serialError) {
     btn.disabled = true;
     return;
   }
-  const needed = reservedPickSerialNeeded();
-  if (!needed) {
+  const qty = reservedPickCurrentQty();
+  if (!(qty > 0) || !Number.isInteger(qty)) {
+    btn.disabled = true;
+    return;
+  }
+  const plan = reqActionContext?.serialPlan;
+  if (!plan || !reservedPickPlanMatchesQty(plan, qty)) {
+    btn.disabled = true;
+    return;
+  }
+  if (!plan.serialRequired) {
     btn.disabled = false;
     return;
   }
   const selected = Array.isArray(reqActionContext?.selectedSerialIds) ? reqActionContext.selectedSerialIds.length : 0;
-  btn.disabled = selected !== needed;
+  btn.disabled = selected !== qty;
 }
 
 function formatEligibleSerialLabel(row) {
@@ -9156,12 +9184,16 @@ async function refreshReservedPickEligibleSerials() {
   const line = reqActionContext.line;
   const cube = reqActionContext.cube;
   if (!req?.id || !line?.id || !cube?.inventoryId) return;
-  const qty = reqQtyNumber(document.getElementById("reqActionQty")?.value);
+  const qty = reservedPickCurrentQty();
   reqActionContext.selectedSerialIds = [];
+  reqActionContext.serialPlan = null;
+  reqActionContext.serialError = false;
+  reqActionContext.serialLoading = true;
   reqActionContext.serialFetchGen = (reqActionContext.serialFetchGen || 0) + 1;
   const gen = reqActionContext.serialFetchGen;
+  updateReservedPickConfirmState();
   if (!(qty > 0) || !Number.isInteger(qty)) {
-    reqActionContext.serialPlan = null;
+    reqActionContext.serialLoading = false;
     hideReqActionSerialField();
     updateReservedPickConfirmState();
     return;
@@ -9171,14 +9203,26 @@ async function refreshReservedPickEligibleSerials() {
   );
   if (!reqActionContext || reqActionContext.serialFetchGen !== gen) return;
   const data = response ? await response.json().catch(() => ({})) : {};
+  if (!reqActionContext || reqActionContext.serialFetchGen !== gen) return;
   if (!response?.ok) {
     reqActionContext.serialPlan = null;
+    reqActionContext.serialLoading = false;
+    reqActionContext.serialError = true;
     hideReqActionSerialField();
     setReqActionMessage(data.message || data.code || "No se pudieron cargar las series elegibles.", false);
     updateReservedPickConfirmState();
     return;
   }
+  reqActionContext.serialLoading = false;
+  reqActionContext.serialError = false;
   reqActionContext.serialPlan = data;
+  if (!reservedPickPlanMatchesQty(data, qty)) {
+    reqActionContext.serialPlan = null;
+    reqActionContext.serialError = true;
+    hideReqActionSerialField();
+    updateReservedPickConfirmState();
+    return;
+  }
   if (!data.serialRequired) {
     hideReqActionSerialField();
     updateReservedPickConfirmState();
@@ -9319,6 +9363,11 @@ function openReqActionModal() {
 }
 
 function closeReqActionModal() {
+  if (reqActionContext) {
+    reqActionContext.serialFetchGen = (reqActionContext.serialFetchGen || 0) + 1;
+    reqActionContext.serialLoading = false;
+    reqActionContext.serialPlan = null;
+  }
   closeModal("reqActionModal");
   reqActionContext = null;
   setReqActionMessage("", true);
@@ -9386,6 +9435,9 @@ function openReservedPickModal(req, line, cube) {
   if (qtyEl) qtyEl.value = maxQty > 0 ? String(maxQty) : "";
   reqActionContext.selectedSerialIds = [];
   reqActionContext.serialPlan = null;
+  reqActionContext.serialError = false;
+  reqActionContext.serialLoading = true;
+  reqActionContext.serialFetchGen = (reqActionContext.serialFetchGen || 0) + 1;
   setReqActionMessage("", true);
   openReqActionModal();
   updateReservedPickConfirmState();
@@ -9495,11 +9547,24 @@ async function confirmReservedPickFromModal(qty) {
   }
   const needed = reservedPickSerialNeeded();
   const serialIds = Array.isArray(reqActionContext?.selectedSerialIds) ? reqActionContext.selectedSerialIds.slice() : [];
-  if (needed && serialIds.length !== needed) {
-    setReqActionMessage(`Debes seleccionar ${needed} series para surtir.`, false);
+  if (reqActionContext?.serialLoading || reqActionContext?.serialError) {
+    setReqActionMessage("Espera a que se carguen las series elegibles o corrige el error.", false);
     return;
   }
-  const result = await executeReservedFifoPick(req, line, cube, qty, needed ? serialIds : undefined);
+  if (!(qty > 0) || !Number.isInteger(qty)) {
+    setReqActionMessage("La cantidad a surtir debe ser un entero positivo.", false);
+    return;
+  }
+  const plan = reqActionContext?.serialPlan;
+  if (!plan || !reservedPickPlanMatchesQty(plan, qty)) {
+    setReqActionMessage("La cantidad cambió. Vuelve a consultar las series elegibles.", false);
+    return;
+  }
+  if (plan.serialRequired && serialIds.length !== qty) {
+    setReqActionMessage(`Debes seleccionar ${qty} series para surtir.`, false);
+    return;
+  }
+  const result = await executeReservedFifoPick(req, line, cube, qty, plan.serialRequired ? serialIds : undefined);
   if (result.cancelled) return;
   if (!result.ok) {
     setReqActionMessage(result.message || "No se pudo surtir la reserva.", false);

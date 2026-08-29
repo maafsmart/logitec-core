@@ -62,6 +62,8 @@ test("consumo serializado usa una transacción, locks y un movimiento por serie"
   assert.match(serviceSrc, /FROM "InventorySerial".*ORDER BY "id" FOR UPDATE/s);
   assert.match(serviceSrc, /inventoryLayerId: null/);
   assert.match(serviceSrc, /inventorySerialId: serial\.id/);
+  assert.match(serviceSrc, /updateMany/);
+  assert.match(serviceSrc, /SERIAL_QTY_NOT_INTEGER/);
   assert.match(serviceSrc, /MIXED_SERIALIZATION_NOT_SUPPORTED/);
   assert.match(serviceSrc, /SERIALS_MISSING_ON_LAYER/);
   assert.match(serviceSrc, /SERIAL_FIFO_LAYER_MISMATCH/);
@@ -93,7 +95,8 @@ test("Surtir reservado consulta elegibles y exige series antes de confirmar", ()
   assert.match(payload, /allocationMode: "FIFO"/);
   assert.doesNotMatch(payload, /reservationId/);
   const confirm = sliceFunction(js, "confirmReservedPickFromModal");
-  assert.match(confirm, /reservedPickSerialNeeded/);
+  assert.match(confirm, /reservedPickPlanMatchesQty/);
+  assert.match(confirm, /serialLoading/);
   assert.doesNotMatch(confirm, /pickSku|skuInput/);
   const qtyWire = sliceFunction(js, "wireReqActionModal");
   assert.match(qtyWire, /refreshReservedPickEligibleSerials/);
@@ -108,6 +111,19 @@ test("AVIAT/LOGITEC: el plan serializado usa el proyecto operativo de la requisi
   assert.match(sliceFunction(js, "openReservedPickModal"), /req\.project \? `\$\{req\.project\.name\} \(\$\{req\.project\.code\}\)`/);
 });
 
+test("refresh ignora respuestas viejas y desactiva Confirmar mientras carga", () => {
+  const refresh = sliceFunction(js, "refreshReservedPickEligibleSerials");
+  const firstGen = refresh.indexOf("serialFetchGen !== gen");
+  const jsonIdx = refresh.indexOf("response.json()");
+  const secondGen = refresh.indexOf("serialFetchGen !== gen", firstGen + 1);
+  assert.ok(firstGen >= 0 && jsonIdx > firstGen);
+  assert.ok(secondGen > jsonIdx);
+  assert.match(refresh, /serialLoading = true/);
+  assert.match(refresh, /serialError = true/);
+  assert.match(sliceFunction(js, "updateReservedPickConfirmState"), /serialLoading/);
+  assert.match(sliceFunction(js, "openReservedPickModal"), /serialLoading = true/);
+});
+
 test("UI acepta serie o IMEI, evita duplicados, actualiza contador y desactiva Confirmar", () => {
   const harness = new Function(
     "escCell",
@@ -116,18 +132,22 @@ test("UI acepta serie o IMEI, evita duplicados, actualiza contador y desactiva C
     const counter = { textContent: "" };
     const eligible = { innerHTML: "" };
     const selected = { innerHTML: "" };
+    const qtyEl = { value: "2" };
     const document = {
       getElementById(id) {
         if (id === "reqActionConfirmBtn") return confirmBtn;
         if (id === "reqActionSerialCounter") return counter;
         if (id === "reqActionSerialEligible") return eligible;
         if (id === "reqActionSerialSelected") return selected;
+        if (id === "reqActionQty") return qtyEl;
         return null;
       }
     };
     const reqActionContext = {
       mode: "pick",
       selectedSerialIds: [],
+      serialLoading: false,
+      serialError: false,
       serialPlan: {
         serialRequired: true,
         quantity: "2",
@@ -139,18 +159,30 @@ test("UI acepta serie o IMEI, evita duplicados, actualiza contador y desactiva C
               { id: "ser-1", serialNumber: "SN-1", imei: "IMEI-1" },
               { id: "ser-2", serialNumber: "SN-2", imei: null }
             ]
+          },
+          {
+            inventoryLayerId: "layer-01",
+            lotNumber: "L-1",
+            serials: [
+              { id: "ser-1", serialNumber: "SN-1", imei: "IMEI-1" },
+              { id: "ser-2", serialNumber: "SN-2", imei: null }
+            ]
           }
         ]
       }
     };
+    ${sliceFunction(js, "reqQtyNumber")}
     ${sliceFunction(js, "flattenEligiblePickSerials")}
     ${sliceFunction(js, "formatEligibleSerialLabel")}
+    ${sliceFunction(js, "reservedPickCurrentQty")}
+    ${sliceFunction(js, "reservedPickPlanMatchesQty")}
     ${sliceFunction(js, "reservedPickSerialNeeded")}
     ${sliceFunction(js, "updateReservedPickConfirmState")}
     ${sliceFunction(js, "renderReservedPickSerialUi")}
     ${sliceFunction(js, "addReservedPickSerialId")}
     ${sliceFunction(js, "addReservedPickSerialFromScan")}
     ${sliceFunction(js, "removeReservedPickSerialId")}
+    const usable = flattenEligiblePickSerials(reqActionContext.serialPlan);
     renderReservedPickSerialUi();
     const initialDisabled = confirmBtn.disabled;
     const first = addReservedPickSerialFromScan("imei-1");
@@ -160,10 +192,39 @@ test("UI acepta serie o IMEI, evita duplicados, actualiza contador y desactiva C
     const complete = { ok: second.ok, counter: counter.textContent, disabled: confirmBtn.disabled };
     removeReservedPickSerialId("ser-2");
     const afterRemove = { counter: counter.textContent, disabled: confirmBtn.disabled };
-    return { initialDisabled, afterOne, dup, complete, afterRemove };
+    reqActionContext.serialLoading = true;
+    updateReservedPickConfirmState();
+    const loadingDisabled = confirmBtn.disabled;
+    reqActionContext.serialLoading = false;
+    reqActionContext.serialError = true;
+    updateReservedPickConfirmState();
+    const errorDisabled = confirmBtn.disabled;
+    reqActionContext.serialError = false;
+    qtyEl.value = "1";
+    reqActionContext.selectedSerialIds = ["ser-1", "ser-2"];
+    updateReservedPickConfirmState();
+    const qtyMismatchDisabled = confirmBtn.disabled;
+    qtyEl.value = "2";
+    reqActionContext.serialPlan = { serialRequired: false, quantity: "2", layers: [] };
+    reqActionContext.selectedSerialIds = [];
+    updateReservedPickConfirmState();
+    const unserializedEnabled = confirmBtn.disabled;
+    return {
+      usableIds: usable.map((row) => row.id),
+      initialDisabled,
+      afterOne,
+      dup,
+      complete,
+      afterRemove,
+      loadingDisabled,
+      errorDisabled,
+      qtyMismatchDisabled,
+      unserializedEnabled
+    };
     `
   );
   const result = harness((value: unknown) => String(value ?? ""));
+  assert.deepEqual(result.usableIds, ["ser-1", "ser-2"]);
   assert.equal(result.initialDisabled, true);
   assert.equal(result.afterOne.ok, true);
   assert.equal(result.afterOne.counter, "1 de 2");
@@ -175,4 +236,8 @@ test("UI acepta serie o IMEI, evita duplicados, actualiza contador y desactiva C
   assert.equal(result.complete.disabled, false);
   assert.equal(result.afterRemove.counter, "1 de 2");
   assert.equal(result.afterRemove.disabled, true);
+  assert.equal(result.loadingDisabled, true);
+  assert.equal(result.errorDisabled, true);
+  assert.equal(result.qtyMismatchDisabled, true);
+  assert.equal(result.unserializedEnabled, false);
 });
