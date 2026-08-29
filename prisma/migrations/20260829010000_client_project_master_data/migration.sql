@@ -7,6 +7,21 @@ ALTER TABLE "Client" ADD COLUMN IF NOT EXISTS "contactTitle" TEXT;
 ALTER TABLE "Client" ADD COLUMN IF NOT EXISTS "contactPhone" TEXT;
 ALTER TABLE "Client" ADD COLUMN IF NOT EXISTS "contactEmail" TEXT;
 
+-- Production can have operational AVIAT inventory with an empty Client catalog.
+-- Create the unique official tenant only when no Client exists and inventory does.
+INSERT INTO "Client" ("id", "name", "code", "legalName", "tradeName", "active", "createdAt", "updatedAt")
+SELECT
+  'cl_aviat_official',
+  'AVIAT',
+  'AVIAT',
+  'AVIAT',
+  'AVIAT',
+  true,
+  CURRENT_TIMESTAMP,
+  CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM "Client")
+  AND EXISTS (SELECT 1 FROM "Inventory");
+
 UPDATE "Client"
 SET "code" = 'AVIAT'
 WHERE "code" IS NULL

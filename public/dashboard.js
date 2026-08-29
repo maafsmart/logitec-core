@@ -354,7 +354,6 @@ let labResetBusy = false;
 let labResetAvailable = false;
 let labResetCompleted = false;
 const physicalInventoryResetBtns = [
-  document.getElementById("physicalInventoryResetBtn"),
   document.getElementById("physicalInventoryResetImportBtn")
 ].filter(Boolean);
 const physicalInventoryResetModal = document.getElementById("physicalInventoryResetModal");
@@ -1365,7 +1364,7 @@ function canAdministerInventoryImport() {
 function openInventoryImportAssistant() {
   if (!canAdministerInventoryImport()) return false;
   closeModal("inventoryImportModal");
-  navigateTo("sistema", "config");
+  navigateTo("inventario", "inventory");
   const panel = document.getElementById("importWizardPanel");
   if (!panel) return false;
   panel.style.display = "";
@@ -11392,14 +11391,13 @@ function applyRoleNavigation(role) {
   if (inventoryOpsNavPanel) inventoryOpsNavPanel.classList.toggle("hidden", role !== "ADMIN");
   const openCatBtn = document.getElementById("openCatalogImportBtn");
   const openInvBtn = document.getElementById("openInventoryImportBtn");
-  const bulkInboundOpenImportBtn = document.getElementById("bulkInboundOpenImportBtn");
   if (openCatBtn) openCatBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
   if (openInvBtn) openInvBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
-  if (bulkInboundOpenImportBtn) bulkInboundOpenImportBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
   physicalInventoryResetBtns.forEach((btn) => {
     btn.classList.toggle("hidden", role !== "ADMIN");
     btn.style.display = role === "ADMIN" ? "inline-block" : "none";
   });
+  void syncAviatDangerZone();
   if (taskCreateWrap) {
     taskCreateWrap.classList.toggle("hidden", role !== "ADMIN" && role !== "SUPERVISOR" && role !== "OPERATOR");
   }
@@ -11441,7 +11439,10 @@ function applyRoleNavigation(role) {
   if (rProd) rProd.style.display = canExportProducts ? "inline-block" : "none";
   if (rTrace) rTrace.style.display = canExportTrace ? "inline-block" : "none";
   const importWizardPanel = document.getElementById("importWizardPanel");
-  if (importWizardPanel) importWizardPanel.style.display = role === "ADMIN" ? "" : "none";
+  if (importWizardPanel && role !== "ADMIN") {
+    importWizardPanel.style.display = "none";
+    importWizardPanel.classList.add("hidden");
+  }
   const exportStockFilteredBtn = document.getElementById("exportStockFilteredBtn");
   const exportProductsFilteredBtn = document.getElementById("exportProductsFilteredBtn");
   if (exportStockFilteredBtn) exportStockFilteredBtn.style.display = canExportInventory ? "inline-block" : "none";
@@ -12184,9 +12185,6 @@ wireRequisitionModes();
 populateOperationalTypeSelects();
 
 document.getElementById("relocateSubmitBtn")?.addEventListener("click", () => void submitRelocate());
-document.getElementById("bulkInboundOpenImportBtn")?.addEventListener("click", () => {
-  openInventoryImportAssistant();
-});
 document.getElementById("taskCreateUserBtn")?.addEventListener("click", () => navigateTo("sistema", "users"));
 
 usersList.addEventListener("click", (event) => {
@@ -13442,8 +13440,10 @@ function clearInventoryWorkspaceState() {
 }
 
 async function refreshInventoryAfterPhysicalPurge() {
+  bumpClientContextEpoch();
   clearInventoryWorkspaceState();
   await refreshInventoryAfterImport();
+  void syncAviatDangerZone();
 }
 
 document.getElementById("importConfirmCancelBtn")?.addEventListener("click", () => finishImportConfirm(false));
@@ -13584,7 +13584,70 @@ if (labResetModal && labResetModal.dataset.modalWired !== "1") {
   });
 }
 
-const PHYSICAL_RESET_CONFIRMATION = "BORRAR INVENTARIO";
+const PHYSICAL_RESET_CONFIRMATION = "BORRAR INVENTARIO DE AVIAT";
+const physicalInventoryResetFinalAck = document.getElementById("physicalInventoryResetFinalAck");
+let aviatResetPreview = null;
+
+function isActiveAviatOperationalClient() {
+  const client = operationalClient || clientContextCatalog.find((row) => row.id === adminSelectedClientId);
+  if (!client) return false;
+  return [client.code, client.name, client.tradeName, client.legalName]
+    .some((value) => String(value || "").trim().toUpperCase() === "AVIAT");
+}
+
+function renderAviatResetCounts(target, counts) {
+  if (!target) return;
+  if (!counts) {
+    target.innerHTML = "";
+    return;
+  }
+  target.innerHTML = [
+    ["Piezas", counts.qty],
+    ["Saldos", counts.inventories],
+    ["Series", counts.serials],
+    ["Reservas", counts.reservations],
+    ["Movimientos", counts.movements],
+    ["Requisiciones", counts.requisitions],
+    ["Tareas", counts.tasks]
+  ]
+    .map(([label, value]) => `<span class="chip">${label}: ${value ?? 0}</span>`)
+    .join("");
+}
+
+async function syncAviatDangerZone() {
+  const zone = document.getElementById("aviatDangerZone");
+  const btn = document.getElementById("physicalInventoryResetImportBtn");
+  const hint = document.getElementById("aviatResetFlagHint");
+  if (!zone) return;
+  const visible = currentRole === "ADMIN" && isActiveAviatOperationalClient();
+  zone.classList.toggle("hidden", !visible);
+  if (!visible) {
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add("hidden");
+    }
+    return;
+  }
+  try {
+    const response = await authenticatedFetch("/api/v1/inventory/physical/reset/preview");
+    const data = await response.json().catch(() => ({}));
+    aviatResetPreview = data;
+    renderAviatResetCounts(document.getElementById("aviatResetCounts"), data.counts);
+    const enabled = Boolean(data.flagEnabled && data.isAviat && data.canExecute);
+    if (hint) {
+      hint.textContent = enabled
+        ? "Escribe la frase exacta y confirma por segunda vez. Esta variable se activará solamente para el ensayo y la carga inicial y deberá volver a false después de la carga aprobada por Hugo."
+        : "El reinicio está desactivado. ALLOW_TENANT_INVENTORY_RESET debe ser true solo para el ensayo y la carga inicial.";
+    }
+    if (btn) {
+      btn.classList.toggle("hidden", currentRole !== "ADMIN");
+      btn.style.display = currentRole === "ADMIN" ? "inline-block" : "none";
+      btn.disabled = !enabled || physicalInventoryResetBusy;
+    }
+  } catch (_err) {
+    if (btn) btn.disabled = true;
+  }
+}
 
 function setPhysicalInventoryResetError(message) {
   if (physicalInventoryResetError) physicalInventoryResetError.textContent = message || "";
@@ -13593,16 +13656,22 @@ function setPhysicalInventoryResetError(message) {
 function syncPhysicalInventoryResetConfirmEnabled() {
   if (!physicalInventoryResetConfirmBtn) return;
   const phrase = String(physicalInventoryResetPhrase?.value || "").trim();
-  const ready = phrase === PHYSICAL_RESET_CONFIRMATION && !physicalInventoryResetBusy;
+  const ack = Boolean(physicalInventoryResetFinalAck?.checked);
+  const ready =
+    phrase === PHYSICAL_RESET_CONFIRMATION &&
+    ack &&
+    !physicalInventoryResetBusy &&
+    Boolean(aviatResetPreview?.canExecute);
   physicalInventoryResetConfirmBtn.disabled = !ready;
 }
 
 function setPhysicalInventoryResetBusy(busy) {
   physicalInventoryResetBusy = busy;
   physicalInventoryResetBtns.forEach((btn) => {
-    btn.disabled = busy;
+    btn.disabled = busy || !aviatResetPreview?.canExecute;
   });
   if (physicalInventoryResetPhrase) physicalInventoryResetPhrase.disabled = busy;
+  if (physicalInventoryResetFinalAck) physicalInventoryResetFinalAck.disabled = busy;
   if (physicalInventoryResetCancelBtn) physicalInventoryResetCancelBtn.disabled = busy;
   if (physicalInventoryResetCloseX) physicalInventoryResetCloseX.disabled = busy;
   if (physicalInventoryResetBusyStatus) physicalInventoryResetBusyStatus.classList.toggle("hidden", !busy);
@@ -13617,12 +13686,15 @@ function setPhysicalInventoryResetBusy(busy) {
 
 function openPhysicalInventoryResetModal() {
   if (currentRole !== "ADMIN" || physicalInventoryResetBusy) return;
+  if (!aviatResetPreview?.canExecute) return;
   setPhysicalInventoryResetError("");
   if (physicalInventoryResetSuccess) {
     physicalInventoryResetSuccess.textContent = "";
     physicalInventoryResetSuccess.classList.add("hidden");
   }
   if (physicalInventoryResetPhrase) physicalInventoryResetPhrase.value = "";
+  if (physicalInventoryResetFinalAck) physicalInventoryResetFinalAck.checked = false;
+  renderAviatResetCounts(document.getElementById("physicalInventoryResetPreviewCounts"), aviatResetPreview?.counts);
   syncPhysicalInventoryResetConfirmEnabled();
   openModal("physicalInventoryResetModal");
 }
@@ -13634,9 +13706,13 @@ function closePhysicalInventoryResetModal() {
 
 async function runPhysicalInventoryReset() {
   if (physicalInventoryResetBusy || currentRole !== "ADMIN") return;
+  if (!aviatResetPreview?.canExecute) {
+    setPhysicalInventoryResetError("El reinicio de inventario de AVIAT está desactivado.");
+    return;
+  }
   const phrase = String(physicalInventoryResetPhrase?.value || "").trim();
-  if (phrase !== PHYSICAL_RESET_CONFIRMATION) {
-    setPhysicalInventoryResetError(`Para confirmar escribe exactamente: ${PHYSICAL_RESET_CONFIRMATION}`);
+  if (phrase !== PHYSICAL_RESET_CONFIRMATION || !physicalInventoryResetFinalAck?.checked) {
+    setPhysicalInventoryResetError(`Para confirmar escribe exactamente: ${PHYSICAL_RESET_CONFIRMATION} y marca la confirmación final.`);
     return;
   }
   setPhysicalInventoryResetBusy(true);
@@ -13645,7 +13721,10 @@ async function runPhysicalInventoryReset() {
     const response = await authenticatedFetch("/api/v1/inventory/physical/reset", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirmation: PHYSICAL_RESET_CONFIRMATION })
+      body: JSON.stringify({
+        confirmation: PHYSICAL_RESET_CONFIRMATION,
+        finalConfirmation: PHYSICAL_RESET_CONFIRMATION
+      })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -13654,16 +13733,16 @@ async function runPhysicalInventoryReset() {
     if (data.result !== "PURGED") {
       throw new Error("El servidor no confirmó la eliminación física del inventario.");
     }
-    const inventories = Number(data.inventoriesPurged ?? data.inventoriesZeroed ?? 0);
-    const layers = Number(data.layersPurged ?? data.layersZeroed ?? 0);
-    const serials = Number(data.serialsPurged ?? data.serialsReleased ?? 0);
-    const reservations = Number(data.reservationsPurged ?? data.reservationsReleased ?? 0);
-    const stock = Number(data.legacyStockPurged ?? data.legacyStockZeroed ?? 0);
     const message =
-      `Inventario eliminado. ${inventories} existencias, ${layers} capas, ${serials} seriales, ${reservations} reservas, ${stock} stock legado.`;
+      `Inventario AVIAT eliminado. Existencias ${data.inventoriesPurged ?? 0}, capas ${data.layersPurged ?? 0}, series ${data.serialsPurged ?? 0}, reservas ${data.reservationsPurged ?? 0}, movimientos ${data.movementsPurged ?? 0}, scans ${data.scanEventsPurged ?? 0}, requisiciones ${data.requisitionsPurged ?? 0}, tareas ${data.tasksPurged ?? 0}, importaciones ${data.importBatchesPurged ?? 0}.`;
     if (physicalInventoryResetSuccess) {
       physicalInventoryResetSuccess.textContent = `✓ ${message}`;
       physicalInventoryResetSuccess.classList.remove("hidden");
+    }
+    const resultBox = document.getElementById("aviatResetResult");
+    if (resultBox) {
+      resultBox.textContent = `✓ ${message}`;
+      resultBox.classList.remove("hidden");
     }
     await refreshInventoryAfterPhysicalPurge();
   } catch (error) {
@@ -13679,6 +13758,7 @@ physicalInventoryResetBtns.forEach((btn) => {
 if (physicalInventoryResetCancelBtn) physicalInventoryResetCancelBtn.addEventListener("click", closePhysicalInventoryResetModal);
 if (physicalInventoryResetCloseX) physicalInventoryResetCloseX.addEventListener("click", closePhysicalInventoryResetModal);
 if (physicalInventoryResetPhrase) physicalInventoryResetPhrase.addEventListener("input", syncPhysicalInventoryResetConfirmEnabled);
+if (physicalInventoryResetFinalAck) physicalInventoryResetFinalAck.addEventListener("change", syncPhysicalInventoryResetConfirmEnabled);
 if (physicalInventoryResetConfirmBtn) physicalInventoryResetConfirmBtn.addEventListener("click", () => void runPhysicalInventoryReset());
 if (physicalInventoryResetModal && physicalInventoryResetModal.dataset.modalWired !== "1") {
   physicalInventoryResetModal.dataset.modalWired = "1";

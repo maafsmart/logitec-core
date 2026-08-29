@@ -109,6 +109,8 @@ test("la migración SQL aborta sin AVIAT único, ante colisión FTS y sin wareho
   assert.match(sql, /FROM "Client"/);
   assert.match(sql, /SET "clientId" = \(SELECT id FROM _aviat_owner\)/);
   assert.match(sql, /FREE_TO_SALE:' \|\| aviat_id/);
+  assert.match(sql, /DROP CONSTRAINT IF EXISTS "Inventory_assignment_coherence_check"/);
+  assert.match(sql, /FREE_TO_SALE:' \|\| "clientId"/);
   assert.match(sql, /ALTER TABLE "Inventory" ALTER COLUMN "clientId" SET NOT NULL/);
   assert.match(sql, /ALTER TABLE "Customer" ALTER COLUMN "clientId" SET NOT NULL/);
   assert.match(sql, /ALTER TABLE "Location" ALTER COLUMN "warehouseId" SET NOT NULL/);

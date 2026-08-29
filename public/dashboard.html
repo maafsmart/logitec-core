@@ -4195,12 +4195,155 @@
             </div>
             <div class="page-toolbar">
               <button type="button" id="openInventoryImportBtn" class="btn-primary">Abrir asistente de importación</button>
-              <button type="button" id="physicalInventoryResetBtn" class="btn-danger hidden">Borrar todo el inventario</button>
               <button type="button" id="exportStockBtn" class="btn-secondary">Exportar existencias CSV</button>
               <button type="button" id="exportStockFilteredBtn" class="btn-secondary">Exportar resultado filtrado</button>
               <button type="button" id="exportMovementsBtn" class="btn-secondary">Exportar movimientos CSV</button>
               <button type="button" id="toggleMovementsBtn" class="btn-secondary">Ver movimientos</button>
             </div>
+            <div class="card-panel hidden" id="importWizardPanel" style="display:none">
+              <h4 class="secondary-panel-title">Importar datos</h4>
+              <p class="module-hint">Secuencia: Archivo → Hoja → Mapeo → Validación → Revisión → Confirmación. Subir un archivo no modifica inventario hasta confirmar.</p>
+              <div id="importResumeBanner" class="import-resume-banner hidden" role="status" aria-live="polite">
+                <h5>Importación en curso</h5>
+                <div id="importResumeMeta" class="import-resume-meta"></div>
+                <div class="page-toolbar">
+                  <button type="button" id="importResumeContinueBtn" class="btn-primary btn-compact">Continuar importación</button>
+                  <button type="button" id="importResumeDiscardBtn" class="btn-secondary btn-compact">Cancelar importación temporal</button>
+                </div>
+              </div>
+              <ol class="import-stepper" id="importStepper" aria-label="Pasos de importación">
+                <li class="import-step is-current" data-import-step="file">
+                  <span class="import-step-num">1</span>
+                  <span class="import-step-title">Archivo</span>
+                  <span class="import-step-state" id="importStepState-file">Pendiente</span>
+                  <span class="import-step-detail" id="importStepDetail-file">Selecciona el archivo a cargar.</span>
+                </li>
+                <li class="import-step is-locked" data-import-step="sheet">
+                  <span class="import-step-num">2</span>
+                  <span class="import-step-title">Hoja</span>
+                  <span class="import-step-state" id="importStepState-sheet">Bloqueado</span>
+                  <span class="import-step-detail" id="importStepDetail-sheet">Espera a que el archivo esté cargado.</span>
+                </li>
+                <li class="import-step is-locked" data-import-step="mapping">
+                  <span class="import-step-num">3</span>
+                  <span class="import-step-title">Mapeo</span>
+                  <span class="import-step-state" id="importStepState-mapping">Bloqueado</span>
+                  <span class="import-step-detail" id="importStepDetail-mapping">Requiere una hoja seleccionada.</span>
+                </li>
+                <li class="import-step is-locked" data-import-step="validate">
+                  <span class="import-step-num">4</span>
+                  <span class="import-step-title">Validación</span>
+                  <span class="import-step-state" id="importStepState-validate">Bloqueado</span>
+                  <span class="import-step-detail" id="importStepDetail-validate">Requiere mapeo aplicado.</span>
+                </li>
+                <li class="import-step is-locked" data-import-step="review">
+                  <span class="import-step-num">5</span>
+                  <span class="import-step-title">Revisión</span>
+                  <span class="import-step-state" id="importStepState-review">Bloqueado</span>
+                  <span class="import-step-detail" id="importStepDetail-review">Requiere validación previa.</span>
+                </li>
+                <li class="import-step is-locked" data-import-step="confirm">
+                  <span class="import-step-num">6</span>
+                  <span class="import-step-title">Confirmación</span>
+                  <span class="import-step-state" id="importStepState-confirm">Bloqueado</span>
+                  <span class="import-step-detail" id="importStepDetail-confirm">No disponible todavía.</span>
+                </li>
+              </ol>
+              <div id="importBusyBanner" class="import-busy-banner hidden" role="status" aria-live="polite"></div>
+              <p id="importSyncLine" class="import-sync-line">Última sincronización: —</p>
+              <p id="importStatus" class="operational-table-meta import-status-line"></p>
+
+              <section class="import-step-body" data-step-body="file" aria-label="Paso 1 Archivo">
+                <h5>1. Archivo</h5>
+                <div class="form-grid">
+                  <div class="field">
+                    <label for="importContext">Contexto</label>
+                    <select id="importContext">
+                      <option value="INVENTORY">Inventario físico / stock</option>
+                      <option value="INBOUND">Entradas masivas</option>
+                      <option value="REQUISITIONS">Requisiciones</option>
+                      <option value="PRODUCTS">Catálogo de productos</option>
+                      <option value="CLIENTS_PROJECTS">Clientes / proyectos</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="importInventoryMode">Modo inventario</label>
+                    <select id="importInventoryMode">
+                      <option value="APPEND">APPEND / recepción</option>
+                      <option value="RECONCILE">RECONCILE / conciliación (solo preview)</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="importPriceCurrency">Precio genérico →</label>
+                    <select id="importPriceCurrency">
+                      <option value="">No aplicar</option>
+                      <option value="MXN">MXN</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="importFile">Archivo XLSX/CSV</label>
+                    <input id="importFile" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                  </div>
+                </div>
+                <div class="page-toolbar" style="margin-top:10px">
+                  <button type="button" id="importUploadBtn" class="btn-primary btn-compact">Subir archivo</button>
+                </div>
+                <p id="importFileMeta" class="assignee-hint"></p>
+              </section>
+
+              <section class="import-step-body" data-step-body="sheet" aria-label="Paso 2 Hoja">
+                <h5>2. Hoja</h5>
+                <div class="field" style="max-width:420px">
+                  <label for="importSheetSelect">Hoja del archivo</label>
+                  <select id="importSheetSelect" disabled>
+                    <option value="">Carga un archivo primero</option>
+                  </select>
+                </div>
+                <p id="importSheetMeta" class="assignee-hint">Bloqueado hasta cargar un archivo.</p>
+              </section>
+
+              <section class="import-step-body" data-step-body="mapping" aria-label="Paso 3 Mapeo">
+                <h5>3. Mapeo</h5>
+                <div id="importMappingBox" class="card-panel" style="margin-top:6px;max-height:220px;overflow:auto"></div>
+                <div class="page-toolbar" style="margin-top:10px">
+                  <button type="button" id="importMapBtn" class="btn-secondary btn-compact" disabled>Aplicar mapeo</button>
+                </div>
+                <p id="importMapHint" class="assignee-hint">Bloqueado hasta seleccionar una hoja.</p>
+              </section>
+
+              <section class="import-step-body" data-step-body="validate" aria-label="Paso 4 Validación">
+                <h5>4. Validación</h5>
+                <div class="page-toolbar">
+                  <button type="button" id="importValidateBtn" class="btn-secondary btn-compact" disabled>Validar</button>
+                </div>
+                <p id="importValidateHint" class="assignee-hint">Bloqueado hasta aplicar el mapeo.</p>
+                <div id="importValidateSummary" class="import-summary-chips"></div>
+                <div id="importPreviewBox" style="overflow:auto;max-height:320px"></div>
+              </section>
+
+              <section class="import-step-body" data-step-body="review" aria-label="Paso 5 Revisión">
+                <h5>5. Revisión</h5>
+                <div class="page-toolbar">
+                  <button type="button" id="importReviewBtn" class="btn-secondary btn-compact" disabled>Actualizar revisión</button>
+                </div>
+                <p id="importReviewHint" class="assignee-hint">Bloqueado hasta validar el archivo.</p>
+                <div id="importReviewQueueBox" style="margin-top:12px"></div>
+              </section>
+
+              <section class="import-step-body" data-step-body="confirm" aria-label="Paso 6 Confirmación">
+                <h5>6. Confirmación</h5>
+                <p id="importConfirmHint" class="import-confirm-hint">🔒 Confirmar está bloqueado hasta completar los pasos anteriores.</p>
+                <div class="page-toolbar">
+                  <button type="button" id="importConfirmBtn" class="btn-compact btn-confirm-locked" disabled>🔒 Confirmar</button>
+                  <button type="button" id="importNormalizedBtn" class="btn-secondary btn-compact" disabled>CSV normalizado</button>
+                  <button type="button" id="importCancelBtn" class="btn-secondary btn-compact hidden" aria-label="Cancelar importación temporal">Cancelar importación temporal</button>
+                </div>
+              </section>
+
+              <div id="importHistoryBox" style="margin-top:12px"></div>
+            </div>
+
             <div class="grid-toolbar" data-grid-toolbar="inventory">
               <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
                 <button type="button" data-density="compact" class="active">Modo compacto</button>
@@ -4897,13 +5040,13 @@
             <div class="card-panel">
               <h4 class="secondary-panel-title">Carga masiva / archivo</h4>
               <p class="module-lead" style="margin-bottom:12px">
-                Abre el asistente de importación en Configuración (CSV/Excel) para actualizar saldos y ubicaciones.
+                La carga masiva desde archivo se realiza únicamente en <strong>Inventario → Existencias</strong>.
                 No es una orden de surtido: <strong>aumenta existencias</strong>. Para salida usa
                 <strong>Órdenes de surtido / Requisiciones</strong>. Para una sola línea usa
                 <strong>Entradas / Recepción</strong>.
               </p>
               <div class="page-toolbar">
-                <button type="button" class="btn-primary btn-compact" id="bulkInboundOpenImportBtn">Abrir asistente de importación</button>
+                <button type="button" class="btn-secondary btn-compact" data-goto-module="inventory">Ir a existencias</button>
                 <button type="button" class="btn-secondary btn-compact" data-goto-module="inbound">Entrada unitaria</button>
               </div>
               <p class="assignee-hint">Entrada con escaneo masivo queda preparada como concepto para versiones futuras.</p>
@@ -4992,152 +5135,18 @@
               <button type="button" id="labResetOpenBtn" class="btn-danger">Reiniciar laboratorio</button>
               <p class="assignee-hint" style="margin-top:10px">Visible solo en DEV/QA y para administradores. No opera contra producción.</p>
             </div>
-            <div class="card-panel" id="importWizardPanel">
-              <h4 class="secondary-panel-title">Importar datos</h4>
-              <p class="module-hint">Secuencia: Archivo → Hoja → Mapeo → Validación → Revisión → Confirmación. Subir un archivo no modifica inventario hasta confirmar.</p>
-              <div class="page-toolbar" id="physicalInventoryResetImportBar">
-                <button type="button" id="physicalInventoryResetImportBtn" class="btn-danger hidden">Borrar todo el inventario</button>
+            <details class="card-panel danger-zone-panel hidden" id="aviatDangerZone">
+              <summary>Zona de peligro</summary>
+              <h4 class="secondary-panel-title">Borrar inventario de AVIAT</h4>
+              <p class="module-lead">Reinicio operativo previo a la carga inicial. Elimina existencias, cubos, cantidades, reservados, capas, series, IMEI, reservas, requisiciones y tareas de ensayo, picking, scans, movimientos operativos de prueba, actividad operativa relacionada y sesiones temporales de importación del cliente AVIAT activo.</p>
+              <p class="module-lead">Se conservan el cliente AVIAT, usuarios, roles, contraseñas, sesiones, proyectos oficiales, almacén oficial, ubicaciones aprobadas, configuración, permisos y catálogos maestros necesarios para volver a importar. El catálogo global de SKU no se borra.</p>
+              <div id="aviatResetCounts" class="import-summary-chips"></div>
+              <p id="aviatResetFlagHint" class="assignee-hint">Esta función se activa solamente para el ensayo y la carga inicial (<code>ALLOW_TENANT_INVENTORY_RESET</code>) y debe volver a desactivarse después de la carga aprobada por Hugo.</p>
+              <div class="page-toolbar">
+                <button type="button" id="physicalInventoryResetImportBtn" class="btn-danger hidden" disabled>Borrar inventario de AVIAT</button>
               </div>
-              <div id="importResumeBanner" class="import-resume-banner hidden" role="status" aria-live="polite">
-                <h5>Importación en curso</h5>
-                <div id="importResumeMeta" class="import-resume-meta"></div>
-                <div class="page-toolbar">
-                  <button type="button" id="importResumeContinueBtn" class="btn-primary btn-compact">Continuar importación</button>
-                  <button type="button" id="importResumeDiscardBtn" class="btn-secondary btn-compact">Cancelar importación temporal</button>
-                </div>
-              </div>
-              <ol class="import-stepper" id="importStepper" aria-label="Pasos de importación">
-                <li class="import-step is-current" data-import-step="file">
-                  <span class="import-step-num">1</span>
-                  <span class="import-step-title">Archivo</span>
-                  <span class="import-step-state" id="importStepState-file">Pendiente</span>
-                  <span class="import-step-detail" id="importStepDetail-file">Selecciona el archivo a cargar.</span>
-                </li>
-                <li class="import-step is-locked" data-import-step="sheet">
-                  <span class="import-step-num">2</span>
-                  <span class="import-step-title">Hoja</span>
-                  <span class="import-step-state" id="importStepState-sheet">Bloqueado</span>
-                  <span class="import-step-detail" id="importStepDetail-sheet">Espera a que el archivo esté cargado.</span>
-                </li>
-                <li class="import-step is-locked" data-import-step="mapping">
-                  <span class="import-step-num">3</span>
-                  <span class="import-step-title">Mapeo</span>
-                  <span class="import-step-state" id="importStepState-mapping">Bloqueado</span>
-                  <span class="import-step-detail" id="importStepDetail-mapping">Requiere una hoja seleccionada.</span>
-                </li>
-                <li class="import-step is-locked" data-import-step="validate">
-                  <span class="import-step-num">4</span>
-                  <span class="import-step-title">Validación</span>
-                  <span class="import-step-state" id="importStepState-validate">Bloqueado</span>
-                  <span class="import-step-detail" id="importStepDetail-validate">Requiere mapeo aplicado.</span>
-                </li>
-                <li class="import-step is-locked" data-import-step="review">
-                  <span class="import-step-num">5</span>
-                  <span class="import-step-title">Revisión</span>
-                  <span class="import-step-state" id="importStepState-review">Bloqueado</span>
-                  <span class="import-step-detail" id="importStepDetail-review">Requiere validación previa.</span>
-                </li>
-                <li class="import-step is-locked" data-import-step="confirm">
-                  <span class="import-step-num">6</span>
-                  <span class="import-step-title">Confirmación</span>
-                  <span class="import-step-state" id="importStepState-confirm">Bloqueado</span>
-                  <span class="import-step-detail" id="importStepDetail-confirm">No disponible todavía.</span>
-                </li>
-              </ol>
-              <div id="importBusyBanner" class="import-busy-banner hidden" role="status" aria-live="polite"></div>
-              <p id="importSyncLine" class="import-sync-line">Última sincronización: —</p>
-              <p id="importStatus" class="operational-table-meta import-status-line"></p>
-
-              <section class="import-step-body" data-step-body="file" aria-label="Paso 1 Archivo">
-                <h5>1. Archivo</h5>
-                <div class="form-grid">
-                  <div class="field">
-                    <label for="importContext">Contexto</label>
-                    <select id="importContext">
-                      <option value="INVENTORY">Inventario físico / stock</option>
-                      <option value="INBOUND">Entradas masivas</option>
-                      <option value="REQUISITIONS">Requisiciones</option>
-                      <option value="PRODUCTS">Catálogo de productos</option>
-                      <option value="CLIENTS_PROJECTS">Clientes / proyectos</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="importInventoryMode">Modo inventario</label>
-                    <select id="importInventoryMode">
-                      <option value="APPEND">APPEND / recepción</option>
-                      <option value="RECONCILE">RECONCILE / conciliación (solo preview)</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="importPriceCurrency">Precio genérico →</label>
-                    <select id="importPriceCurrency">
-                      <option value="">No aplicar</option>
-                      <option value="MXN">MXN</option>
-                      <option value="USD">USD</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="importFile">Archivo XLSX/CSV</label>
-                    <input id="importFile" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
-                  </div>
-                </div>
-                <div class="page-toolbar" style="margin-top:10px">
-                  <button type="button" id="importUploadBtn" class="btn-primary btn-compact">Subir archivo</button>
-                </div>
-                <p id="importFileMeta" class="assignee-hint"></p>
-              </section>
-
-              <section class="import-step-body" data-step-body="sheet" aria-label="Paso 2 Hoja">
-                <h5>2. Hoja</h5>
-                <div class="field" style="max-width:420px">
-                  <label for="importSheetSelect">Hoja del archivo</label>
-                  <select id="importSheetSelect" disabled>
-                    <option value="">Carga un archivo primero</option>
-                  </select>
-                </div>
-                <p id="importSheetMeta" class="assignee-hint">Bloqueado hasta cargar un archivo.</p>
-              </section>
-
-              <section class="import-step-body" data-step-body="mapping" aria-label="Paso 3 Mapeo">
-                <h5>3. Mapeo</h5>
-                <div id="importMappingBox" class="card-panel" style="margin-top:6px;max-height:220px;overflow:auto"></div>
-                <div class="page-toolbar" style="margin-top:10px">
-                  <button type="button" id="importMapBtn" class="btn-secondary btn-compact" disabled>Aplicar mapeo</button>
-                </div>
-                <p id="importMapHint" class="assignee-hint">Bloqueado hasta seleccionar una hoja.</p>
-              </section>
-
-              <section class="import-step-body" data-step-body="validate" aria-label="Paso 4 Validación">
-                <h5>4. Validación</h5>
-                <div class="page-toolbar">
-                  <button type="button" id="importValidateBtn" class="btn-secondary btn-compact" disabled>Validar</button>
-                </div>
-                <p id="importValidateHint" class="assignee-hint">Bloqueado hasta aplicar el mapeo.</p>
-                <div id="importValidateSummary" class="import-summary-chips"></div>
-                <div id="importPreviewBox" style="overflow:auto;max-height:320px"></div>
-              </section>
-
-              <section class="import-step-body" data-step-body="review" aria-label="Paso 5 Revisión">
-                <h5>5. Revisión</h5>
-                <div class="page-toolbar">
-                  <button type="button" id="importReviewBtn" class="btn-secondary btn-compact" disabled>Actualizar revisión</button>
-                </div>
-                <p id="importReviewHint" class="assignee-hint">Bloqueado hasta validar el archivo.</p>
-                <div id="importReviewQueueBox" style="margin-top:12px"></div>
-              </section>
-
-              <section class="import-step-body" data-step-body="confirm" aria-label="Paso 6 Confirmación">
-                <h5>6. Confirmación</h5>
-                <p id="importConfirmHint" class="import-confirm-hint">🔒 Confirmar está bloqueado hasta completar los pasos anteriores.</p>
-                <div class="page-toolbar">
-                  <button type="button" id="importConfirmBtn" class="btn-compact btn-confirm-locked" disabled>🔒 Confirmar</button>
-                  <button type="button" id="importNormalizedBtn" class="btn-secondary btn-compact" disabled>CSV normalizado</button>
-                  <button type="button" id="importCancelBtn" class="btn-secondary btn-compact hidden" aria-label="Cancelar importación temporal">Cancelar importación temporal</button>
-                </div>
-              </section>
-
-              <div id="importHistoryBox" style="margin-top:12px"></div>
-            </div>
+              <p id="aviatResetResult" class="ops-message ok hidden"></p>
+            </details>
           </div>
 
         </main>
@@ -5271,17 +5280,23 @@
     <div id="physicalInventoryResetModal" class="modal-overlay" aria-hidden="true">
       <div class="modal-panel" role="dialog" aria-labelledby="physicalInventoryResetTitle" aria-modal="true">
         <div class="modal-header">
-          <h3 id="physicalInventoryResetTitle">Borrar todo el inventario</h3>
+          <h3 id="physicalInventoryResetTitle">Borrar inventario de AVIAT</h3>
           <button type="button" class="modal-close" id="physicalInventoryResetCloseX" aria-label="Cerrar">×</button>
         </div>
-        <p>Esta acción eliminará completamente todos los registros de existencias, capas, seriales y reservas. No eliminará productos, proyectos, clientes, almacenes, ubicaciones ni usuarios. Después podrá realizar una nueva importación manual.</p>
+        <p>Esta acción elimina el inventario operativo del cliente AVIAT activo: existencias, cubos, cantidades, reservados, capas, series, reservas, requisiciones y tareas de ensayo, picking, scans, movimientos de prueba, actividad operativa relacionada y sesiones temporales de importación.</p>
+        <p>Se conservan AVIAT, usuarios, roles, contraseñas, sesiones, proyectos oficiales, almacén, ubicaciones aprobadas, configuración, permisos y catálogos maestros. El catálogo global de SKU no se borra.</p>
+        <div id="physicalInventoryResetPreviewCounts" class="import-summary-chips"></div>
         <label class="lab-reset-check" for="physicalInventoryResetPhrase">
-          Escribe <strong>BORRAR INVENTARIO</strong> para confirmar
+          Escribe <strong>BORRAR INVENTARIO DE AVIAT</strong> para confirmar
         </label>
-        <input id="physicalInventoryResetPhrase" type="text" autocomplete="off" spellcheck="false" placeholder="BORRAR INVENTARIO" />
+        <input id="physicalInventoryResetPhrase" type="text" autocomplete="off" spellcheck="false" placeholder="BORRAR INVENTARIO DE AVIAT" />
+        <label class="lab-reset-check" for="physicalInventoryResetFinalAck">
+          <input id="physicalInventoryResetFinalAck" type="checkbox" />
+          Confirmo el borrado definitivo del inventario operativo de AVIAT
+        </label>
         <p id="physicalInventoryResetBusyStatus" class="lab-reset-busy hidden" role="status" aria-live="polite">
           <span class="lab-reset-spinner"></span>
-          Eliminando existencias…
+          Eliminando inventario operativo de AVIAT…
         </p>
         <p id="physicalInventoryResetError" class="ops-message error"></p>
         <p id="physicalInventoryResetSuccess" class="ops-message ok hidden"></p>
@@ -5392,6 +5407,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=82"></script>
+    <script src="/dashboard.js?v=83"></script>
   </body>
 </html>

@@ -42,8 +42,10 @@ import {
 import { assertActiveInventoryStatus } from "./inventory-status.js";
 import { hasInventoryScope, inventoryScopeWhere, movementScopeWhere } from "./inventory-scope.js";
 import {
-  assertPhysicalResetConfirmation,
-  executePhysicalInventoryReset
+  assertPhysicalResetFinalConfirmation,
+  assertTenantInventoryResetAllowed,
+  executePhysicalInventoryReset,
+  previewPhysicalInventoryReset
 } from "./physical-reset.service.js";
 import { isForbiddenInventoryProjectRecord } from "./inventory-project-rules.js";
 import { createMovementSchema } from "./inventory-movement.schema.js";
@@ -1028,9 +1030,25 @@ inventoryRouter.post("/assignment-transfer", requireRole(["ADMIN", "SUPERVISOR"]
   }
 });
 
+inventoryRouter.get("/physical/reset/preview", requireRole(["ADMIN"]), async (req, res) => {
+  const result = await previewPhysicalInventoryReset({
+    userId: req.auth!.userId,
+    clientId: req.auth!.operationalClientId!
+  });
+  res.json(result);
+});
+
 inventoryRouter.post("/physical/reset", requireRole(["ADMIN"]), async (req, res) => {
-  const body = z.object({ confirmation: z.string().optional() }).parse(req.body ?? {});
-  assertPhysicalResetConfirmation(body.confirmation);
+  const body = z
+    .object({
+      confirmation: z.string().optional(),
+      finalConfirmation: z.string().optional(),
+      clientId: z.unknown().optional()
+    })
+    .parse(req.body ?? {});
+  void body.clientId;
+  assertTenantInventoryResetAllowed();
+  assertPhysicalResetFinalConfirmation(body.confirmation, body.finalConfirmation);
   const result = await executePhysicalInventoryReset({
     userId: req.auth!.userId,
     clientId: req.auth!.operationalClientId!

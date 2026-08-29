@@ -93,6 +93,8 @@ BEGIN
   END IF;
 END $$;
 
+ALTER TABLE "Inventory" DROP CONSTRAINT IF EXISTS "Inventory_assignment_coherence_check";
+
 UPDATE "Inventory"
 SET "assignmentKey" = 'FREE_TO_SALE:' || "clientId"
 WHERE "assignmentType" = 'FREE_TO_SALE'
@@ -108,6 +110,24 @@ ALTER TABLE "Inventory"
   ADD CONSTRAINT "Inventory_clientId_fkey"
   FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 CREATE INDEX "Inventory_clientId_idx" ON "Inventory"("clientId");
+
+ALTER TABLE "Inventory" ADD CONSTRAINT "Inventory_assignment_coherence_check" CHECK (
+    (
+        "assignmentType" = 'PROJECT'
+        AND "projectId" IS NOT NULL
+        AND "assignmentKey" = ('P:' || "projectId")
+    )
+    OR (
+        "assignmentType" = 'FREE_TO_SALE'
+        AND "projectId" IS NULL
+        AND "assignmentKey" = ('FREE_TO_SALE:' || "clientId")
+    )
+    OR (
+        "assignmentType" = 'LEGACY_UNASSIGNED'
+        AND "projectId" IS NULL
+        AND "assignmentKey" = ('LEGACY_UNASSIGNED:' || "clientId")
+    )
+);
 
 ALTER TABLE "InventoryMovement" ADD COLUMN "clientId" TEXT;
 UPDATE "InventoryMovement"

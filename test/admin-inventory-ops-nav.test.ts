@@ -111,7 +111,7 @@ test("el panel ADMIN dirige a Operación con las claves canónicas", () => {
   );
   const applyRoleSrc = sliceFunction(js, "applyRoleNavigation");
   assert.match(applyRoleSrc, /inventoryOpsNavPanel[\s\S]*classList\.toggle\("hidden", role !== "ADMIN"\)/);
-  assert.match(html, /dashboard\.js\?v=82/);
+  assert.match(html, /dashboard\.js\?v=83/);
 });
 
 test("los tres botones navegan al módulo canónico y no mutan inventario", () => {

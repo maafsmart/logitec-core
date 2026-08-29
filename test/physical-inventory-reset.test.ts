@@ -8,8 +8,11 @@ import {
   PHYSICAL_RESET_PATH,
   applyPhysicalInventoryPurge,
   assertPhysicalResetConfirmation,
+  assertPhysicalResetFinalConfirmation,
+  assertTenantInventoryResetAllowed,
   executePhysicalInventoryReset,
-  isPhysicalResetInFlight
+  isPhysicalResetInFlight,
+  isTenantInventoryResetAllowed
 } from "../src/modules/inventory/physical-reset.service.js";
 
 const html = readFileSync(new URL("../public/dashboard.html", import.meta.url), "utf8");
@@ -17,11 +20,15 @@ const js = readFileSync(new URL("../public/dashboard.js", import.meta.url), "utf
 const routes = readFileSync(new URL("../src/modules/inventory/inventory.routes.ts", import.meta.url), "utf8");
 const appSrc = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
 const serviceSrc = readFileSync(new URL("../src/modules/inventory/physical-reset.service.ts", import.meta.url), "utf8");
+const envExample = readFileSync(new URL("../.env.example", import.meta.url), "utf8");
 
 const resetBlock = routes.slice(
-  routes.indexOf('inventoryRouter.post("/physical/reset"'),
+  routes.indexOf('inventoryRouter.get("/physical/reset/preview"'),
   routes.indexOf('inventoryRouter.post("/import"')
 );
+
+const AVIAT_ID = "client-aviat";
+const OTHER_ID = "client-2";
 
 function d(n: number) {
   return new Prisma.Decimal(n);
@@ -32,54 +39,132 @@ function cloneRows<T>(rows: T[]): T[] {
 }
 
 function createFakeTx(seed?: Partial<{
-  inventory: Array<{ id: string; qty: Prisma.Decimal; reservedQty: Prisma.Decimal }>;
-  layers: Array<{ id: string; qty: Prisma.Decimal; reservedQty: Prisma.Decimal }>;
-  serials: Array<{ id: string; serialNumber: string }>;
+  inventory: Array<{ id: string; clientId: string; qty: Prisma.Decimal; reservedQty: Prisma.Decimal }>;
+  layers: Array<{ id: string; clientId?: string; qty: Prisma.Decimal; reservedQty: Prisma.Decimal }>;
+  serials: Array<{ id: string; clientId: string; serialNumber: string }>;
   stock: Array<{ id: string; quantity: Prisma.Decimal }>;
-  reservations: Array<{ id: string; status: string }>;
-  movements: Array<{ id: string }>;
-  products: Array<{ id: string }>;
-  locations: Array<{ id: string }>;
-  users: Array<{ id: string }>;
+  reservations: Array<{ id: string; clientId?: string; status: string }>;
+  movements: Array<{ id: string; clientId: string; taskId?: string | null }>;
+  scans: Array<{ id: string; clientId: string }>;
+  activity: Array<{ id: string; clientId: string }>;
+  requisitions: Array<{ id: string; clientId: string }>;
+  tasks: Array<{ id: string; clientId?: string }>;
+  productProjects: Array<{ id: string; clientId: string }>;
+  importBatches: Array<{ id: string }>;
+  products: Array<{ id: string; customerId?: string | null }>;
+  customers: Array<{ id: string; clientId: string; code: string; name: string }>;
+  clients: Array<{ id: string; code: string; name: string; tradeName: string; legalName: string }>;
 }>) {
   const state = {
-    inventory: cloneRows(seed?.inventory || [{ id: "inv-1", qty: d(10), reservedQty: d(2) }]),
-    layers: cloneRows(seed?.layers || [{ id: "ly-1", qty: d(10), reservedQty: d(0) }]),
-    serials: cloneRows(seed?.serials || [{ id: "s-1", serialNumber: "1659" }]),
+    inventory: cloneRows(seed?.inventory || [
+      { id: "inv-1", clientId: AVIAT_ID, qty: d(10), reservedQty: d(2) }
+    ]),
+    layers: cloneRows(seed?.layers || [{ id: "ly-1", clientId: AVIAT_ID, qty: d(10), reservedQty: d(0) }]),
+    serials: cloneRows(seed?.serials || [{ id: "s-1", clientId: AVIAT_ID, serialNumber: "1659" }]),
     stock: cloneRows(seed?.stock || [{ id: "st-1", quantity: d(4) }]),
-    reservations: cloneRows(seed?.reservations || [{ id: "r-1", status: "ACTIVE" }]),
-    movements: cloneRows(seed?.movements || [{ id: "m-1" }]),
-    products: cloneRows(seed?.products || [{ id: "p-1" }]),
-    locations: cloneRows(seed?.locations || [{ id: "l-1" }]),
-    users: cloneRows(seed?.users || [{ id: "u-1" }]),
+    reservations: cloneRows(seed?.reservations || [{ id: "r-1", clientId: AVIAT_ID, status: "ACTIVE" }]),
+    movements: cloneRows(seed?.movements || [{ id: "m-1", clientId: AVIAT_ID, taskId: "t-1" }]),
+    scans: cloneRows(seed?.scans || [{ id: "sc-1", clientId: AVIAT_ID }]),
+    activity: cloneRows(seed?.activity || [{ id: "a-1", clientId: AVIAT_ID }]),
+    requisitions: cloneRows(seed?.requisitions || [{ id: "rq-1", clientId: AVIAT_ID }]),
+    tasks: cloneRows(seed?.tasks || [{ id: "t-1", clientId: AVIAT_ID }]),
+    productProjects: cloneRows(seed?.productProjects || [{ id: "pp-1", clientId: AVIAT_ID }]),
+    importBatches: cloneRows(seed?.importBatches || [{ id: "ib-1" }]),
+    products: cloneRows(seed?.products || [{ id: "p-1", customerId: "proj-logitec" }]),
+    customers: cloneRows(seed?.customers || [
+      { id: "proj-att", clientId: AVIAT_ID, code: "ATT", name: "AT&T" },
+      { id: "proj-logitec", clientId: AVIAT_ID, code: "LOGITEC", name: "LOGITEC" }
+    ]),
+    clients: cloneRows(seed?.clients || [
+      { id: AVIAT_ID, code: "AVIAT", name: "AVIAT", tradeName: "AVIAT", legalName: "AVIAT" }
+    ]),
+    locations: [{ id: "l-1" }],
+    users: [{ id: "u-1" }],
     logs: [] as Array<Record<string, unknown>>,
     deleted: {
       product: 0,
       location: 0,
-      user: 0,
-      movement: 0,
-      importBatch: 0
+      user: 0
     }
   };
 
-  function sum(rows: Array<Record<string, Prisma.Decimal>>, field: string) {
-    return rows.reduce((acc, row) => acc.add(row[field] || d(0)), d(0));
+  function clientIdFromWhere(where: unknown): string | undefined {
+    if (!where || typeof where !== "object") return undefined;
+    const record = where as Record<string, unknown>;
+    if (typeof record.clientId === "string") return record.clientId;
+    if (record.inventory && typeof record.inventory === "object") {
+      return clientIdFromWhere(record.inventory);
+    }
+    if (record.project && typeof record.project === "object") {
+      return clientIdFromWhere(record.project);
+    }
+    if (Array.isArray(record.OR)) {
+      for (const part of record.OR) {
+        const found = clientIdFromWhere(part);
+        if (found) return found;
+      }
+    }
+    if (Array.isArray(record.AND)) {
+      for (const part of record.AND) {
+        const found = clientIdFromWhere(part);
+        if (found) return found;
+      }
+    }
+    return undefined;
   }
 
+  function sum(rows: Array<Record<string, unknown>>, field: string, clientId?: string) {
+    return rows
+      .filter((row) => !clientId || row.clientId === clientId)
+      .reduce((acc, row) => acc.add((row[field] as Prisma.Decimal) || d(0)), d(0));
+  }
+
+  function scopedDelete<T extends { clientId?: string }>(rows: T[], where: unknown) {
+    const clientId = clientIdFromWhere(where);
+    const kept = clientId ? rows.filter((row) => row.clientId !== clientId) : [];
+    return { next: kept, count: rows.length - kept.length };
+  }
+
+  const emptyCount = { count: 0 };
+
   const tx = {
-    inventory: {
-      aggregate: async ({ _sum }: { _sum: Record<string, boolean> }) => {
-        const key = Object.keys(_sum)[0]!;
-        return { _sum: { [key]: sum(state.inventory, key) } };
+    client: {
+      findMany: async () => state.clients
+    },
+    customer: {
+      findMany: async ({ where }: { where?: { clientId?: string } }) =>
+        state.customers.filter((row) => !where?.clientId || row.clientId === where.clientId),
+      delete: async ({ where }: { where: { id: string } }) => {
+        const row = state.customers.find((item) => item.id === where.id);
+        state.customers = state.customers.filter((item) => item.id !== where.id);
+        return row;
       },
-      count: async () => state.inventory.length,
+      count: async ({ where }: { where?: { projectId?: string; clientId?: string } }) => {
+        if (where && "projectId" in (where as object) && (where as { projectId?: string }).projectId) {
+          return state.customers.filter((row) => row.id === (where as { projectId: string }).projectId).length;
+        }
+        return state.customers.length;
+      }
+    },
+    inventory: {
+      aggregate: async ({ where, _sum }: { where?: unknown; _sum: Record<string, boolean> }) => {
+        const key = Object.keys(_sum)[0]!;
+        return { _sum: { [key]: sum(state.inventory, key, clientIdFromWhere(where)) } };
+      },
+      count: async ({ where }: { where?: unknown } = {}) => {
+        const clientId = clientIdFromWhere(where);
+        if ((where as { projectId?: string } | undefined)?.projectId) {
+          return 0;
+        }
+        return clientId ? state.inventory.filter((row) => row.clientId === clientId).length : state.inventory.length;
+      },
       updateMany: async () => {
         throw new Error("inventory.updateMany forbidden");
       },
-      deleteMany: async () => {
-        const count = state.inventory.length;
-        state.inventory = [];
-        return { count };
+      deleteMany: async ({ where }: { where?: unknown }) => {
+        const result = scopedDelete(state.inventory, where);
+        state.inventory = result.next;
+        return { count: result.count };
       }
     },
     inventoryLayer: {
@@ -87,32 +172,40 @@ function createFakeTx(seed?: Partial<{
         const key = Object.keys(_sum)[0]!;
         return { _sum: { [key]: sum(state.layers, key) } };
       },
-      count: async () => state.layers.length,
+      count: async ({ where }: { where?: unknown } = {}) => {
+        const clientId = clientIdFromWhere(where);
+        return clientId ? state.layers.filter((row) => !row.clientId || row.clientId === clientId).length : state.layers.length;
+      },
       updateMany: async () => {
         throw new Error("inventoryLayer.updateMany forbidden");
       },
-      deleteMany: async () => {
-        const count = state.layers.length;
-        state.layers = [];
+      deleteMany: async ({ where }: { where?: unknown }) => {
+        const clientId = clientIdFromWhere(where);
+        if (!clientId) {
+          const count = state.layers.length;
+          state.layers = [];
+          return { count };
+        }
+        const kept = state.layers.filter((row) => row.clientId && row.clientId !== clientId);
+        const count = state.layers.length - kept.length;
+        state.layers = kept;
         return { count };
       }
     },
     inventorySerial: {
-      count: async () => state.serials.length,
-      deleteMany: async () => {
-        const count = state.serials.length;
-        state.serials = [];
-        return { count };
+      count: async ({ where }: { where?: unknown } = {}) => {
+        const clientId = clientIdFromWhere(where);
+        return clientId ? state.serials.filter((row) => row.clientId === clientId).length : state.serials.length;
+      },
+      deleteMany: async ({ where }: { where?: unknown }) => {
+        const result = scopedDelete(state.serials, where);
+        state.serials = result.next;
+        return { count: result.count };
       }
     },
     inventoryStock: {
-      aggregate: async ({ _sum }: { _sum: Record<string, boolean> }) => ({
-        _sum: { quantity: sum(state.stock, "quantity") }
-      }),
       count: async () => state.stock.length,
-      updateMany: async () => {
-        throw new Error("inventoryStock.updateMany forbidden");
-      },
+      findMany: async () => state.stock.map((row) => ({ id: row.id })),
       deleteMany: async () => {
         const count = state.stock.length;
         state.stock = [];
@@ -120,53 +213,202 @@ function createFakeTx(seed?: Partial<{
       }
     },
     inventoryReservation: {
-      count: async () => state.reservations.length,
+      count: async ({ where }: { where?: unknown } = {}) => {
+        const clientId = clientIdFromWhere(where);
+        return clientId
+          ? state.reservations.filter((row) => !row.clientId || row.clientId === clientId).length
+          : state.reservations.length;
+      },
       updateMany: async () => {
         throw new Error("inventoryReservation.updateMany forbidden");
       },
-      deleteMany: async () => {
-        const count = state.reservations.length;
-        state.reservations = [];
+      deleteMany: async ({ where }: { where?: unknown }) => {
+        const clientId = clientIdFromWhere(where);
+        if (!clientId) {
+          const count = state.reservations.length;
+          state.reservations = [];
+          return { count };
+        }
+        const kept = state.reservations.filter((row) => row.clientId && row.clientId !== clientId);
+        const count = state.reservations.length - kept.length;
+        state.reservations = kept;
         return { count };
       }
     },
+    inventoryMovement: {
+      count: async ({ where }: { where?: unknown } = {}) => {
+        const clientId = clientIdFromWhere(where);
+        if (where && typeof where === "object" && ("OR" in (where as object))) {
+          return 0;
+        }
+        return clientId ? state.movements.filter((row) => row.clientId === clientId).length : state.movements.length;
+      },
+      findMany: async () => state.movements,
+      updateMany: async () => emptyCount,
+      deleteMany: async ({ where }: { where?: unknown }) => {
+        const result = scopedDelete(state.movements, where);
+        state.movements = result.next;
+        return { count: result.count };
+      }
+    },
+    scanEvent: {
+      count: async ({ where }: { where?: unknown } = {}) => {
+        const clientId = clientIdFromWhere(where);
+        return clientId ? state.scans.filter((row) => row.clientId === clientId).length : state.scans.length;
+      },
+      findMany: async () => state.scans,
+      deleteMany: async ({ where }: { where?: unknown }) => {
+        const result = scopedDelete(state.scans, where);
+        state.scans = result.next;
+        return { count: result.count };
+      }
+    },
     activityLog: {
+      count: async ({ where }: { where?: { clientId?: string; customerId?: string } } = {}) => {
+        if (where?.customerId) return 0;
+        const clientId = where?.clientId;
+        return clientId ? state.activity.filter((row) => row.clientId === clientId).length : state.activity.length;
+      },
+      deleteMany: async ({ where }: { where?: unknown }) => {
+        const result = scopedDelete(state.activity, where);
+        state.activity = result.next;
+        return { count: result.count };
+      },
       create: async ({ data }: { data: Record<string, unknown> }) => {
         state.logs.push(data);
         return data;
       }
     },
-    product: { deleteMany: async () => { state.deleted.product += 1; } },
+    requisition: {
+      count: async ({ where }: { where?: unknown } = {}) => {
+        const clientId = clientIdFromWhere(where);
+        if ((where as { projectId?: string } | undefined)?.projectId) return 0;
+        return clientId ? state.requisitions.filter((row) => row.clientId === clientId).length : state.requisitions.length;
+      },
+      findMany: async () => state.requisitions,
+      deleteMany: async ({ where }: { where?: unknown }) => {
+        const result = scopedDelete(state.requisitions, where);
+        state.requisitions = result.next;
+        return { count: result.count };
+      }
+    },
+    task: {
+      count: async ({ where }: { where?: unknown } = {}) => {
+        const clientId = clientIdFromWhere(where);
+        return clientId ? state.tasks.filter((row) => !row.clientId || row.clientId === clientId).length : state.tasks.length;
+      },
+      findMany: async () => state.tasks.map((row) => ({ id: row.id })),
+      updateMany: async () => emptyCount,
+      deleteMany: async ({ where }: { where?: { id?: { in: string[] } } }) => {
+        if (where?.id?.in) {
+          const drop = new Set(where.id.in);
+          const kept = state.tasks.filter((row) => !drop.has(row.id));
+          const count = state.tasks.length - kept.length;
+          state.tasks = kept;
+          return { count };
+        }
+        const count = state.tasks.length;
+        state.tasks = [];
+        return { count };
+      }
+    },
+    productProject: {
+      count: async ({ where }: { where?: unknown } = {}) => {
+        const clientId = clientIdFromWhere(where);
+        if ((where as { projectId?: string } | undefined)?.projectId) return 0;
+        return clientId ? state.productProjects.filter((row) => row.clientId === clientId).length : state.productProjects.length;
+      },
+      deleteMany: async ({ where }: { where?: unknown }) => {
+        const result = scopedDelete(state.productProjects, where);
+        state.productProjects = result.next;
+        return { count: result.count };
+      }
+    },
+    importBatch: {
+      count: async () => state.importBatches.length,
+      deleteMany: async () => {
+        const count = state.importBatches.length;
+        state.importBatches = [];
+        return { count };
+      }
+    },
+    product: {
+      count: async ({ where }: { where?: { customerId?: string } } = {}) => {
+        if (where?.customerId) return state.products.filter((row) => row.customerId === where.customerId).length;
+        return state.products.filter((row) => !row.customerId).length;
+      },
+      updateMany: async () => {
+        state.products = state.products.map((row) => ({ ...row, customerId: null }));
+        return { count: state.products.length };
+      },
+      deleteMany: async () => {
+        state.deleted.product += 1;
+      },
+      findMany: async () => state.products
+    },
     location: { deleteMany: async () => { state.deleted.location += 1; } },
-    user: { deleteMany: async () => { state.deleted.user += 1; } },
-    inventoryMovement: { deleteMany: async () => { state.deleted.movement += 1; } },
-    importBatch: { deleteMany: async () => { state.deleted.importBatch += 1; } }
+    user: { deleteMany: async () => { state.deleted.user += 1; } }
   };
 
   return { state, tx };
 }
 
+function withResetFlag<T>(enabled: boolean, fn: () => T): T {
+  const previous = process.env.ALLOW_TENANT_INVENTORY_RESET;
+  process.env.ALLOW_TENANT_INVENTORY_RESET = enabled ? "true" : "false";
+  const restore = () => {
+    if (previous === undefined) delete process.env.ALLOW_TENANT_INVENTORY_RESET;
+    else process.env.ALLOW_TENANT_INVENTORY_RESET = previous;
+  };
+  try {
+    const result = fn();
+    if (result && typeof (result as { then?: unknown }).then === "function") {
+      return (result as Promise<unknown>).finally(restore) as T;
+    }
+    restore();
+    return result;
+  } catch (error) {
+    restore();
+    throw error;
+  }
+}
+
 test("la frase de confirmación es exacta y no admite N/A ni variantes", () => {
-  assert.equal(PHYSICAL_RESET_CONFIRMATION, "BORRAR INVENTARIO");
-  assert.doesNotThrow(() => assertPhysicalResetConfirmation("BORRAR INVENTARIO"));
-  assert.doesNotThrow(() => assertPhysicalResetConfirmation("  BORRAR INVENTARIO  "));
-  assert.throws(() => assertPhysicalResetConfirmation("borrar inventario"), HttpError);
-  assert.throws(() => assertPhysicalResetConfirmation("N/A"), HttpError);
-  assert.throws(() => assertPhysicalResetConfirmation(""), HttpError);
+  assert.equal(PHYSICAL_RESET_CONFIRMATION, "BORRAR INVENTARIO DE AVIAT");
+  assert.doesNotThrow(() => assertPhysicalResetConfirmation("BORRAR INVENTARIO DE AVIAT"));
+  assert.doesNotThrow(() => assertPhysicalResetFinalConfirmation("BORRAR INVENTARIO DE AVIAT", "BORRAR INVENTARIO DE AVIAT"));
+  assert.throws(() => assertPhysicalResetConfirmation("BORRAR INVENTARIO"), HttpError);
+  assert.throws(() => assertPhysicalResetConfirmation("borrar inventario de aviat"), HttpError);
+  assert.throws(() => assertPhysicalResetFinalConfirmation("BORRAR INVENTARIO DE AVIAT", "BORRAR INVENTARIO"), HttpError);
 });
 
-test("el endpoint v1 existe, es ADMIN y no toca confirm de importación", () => {
+test("el flag de inicialización rechaza el reinicio cuando está apagado", () => {
+  withResetFlag(false, () => {
+    assert.equal(isTenantInventoryResetAllowed(), false);
+    assert.throws(() => assertTenantInventoryResetAllowed(), (error: unknown) => (
+      error instanceof HttpError && error.statusCode === 403 && error.code === "TENANT_INVENTORY_RESET_DISABLED"
+    ));
+  });
+  withResetFlag(true, () => {
+    assert.equal(isTenantInventoryResetAllowed(), true);
+    assert.doesNotThrow(() => assertTenantInventoryResetAllowed());
+  });
+  assert.match(envExample, /ALLOW_TENANT_INVENTORY_RESET=false/);
+  assert.match(serviceSrc, /TENANT_INVENTORY_RESET_FLAG/);
+});
+
+test("el endpoint v1 existe, es ADMIN y toma el cliente solo del contexto firmado", () => {
   assert.equal(PHYSICAL_RESET_PATH, "/api/v1/inventory/physical/reset");
   assert.match(appSrc, /app\.use\("\/api\/v1\/inventory", inventoryRouter\)/);
   assert.match(resetBlock, /requireRole\(\["ADMIN"\]\)/);
   assert.doesNotMatch(resetBlock, /OPERATOR|CLIENT|SUPERVISOR/);
   assert.match(resetBlock, /executePhysicalInventoryReset/);
+  assert.match(resetBlock, /req\.auth!\.operationalClientId!/);
+  assert.match(resetBlock, /void body\.clientId/);
+  assert.match(resetBlock, /assertPhysicalResetFinalConfirmation/);
+  assert.match(resetBlock, /assertTenantInventoryResetAllowed/);
   assert.doesNotMatch(resetBlock, /\/api\/imports\/.+\/confirm/);
-  assert.doesNotMatch(serviceSrc, /importBatch/);
-  assert.doesNotMatch(serviceSrc, /AN202|AN203|AN204/);
   assert.match(serviceSrc, /result: "PURGED"/);
-  assert.doesNotMatch(serviceSrc, /result: "ZEROED"|result: "ALREADY_ZERO"/);
-  assert.doesNotMatch(serviceSrc, /updateMany\(/);
 });
 
 test("OPERATOR y CLIENT no tienen el botón ni la ruta", () => {
@@ -175,67 +417,80 @@ test("OPERATOR y CLIENT no tienen el botón ni la ruta", () => {
   assert.match(resetBlock, /requireRole\(\["ADMIN"\]\)/);
 });
 
-test("el botón rojo y el modal están en Inventario y Carga física", () => {
-  assert.match(html, /id="physicalInventoryResetBtn"[^>]*class="btn-danger hidden"[^>]*>Borrar todo el inventario/);
-  assert.match(html, /id="physicalInventoryResetImportBtn"[^>]*class="btn-danger hidden"[^>]*>Borrar todo el inventario/);
+test("la zona de peligro está en Sistema y el importador único en Existencias", () => {
+  const configSlice = html.slice(html.indexOf('id="moduleConfig"'), html.indexOf("        </main>"));
+  const inventorySlice = html.slice(html.indexOf('id="moduleInventory"'), html.indexOf('id="moduleConfig"'));
+  assert.match(configSlice, /id="aviatDangerZone"/);
+  assert.match(configSlice, /Borrar inventario de AVIAT/);
+  assert.doesNotMatch(configSlice, /id="importWizardPanel"/);
+  assert.match(inventorySlice, /id="openInventoryImportBtn"[^>]*>Abrir asistente de importación/);
+  assert.match(inventorySlice, /id="importWizardPanel"/);
+  assert.doesNotMatch(inventorySlice, /id="physicalInventoryResetBtn"/);
+  assert.doesNotMatch(inventorySlice, /Borrar inventario de AVIAT/);
   assert.match(html, /id="physicalInventoryResetModal"/);
-  assert.match(
-    html,
-    /Esta acción eliminará completamente todos los registros de existencias, capas, seriales y reservas\. No eliminará productos, proyectos, clientes, almacenes, ubicaciones ni usuarios\. Después podrá realizar una nueva importación manual\./
-  );
-  assert.match(html, /Escribe <strong>BORRAR INVENTARIO<\/strong> para confirmar/);
+  assert.match(html, /Escribe <strong>BORRAR INVENTARIO DE AVIAT<\/strong> para confirmar/);
+  assert.match(html, /id="physicalInventoryResetFinalAck"/);
   assert.match(js, /physicalInventoryResetConfirmBtn\.addEventListener\("click", \(\) => void runPhysicalInventoryReset\(\)\)/);
-  assert.doesNotMatch(js, /DOMContentLoaded[\s\S]{0,400}runPhysicalInventoryReset/);
   assert.match(js, /refreshInventoryAfterPhysicalPurge/);
-  assert.match(js, /clearInventoryWorkspaceState/);
-  assert.match(js, /data\.result !== "PURGED"/);
-  assert.doesNotMatch(js.slice(js.indexOf("async function runPhysicalInventoryReset")), /refreshInventoryAfterImport\(\);\s*\n\s*await authenticatedFetch\(`\/api\/imports/);
-  assert.doesNotMatch(js.slice(js.indexOf("async function runPhysicalInventoryReset"), js.indexOf("physicalInventoryResetBtns.forEach")), /\/api\/imports\/.+\/confirm/);
+  assert.match(js, /bumpClientContextEpoch/);
+  assert.match(html, /dashboard\.js\?v=83/);
 });
 
-test("elimina físicamente existencias, incluidas qty=0, y conserva catálogos y movimientos", async () => {
+test("elimina el inventario operativo de AVIAT y conserva catálogos y el otro cliente", async () => {
   const { state, tx } = createFakeTx({
     inventory: [
-      { id: "inv-1", qty: d(10), reservedQty: d(2) },
-      { id: "inv-0", qty: d(0), reservedQty: d(0) }
+      { id: "inv-1", clientId: AVIAT_ID, qty: d(10), reservedQty: d(2) },
+      { id: "inv-0", clientId: AVIAT_ID, qty: d(0), reservedQty: d(0) },
+      { id: "inv-other", clientId: OTHER_ID, qty: d(7), reservedQty: d(1) }
     ],
     layers: [
-      { id: "ly-1", qty: d(10), reservedQty: d(0) },
-      { id: "ly-0", qty: d(0), reservedQty: d(0) }
+      { id: "ly-1", clientId: AVIAT_ID, qty: d(10), reservedQty: d(0) },
+      { id: "ly-other", clientId: OTHER_ID, qty: d(7), reservedQty: d(0) }
+    ],
+    serials: [
+      { id: "s-1", clientId: AVIAT_ID, serialNumber: "1659" },
+      { id: "s-other", clientId: OTHER_ID, serialNumber: "OTHER" }
+    ],
+    movements: [
+      { id: "m-1", clientId: AVIAT_ID, taskId: "t-1" },
+      { id: "m-other", clientId: OTHER_ID, taskId: null }
+    ],
+    clients: [
+      { id: AVIAT_ID, code: "AVIAT", name: "AVIAT", tradeName: "AVIAT", legalName: "AVIAT" },
+      { id: OTHER_ID, code: "CLI2", name: "Cliente 2", tradeName: "Cliente 2", legalName: "Cliente 2" }
     ]
   });
-  const first = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: "client-aviat" });
+  const first = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: AVIAT_ID });
   assert.equal(first.result, "PURGED");
   assert.equal(first.alreadyZero, false);
   assert.equal(first.inventoriesPurged, 2);
-  assert.equal(first.layersPurged, 2);
   assert.equal(first.serialsPurged, 1);
-  assert.equal(first.reservationsPurged, 1);
-  assert.equal(first.legacyStockPurged, 0);
-  assert.equal(state.inventory.length, 0);
-  assert.equal(state.layers.length, 0);
-  assert.equal(state.serials.length, 0);
-  assert.equal(state.reservations.length, 0);
-  assert.equal(state.stock.length, 1);
-  assert.equal(state.movements.length, 1);
+  assert.equal(first.movementsPurged, 1);
+  assert.equal(state.inventory.some((row) => row.clientId === AVIAT_ID), false);
+  assert.equal(state.inventory.find((row) => row.id === "inv-other")?.clientId, OTHER_ID);
+  assert.equal(state.serials.find((row) => row.id === "s-other")?.serialNumber, "OTHER");
+  assert.equal(state.movements.find((row) => row.id === "m-other")?.clientId, OTHER_ID);
   assert.equal(state.products.length, 1);
-  assert.equal(state.locations.length, 1);
-  assert.equal(state.users.length, 1);
   assert.equal(state.deleted.product, 0);
   assert.equal(state.deleted.location, 0);
   assert.equal(state.deleted.user, 0);
-  assert.equal(state.deleted.movement, 0);
-  assert.equal(state.deleted.importBatch, 0);
-  assert.equal(state.logs.length, 1);
+  assert.equal(state.customers.some((row) => row.code === "ATT"), true);
+  assert.equal(state.customers.some((row) => row.code === "LOGITEC"), false);
   assert.equal(state.logs[0]!.subtype, "PHYSICAL_RESET");
-  assert.equal(state.logs[0]!.result, "PURGED");
 
-  const second = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: "client-aviat" });
+  const second = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: AVIAT_ID });
   assert.equal(second.result, "PURGED");
   assert.equal(second.alreadyEmpty, true);
   assert.equal(second.inventoriesPurged, 0);
-  assert.equal(second.serialsPurged, 0);
-  assert.equal(state.logs.length, 2);
+  assert.equal(second.movementsPurged, 0);
+});
+
+test("un cliente distinto a AVIAT no puede reiniciar", async () => {
+  const { tx } = createFakeTx();
+  await assert.rejects(
+    () => applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: OTHER_ID }),
+    (error: unknown) => error instanceof HttpError && error.code === "TENANT_INVENTORY_RESET_NOT_AVIAT"
+  );
 });
 
 test("un fallo intermedio hace rollback y no deja seriales a medias", async () => {
@@ -245,7 +500,7 @@ test("un fallo intermedio hace rollback y no deja seriales a medias", async () =
     layers: cloneRows(state.layers),
     serials: cloneRows(state.serials),
     reservations: cloneRows(state.reservations),
-    stock: cloneRows(state.stock)
+    movements: cloneRows(state.movements)
   };
   const db = {
     $transaction: async (fn: (inner: typeof tx) => Promise<unknown>) => {
@@ -264,17 +519,21 @@ test("un fallo intermedio hace rollback y no deja seriales a medias", async () =
         state.layers = cloneRows(snapshot.layers);
         state.serials = cloneRows(snapshot.serials);
         state.reservations = cloneRows(snapshot.reservations);
-        state.stock = cloneRows(snapshot.stock);
+        state.movements = cloneRows(snapshot.movements);
         throw error;
       }
     }
   };
-  await assert.rejects(() => executePhysicalInventoryReset({ userId: "admin-1", clientId: "client-aviat" }, db as never), /audit-fail/);
+  await withResetFlag(true, async () => {
+    await assert.rejects(
+      () => executePhysicalInventoryReset({ userId: "admin-1", clientId: AVIAT_ID }, db as never),
+      /audit-fail/
+    );
+  });
   assert.equal(state.inventory.length, 1);
   assert.equal(String(state.inventory[0]!.qty), "10");
   assert.equal(state.serials[0]!.serialNumber, "1659");
-  assert.equal(state.reservations[0]!.status, "ACTIVE");
-  assert.equal(state.layers.length, 1);
+  assert.equal(state.movements.length, 1);
   assert.equal(isPhysicalResetInFlight(), false);
 });
 
@@ -293,9 +552,18 @@ test("impide una segunda solicitud simultánea", async () => {
         layersPurged: 0,
         serialsPurged: 0,
         reservationsPurged: 0,
+        movementsPurged: 0,
+        scanEventsPurged: 0,
+        activityLogsPurged: 0,
+        requisitionsPurged: 0,
+        tasksPurged: 0,
+        productProjectsPurged: 0,
+        importBatchesPurged: 0,
         legacyStockPurged: 0,
         qtyCleared: "0",
         reservedCleared: "0",
+        orphanProductsRetained: 0,
+        legacyLogitec: { found: false },
         result: "PURGED",
         inventoriesZeroed: 0,
         layersZeroed: 0,
@@ -306,24 +574,39 @@ test("impide una segunda solicitud simultánea", async () => {
       };
     }
   };
-  const first = executePhysicalInventoryReset({ userId: "admin-1", clientId: "client-aviat" }, db as never);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(isPhysicalResetInFlight(), true);
-  await assert.rejects(
-    () => executePhysicalInventoryReset({ userId: "admin-2", clientId: "client-aviat" }, db as never),
-    (error: unknown) => error instanceof HttpError && error.statusCode === 409
-  );
-  release();
-  await first;
+  await withResetFlag(true, async () => {
+    const first = executePhysicalInventoryReset({ userId: "admin-1", clientId: AVIAT_ID }, db as never);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(isPhysicalResetInFlight(), true);
+    await assert.rejects(
+      () => executePhysicalInventoryReset({ userId: "admin-2", clientId: AVIAT_ID }, db as never),
+      (error: unknown) => error instanceof HttpError && error.statusCode === 409
+    );
+    release();
+    await first;
+  });
   assert.equal(isPhysicalResetInFlight(), false);
+});
+
+test("el flag apagado impide execute aunque haya confirmación", async () => {
+  const db = {
+    $transaction: async () => {
+      throw new Error("transaction should not run");
+    }
+  };
+  await withResetFlag(false, async () => {
+    await assert.rejects(
+      () => executePhysicalInventoryReset({ userId: "admin-1", clientId: AVIAT_ID }, db as never),
+      (error: unknown) => error instanceof HttpError && error.code === "TENANT_INVENTORY_RESET_DISABLED"
+    );
+  });
 });
 
 test("después del reset los seriales de la carga borrada no bloquean una recarga", async () => {
   const { state, tx } = createFakeTx();
-  await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: "client-aviat" });
-  const serialSet = new Set(state.serials.map((row) => row.serialNumber.toUpperCase()));
+  await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: AVIAT_ID });
+  const serialSet = new Set(state.serials.filter((row) => row.clientId === AVIAT_ID).map((row) => row.serialNumber.toUpperCase()));
   assert.equal(serialSet.has("1659"), false);
-  assert.equal(state.serials.length, 0);
 });
 
 test("Existencias no consulta qty=0 y AN102/202 siguen sin remapeo", () => {
