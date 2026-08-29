@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es" data-ui-version="compact-workspace-v1" data-import-cancel-version="server-cancel-v1" data-canonical-host-version="www-v1" data-grid-density="compact">
+<html lang="es" data-ui-version="compact-workspace-v1" data-visual="industrial-v84" data-import-cancel-version="server-cancel-v1" data-canonical-host-version="www-v1" data-grid-density="compact">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,20 +7,27 @@
     <title>LOGITEC CORE WMS</title>
     <style>
       :root {
-        --bg: #e8f2fc;
-        --panel: #f5f9ff;
+        --bg: #e8ecf1;
+        --panel: #f4f6f8;
         --panel-solid: #ffffff;
-        --line: #c5d9ef;
-        --text: #1e3a5f;
-        --muted: #5b7a9d;
-        --ok: #059669;
-        --error: #dc2626;
-        --accent: #0f4c81;
-        --accent-dark: #0a3558;
-        --accent-soft: #dceaf8;
-        --warn: #d97706;
-        --info: #0284c7;
-        --purple: #7c3aed;
+        --line: #c8d0d8;
+        --text: #1a2332;
+        --muted: #5c6b7a;
+        --ok: #1f7a4d;
+        --error: #b42318;
+        --accent: #1e4a6e;
+        --accent-dark: #122a40;
+        --accent-soft: #d9e4ee;
+        --warn: #c45c12;
+        --info: #2a6f97;
+        --purple: #5b4b8a;
+        --surface-elevated: #ffffff;
+        --shadow-sm: 0 1px 2px rgba(18, 42, 64, 0.06);
+        --shadow-md: 0 4px 14px rgba(18, 42, 64, 0.08);
+        --danger-bg: #fef3f2;
+        --danger-line: #f5c2c0;
+        --ok-soft: #e8f5ee;
+        --warn-soft: #fff4e8;
       }
       * {
         box-sizing: border-box;
@@ -2712,17 +2719,20 @@
       .aviat-context-bar {
         display: flex;
         flex-wrap: wrap;
-        gap: 10px 18px;
+        gap: 8px 14px;
         align-items: center;
-        margin-bottom: 14px;
-        padding: 10px 14px;
-        border-radius: 10px;
-        border: 1px solid rgba(108, 168, 255, 0.25);
-        background: rgba(20, 39, 77, 0.65);
-        font-size: 0.92rem;
+        margin-bottom: 12px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--panel-solid);
+        color: var(--muted);
+        font-size: 0.82rem;
+        box-shadow: var(--shadow-sm);
       }
       .aviat-context-bar strong {
-        color: #eaf0ff;
+        color: var(--accent-dark);
+        font-weight: 700;
       }
       .aviat-filter-notice {
         margin: 0 0 12px;
@@ -2817,9 +2827,9 @@
         cursor: pointer;
       }
       .inventory-master-tabs button.active {
-        background: var(--accent-dark);
-        border-color: var(--accent-dark);
-        color: #fff;
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        color: var(--accent-dark);
       }
       .master-toolbar {
         display: flex;
@@ -2867,8 +2877,9 @@
         color: var(--accent-dark);
       }
       .assignment-seg button.active {
-        background: var(--accent);
-        color: #fff;
+        background: var(--accent-soft);
+        color: var(--accent-dark);
+        box-shadow: inset 0 -2px 0 var(--accent);
       }
       .assignment-seg button:disabled {
         opacity: 0.45;
@@ -2920,22 +2931,25 @@
         gap: 8px;
       }
       .project-chip {
-        padding: 8px 14px;
-        border-radius: 999px;
-        border: 1px solid rgba(108, 168, 255, 0.35);
-        background: #152a52;
-        color: #eaf0ff;
+        padding: 6px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--panel-solid);
+        color: var(--text);
         font-size: 0.82rem;
         font-weight: 600;
         cursor: pointer;
       }
       .project-chip:hover {
-        border-color: #8ec0ff;
-        background: #1a3562;
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent-dark);
       }
       .project-chip.active {
-        border-color: #6ca8ff;
-        background: linear-gradient(180deg, #1f4a9a 0%, #17356b 100%);
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent-dark);
+        box-shadow: inset 0 -2px 0 var(--accent);
       }
       .ops-aviat-banner {
         margin: 0 0 12px;
@@ -3264,25 +3278,36 @@
         display: flex;
         align-items: flex-start;
         justify-content: center;
-        padding: 48px 16px 24px;
-        background: rgba(232, 242, 252, 0.96);
+        padding: 28px 16px 24px;
+        background: rgba(232, 236, 241, 0.97);
         overflow: auto;
       }
       .client-context-gate.hidden { display: none !important; }
       .client-context-panel {
-        width: min(960px, 100%);
+        width: min(1180px, 100%);
         background: var(--panel-solid);
         border: 1px solid var(--line);
-        border-radius: 16px;
-        padding: 24px;
-        box-shadow: 0 12px 32px rgba(15, 76, 129, 0.12);
+        border-radius: 14px;
+        padding: 20px 22px 22px;
+        box-shadow: var(--shadow-md);
       }
-      .client-context-panel h2 { margin: 0 0 8px; }
+      .client-context-panel h2 {
+        margin: 0 0 4px;
+        font-size: 1.2rem;
+        color: var(--accent-dark);
+        letter-spacing: 0.01em;
+      }
+      .client-context-panel > .subtitle {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
       .client-context-toolbar {
         display: flex;
         gap: 8px;
-        margin: 16px 0;
+        margin: 0 0 10px;
         flex-wrap: wrap;
+        align-items: center;
       }
       .client-context-toolbar input {
         flex: 1;
@@ -3290,26 +3315,337 @@
         padding: 8px 10px;
         border: 1px solid var(--line);
         border-radius: 8px;
+        background: #fff;
       }
       .client-context-cards {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 14px;
+        align-items: stretch;
       }
-      .client-context-card {
+      @media (min-width: 1100px) {
+        .client-context-cards {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+      .client-master-card {
         border: 1px solid var(--line);
         border-radius: 12px;
-        padding: 14px;
+        padding: 0;
         background: var(--panel);
         display: flex;
         flex-direction: column;
+        min-height: 420px;
+        overflow: hidden;
+        box-shadow: var(--shadow-sm);
+      }
+      .client-master-card.is-live {
+        border-color: #9eb6c9;
+        background: linear-gradient(180deg, #ffffff 0%, #f3f6f9 100%);
+      }
+      .client-master-card.is-placeholder {
+        border-style: dashed;
+        background: #f7f8fa;
+      }
+      .client-master-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: flex-start;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        background: #eef2f5;
+      }
+      .client-master-card.is-live .client-master-head {
+        background: linear-gradient(90deg, #e4edf4 0%, #eef2f5 100%);
+      }
+      .client-slot-label {
+        display: block;
+        font-size: 0.68rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-bottom: 2px;
+      }
+      .client-master-head h3 {
+        margin: 0;
+        font-size: 1.05rem;
+        color: var(--accent-dark);
+        line-height: 1.2;
+      }
+      .client-master-code {
+        margin: 2px 0 0;
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: var(--muted);
+        font-family: ui-monospace, Consolas, monospace;
+      }
+      .client-master-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px 10px;
+        margin: 0;
+        padding: 12px 14px;
+        flex: 1;
+      }
+      .client-master-grid > div {
+        min-width: 0;
+      }
+      .client-master-grid dt {
+        margin: 0;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .client-master-grid dd {
+        margin: 2px 0 0;
+        font-size: 0.82rem;
+        color: var(--text);
+        word-break: break-word;
+        line-height: 1.3;
+      }
+      .client-projects-block {
+        padding: 0 14px 10px;
+        border-top: 1px dashed var(--line);
+        margin-top: auto;
+      }
+      .client-projects-block h4 {
+        margin: 10px 0 6px;
+        font-size: 0.75rem;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .client-projects-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
         gap: 6px;
+        max-height: 88px;
+        overflow: auto;
       }
-      .client-context-card h3 { margin: 0; font-size: 1rem; }
-      .client-context-actions { display: flex; gap: 8px; margin-top: 8px; }
+      .client-projects-list li {
+        font-size: 0.72rem;
+        font-weight: 650;
+        padding: 3px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--text);
+      }
+      .client-projects-list li.is-empty,
+      .client-placeholder-note {
+        color: var(--muted);
+        font-weight: 600;
+        font-size: 0.78rem;
+      }
+      .client-context-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding: 10px 14px 12px;
+        border-top: 1px solid var(--line);
+        background: rgba(255,255,255,0.65);
+      }
+      .client-context-actions .btn-compact { flex: 1 1 auto; min-width: 0; }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .client-context-panel {
-        padding: 16px;
+        padding: 16px 18px;
       }
+      /* ===== visual-overhaul-v84 ===== */
+      html[data-visual="industrial-v84"] body {
+        background:
+          radial-gradient(1200px 500px at 10% -10%, rgba(30, 74, 110, 0.08), transparent 55%),
+          radial-gradient(900px 420px at 100% 0%, rgba(31, 122, 77, 0.05), transparent 50%),
+          var(--bg);
+      }
+      html[data-visual="industrial-v84"] .app-topbar {
+        background: linear-gradient(180deg, #f8fafb 0%, #eef1f4 100%);
+        border-bottom-color: #b9c3cd;
+        box-shadow: 0 1px 0 rgba(255,255,255,0.7), var(--shadow-sm);
+      }
+      html[data-visual="industrial-v84"] .nav-section-tab.active {
+        background: #fff;
+        color: var(--accent-dark);
+        border-color: var(--line);
+        box-shadow: inset 0 -2px 0 var(--accent);
+      }
+      html[data-visual="industrial-v84"] .module-btn.active {
+        background: #fff;
+        color: var(--accent-dark);
+        border-color: #9eb6c9;
+        box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
+      }
+      html[data-visual="industrial-v84"] .module-btn.active .module-btn-label,
+      html[data-visual="industrial-v84"] .module-btn.active .module-btn-desc {
+        color: var(--accent-dark);
+      }
+      html[data-visual="industrial-v84"] .tasks-tab.active,
+      html[data-visual="industrial-v84"] .grid-density-toggle button.active,
+      html[data-visual="industrial-v84"] .req-mode-tabs button.active,
+      html[data-visual="industrial-v84"] .picking-step.active {
+        background: var(--accent-soft) !important;
+        color: var(--accent-dark) !important;
+        border-color: var(--accent) !important;
+      }
+      html[data-visual="industrial-v84"] .card-panel {
+        background: var(--surface-elevated);
+        border-color: #b9c3cd;
+        box-shadow: var(--shadow-sm);
+      }
+      html[data-visual="industrial-v84"] .module-screen-header {
+        margin-bottom: 10px;
+      }
+      html[data-visual="industrial-v84"] .module-screen-header h3 {
+        font-size: 1.15rem;
+        margin-bottom: 2px;
+      }
+      html[data-visual="industrial-v84"] .module-lead {
+        font-size: 0.84rem;
+        margin: 0 0 8px;
+        max-width: 72ch;
+      }
+      html[data-visual="industrial-v84"] .kpi-card,
+      html[data-visual="industrial-v84"] .summary-card {
+        border-left: 3px solid #9eb6c9;
+        background: linear-gradient(180deg, #fff 0%, #f5f7f9 100%);
+      }
+      html[data-visual="industrial-v84"] .kpi-card.ok,
+      html[data-visual="industrial-v84"] .summary-card.ok { border-left-color: var(--ok); }
+      html[data-visual="industrial-v84"] .kpi-card.warn,
+      html[data-visual="industrial-v84"] .summary-card.warn { border-left-color: var(--warn); }
+      html[data-visual="industrial-v84"] .kpi-card.accent,
+      html[data-visual="industrial-v84"] .summary-card.accent { border-left-color: var(--accent); }
+      html[data-visual="industrial-v84"] .kpi-card .kpi-label,
+      html[data-visual="industrial-v84"] .summary-card .label {
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        line-height: 1.25;
+      }
+      html[data-visual="industrial-v84"] .btn-primary {
+        background: var(--accent);
+        border: 1px solid var(--accent-dark);
+      }
+      html[data-visual="industrial-v84"] .btn-primary:hover:not(:disabled) {
+        background: var(--accent-dark);
+      }
+      html[data-visual="industrial-v84"] .btn-secondary {
+        background: #fff;
+        color: var(--accent-dark);
+        border: 1px solid #9eb6c9;
+      }
+      html[data-visual="industrial-v84"] .btn-danger {
+        background: var(--error);
+        border: 1px solid #8f1d16;
+        color: #fff;
+        font-weight: 750;
+        box-shadow: 0 1px 2px rgba(180, 35, 24, 0.25);
+      }
+      html[data-visual="industrial-v84"] .btn-danger:disabled {
+        opacity: 0.55;
+      }
+      html[data-visual="industrial-v84"] .cc-hero {
+        background: linear-gradient(135deg, #152536 0%, #1e4a6e 55%, #245a56 100%);
+        border: 1px solid #0f1c28;
+        box-shadow: var(--shadow-md);
+        padding: 16px 18px;
+        margin-bottom: 16px;
+      }
+      html[data-visual="industrial-v84"] .cc-hero .cc-title {
+        font-size: 1.35rem;
+      }
+      html[data-visual="industrial-v84"] .ops-form-groups {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+      @media (max-width: 900px) {
+        html[data-visual="industrial-v84"] .ops-form-groups {
+          grid-template-columns: 1fr;
+        }
+      }
+      html[data-visual="industrial-v84"] .ops-form-group {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #f7f9fb;
+        padding: 10px 12px;
+      }
+      html[data-visual="industrial-v84"] .ops-form-group h5 {
+        margin: 0 0 8px;
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      html[data-visual="industrial-v84"] .ops-form-group .form-grid {
+        margin: 0;
+        gap: 8px;
+      }
+      html[data-visual="industrial-v84"] .ops-form-group.span-2 {
+        grid-column: 1 / -1;
+      }
+      html[data-visual="industrial-v84"] .ops-form-footer {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 4px;
+      }
+      html[data-visual="industrial-v84"] .danger-zone-panel {
+        border: 1px solid var(--danger-line);
+        background: var(--danger-bg);
+        box-shadow: none;
+      }
+      html[data-visual="industrial-v84"] .danger-zone-banner {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 12px;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+      html[data-visual="industrial-v84"] .danger-zone-banner h4 {
+        margin: 0;
+        color: var(--error);
+        font-size: 0.95rem;
+      }
+      html[data-visual="industrial-v84"] .danger-zone-kicker {
+        display: inline-block;
+        font-size: 0.68rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #fff;
+        background: var(--error);
+        padding: 3px 8px;
+        border-radius: 4px;
+      }
+      html[data-visual="industrial-v84"] .excel-table thead th,
+      html[data-visual="industrial-v84"] .data-grid-row.head .data-grid-cell {
+        background: #e8edf2;
+        color: #3d4d5c;
+        font-weight: 750;
+      }
+      html[data-visual="industrial-v84"] .ops-aviat-banner {
+        background: #eef3f7;
+        border: 1px solid var(--line);
+        color: var(--text);
+      }
+      html[data-visual="industrial-v84"] .economic-partial-hint {
+        background: var(--warn-soft);
+        border: 1px solid #f0c9a0;
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      /* ===== /visual-overhaul-v84 ===== */
       /* ===== /compact-workspace-v1 ===== */
     </style>
   </head>
@@ -3317,13 +3653,13 @@
     <div id="clientContextGate" class="client-context-gate hidden" hidden>
       <div class="client-context-panel">
         <h2>Seleccionar cliente</h2>
-        <p class="subtitle">Elige el cliente operativo antes de abrir Inventario, Operación o Control.</p>
+        <p class="subtitle">Panel maestro de clientes. Elige el cliente operativo. AVIAT está listo; Cliente 2 y Cliente 3 quedan preparados para alta futura.</p>
         <div class="client-context-toolbar">
-          <input id="clientContextSearch" type="search" placeholder="Buscar cliente..." autocomplete="off" />
+          <input id="clientContextSearch" type="search" placeholder="Buscar por código, nombre o razón social…" autocomplete="off" />
           <button type="button" class="btn-primary btn-compact" id="clientContextAddBtn">Agregar cliente</button>
         </div>
         <p id="clientContextStatus" class="filter-hint"></p>
-        <div id="clientContextCards" class="client-context-cards"></div>
+        <div id="clientContextCards" class="client-context-cards" role="list"></div>
       </div>
     </div>
     <div class="app-shell">
@@ -3514,11 +3850,11 @@
               </div>
               <div class="kpi-card">
                 <span class="kpi-value" id="ccKpiCustomers">—</span>
-                <span class="kpi-label">Proyectos</span>
+                <span class="kpi-label">Proyectos con existencias</span>
               </div>
               <div class="kpi-card">
                 <span class="kpi-value" id="ccKpiLocations">—</span>
-                <span class="kpi-label">Ubicaciones</span>
+                <span class="kpi-label">Ubicaciones con inventario</span>
               </div>
               <div class="kpi-card ok">
                 <span class="kpi-value" id="ccKpiStock">—</span>
@@ -4155,11 +4491,11 @@
               </div>
               <div class="summary-card">
                 <span class="value" id="sumCustomers">—</span>
-                <span class="label">Proyectos</span>
+                <span class="label">Proyectos con existencias</span>
               </div>
               <div class="summary-card">
                 <span class="value" id="sumLocations">—</span>
-                <span class="label">Ubicaciones</span>
+                <span class="label">Ubicaciones con inventario</span>
               </div>
               <div class="summary-card">
                 <span class="value" id="sumMovements">—</span>
@@ -4662,101 +4998,125 @@
           <div id="moduleInbound" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Entradas / Recepción</h3>
-              <p class="module-lead">Registra mercancía recibida y aumenta existencias por proyecto, lote y ubicación. Usado en recepción de almacén.</p>
+              <p class="module-lead">Registra mercancía recibida y aumenta existencias por proyecto, lote y ubicación.</p>
             </div>
             <div class="card-panel ops-form-panel">
-              <p class="ops-aviat-banner">Cliente: <strong data-aviat-primary-label>—</strong></p>
-              <h4 class="secondary-panel-title">Registrar entrada</h4>
-              <p class="module-hint" style="margin:0 0 10px">Primero selecciona la asignación. Si eliges Proyecto, indica el proyecto destino. Después selecciona un SKU de las sugerencias.</p>
-              <div class="form-grid">
-                <div class="field">
-                  <label for="inboundAssignmentType">Asignación</label>
-                  <select id="inboundAssignmentType">
-                    <option value="">— Seleccionar asignación —</option>
-                    <option value="FREE_TO_SALE">Free to Sale</option>
-                    <option value="PROJECT">Proyecto</option>
-                  </select>
-                </div>
+              <div class="ops-form-header-row" style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:space-between;margin-bottom:10px">
+                <p class="ops-aviat-banner" style="margin:0">Cliente: <strong data-aviat-primary-label>—</strong></p>
+                <h4 class="secondary-panel-title" style="margin:0">Registrar entrada</h4>
+              </div>
+              <p class="module-hint" style="margin:0 0 10px">1) Asignación → 2) SKU → 3) Cantidad y ubicación → 4) Registrar.</p>
+              <div class="ops-form-groups">
+                <div class="ops-form-group">
+                  <h5>Asignación</h5>
+                  <div class="form-grid">
+                    <div class="field">
+                      <label for="inboundAssignmentType">Asignación</label>
+                      <select id="inboundAssignmentType">
+                        <option value="">— Seleccionar asignación —</option>
+                        <option value="FREE_TO_SALE">Free to Sale</option>
+                        <option value="PROJECT">Proyecto</option>
+                      </select>
+                    </div>
                     <div class="field hidden" id="inboundClientField">
-                  <label for="inboundClientId">Cliente propietario</label>
-                  <select id="inboundClientId">
-                    <option value="">— Seleccionar cliente —</option>
-                  </select>
-                </div>
-                <div class="field hidden" id="inboundProjectField">
-                  <label for="inboundProjectId">Proyecto destino</label>
-                  <select id="inboundProjectId">
-                    <option value="">— Seleccionar proyecto —</option>
-                  </select>
-                </div>
-                <div class="field hidden">
-                  <label for="inboundCliente">Cliente</label>
-                  <input id="inboundCliente" type="text" class="field-readonly hidden" readonly tabindex="-1" aria-hidden="true" />
-                </div>
-                <div class="field">
-                  <label for="inboundLote">Lote</label>
-                  <input id="inboundLote" type="text" placeholder="Opcional" />
-                </div>
-                <div class="field">
-                  <label for="inboundSku">SKU / Código de barras</label>
-                  <div class="product-typeahead" data-pta="inbound">
-                    <input
-                      id="inboundSku"
-                      type="text"
-                      autocomplete="off"
-                      spellcheck="false"
-                      placeholder="Buscar SKU, barras, nombre o proyecto…"
-                    />
-                    <input type="hidden" id="inboundProductId" value="" />
-                    <div id="inboundSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                      <label for="inboundClientId">Cliente propietario</label>
+                      <select id="inboundClientId">
+                        <option value="">— Seleccionar cliente —</option>
+                      </select>
+                    </div>
+                    <div class="field hidden" id="inboundProjectField">
+                      <label for="inboundProjectId">Proyecto destino</label>
+                      <select id="inboundProjectId">
+                        <option value="">— Seleccionar proyecto —</option>
+                      </select>
+                    </div>
+                    <div class="field hidden">
+                      <label for="inboundCliente">Cliente</label>
+                      <input id="inboundCliente" type="text" class="field-readonly hidden" readonly tabindex="-1" aria-hidden="true" />
+                    </div>
+                    <div class="field">
+                      <label for="inboundLote">Lote</label>
+                      <input id="inboundLote" type="text" placeholder="Opcional" />
+                    </div>
+                    <div class="field">
+                      <label for="inboundReference">Referencia</label>
+                      <input id="inboundReference" type="text" placeholder="OC, factura, folio" />
+                    </div>
                   </div>
                 </div>
-                <div class="field">
-                  <label for="inboundProduct">Producto</label>
-                  <input id="inboundProduct" type="text" class="field-readonly" readonly />
-                </div>
-                <div class="field">
-                  <label for="inboundQty">Cantidad</label>
-                  <input id="inboundQty" type="number" step="0.0001" min="0.0001" required />
-                </div>
-                <div class="field js-economic-card js-economic-edit hidden">
-                  <label for="inboundUnitPriceMxn">Precio unitario MXN (opcional)</label>
-                  <input id="inboundUnitPriceMxn" type="text" inputmode="decimal" autocomplete="off" placeholder="Sin precio por ahora" value="" />
-                </div>
-                <div class="field js-economic-card hidden">
-                  <label for="inboundEntryValue">Valor de esta entrada</label>
-                  <input id="inboundEntryValue" type="text" class="field-readonly" readonly value="Pendiente" />
-                </div>
-                <div class="field">
-                  <label for="inboundWarehouse">Almacén</label>
-                  <div class="smart-select-wrap">
-                    <select id="inboundWarehouseSelect"><option value="">— Seleccionar —</option></select>
-                    <input id="inboundWarehouse" type="text" class="smart-other-input hidden" value="TULTITLAN24" />
+                <div class="ops-form-group">
+                  <h5>Producto</h5>
+                  <div class="form-grid">
+                    <div class="field">
+                      <label for="inboundSku">SKU / Código de barras</label>
+                      <div class="product-typeahead" data-pta="inbound">
+                        <input
+                          id="inboundSku"
+                          type="text"
+                          autocomplete="off"
+                          spellcheck="false"
+                          placeholder="Buscar SKU, barras, nombre o proyecto…"
+                        />
+                        <input type="hidden" id="inboundProductId" value="" />
+                        <div id="inboundSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label for="inboundProduct">Producto</label>
+                      <input id="inboundProduct" type="text" class="field-readonly" readonly />
+                    </div>
+                    <div class="field">
+                      <label for="inboundQty">Cantidad</label>
+                      <input id="inboundQty" type="number" step="0.0001" min="0.0001" required />
+                    </div>
+                    <div class="field">
+                      <label for="inboundStatus">Estatus</label>
+                      <select id="inboundStatus"></select>
+                    </div>
                   </div>
                 </div>
-                <div class="field">
-                  <label for="inboundLocation">Ubicación destino</label>
-                  <div class="smart-select-wrap">
-                    <select id="inboundLocationSelect"><option value="">— Seleccionar —</option></select>
-                    <input id="inboundLocation" type="text" class="smart-other-input hidden" placeholder="Ej. TULTITLAN24-GEN-STAGE-01" />
+                <div class="ops-form-group">
+                  <h5>Ubicación</h5>
+                  <div class="form-grid">
+                    <div class="field">
+                      <label for="inboundWarehouse">Almacén</label>
+                      <div class="smart-select-wrap">
+                        <select id="inboundWarehouseSelect"><option value="">— Seleccionar —</option></select>
+                        <input id="inboundWarehouse" type="text" class="smart-other-input hidden" value="TULTITLAN24" />
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label for="inboundLocation">Ubicación destino</label>
+                      <div class="smart-select-wrap">
+                        <select id="inboundLocationSelect"><option value="">— Seleccionar —</option></select>
+                        <input id="inboundLocation" type="text" class="smart-other-input hidden" placeholder="Ej. TULTITLAN24-GEN-STAGE-01" />
+                      </div>
+                    </div>
                   </div>
                 </div>
-                <div class="field">
-                  <label for="inboundStatus">Estatus</label>
-                  <select id="inboundStatus"></select>
-                </div>
-                <div class="field">
-                  <label for="inboundReference">Referencia de entrada</label>
-                  <input id="inboundReference" type="text" placeholder="OC, factura, folio" />
-                </div>
-                <div class="field full">
-                  <label for="inboundNotes">Notas</label>
-                  <input id="inboundNotes" type="text" />
+                <div class="ops-form-group">
+                  <h5>Valoración y notas</h5>
+                  <div class="form-grid">
+                    <div class="field js-economic-card js-economic-edit hidden">
+                      <label for="inboundUnitPriceMxn">Precio unitario MXN (opcional)</label>
+                      <input id="inboundUnitPriceMxn" type="text" inputmode="decimal" autocomplete="off" placeholder="Sin precio por ahora" value="" />
+                    </div>
+                    <div class="field js-economic-card hidden">
+                      <label for="inboundEntryValue">Valor de esta entrada</label>
+                      <input id="inboundEntryValue" type="text" class="field-readonly" readonly value="Pendiente" />
+                    </div>
+                    <div class="field full">
+                      <label for="inboundNotes">Notas</label>
+                      <input id="inboundNotes" type="text" />
+                    </div>
+                  </div>
                 </div>
               </div>
               <p class="module-hint js-economic-card hidden" id="inboundPriceHelp" style="margin:8px 0 10px">Si todavía no conoces el precio, puedes dejarlo vacío y asignarlo posteriormente desde Existencias.</p>
-              <p id="inboundMessage" class="ops-message"></p>
-              <button type="button" id="inboundSubmitBtn" class="btn-primary btn-compact" disabled>Registrar entrada</button>
+              <div class="ops-form-footer">
+                <p id="inboundMessage" class="ops-message" style="margin:0"></p>
+                <button type="button" id="inboundSubmitBtn" class="btn-primary btn-compact" disabled>Registrar entrada</button>
+              </div>
             </div>
             <div class="card-panel" style="padding:0">
               <p id="inboundTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Entradas recientes</p>
@@ -5135,18 +5495,20 @@
               <button type="button" id="labResetOpenBtn" class="btn-danger">Reiniciar laboratorio</button>
               <p class="assignee-hint" style="margin-top:10px">Visible solo en DEV/QA y para administradores. No opera contra producción.</p>
             </div>
-            <details class="card-panel danger-zone-panel hidden" id="aviatDangerZone">
-              <summary>Zona de peligro</summary>
-              <h4 class="secondary-panel-title">Borrar inventario de AVIAT</h4>
+            <section class="card-panel danger-zone-panel hidden" id="aviatDangerZone" aria-label="Zona de peligro">
+              <div class="danger-zone-banner">
+                <div>
+                  <span class="danger-zone-kicker">Acción sensible · Solo ADMIN</span>
+                  <h4 class="secondary-panel-title" style="margin:6px 0 0;color:var(--error)">Borrar inventario de AVIAT</h4>
+                </div>
+                <button type="button" id="physicalInventoryResetImportBtn" class="btn-danger" disabled>Borrar inventario de AVIAT</button>
+              </div>
               <p class="module-lead">Reinicio operativo previo a la carga inicial. Elimina existencias, cubos, cantidades, reservados, capas, series, IMEI, reservas, requisiciones y tareas de ensayo, picking, scans, movimientos operativos de prueba, actividad operativa relacionada y sesiones temporales de importación del cliente AVIAT activo.</p>
               <p class="module-lead">Se conservan el cliente AVIAT, usuarios, roles, contraseñas, sesiones, proyectos oficiales, almacén oficial, ubicaciones aprobadas, configuración, permisos y catálogos maestros necesarios para volver a importar. El catálogo global de SKU no se borra.</p>
               <div id="aviatResetCounts" class="import-summary-chips"></div>
               <p id="aviatResetFlagHint" class="assignee-hint">Esta función se activa solamente para el ensayo y la carga inicial (<code>ALLOW_TENANT_INVENTORY_RESET</code>) y debe volver a desactivarse después de la carga aprobada por Hugo.</p>
-              <div class="page-toolbar">
-                <button type="button" id="physicalInventoryResetImportBtn" class="btn-danger hidden" disabled>Borrar inventario de AVIAT</button>
-              </div>
               <p id="aviatResetResult" class="ops-message ok hidden"></p>
-            </details>
+            </section>
           </div>
 
         </main>
@@ -5376,6 +5738,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=83"></script>
+    <script src="/dashboard.js?v=84"></script>
   </body>
 </html>

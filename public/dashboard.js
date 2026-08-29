@@ -95,36 +95,159 @@ function updateActiveClientChrome() {
   }
 }
 
+function formatClientAddress(row) {
+  const parts = [row.address, row.city, row.state, row.postalCode]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  return parts.length ? parts.join(", ") : "—";
+}
+
+function clientFieldOrDash(value) {
+  const text = String(value ?? "").trim();
+  return text || "—";
+}
+
+function renderClientProjectsList(projects) {
+  const list = Array.isArray(projects) ? projects : [];
+  if (!list.length) {
+    return '<ul class="client-projects-list"><li class="is-empty">Sin proyectos asociados</li></ul>';
+  }
+  return `<ul class="client-projects-list">${list
+    .slice(0, 12)
+    .map((project) => {
+      const label = project.code || project.name || project.id || "Proyecto";
+      const name = project.name && project.code && project.name !== project.code ? ` · ${project.name}` : "";
+      return `<li title="${escCell(project.name || label)}">${escCell(label)}${escCell(name)}</li>`;
+    })
+    .join("")}${list.length > 12 ? `<li class="is-empty">+${list.length - 12} más</li>` : ""}</ul>`;
+}
+
+function renderLiveClientMasterCard(row, slotIndex) {
+  const active = row.active !== false;
+  const enterDisabled = active ? "" : " disabled";
+  const statusBadge = active
+    ? '<span class="badge success">Activo</span>'
+    : '<span class="badge error">Inactivo</span>';
+  const tradeName = row.tradeName || row.name || "Cliente";
+  return `<article class="client-master-card is-live" data-client-id="${escCell(row.id)}" role="listitem">
+    <header class="client-master-head">
+      <div>
+        <span class="client-slot-label">Cliente ${slotIndex}</span>
+        <h3>${escCell(tradeName)}</h3>
+        <p class="client-master-code">${escCell(row.code || "—")}</p>
+      </div>
+      ${statusBadge}
+    </header>
+    <dl class="client-master-grid">
+      <div><dt>Nombre comercial</dt><dd>${escCell(clientFieldOrDash(row.tradeName || row.name))}</dd></div>
+      <div><dt>Razón social</dt><dd>${escCell(clientFieldOrDash(row.legalName))}</dd></div>
+      <div><dt>RFC</dt><dd>${escCell(clientFieldOrDash(row.rfc))}</dd></div>
+      <div><dt>Estado</dt><dd>${active ? "Operativo" : "Inactivo"}</dd></div>
+      <div><dt>Dirección</dt><dd>${escCell(formatClientAddress(row))}</dd></div>
+      <div><dt>Teléfono</dt><dd>${escCell(clientFieldOrDash(row.phone || row.alternatePhone))}</dd></div>
+      <div><dt>Correo</dt><dd>${escCell(clientFieldOrDash(row.email))}</dd></div>
+      <div><dt>Contacto</dt><dd>${escCell(clientFieldOrDash(row.primaryContact))}</dd></div>
+      <div><dt>Tel. contacto</dt><dd>${escCell(clientFieldOrDash(row.contactPhone))}</dd></div>
+      <div><dt>Correo contacto</dt><dd>${escCell(clientFieldOrDash(row.contactEmail))}</dd></div>
+    </dl>
+    <div class="client-projects-block">
+      <h4>Proyectos asociados (${escCell(String((row.projects || []).length || row._count?.projects || 0))})</h4>
+      ${renderClientProjectsList(row.projects)}
+    </div>
+    <div class="client-context-actions">
+      <button type="button" class="btn-primary btn-compact" data-enter-client="${escCell(row.id)}"${enterDisabled}>Entrar</button>
+      <button type="button" class="btn-secondary btn-compact" data-manage-client="${escCell(row.id)}">Administrar</button>
+      <button type="button" class="btn-secondary btn-compact" data-add-project-client="${escCell(row.id)}">Agregar proyecto</button>
+    </div>
+  </article>`;
+}
+
+function renderPlaceholderClientMasterCard(slotIndex) {
+  return `<article class="client-master-card is-placeholder" data-placeholder-slot="${slotIndex}" role="listitem" aria-label="Cliente ${slotIndex} sin configurar">
+    <header class="client-master-head">
+      <div>
+        <span class="client-slot-label">Cliente ${slotIndex}</span>
+        <h3>Sin configurar</h3>
+        <p class="client-master-code">PENDIENTE</p>
+      </div>
+      <span class="badge info">Reservado</span>
+    </header>
+    <dl class="client-master-grid">
+      <div><dt>Nombre comercial</dt><dd>—</dd></div>
+      <div><dt>Razón social</dt><dd>—</dd></div>
+      <div><dt>RFC</dt><dd>—</dd></div>
+      <div><dt>Estado</dt><dd>Pendiente de alta</dd></div>
+      <div><dt>Dirección</dt><dd>—</dd></div>
+      <div><dt>Teléfono</dt><dd>—</dd></div>
+      <div><dt>Correo</dt><dd>—</dd></div>
+      <div><dt>Contacto</dt><dd>—</dd></div>
+      <div><dt>Tel. contacto</dt><dd>—</dd></div>
+      <div><dt>Correo contacto</dt><dd>—</dd></div>
+    </dl>
+    <div class="client-projects-block">
+      <h4>Proyectos asociados</h4>
+      <p class="client-placeholder-note">Estructura lista. Cuando se dé de alta el cliente, sus proyectos aparecerán aquí.</p>
+    </div>
+    <div class="client-context-actions">
+      <button type="button" class="btn-primary btn-compact" disabled>Entrar</button>
+      <button type="button" class="btn-secondary btn-compact" data-configure-client-slot="${slotIndex}">Configurar</button>
+      <button type="button" class="btn-secondary btn-compact" disabled>Agregar proyecto</button>
+    </div>
+  </article>`;
+}
+
 function renderClientContextCards(query = "") {
   if (!clientContextCards) return;
   const needle = String(query || "").trim().toLowerCase();
   const rows = (clientContextCatalog || []).filter((row) => {
     if (!needle) return true;
-    return [row.code, row.name, row.tradeName, row.legalName]
+    return [row.code, row.name, row.tradeName, row.legalName, row.rfc]
       .map((value) => String(value || "").toLowerCase())
       .some((value) => value.includes(needle));
   });
-  if (!rows.length) {
-    clientContextCards.innerHTML = '<p class="subtitle">No hay clientes para mostrar.</p>';
+  if (needle) {
+    if (!rows.length) {
+      clientContextCards.innerHTML = '<p class="subtitle">No hay clientes que coincidan con la búsqueda.</p>';
+      return;
+    }
+    clientContextCards.innerHTML = rows
+      .map((row, index) => renderLiveClientMasterCard(row, index + 1))
+      .join("");
     return;
   }
-  clientContextCards.innerHTML = rows
-    .map((row) => {
-      const active = row.active !== false;
-      const projects = Number(row._count?.projects ?? row.projectCount ?? 0);
-      const enterDisabled = active ? "" : " disabled";
-      return `<article class="client-context-card" data-client-id="${escCell(row.id)}">
-        <h3>${escCell(row.tradeName || row.name)}</h3>
-        <p><strong>${escCell(row.code)}</strong></p>
-        <p>${escCell(row.legalName || "—")}</p>
-        <p>${active ? "Activo" : "Inactivo"} · ${escCell(String(projects))} proyectos</p>
-        <div class="client-context-actions">
-          <button type="button" class="btn-primary btn-compact" data-enter-client="${escCell(row.id)}"${enterDisabled}>Entrar</button>
-          <button type="button" class="btn-secondary btn-compact" data-manage-client="${escCell(row.id)}">Administrar</button>
-        </div>
-      </article>`;
+  const cards = rows.map((row, index) => renderLiveClientMasterCard(row, index + 1));
+  for (let slot = cards.length + 1; slot <= 3; slot += 1) {
+    cards.push(renderPlaceholderClientMasterCard(slot));
+  }
+  if (!rows.length) {
+    clientContextCards.innerHTML = `${cards.join("")}<p class="subtitle" style="grid-column:1/-1;margin:4px 0 0">Aún no hay clientes reales. Usa «Agregar cliente» para dar de alta el primero.</p>`;
+    return;
+  }
+  clientContextCards.innerHTML = cards.join("");
+}
+
+async function enrichClientContextCatalog(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const enriched = await Promise.all(
+    list.map(async (row) => {
+      if (Array.isArray(row.projects)) return row;
+      try {
+        const response = await authenticatedFetch(`/api/clients/${encodeURIComponent(row.id)}`);
+        if (!response || !response.ok) return row;
+        const detail = await response.json().catch(() => null);
+        if (!detail || typeof detail !== "object") return row;
+        return {
+          ...row,
+          ...detail,
+          projects: Array.isArray(detail.projects) ? detail.projects : [],
+          _count: row._count || { projects: (detail.projects || []).length }
+        };
+      } catch (_err) {
+        return row;
+      }
     })
-    .join("");
+  );
+  return enriched;
 }
 
 async function loadAdminClientCatalog() {
@@ -139,12 +262,13 @@ async function loadAdminClientCatalog() {
     return;
   }
   const rows = await response.json().catch(() => []);
-  clientContextCatalog = Array.isArray(rows) ? rows : [];
+  const base = Array.isArray(rows) ? rows : [];
+  clientContextCatalog = await enrichClientContextCatalog(base);
   renderClientContextCards(clientContextSearch?.value || "");
   if (clientContextStatus) {
     clientContextStatus.textContent = clientContextCatalog.length
-      ? `${clientContextCatalog.length} cliente(s). Solo los activos pueden abrirse operativamente.`
-      : "No hay clientes registrados.";
+      ? `${clientContextCatalog.length} cliente(s) real(es). Los slots 2 y 3 quedan reservados hasta su alta. Solo activos pueden abrirse operativamente.`
+      : "No hay clientes registrados. Los tres slots muestran la estructura lista para configurar.";
   }
 }
 
@@ -13550,7 +13674,7 @@ async function syncAviatDangerZone() {
         : "El reinicio está desactivado. ALLOW_TENANT_INVENTORY_RESET debe ser true solo para el ensayo y la carga inicial.";
     }
     if (btn) {
-      btn.classList.toggle("hidden", currentRole !== "ADMIN");
+      btn.classList.remove("hidden");
       btn.style.display = currentRole === "ADMIN" ? "inline-block" : "none";
       btn.disabled = !enabled || physicalInventoryResetBusy;
     }
@@ -13741,6 +13865,17 @@ clientContextCards?.addEventListener("click", (event) => {
   }
   const manageId = target.getAttribute("data-manage-client");
   if (manageId) {
+    setAdminClientGateVisible(false);
+    navigateTo("inventario", "clients");
+    return;
+  }
+  const addProjectId = target.getAttribute("data-add-project-client");
+  if (addProjectId) {
+    setAdminClientGateVisible(false);
+    navigateTo("inventario", "projects");
+    return;
+  }
+  if (target.hasAttribute("data-configure-client-slot")) {
     setAdminClientGateVisible(false);
     navigateTo("inventario", "clients");
   }
