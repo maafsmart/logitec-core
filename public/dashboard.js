@@ -8697,6 +8697,14 @@ function canPickReservedUi() {
   return currentRole === "ADMIN" || currentRole === "SUPERVISOR" || currentRole === "OPERATOR";
 }
 
+function canCancelRequisitionUi() {
+  return currentRole === "ADMIN" || currentRole === "SUPERVISOR";
+}
+
+function canShowRequisitionCancel(row) {
+  return canCancelRequisitionUi() && (row?.status === "APPROVED" || row?.status === "IN_PROGRESS");
+}
+
 function lineReservableQty(line) {
   const pending = reqQtyNumber(line?.pendingQty);
   const reserved = reqQtyNumber(line?.reservedQty);
@@ -9319,6 +9327,14 @@ function renderRequisitionDetail(row) {
       }
     }
   }
+  if (canShowRequisitionCancel(row)) {
+    actions.push({
+      id: "cancel-requisition",
+      label: "Cancelar requisición",
+      className: "btn-danger",
+      onClick: () => void cancelRequisitionFromDetail(row)
+    });
+  }
   openDetailDrawer(`Requisición ${row.number || ""}`, fields, actions);
 }
 
@@ -9365,6 +9381,28 @@ async function approveRequisitionFromDetail(row) {
     return;
   }
   setOpsMessage("reqMessage", "Requisición aprobada. Ya puede reservarse inventario.", true);
+  await refreshRequisitionViews(row.id);
+}
+
+async function cancelRequisitionFromDetail(row) {
+  if (!row?.id || !canShowRequisitionCancel(row)) return;
+  const folio = String(row.number || "").trim() || row.id;
+  if (
+    !window.confirm(
+      `Cancelar requisición ${folio}?\nSe liberarán las reservas. El inventario físico no será eliminado.`
+    )
+  ) {
+    return;
+  }
+  const response = await authenticatedFetch(`/api/requisitions/${encodeURIComponent(row.id)}/cancel`, {
+    method: "POST"
+  });
+  const data = response ? await response.json().catch(() => ({})) : {};
+  if (!response?.ok) {
+    setOpsMessage("reqMessage", data.message || "No se pudo cancelar la requisición.", false);
+    return;
+  }
+  setOpsMessage("reqMessage", `Requisición ${folio} cancelada. Las reservas fueron liberadas.`, true);
   await refreshRequisitionViews(row.id);
 }
 

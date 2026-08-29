@@ -102,6 +102,8 @@ function createReqWorld(opts?: { layerCount?: number; requestedQty?: string }) {
     nextId: 1,
     failOnLayerReserve: 0,
     layerReserveCount: 0,
+    failOnLayerRelease: 0,
+    layerReleaseCount: 0,
     inventories: [
       {
         id: "inv-proj",
@@ -211,6 +213,9 @@ function createReqWorld(opts?: { layerCount?: number; requestedQty?: string }) {
     }>,
     movements: [] as Array<Record<string, unknown>>,
     activities: [] as Array<Record<string, unknown>>,
+    scanEvents: [] as Array<Record<string, unknown>>,
+    tasks: [{ id: "task-pick-1", requisitionId: "req-1", type: "PICK", status: "PENDING" }],
+    serials: [] as Array<{ id: string; inventoryLayerId: string; serialNumber: string }>,
     productProjects: [{ productId: product.id, projectId: project.id, active: true }]
   };
 
@@ -227,6 +232,11 @@ function createReqWorld(opts?: { layerCount?: number; requestedQty?: string }) {
       unitPriceMxn: null,
       unitPriceUsd: null,
       sourceReference: `REF-${i + 1}`
+    });
+    state.serials.push({
+      id: `serial-${i + 1}`,
+      inventoryLayerId: `layer-${String(i + 1).padStart(2, "0")}`,
+      serialNumber: `SN-${i + 1}`
     });
   }
 
@@ -388,6 +398,35 @@ function createReqWorld(opts?: { layerCount?: number; requestedQty?: string }) {
         return { id: `act-${state.nextId++}` };
       }
     },
+    scanEvent: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        const created = { id: `scan-${state.nextId++}`, ...data };
+        state.scanEvents.push(created);
+        return created;
+      }
+    },
+    task: {
+      updateMany: async ({
+        where,
+        data
+      }: {
+        where: { requisitionId: string; type: string; status?: { notIn: string[] } };
+        data: { status: string };
+      }) => {
+        let count = 0;
+        for (const row of state.tasks) {
+          if (row.requisitionId !== where.requisitionId || row.type !== where.type) continue;
+          if (where.status?.notIn?.includes(row.status)) continue;
+          row.status = data.status;
+          count += 1;
+        }
+        return { count };
+      }
+    },
+    inventorySerial: {
+      count: async ({ where }: { where: { inventoryLayerId: string } }) =>
+        state.serials.filter((row) => row.inventoryLayerId === where.inventoryLayerId).length
+    },
     $queryRaw: async (query: unknown, ...values: unknown[]) => {
       const parts = sqlParts(query, values);
       const text = parts.text;
@@ -419,6 +458,10 @@ function createReqWorld(opts?: { layerCount?: number; requestedQty?: string }) {
         return [{ id: inv.id }];
       }
       if (text.includes("InventoryLayer") && text.includes('"reservedQty" = "reservedQty" -')) {
+        state.layerReleaseCount += 1;
+        if (state.failOnLayerRelease > 0 && state.layerReleaseCount >= state.failOnLayerRelease) {
+          throw new Error("simulated layer release failure");
+        }
         const delta = d(String(vals[0]));
         const id = String(vals[1]);
         const layer = allLayers().find((item) => item.id === id);
@@ -481,7 +524,11 @@ function snapshotWorld(state: ReturnType<typeof createReqWorld>["state"]) {
       releasedQty: d(row.releasedQty)
     })),
     movements: state.movements.slice(),
-    activities: state.activities.slice()
+    activities: state.activities.slice(),
+    scanEvents: state.scanEvents.slice(),
+    tasks: state.tasks.map((row) => ({ ...row })),
+    serials: state.serials.map((row) => ({ ...row })),
+    requisitionStatus: state.requisitions.map((row) => ({ id: row.id, status: row.status }))
   };
 }
 
@@ -494,6 +541,13 @@ function restoreWorld(
   state.reservations.splice(0, state.reservations.length, ...snap.reservations);
   state.movements.splice(0, state.movements.length, ...snap.movements);
   state.activities.splice(0, state.activities.length, ...snap.activities);
+  state.scanEvents.splice(0, state.scanEvents.length, ...snap.scanEvents);
+  state.tasks.splice(0, state.tasks.length, ...snap.tasks);
+  state.serials.splice(0, state.serials.length, ...snap.serials);
+  for (const row of snap.requisitionStatus) {
+    const current = state.requisitions.find((item) => item.id === row.id);
+    if (current) current.status = row.status;
+  }
 }
 
 async function reserveFifo(
@@ -786,6 +840,7 @@ test("17 cancelar requisición libera todas las reservas y restaura reservedQty"
   assert.equal(String(world.state.inventories.find((row) => row.id === "inv-proj")?.reservedQty), "0");
   assert.ok(world.state.layers.every((layer) => String(layer.qty) === "1" && String(layer.reservedQty) === "0"));
   assert.equal(world.state.movements.length, 0);
+  assert.equal(world.state.tasks.find((row) => row.id === "task-pick-1")?.status, "CANCELLED");
 });
 
 test("18 concurrencia sin sobre-reserva", async () => {
@@ -852,7 +907,7 @@ test("21 encabezado completo y cache-buster v72", () => {
   assert.match(html, /#moduleRequisitions \.req-stock-hint/);
   assert.match(html, /white-space:\s*normal/);
   assert.match(html, /max-height:\s*52px/);
-  assert.match(html, /dashboard\.js\?v=74/);
+  assert.match(html, /dashboard\.js\?v=75/);
   assert.doesNotMatch(html, /dashboard\.js\?v=72/);
 });
 
@@ -893,4 +948,63 @@ test("APPROVED es requerido y HttpError no se traga", async () => {
       assert.equal(error.statusCode, 409);
     }
   );
+});
+
+test("cancelar APPROVED con dos capas, seriales y reservas libera sin tocar físico", async () => {
+  const world = createReqWorld({ layerCount: 2, requestedQty: "2" });
+  await reserveFifo(world.tx, "2");
+  assert.equal(world.state.reservations.length, 2);
+  assert.ok(world.state.reservations.every((row) => row.status === "ACTIVE"));
+  assert.equal(world.state.serials.length, 2);
+  await cancelRequisitionInTransaction(world.tx as never, "req-1", "admin-1");
+  const cube = world.state.inventories.find((row) => row.id === "inv-proj");
+  assert.equal(String(cube?.qty), "2");
+  assert.equal(String(cube?.reservedQty), "0");
+  assert.equal(world.state.layers.length, 2);
+  assert.ok(world.state.layers.every((layer) => String(layer.qty) === "1" && String(layer.reservedQty) === "0"));
+  assert.ok(world.state.reservations.every((row) => row.status === "RELEASED"));
+  assert.equal(world.state.requisitions.find((row) => row.id === "req-1")?.status, "CANCELLED");
+  assert.equal(world.state.tasks.find((row) => row.id === "task-pick-1")?.status, "CANCELLED");
+  assert.equal(world.state.movements.length, 0);
+  assert.equal(world.state.scanEvents.length, 0);
+  assert.equal(world.state.serials.length, 2);
+  assert.doesNotMatch(sliceFunction(serviceSrc, "cancelRequisitionInTransaction"), /inventoryMovement\.create/);
+  assert.doesNotMatch(sliceFunction(serviceSrc, "cancelRequisitionInTransaction"), /scanEvent\.create/);
+  assert.doesNotMatch(sliceFunction(serviceSrc, "cancelRequisitionInTransaction"), /SERIAL_SELECTION_REQUIRED/);
+});
+
+test("rollback completo si falla la segunda liberación", async () => {
+  const world = createReqWorld({ layerCount: 2, requestedQty: "2" });
+  await reserveFifo(world.tx, "2");
+  const snap = snapshotWorld(world.state);
+  world.state.failOnLayerRelease = 2;
+  await cancelRequisitionInTransaction(world.tx as never, "req-1", "admin-1").then(
+    () => {
+      throw new Error("second release should fail");
+    },
+    (error) => {
+      assert.equal(String((error as Error).message), "simulated layer release failure");
+    }
+  );
+  restoreWorld(world.state, snap);
+  const cube = world.state.inventories.find((row) => row.id === "inv-proj");
+  assert.equal(String(cube?.qty), "2");
+  assert.equal(String(cube?.reservedQty), "2");
+  assert.ok(world.state.layers.every((layer) => String(layer.qty) === "1" && String(layer.reservedQty) === "1"));
+  assert.ok(world.state.reservations.every((row) => row.status === "ACTIVE"));
+  assert.equal(world.state.requisitions.find((row) => row.id === "req-1")?.status, "APPROVED");
+  assert.equal(world.state.tasks.find((row) => row.id === "task-pick-1")?.status, "PENDING");
+});
+
+test("segundo intento de cancelar no genera cantidades negativas", async () => {
+  const world = createReqWorld({ layerCount: 2, requestedQty: "2" });
+  await reserveFifo(world.tx, "2");
+  await cancelRequisitionInTransaction(world.tx as never, "req-1", "admin-1");
+  await cancelRequisitionInTransaction(world.tx as never, "req-1", "admin-1");
+  const cube = world.state.inventories.find((row) => row.id === "inv-proj");
+  assert.equal(String(cube?.qty), "2");
+  assert.equal(String(cube?.reservedQty), "0");
+  assert.ok(!d(String(cube?.reservedQty)).lessThan(0));
+  assert.ok(world.state.layers.every((layer) => !layer.reservedQty.lessThan(0) && String(layer.qty) === "1"));
+  assert.equal(world.state.requisitions.find((row) => row.id === "req-1")?.status, "CANCELLED");
 });

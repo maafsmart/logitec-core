@@ -1052,6 +1052,14 @@ export async function cancelRequisitionInTransaction(tx: Prisma.TransactionClien
       });
     }
   }
+  await tx.task.updateMany({
+    where: {
+      requisitionId: id,
+      type: "PICK",
+      status: { notIn: ["CANCELLED", "COMPLETED", "REJECTED"] }
+    },
+    data: { status: "CANCELLED" }
+  });
   await tx.requisition.update({ where: { id }, data: { status: "CANCELLED" } });
   await logActivity(
     {
