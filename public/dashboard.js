@@ -7775,6 +7775,15 @@ function buildSkuSelectedCardHtml(context, detailHtml) {
   const availableValue = focus.showAvailableDash ? "—" : formatQty(focus.qty);
   const reservedValue = focus.showAvailableDash ? "—" : formatQty(focus.reservedQty);
   const unreservedValue = focus.showAvailableDash ? "—" : formatQty(focus.unreservedQty);
+  const ftsQty = escCell(formatQty(focus.freeToSaleQty));
+  const otherQty = escCell(formatQty(focus.otherProjectsQty));
+  const projectQty = escCell(formatQty(focus.attQty));
+  let breakdownSecondLine = `${escCell(focus.projectNameShort)}: ${projectQty} · Free to Sale: ${ftsQty} · otros proyectos: ${otherQty}`;
+  if (focus.mode === "FREE_TO_SALE") {
+    breakdownSecondLine = `Free to Sale: ${ftsQty} · Total en proyectos: ${otherQty}`;
+  } else if (focus.mode === "ALL") {
+    breakdownSecondLine = `Total en proyectos: ${otherQty} · Free to Sale: ${ftsQty}`;
+  }
   return `<div class="sku-selected-card-title">✓ SKU seleccionado</div>
     <dl class="sku-selected-card-meta">
       <div><dt>SKU</dt><dd>${escCell(product.sku)}</dd></div>
@@ -7789,9 +7798,7 @@ function buildSkuSelectedCardHtml(context, detailHtml) {
     </dl>
     <div class="sku-selected-card-breakdown">
       <div>Total global: ${escCell(formatQty(focus.globalQty))} <span class="sku-selected-card-breakdown-note">(informativo, no es el saldo del proyecto)</span></div>
-      <div>${escCell(focus.projectNameShort)}: ${escCell(formatQty(focus.attQty))} · Free to Sale: ${escCell(
-        formatQty(focus.freeToSaleQty)
-      )} · otros proyectos: ${escCell(formatQty(focus.otherProjectsQty))}</div>
+      <div>${breakdownSecondLine}</div>
     </div>
     <button type="button" class="btn-secondary btn-compact sku-change-btn">Cambiar SKU</button>
     <details class="sku-selected-detail">

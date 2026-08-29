@@ -160,8 +160,7 @@ test("la tarjeta con AT&T activo muestra AVIAT, AT&T y disponible 2 no 25", () =
   assert.match(htmlCard, /<dt>Reservado<\/dt><dd>0<\/dd>/);
   assert.match(htmlCard, /<dt>No reservado<\/dt><dd>2<\/dd>/);
   assert.match(htmlCard, /Total global: 25/);
-  assert.match(htmlCard, /Free to Sale: 21/);
-  assert.match(htmlCard, /otros proyectos: 2/);
+  assert.match(htmlCard, /AT&amp;T COMUNICACIONES DIGITALES: 2 · Free to Sale: 21 · otros proyectos: 2/);
   assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>25<\/dd>/);
   assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>4<\/dd>/);
   assert.doesNotMatch(htmlCard, />LOGITEC</);
@@ -185,7 +184,7 @@ test("proyecto seleccionado sin saldo muestra 0 y no usa otro proyecto", () => {
   assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>25<\/dd>/);
   assert.doesNotMatch(htmlCard, />LOGITEC</);
   assert.match(htmlCard, /Total global: 25/);
-  assert.match(htmlCard, /otros proyectos: 4/);
+  assert.match(htmlCard, /OPERBES: 0 · Free to Sale: 21 · otros proyectos: 4/);
 });
 
 test("alcance Todos no atribuye la suma al primer proyecto ni cambia filtros", () => {
@@ -193,6 +192,8 @@ test("alcance Todos no atribuye la suma al primer proyecto ni cambia filtros", (
   assert.match(htmlCard, /<dt>Proyecto<\/dt><dd>Selecciona un proyecto<\/dd>/);
   assert.match(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>—<\/dd>/);
   assert.match(htmlCard, /Total global: 25/);
+  assert.match(htmlCard, /Total en proyectos: 4 · Free to Sale: 21/);
+  assert.doesNotMatch(htmlCard, /Proyectos: 0/);
   assert.doesNotMatch(htmlCard, /AT&amp;T COMUNICACIONES DIGITALES/);
   assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>2<\/dd>/);
   assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>4<\/dd>/);
@@ -213,6 +214,9 @@ test("alcance FREE_TO_SALE muestra exclusivamente Free to Sale", () => {
   assert.doesNotMatch(htmlCard, /<dt>Disponible en Free to Sale<\/dt><dd>25<\/dd>/);
   assert.doesNotMatch(htmlCard, /<dt>Disponible en Free to Sale<\/dt><dd>2<\/dd>/);
   assert.match(htmlCard, /Total global: 25/);
+  assert.match(htmlCard, /Free to Sale: 21 · Total en proyectos: 4/);
+  assert.doesNotMatch(htmlCard, /Free to Sale: 21 · Free to Sale: 21/);
+  assert.doesNotMatch(htmlCard, /otros proyectos:/);
 });
 
 test("la tarjeta conserva ancho legible y no nace en la columna compacta", () => {
