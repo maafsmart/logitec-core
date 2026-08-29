@@ -50,6 +50,7 @@ export async function executeImportBatch(input: {
       context: input.context,
       rows: valid,
       userId: input.userId,
+      clientId: input.clientId,
       batchId,
       metadata: sourceMeta,
       txOptions: inventoryImportTransactionOptions(valid.length)

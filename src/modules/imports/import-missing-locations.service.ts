@@ -67,6 +67,7 @@ async function resolveLocationTemplate() {
 
 export async function createMissingImportLocations(input: {
   batchId: string;
+  clientId: string;
   userId: string;
   confirmPhysical: boolean;
 }) {
@@ -78,8 +79,8 @@ export async function createMissingImportLocations(input: {
   }
   inFlightByBatch.add(input.batchId);
   try {
-    const batch = await prisma.importBatch.findUnique({
-      where: { id: input.batchId },
+    const batch = await prisma.importBatch.findFirst({
+      where: { id: input.batchId, clientId: input.clientId },
       include: { rows: { select: { sourceRow: true, reviewState: true, errors: true, warnings: true } } }
     });
     if (!batch) throw new HttpError(404, "Importación no encontrada.");

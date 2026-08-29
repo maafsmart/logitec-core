@@ -7,6 +7,8 @@ import { isCompanyProjectLabel } from "./inventory-project-rules.js";
 export const PHYSICAL_RESET_CONFIRMATION = "BORRAR INVENTARIO DE AVIAT";
 export const PHYSICAL_RESET_PATH = "/api/v1/inventory/physical/reset";
 export const TENANT_INVENTORY_RESET_FLAG = "ALLOW_TENANT_INVENTORY_RESET";
+/** Distinct from Prisma migrate's advisory lock key 72707369. */
+export const PHYSICAL_RESET_ADVISORY_LOCK_CLASS = 90429101;
 
 export type PhysicalResetDb = {
   $transaction<T>(
@@ -158,6 +160,16 @@ export function assertAviatOperationalClient(operationalClientId: string, aviatI
   }
 }
 
+export async function tryAcquirePhysicalResetLock(
+  tx: { $queryRaw: Prisma.TransactionClient["$queryRaw"] },
+  clientId: string
+): Promise<boolean> {
+  const rows = await tx.$queryRaw<Array<{ locked: boolean }>>`
+    SELECT pg_try_advisory_xact_lock(CAST(${PHYSICAL_RESET_ADVISORY_LOCK_CLASS} AS INTEGER), hashtext(${clientId})) AS locked
+  `;
+  return Boolean(rows[0]?.locked);
+}
+
 async function collectOperationalCounts(
   tx: Prisma.TransactionClient,
   clientId: string
@@ -177,8 +189,7 @@ async function collectOperationalCounts(
     requisitions,
     tasks,
     productProjects,
-    importBatches,
-    legacyStock
+    importBatches
   ] = await Promise.all([
     tx.inventory.aggregate({ where: clientWhere, _sum: { qty: true } }),
     tx.inventory.aggregate({ where: clientWhere, _sum: { reservedQty: true } }),
@@ -204,12 +215,7 @@ async function collectOperationalCounts(
       }
     }),
     tx.productProject.count({ where: { project: { clientId } } }),
-    tx.importBatch.count({
-      where: { createdBy: { OR: [{ clientId }, { role: "ADMIN" }] } }
-    }),
-    tx.inventoryStock.count({
-      where: { product: { inventories: { some: clientWhere } } }
-    })
+    tx.importBatch.count({ where: clientWhere })
   ]);
 
   return {
@@ -224,7 +230,7 @@ async function collectOperationalCounts(
     tasks,
     productProjects,
     importBatches,
-    legacyStock,
+    legacyStock: 0,
     qty: decimalText(qtyAgg._sum.qty),
     reservedQty: decimalText(reservedAgg._sum.reservedQty)
   };
@@ -357,8 +363,7 @@ export async function applyPhysicalInventoryPurge(
     before.requisitions === 0 &&
     before.tasks === 0 &&
     before.productProjects === 0 &&
-    before.importBatches === 0 &&
-    before.legacyStock === 0;
+    before.importBatches === 0;
 
   const aviatTaskIds = await tx.task.findMany({
     where: {
@@ -415,22 +420,8 @@ export async function applyPhysicalInventoryPurge(
   });
 
   const importBatches = await tx.importBatch.deleteMany({
-    where: { createdBy: { OR: [{ clientId: aviatId }, { role: "ADMIN" }] } }
+    where: { clientId: aviatId }
   });
-
-  const leftoverAviatStock = await tx.inventoryStock.findMany({
-    where: {
-      product: {
-        inventories: { none: {} },
-        inventorySerials: { none: {} },
-        inventoryMovements: { none: {} }
-      }
-    },
-    select: { id: true }
-  });
-  const stock = leftoverAviatStock.length
-    ? await tx.inventoryStock.deleteMany({ where: { id: { in: leftoverAviatStock.map((row) => row.id) } } })
-    : { count: 0 };
 
   const after = await collectOperationalCounts(tx, aviatId);
   if (
@@ -463,7 +454,7 @@ export async function applyPhysicalInventoryPurge(
     tasksPurged: tasks.count,
     productProjectsPurged: productProjects.count,
     importBatchesPurged: importBatches.count,
-    legacyStockPurged: stock.count,
+    legacyStockPurged: 0,
     qtyCleared: before.qty,
     reservedCleared: before.reservedQty,
     orphanProductsRetained,
@@ -473,7 +464,7 @@ export async function applyPhysicalInventoryPurge(
     layersZeroed: layers.count,
     serialsReleased: serials.count,
     reservationsReleased: reservations.count,
-    legacyStockZeroed: stock.count,
+    legacyStockZeroed: 0,
     alreadyZero: false
   };
 
@@ -531,7 +522,13 @@ export async function executePhysicalInventoryReset(
   }
   physicalResetInFlight = true;
   try {
-    return await db.$transaction((tx) => applyPhysicalInventoryPurge(tx, actor), {
+    return await db.$transaction(async (tx) => {
+      const locked = await tryAcquirePhysicalResetLock(tx, actor.clientId);
+      if (!locked) {
+        throw new HttpError(409, "Ya hay un reinicio de inventario en curso.", "PHYSICAL_RESET_IN_FLIGHT");
+      }
+      return applyPhysicalInventoryPurge(tx, actor);
+    }, {
       maxWait: 15_000,
       timeout: 300_000
     });

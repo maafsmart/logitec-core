@@ -12,7 +12,8 @@ import {
   assertTenantInventoryResetAllowed,
   executePhysicalInventoryReset,
   isPhysicalResetInFlight,
-  isTenantInventoryResetAllowed
+  isTenantInventoryResetAllowed,
+  PHYSICAL_RESET_ADVISORY_LOCK_CLASS
 } from "../src/modules/inventory/physical-reset.service.js";
 
 const html = readFileSync(new URL("../public/dashboard.html", import.meta.url), "utf8");
@@ -50,7 +51,7 @@ function createFakeTx(seed?: Partial<{
   requisitions: Array<{ id: string; clientId: string }>;
   tasks: Array<{ id: string; clientId?: string }>;
   productProjects: Array<{ id: string; clientId: string }>;
-  importBatches: Array<{ id: string }>;
+  importBatches: Array<{ id: string; clientId: string }>;
   products: Array<{ id: string; customerId?: string | null }>;
   customers: Array<{ id: string; clientId: string; code: string; name: string }>;
   clients: Array<{ id: string; code: string; name: string; tradeName: string; legalName: string }>;
@@ -69,7 +70,7 @@ function createFakeTx(seed?: Partial<{
     requisitions: cloneRows(seed?.requisitions || [{ id: "rq-1", clientId: AVIAT_ID }]),
     tasks: cloneRows(seed?.tasks || [{ id: "t-1", clientId: AVIAT_ID }]),
     productProjects: cloneRows(seed?.productProjects || [{ id: "pp-1", clientId: AVIAT_ID }]),
-    importBatches: cloneRows(seed?.importBatches || [{ id: "ib-1" }]),
+    importBatches: cloneRows(seed?.importBatches || [{ id: "ib-1", clientId: AVIAT_ID }]),
     products: cloneRows(seed?.products || [{ id: "p-1", customerId: "proj-logitec" }]),
     customers: cloneRows(seed?.customers || [
       { id: "proj-att", clientId: AVIAT_ID, code: "ATT", name: "AT&T" },
@@ -205,11 +206,11 @@ function createFakeTx(seed?: Partial<{
     },
     inventoryStock: {
       count: async () => state.stock.length,
-      findMany: async () => state.stock.map((row) => ({ id: row.id })),
+      findMany: async () => {
+        throw new Error("inventoryStock.findMany forbidden");
+      },
       deleteMany: async () => {
-        const count = state.stock.length;
-        state.stock = [];
-        return { count };
+        throw new Error("inventoryStock.deleteMany forbidden");
       }
     },
     inventoryReservation: {
@@ -325,10 +326,20 @@ function createFakeTx(seed?: Partial<{
       }
     },
     importBatch: {
-      count: async () => state.importBatches.length,
-      deleteMany: async () => {
-        const count = state.importBatches.length;
-        state.importBatches = [];
+      count: async ({ where }: { where?: unknown } = {}) => {
+        const clientId = clientIdFromWhere(where);
+        return clientId
+          ? state.importBatches.filter((row) => row.clientId === clientId).length
+          : state.importBatches.length;
+      },
+      deleteMany: async ({ where }: { where?: unknown } = {}) => {
+        const clientId = clientIdFromWhere(where);
+        if (!clientId) {
+          throw new Error("importBatch.deleteMany requires clientId");
+        }
+        const kept = state.importBatches.filter((row) => row.clientId !== clientId);
+        const count = state.importBatches.length - kept.length;
+        state.importBatches = kept;
         return { count };
       }
     },
@@ -347,7 +358,8 @@ function createFakeTx(seed?: Partial<{
       findMany: async () => state.products
     },
     location: { deleteMany: async () => { state.deleted.location += 1; } },
-    user: { deleteMany: async () => { state.deleted.user += 1; } }
+    user: { deleteMany: async () => { state.deleted.user += 1; } },
+    $queryRaw: async () => [{ locked: true }]
   };
 
   return { state, tx };
@@ -485,6 +497,65 @@ test("elimina el inventario operativo de AVIAT y conserva catálogos y el otro c
   assert.equal(second.movementsPurged, 0);
 });
 
+test("conserva InventoryStock y las importaciones de otro cliente", async () => {
+  const { state, tx } = createFakeTx({
+    inventory: [
+      { id: "inv-1", clientId: AVIAT_ID, qty: d(10), reservedQty: d(2) },
+      { id: "inv-other", clientId: OTHER_ID, qty: d(7), reservedQty: d(1) }
+    ],
+    stock: [
+      { id: "st-shared", quantity: d(40) },
+      { id: "st-other", quantity: d(9) }
+    ],
+    importBatches: [
+      { id: "ib-aviat", clientId: AVIAT_ID },
+      { id: "ib-other", clientId: OTHER_ID },
+      { id: "ib-admin-other", clientId: OTHER_ID }
+    ],
+    clients: [
+      { id: AVIAT_ID, code: "AVIAT", name: "AVIAT", tradeName: "AVIAT", legalName: "AVIAT" },
+      { id: OTHER_ID, code: "CLI2", name: "Cliente 2", tradeName: "Cliente 2", legalName: "Cliente 2" }
+    ]
+  });
+  const result = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: AVIAT_ID });
+  assert.equal(result.legacyStockPurged, 0);
+  assert.equal(result.legacyStockZeroed, 0);
+  assert.equal(result.importBatchesPurged, 1);
+  assert.equal(state.stock.length, 2);
+  assert.equal(state.stock.some((row) => row.id === "st-shared"), true);
+  assert.equal(state.stock.some((row) => row.id === "st-other"), true);
+  assert.deepEqual(
+    state.importBatches.map((row) => row.id).sort(),
+    ["ib-admin-other", "ib-other"]
+  );
+  assert.equal(state.inventory.find((row) => row.id === "inv-other")?.clientId, OTHER_ID);
+});
+
+test("el bloqueo PostgreSQL impide un segundo reinicio entre instancias", async () => {
+  const { state, tx } = createFakeTx({
+    stock: [{ id: "st-keep", quantity: d(99) }],
+    importBatches: [
+      { id: "ib-aviat", clientId: AVIAT_ID },
+      { id: "ib-other", clientId: OTHER_ID }
+    ]
+  });
+  tx.$queryRaw = async () => [{ locked: false }];
+  const db = {
+    $transaction: async (fn: (inner: typeof tx) => Promise<unknown>) => fn(tx)
+  };
+  await withResetFlag(true, async () => {
+    await assert.rejects(
+      () => executePhysicalInventoryReset({ userId: "admin-1", clientId: AVIAT_ID }, db as never),
+      (error: unknown) => error instanceof HttpError && error.code === "PHYSICAL_RESET_IN_FLIGHT"
+    );
+  });
+  assert.equal(state.inventory.length, 1);
+  assert.equal(String(state.inventory[0]!.qty), "10");
+  assert.equal(state.stock.length, 1);
+  assert.equal(state.importBatches.length, 2);
+  assert.equal(isPhysicalResetInFlight(), false);
+});
+
 test("un cliente distinto a AVIAT no puede reiniciar", async () => {
   const { tx } = createFakeTx();
   await assert.rejects(
@@ -617,4 +688,19 @@ test("Existencias no consulta qty=0 y AN102/202 siguen sin remapeo", () => {
   assert.doesNotMatch(js, /AN203\s*[:=]\s*["']AN103["']/);
   assert.doesNotMatch(js, /AN204\s*[:=]\s*["']AN104["']/);
   assert.match(js, /Number\(row\.qty\) > 0/);
+});
+
+test("el reinicio no borra InventoryStock y usa advisory lock de PostgreSQL", () => {
+  assert.equal(PHYSICAL_RESET_ADVISORY_LOCK_CLASS, 90429101);
+  assert.notEqual(PHYSICAL_RESET_ADVISORY_LOCK_CLASS, 72707369);
+  assert.match(serviceSrc, /pg_try_advisory_xact_lock/);
+  assert.match(serviceSrc, /hashtext\(\$\{clientId\}\)/);
+  assert.match(serviceSrc, /legacyStockPurged:\s*0/);
+  assert.match(serviceSrc, /legacyStockZeroed:\s*0/);
+  assert.match(serviceSrc, /importBatch\.deleteMany\(\{\s*where:\s*\{\s*clientId:\s*aviatId/);
+  assert.match(serviceSrc, /importBatch\.count\(\{\s*where:\s*clientWhere/);
+  assert.doesNotMatch(serviceSrc, /inventoryStock\.deleteMany/);
+  assert.doesNotMatch(serviceSrc, /inventoryStock\.findMany/);
+  assert.doesNotMatch(serviceSrc, /createdBy:\s*\{\s*OR:/);
+  assert.doesNotMatch(serviceSrc, /role:\s*"ADMIN"/);
 });

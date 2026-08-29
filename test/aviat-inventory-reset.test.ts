@@ -63,6 +63,9 @@ test("el reinicio es transaccional, idempotente y reporta conteos por entidad", 
   assert.match(service, /tasksPurged/);
   assert.match(service, /orphanProductsRetained/);
   assert.match(service, /legacyLogitec/);
+  assert.match(service, /pg_try_advisory_xact_lock/);
+  assert.match(service, /PHYSICAL_RESET_ADVISORY_LOCK_CLASS = 90429101/);
+  assert.doesNotMatch(service, /pg_try_advisory_xact_lock\(72707369/);
   assert.doesNotMatch(service, /product\.deleteMany/);
   assert.match(js, /physicalInventoryResetBusy/);
   assert.match(js, /setPhysicalInventoryResetBusy\(true\)/);
@@ -95,6 +98,17 @@ test("la migración de coherencia de movimientos admite FTS namespaced y el valo
   assert.match(sql, /FREE_TO_SALE:' \|\| "clientId"/);
   assert.match(sql, /"toAssignmentKey" = 'FREE_TO_SALE'/);
   assert.doesNotMatch(sql, /DELETE FROM "Inventory"/);
+});
+
+test("ImportBatch.clientId acota listado, alta y reinicio al cliente operativo", () => {
+  const importRoutes = readFileSync(new URL("../src/modules/imports/imports.routes.ts", import.meta.url), "utf8");
+  assert.match(importRoutes, /clientId: operationalClientId\(req\.auth!\)/);
+  assert.match(importRoutes, /where: clientImportBatchWhere\(req\.auth!\)/);
+  assert.match(importRoutes, /findFirst\(\{\s*where:\s*\{\s*id,\s*clientId\s*\}/);
+  assert.doesNotMatch(importRoutes, /importBatch\.findUnique/);
+  assert.match(service, /where: \{ clientId: aviatId \}/);
+  assert.doesNotMatch(service, /createdBy: \{ OR: \[\{ clientId: aviatId \}, \{ role: "ADMIN" \}\] \}/);
+  assert.doesNotMatch(service, /inventoryStock\.deleteMany/);
 });
 
 test("ALLOW_TENANT_INVENTORY_RESET queda documentado y en false por defecto", () => {

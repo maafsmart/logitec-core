@@ -96,6 +96,7 @@ export async function executeInventoryImportBulk(input: {
   context: ImportContext;
   rows: ExecRow[];
   userId: string;
+  clientId: string;
   batchId: string;
   metadata?: Record<string, unknown>;
   txOptions: { maxWait: number; timeout: number };
@@ -410,8 +411,8 @@ export async function executeInventoryImportBulk(input: {
       const qtyTotal = [...runningQty.values()].reduce((sum, qty) => sum.add(qty), new Prisma.Decimal(0));
       const cleanMeta = { ...sourceMeta };
       delete cleanMeta.lastFailedAttempt;
-      await tx.importBatch.update({
-        where: { id: input.batchId },
+      const completed = await tx.importBatch.updateMany({
+        where: { id: input.batchId, clientId: input.clientId },
         data: {
           status: "COMPLETED",
           completedAt: new Date(),
@@ -432,6 +433,9 @@ export async function executeInventoryImportBulk(input: {
           } as Prisma.InputJsonValue
         }
       });
+      if (completed.count !== 1) {
+        throw new ImportExecuteError("IMPORT_BATCH_NOT_OWNED");
+      }
       return txResults;
   }, input.txOptions);
 }

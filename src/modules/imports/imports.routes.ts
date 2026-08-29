@@ -1,11 +1,11 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
-import { requireOperationalClient } from "../clients/client-scope.js";
+import { clientImportBatchWhere, operationalClientId, requireOperationalClient } from "../clients/client-scope.js";
 import { buildSuggestedMapping, type CanonicalField, type ImportContext } from "./import-mapping.js";
 import { parseUpload } from "./import-parse.service.js";
 import { buildInventoryReconcileDiff, validateMappedRows } from "./import-validate.service.js";
@@ -43,9 +43,10 @@ function asMeta(value: Prisma.JsonValue | null | undefined): Record<string, any>
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, any>) : {};
 }
 
-async function loadBatch(id: string) {
-  const batch = await prisma.importBatch.findUnique({
-    where: { id },
+async function loadBatch(id: string, req: Request) {
+  const clientId = operationalClientId(req.auth!);
+  const batch = await prisma.importBatch.findFirst({
+    where: { id, clientId },
     include: {
       createdBy: { select: { id: true, fullName: true, email: true } },
       rows: { orderBy: { sourceRow: "asc" } }
@@ -55,11 +56,21 @@ async function loadBatch(id: string) {
   return batch;
 }
 
+async function updateOwnedBatch(id: string, req: Request, data: Prisma.ImportBatchUpdateManyMutationInput) {
+  const clientId = operationalClientId(req.auth!);
+  const claimed = await prisma.importBatch.updateMany({ where: { id, clientId }, data });
+  if (claimed.count !== 1) throw new HttpError(404, "Importación no encontrada.");
+  const updated = await prisma.importBatch.findFirst({ where: { id, clientId } });
+  if (!updated) throw new HttpError(404, "Importación no encontrada.");
+  return updated;
+}
+
 importsRouter.use(requireAuth);
 importsRouter.use(requireOperationalClient);
 
-importsRouter.get("/", requireRole(["ADMIN", "SUPERVISOR"]), async (_req, res) => {
+importsRouter.get("/", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
   const rows = await prisma.importBatch.findMany({
+    where: clientImportBatchWhere(req.auth!),
     orderBy: { createdAt: "desc" },
     take: 100,
     include: { createdBy: { select: { id: true, fullName: true, email: true } } }
@@ -70,6 +81,7 @@ importsRouter.get("/", requireRole(["ADMIN", "SUPERVISOR"]), async (_req, res) =
 importsRouter.get("/active", requireRole(["ADMIN"]), async (req, res) => {
   const batch = await prisma.importBatch.findFirst({
     where: {
+      clientId: operationalClientId(req.auth!),
       createdById: req.auth!.userId,
       status: { in: [...RESUMABLE_IMPORT_STATUSES] }
     },
@@ -119,6 +131,7 @@ importsRouter.post("/upload", requireRole(["ADMIN"]), upload.single("file"), asy
       status: "UPLOADED",
       totalRows: first?.totalDataRows || 0,
       createdById: req.auth!.userId,
+      clientId: operationalClientId(req.auth!),
       metadata: {
         sheets: parsed.sheets.map((s) => ({
           name: s.name,
@@ -138,7 +151,7 @@ importsRouter.post("/upload", requireRole(["ADMIN"]), upload.single("file"), asy
 });
 
 importsRouter.get("/:id/state", requireRole(["ADMIN"]), async (req, res) => {
-  const batch = await loadBatch(z.string().min(1).parse(req.params.id));
+  const batch = await loadBatch(z.string().min(1).parse(req.params.id), req);
   if (batch.createdById !== req.auth!.userId) {
     throw new HttpError(404, "Importación no encontrada.");
   }
@@ -146,7 +159,7 @@ importsRouter.get("/:id/state", requireRole(["ADMIN"]), async (req, res) => {
 });
 
 importsRouter.get("/:id", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
-  const batch = await loadBatch(z.string().min(1).parse(req.params.id));
+  const batch = await loadBatch(z.string().min(1).parse(req.params.id), req);
   const meta = asMeta(batch.metadata);
   res.json({
     ...batch,
@@ -159,14 +172,12 @@ importsRouter.get("/:id", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res)
 importsRouter.post("/:id/select-sheet", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   const sheetName = z.string().min(1).parse(req.body.sheetName);
-  const batch = await loadBatch(id);
+  const batch = await loadBatch(id, req);
   assertImportBatchMutable(batch.status);
   const meta = asMeta(batch.metadata);
   const sheet = (meta.sheets || []).find((s: any) => s.name === sheetName);
   if (!sheet) throw new HttpError(404, "Hoja no encontrada.");
-  const updated = await prisma.importBatch.update({
-    where: { id },
-    data: {
+  const updated = await updateOwnedBatch(id, req, {
       sheetName,
       totalRows: sheet.totalDataRows || 0,
       status: "UPLOADED",
@@ -176,14 +187,13 @@ importsRouter.post("/:id/select-sheet", requireRole(["ADMIN"]), async (req, res)
         parsedRows: sheet.rows || [],
         mapping: undefined
       } as Prisma.InputJsonValue
-    }
-  });
+    });
   res.json(updated);
 });
 
 importsRouter.post("/:id/mapping", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
-  const batch = await loadBatch(id);
+  const batch = await loadBatch(id, req);
   assertImportBatchMutable(batch.status);
   const meta = asMeta(batch.metadata);
   const sheet =
@@ -194,20 +204,17 @@ importsRouter.post("/:id/mapping", requireRole(["ADMIN"]), async (req, res) => {
     req.body.mapping && typeof req.body.mapping === "object"
       ? (req.body.mapping as Record<string, CanonicalField | null>)
       : buildSuggestedMapping(sheet.headers || [], sheet.rows || []);
-  const updated = await prisma.importBatch.update({
-    where: { id },
-    data: {
+  const updated = await updateOwnedBatch(id, req, {
       status: "MAPPED",
       sheetName: sheet.name,
       metadata: { ...meta, mapping, selectedSheet: sheet.name } as Prisma.InputJsonValue
-    }
-  });
+    });
   res.json({ batch: updated, mapping, suggested: buildSuggestedMapping(sheet.headers || [], sheet.rows || []) });
 });
 
 importsRouter.post("/:id/validate", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
-  const batch = await loadBatch(id);
+  const batch = await loadBatch(id, req);
   assertImportBatchMutable(batch.status);
   const meta = asMeta(batch.metadata);
   const mapping = (meta.mapping || {}) as Record<string, CanonicalField | null>;
@@ -288,9 +295,7 @@ importsRouter.post("/:id/validate", requireRole(["ADMIN"]), async (req, res) => 
   );
   const requiredLocationsMissing = Object.values(missingLocationSummary)
     .sort((a, b) => b.records - a.records || a.code.localeCompare(b.code));
-  const updated = await prisma.importBatch.update({
-    where: { id },
-    data: {
+  const updated = await updateOwnedBatch(id, req, {
       status: validated.summary.invalidRows ? "VALIDATED" : "READY",
       totalRows: validated.summary.totalRows,
       validRows: validated.summary.validRows,
@@ -309,7 +314,6 @@ importsRouter.post("/:id/validate", requireRole(["ADMIN"]), async (req, res) => 
           assignmentUnresolved: validated.summary.assignmentUnresolved
         }
       } as Prisma.InputJsonValue
-    }
   });
   res.json({
     batch: updated,
@@ -321,7 +325,7 @@ importsRouter.post("/:id/validate", requireRole(["ADMIN"]), async (req, res) => 
 });
 
 importsRouter.get("/:id/preview", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
-  const batch = await loadBatch(z.string().min(1).parse(req.params.id));
+  const batch = await loadBatch(z.string().min(1).parse(req.params.id), req);
   res.json({
     id: batch.id,
     context: batch.context,
@@ -356,7 +360,7 @@ importsRouter.get("/:id/errors", requireRole(["ADMIN", "SUPERVISOR"]), async (re
 });
 
 importsRouter.get("/:id/review", requireRole(["ADMIN"]), async (req, res) => {
-  const batch = await loadBatch(z.string().min(1).parse(req.params.id));
+  const batch = await loadBatch(z.string().min(1).parse(req.params.id), req);
   const match = {
     sku: z.string().trim().min(1).max(80).optional().parse(req.query.sku),
     lotNumber: z.string().trim().min(1).max(120).optional().parse(req.query.lotNumber),
@@ -410,7 +414,7 @@ importsRouter.patch("/:id/review", requireRole(["ADMIN"]), async (req, res) => {
     status: z.string().trim().min(1).max(80).optional(),
     description: z.string().trim().min(1).max(160).optional()
   }).optional().parse(req.body.match);
-  const batch = await loadBatch(id);
+  const batch = await loadBatch(id, req);
   assertImportBatchMutable(batch.status);
   if (["SERIAL_DUPLICATE_FILE", "SERIAL_EXISTS", "SERIAL_QTY", "IMEI_DUPLICATE_FILE", "IMEI_EXISTS"].includes(String(issueCode || ""))) {
     throw new HttpError(409, "Este conflicto de identidad requiere revisión individual.");
@@ -446,8 +450,9 @@ importsRouter.patch("/:id/review", requireRole(["ADMIN"]), async (req, res) => {
 
 importsRouter.post("/:id/review/missing-locations", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
-  const batch = await prisma.importBatch.findUnique({
-    where: { id },
+  const clientId = operationalClientId(req.auth!);
+  const batch = await prisma.importBatch.findFirst({
+    where: { id, clientId },
     select: { id: true, status: true }
   });
   if (!batch) throw new HttpError(404, "Importación no encontrada.");
@@ -455,6 +460,7 @@ importsRouter.post("/:id/review/missing-locations", requireRole(["ADMIN"]), asyn
   const confirmPhysical = z.literal(true).parse(req.body.confirmPhysical);
   const result = await createMissingImportLocations({
     batchId: id,
+    clientId,
     userId: req.auth!.userId,
     confirmPhysical
   });
@@ -463,8 +469,8 @@ importsRouter.post("/:id/review/missing-locations", requireRole(["ADMIN"]), asyn
 
 importsRouter.post("/:id/review/ignore", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
-  const batch = await prisma.importBatch.findUnique({
-    where: { id },
+  const batch = await prisma.importBatch.findFirst({
+    where: { id, clientId: operationalClientId(req.auth!) },
     select: { id: true, status: true }
   });
   if (!batch) throw new HttpError(404, "Importación no encontrada.");
@@ -479,7 +485,7 @@ importsRouter.post("/:id/review/ignore", requireRole(["ADMIN"]), async (req, res
 });
 
 importsRouter.get("/:id/normalized.csv", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
-  const batch = await loadBatch(z.string().min(1).parse(req.params.id));
+  const batch = await loadBatch(z.string().min(1).parse(req.params.id), req);
   const headers = [
     "sourceRow",
     "sku",
@@ -541,8 +547,9 @@ importsRouter.get("/:id/normalized.csv", requireRole(["ADMIN", "SUPERVISOR"]), a
 importsRouter.post("/:id/cancel", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   const userId = req.auth!.userId;
-  const existing = await prisma.importBatch.findUnique({
-    where: { id },
+  const clientId = operationalClientId(req.auth!);
+  const existing = await prisma.importBatch.findFirst({
+    where: { id, clientId },
     select: { id: true, createdById: true }
   });
   if (!existing || existing.createdById !== userId) {
@@ -552,6 +559,7 @@ importsRouter.post("/:id/cancel", requireRole(["ADMIN"]), async (req, res) => {
     const claimed = await tx.importBatch.updateMany({
       where: {
         id,
+        clientId,
         createdById: userId,
         status: { in: [...CANCELLABLE_IMPORT_STATUSES] }
       },
@@ -564,13 +572,13 @@ importsRouter.post("/:id/cancel", requireRole(["ADMIN"]), async (req, res) => {
     if (claimed.count !== 1) {
       throw new HttpError(409, "La importación no puede cancelarse porque ya está en proceso, confirmada o cancelada.");
     }
-    const batch = await tx.importBatch.findUnique({
-      where: { id },
+    const batch = await tx.importBatch.findFirst({
+      where: { id, clientId },
       select: { metadata: true }
     });
     const deleted = await tx.importRow.deleteMany({ where: { importBatchId: id } });
-    await tx.importBatch.update({
-      where: { id },
+    await tx.importBatch.updateMany({
+      where: { id, clientId },
       data: {
         metadata: buildCancelledImportMetadata(batch?.metadata, { cancelledById: userId }) as Prisma.InputJsonValue
       }
@@ -587,7 +595,7 @@ importsRouter.post("/:id/cancel", requireRole(["ADMIN"]), async (req, res) => {
 
 importsRouter.post("/:id/confirm", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
-  const batch = await loadBatch(id);
+  const batch = await loadBatch(id, req);
   assertImportBatchMutable(batch.status);
   const meta = asMeta(batch.metadata);
   if (meta.inventoryMode === "RECONCILE") {
@@ -603,7 +611,7 @@ importsRouter.post("/:id/confirm", requireRole(["ADMIN"]), async (req, res) => {
     throw new HttpError(409, `Existen ${blockedRows || batch.invalidRows} registros pendientes de corrección.`);
   }
   const claimed = await prisma.importBatch.updateMany({
-    where: { id, status: { in: ["READY", "VALIDATED"] } },
+    where: { id, clientId: operationalClientId(req.auth!), status: { in: ["READY", "VALIDATED"] } },
     data: { status: "PROCESSING", confirmedAt: new Date() }
   });
   if (claimed.count !== 1) {
@@ -633,27 +641,24 @@ importsRouter.post("/:id/confirm", requireRole(["ADMIN"]), async (req, res) => {
       throw new ImportExecuteError(failed[0]?.message || "IMPORT_ROW_FAILED", failed[0]?.sourceRow);
     }
     if (isInventory) {
-      const updated = await prisma.importBatch.findUnique({ where: { id } });
+      const updated = await prisma.importBatch.findFirst({
+        where: { id, clientId: operationalClientId(req.auth!) }
+      });
       if (!updated || updated.status !== "COMPLETED" || !updated.completedAt) {
         throw new ImportExecuteError("IMPORT_BATCH_NOT_COMPLETED");
       }
       res.json({ batch: updated, results });
       return;
     }
-    const updated = await prisma.importBatch.update({
-      where: { id },
-      data: {
+    const updated = await updateOwnedBatch(id, req, {
         status: failed.length ? "FAILED" : "COMPLETED",
         completedAt: new Date(),
         metadata: { ...meta, execution: { results, failed: failed.length } } as Prisma.InputJsonValue
-      }
-    });
+      });
     res.json({ batch: updated, results });
   } catch (error) {
     const isInventory = batch.context === "INVENTORY" || batch.context === "INBOUND";
-    await prisma.importBatch.update({
-      where: { id },
-      data: isInventory
+    await updateOwnedBatch(id, req, isInventory
         ? {
             status: "READY",
             confirmedAt: null,
@@ -675,7 +680,7 @@ importsRouter.post("/:id/confirm", requireRole(["ADMIN"]), async (req, res) => {
               executionError: error instanceof Error ? error.message : "FAILED"
             } as Prisma.InputJsonValue
           }
-    });
+    );
     if (isInventory) {
       throw new HttpError(
         409,

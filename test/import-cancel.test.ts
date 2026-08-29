@@ -109,6 +109,7 @@ test("la ruta usa updateMany condicionado y elimina exclusivamente ImportRow", (
   assert.match(cancelBlock, /updateMany/);
   assert.match(cancelBlock, /CANCELLABLE_IMPORT_STATUSES/);
   assert.match(cancelBlock, /createdById:\s*userId/);
+  assert.match(cancelBlock, /clientId/);
   assert.match(cancelBlock, /importRow\.deleteMany/);
   assert.doesNotMatch(cancelBlock, /importBatch\.delete/);
   assert.doesNotMatch(cancelBlock, /tx\.inventory\b/);

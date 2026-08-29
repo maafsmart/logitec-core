@@ -152,6 +152,10 @@ export function clientScanWhere(auth: AuthContext): Prisma.ScanEventWhereInput {
   return { clientId: operationalClientId(auth) };
 }
 
+export function clientImportBatchWhere(auth: AuthContext): Prisma.ImportBatchWhereInput {
+  return { clientId: operationalClientId(auth) };
+}
+
 export function clientListWhere(auth: AuthContext): Prisma.ClientWhereInput {
   if (auth.role === "ADMIN") return {};
   return { id: operationalClientId(auth) };

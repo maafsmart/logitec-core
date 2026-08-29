@@ -202,6 +202,7 @@ model Client {
   serials        InventorySerial[]
   scanEvents     ScanEvent[]
   activityLogs   ActivityLog[]
+  importBatches  ImportBatch[]
 }
 
 model Customer {
@@ -438,15 +439,19 @@ model ImportBatch {
   invalidRows      Int         @default(0)
   warningRows      Int         @default(0)
   createdById      String
+  clientId         String
   createdAt        DateTime    @default(now())
   confirmedAt      DateTime?
   completedAt      DateTime?
   metadata         Json?
   createdBy        User        @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  client           Client      @relation(fields: [clientId], references: [id], onDelete: Restrict)
   rows             ImportRow[]
 
   @@index([createdById, createdAt])
   @@index([status, createdAt])
+  @@index([clientId])
+  @@index([clientId, createdAt])
 }
 
 model ImportRow {
