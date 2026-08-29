@@ -183,9 +183,9 @@ function loadSkuFns(document: unknown) {
   )(document);
 }
 
-test("dashboard.js usa cache-buster v=76 para la tarjeta de SKU", () => {
-  assert.match(html, /dashboard\.js\?v=76/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=75/);
+test("dashboard.js usa cache-buster v=77 para la tarjeta de SKU", () => {
+  assert.match(html, /dashboard\.js\?v=77/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=76/);
 });
 
 test("Registrar entrada nace deshabilitado y exige inboundProductId", () => {

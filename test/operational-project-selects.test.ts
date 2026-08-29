@@ -437,8 +437,8 @@ test("28 reubicación, recepción y salidas no tienen regresiones", () => {
   assert.match(transferSrc, /PROJECT_INACTIVE/);
 });
 
-test("29 cache-buster v76", () => {
-  assert.match(html, /dashboard\.js\?v=76/);
+test("29 cache-buster v77", () => {
+  assert.match(html, /dashboard\.js\?v=77/);
   assert.doesNotMatch(html, /dashboard\.js\?v=73/);
 });
 

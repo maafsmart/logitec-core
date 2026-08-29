@@ -227,7 +227,7 @@ test("la tarjeta conserva ancho legible y no nace en la columna compacta", () =>
   assert.match(css, /max-height:\s*160px/);
   assert.match(html, /id="inventorySkuSelectedHost"/);
   assert.match(sliceFunction(js, "renderSkuContext"), /inventorySkuSelectedHost/);
-  assert.match(html, /dashboard\.js\?v=76/);
+  assert.match(html, /dashboard\.js\?v=77/);
 });
 
 test("OS-2026-001 muestra Cliente AVIAT y no deriva el proyecto del catálogo", () => {

@@ -161,6 +161,8 @@ const LEGACY_AVIAT_PROJECT_FILTER_KEY = "logitec_aviat_project_filter";
 let inventoryProjectsCache = [];
 let catalogProjectsCache = [];
 let inventoryScope = { projectId: "", assignmentType: "" };
+let inventorySkuSelectedContext = null;
+let inventorySkuSelectedListEl = null;
 let environmentDisplayName = "Desarrollo";
 let inventoryScopeWired = false;
 let importConfirmResolver = null;
@@ -171,6 +173,32 @@ function clearLegacyAviatProjectFilter() {
   } catch (_e) {
     /* ignore */
   }
+}
+
+function inventoryScopeFromAssignmentOpt(assignmentType) {
+  const current = getInventoryScope();
+  const value = String(assignmentType || "").trim().toUpperCase();
+  if (value === "FREE_TO_SALE") return { projectId: "", assignmentType: "FREE_TO_SALE" };
+  if (value === "PROJECT") return { projectId: current.projectId, assignmentType: "PROJECT" };
+  return { projectId: "", assignmentType: "" };
+}
+
+function rememberInventorySkuSelectedContext(listEl, context) {
+  if (listEl?.id !== "invFilterSkuSuggestions" || !context?.product) return;
+  inventorySkuSelectedContext = context;
+  inventorySkuSelectedListEl = listEl;
+}
+
+function clearInventorySkuSelectedContext() {
+  inventorySkuSelectedContext = null;
+  inventorySkuSelectedListEl = null;
+}
+
+function refreshInventorySkuSelectedCard() {
+  if (!inventorySkuSelectedContext?.product) return;
+  const listEl = inventorySkuSelectedListEl || document.getElementById("invFilterSkuSuggestions");
+  if (!listEl) return;
+  renderSkuContext(listEl, inventorySkuSelectedContext);
 }
 
 function getInventoryScope() {
@@ -296,6 +324,7 @@ async function setInventoryScope(next, { reload = true } = {}) {
     inventoryScope = { projectId: "", assignmentType: "" };
   }
   updateInventoryScopeUi();
+  refreshInventorySkuSelectedCard();
   if (reload) {
     await Promise.all([loadStockStrip(), loadInventoryMovements()]);
   }
@@ -375,7 +404,7 @@ function wireInventoryScopeUi() {
       const projectId = sel.value || "";
       void setInventoryScope({
         projectId,
-        assignmentType: projectId ? "PROJECT" : getInventoryScope().assignmentType === "FREE_TO_SALE" ? "" : getInventoryScope().assignmentType
+        assignmentType: projectId ? "PROJECT" : ""
       });
     });
   });
@@ -383,10 +412,7 @@ function wireInventoryScopeUi() {
     btn.addEventListener("click", () => {
       if (btn.disabled) return;
       const assignmentType = btn.getAttribute("data-assignment") || "";
-      void setInventoryScope({
-        projectId: assignmentType === "FREE_TO_SALE" ? "" : getInventoryScope().projectId,
-        assignmentType
-      });
+      void setInventoryScope(inventoryScopeFromAssignmentOpt(assignmentType));
     });
   });
   updateInventoryScopeUi();
@@ -7527,6 +7553,7 @@ function hideSkuSelectedCard(listEl) {
       panel.hidden = true;
       panel.innerHTML = "";
     });
+    if (host.id === "inventorySkuSelectedHost") clearInventorySkuSelectedContext();
   }
 }
 
@@ -7827,6 +7854,7 @@ function renderSkuContext(listEl, context) {
   const locations = Array.isArray(context.inventory?.locations) ? context.inventory.locations : [];
   const pickingSelector = Boolean(document.getElementById("pickCandidates") && listEl?.id === "scanSkuSuggestions");
   panel.innerHTML = buildSkuSelectedCardHtml(context, buildSkuContextDetailHtml(context, { pickingSelector }));
+  rememberInventorySkuSelectedContext(listEl, context);
   const input = wrap?.querySelector("input");
   panel.querySelector(".sku-change-btn")?.addEventListener("click", () => {
     beginSkuChange(listEl, input);
