@@ -5,7 +5,7 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { InventoryMutationError, mutateInventory } from "../inventory/inventory-mutation.service.js";
-import { RequisitionError, consumeReservationPick } from "../requisitions/requisition.service.js";
+import { RequisitionError, consumeReservationPick, getEligiblePickSerials } from "../requisitions/requisition.service.js";
 import { assertActiveInventoryStatus } from "../inventory/inventory-status.js";
 
 const pickingRouter = Router();
@@ -25,7 +25,8 @@ const scanSchema = z.object({
   reservationId: z.string().min(1).optional(),
   requisitionLineId: z.string().min(1).optional(),
   allocationMode: z.string().max(20).optional(),
-  taskId: z.string().optional()
+  taskId: z.string().optional(),
+  serialIds: z.array(z.string().min(1).max(120)).max(1_000).optional()
 });
 
 function dec(n: string | number): Prisma.Decimal {
@@ -75,6 +76,37 @@ function mapCandidate(row: {
 
 pickingRouter.use(requireAuth, requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]));
 
+pickingRouter.get("/requisitions/:requisitionId/lines/:lineId/eligible-serials", async (req, res) => {
+  try {
+    const parsed = z
+      .object({
+        inventoryId: z.string().min(1),
+        quantity: z.coerce.number().int().positive().max(1_000_000)
+      })
+      .parse(req.query);
+    const result = await getEligiblePickSerials({
+      requisitionId: String(req.params.requisitionId || ""),
+      lineId: String(req.params.lineId || ""),
+      inventoryId: parsed.inventoryId,
+      quantity: parsed.quantity
+    });
+    res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({
+        message: "Datos de consulta inválidos.",
+        issues: error.issues
+      });
+      return;
+    }
+    if (error instanceof RequisitionError) {
+      res.status(409).json({ message: error.message, code: error.code, details: error.details });
+      return;
+    }
+    throw error;
+  }
+});
+
 pickingRouter.post("/scan", async (req, res) => {
   try {
     const parsed = scanSchema.parse(req.body);
@@ -91,7 +123,8 @@ pickingRouter.post("/scan", async (req, res) => {
       reservationId: reservationIdOpt,
       requisitionLineId: requisitionLineIdOpt,
       allocationMode: allocationModeOpt,
-      taskId: taskIdOpt
+      taskId: taskIdOpt,
+      serialIds: serialIdsOpt
     } = parsed;
 
     const taskId = taskIdOpt?.trim() || null;
@@ -105,6 +138,9 @@ pickingRouter.post("/scan", async (req, res) => {
     const reservationId = reservationIdOpt?.trim() || null;
     const requisitionLineId = requisitionLineIdOpt?.trim() || null;
     const allocationMode = allocationModeOpt?.trim() || null;
+    const serialIds = Array.isArray(serialIdsOpt)
+      ? serialIdsOpt.map((id) => String(id || "").trim()).filter(Boolean)
+      : [];
     const statusFilter = statusInput?.trim()
       ? await assertActiveInventoryStatus(statusInput)
       : null;
@@ -113,6 +149,20 @@ pickingRouter.post("/scan", async (req, res) => {
       res.status(409).json({
         code: "RESERVATION_ALLOCATION_CONFLICT",
         message: "No se puede indicar reservationId y allocationMode al mismo tiempo."
+      });
+      return;
+    }
+    if (serialIds.length && reservationId) {
+      res.status(409).json({
+        code: "RESERVATION_ALLOCATION_CONFLICT",
+        message: "No se puede indicar serialIds y reservationId al mismo tiempo."
+      });
+      return;
+    }
+    if (serialIds.length && allocationMode !== "FIFO") {
+      res.status(409).json({
+        code: "SERIAL_IDS_REQUIRE_FIFO",
+        message: "Las series solo se pueden indicar en picking FIFO."
       });
       return;
     }
@@ -127,7 +177,8 @@ pickingRouter.post("/scan", async (req, res) => {
             requisitionLineId,
             inventoryId,
             allocationMode,
-            taskId
+            taskId,
+            serialIds
           });
           res.json({
             message: "Picking FIFO reservado OK: stock y reservas consumidos atómicamente.",

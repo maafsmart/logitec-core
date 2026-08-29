@@ -2666,6 +2666,8 @@
       }
       .grid-detail-actions button { width: 100%; }
       #reqActionModal .modal-panel { width: min(480px, 96vw); }
+      #reqActionSerialField .req-serial-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 160px; overflow: auto; }
+      #reqActionSerialField .req-serial-list li { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border, #e5e7eb); font-size: 13px; }
       #reqActionSummary .detail-field { margin-bottom: 8px; padding-bottom: 8px; }
       #reqActionMessage { min-height: 1.2em; margin: 8px 0 0; }
       .data-grid-row.body .data-grid-cell {
@@ -5024,6 +5026,14 @@
           <label for="reqActionQty" id="reqActionQtyLabel">Cantidad</label>
           <input id="reqActionQty" type="number" min="0.0001" step="0.0001" />
         </div>
+        <div id="reqActionSerialField" class="field hidden">
+          <label for="reqActionSerialScan">Escanear serie o IMEI</label>
+          <input id="reqActionSerialScan" type="text" autocomplete="off" />
+          <p id="reqActionSerialCounter" class="module-lead">0 de 0</p>
+          <ul id="reqActionSerialSelected" class="req-serial-list"></ul>
+          <p class="module-lead">Series elegibles</p>
+          <ul id="reqActionSerialEligible" class="req-serial-list"></ul>
+        </div>
         <p id="reqActionMessage" class="ops-message"></p>
         <div class="import-actions" style="margin-top:12px">
           <button type="button" id="reqActionCancelBtn" class="btn-secondary">Cancelar</button>
@@ -5211,6 +5221,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=77"></script>
+    <script src="/dashboard.js?v=78"></script>
   </body>
 </html>

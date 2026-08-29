@@ -119,6 +119,6 @@ test("FIFO reserva y picking existentes continúan intactos", () => {
   assert.match(js, /allocationMode: "FIFO"/);
   assert.match(js, /function buildReservedFifoPickPayload/);
   assert.match(mutationSrc, /type === "RELOCATE"/);
-  assert.match(html, /dashboard\.js\?v=77/);
+  assert.match(html, /dashboard\.js\?v=78/);
   assert.doesNotMatch(html, /dashboard\.js\?v=74/);
 });

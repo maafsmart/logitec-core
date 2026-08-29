@@ -8,6 +8,7 @@ import {
   cancelRequisitionInTransaction,
   comparePickFifoReservations,
   consumeReservationPickInTransaction,
+  getEligiblePickSerials,
   reserveLineInTransaction
 } from "../src/modules/requisitions/requisition.service.js";
 
@@ -80,7 +81,8 @@ function createPickWorld(opts?: { layerCount?: number; requestedQty?: string }) 
     barcode: "BAR-REQ-1",
     name: "Radio",
     active: true,
-    customerId: project.id
+    customerId: project.id,
+    serialControlled: false
   };
   const location = { id: "loc-1", code: "AN14-F", warehouse: "TULTITLAN24" };
   const ftsLocation = { id: "loc-fts", code: "AN15-A", warehouse: "TULTITLAN24" };
@@ -96,6 +98,8 @@ function createPickWorld(opts?: { layerCount?: number; requestedQty?: string }) 
     failOnLayerConsume: 0,
     layerConsumeCount: 0,
     inventoryConsumeCount: 0,
+    failOnSerialUpdate: 0,
+    serialUpdateCount: 0,
     inventories: [
       {
         id: "inv-proj",
@@ -212,7 +216,13 @@ function createPickWorld(opts?: { layerCount?: number; requestedQty?: string }) 
         requisitionId: "req-1"
       }
     ],
-    serials: [] as Array<{ inventoryLayerId: string }>,
+    serials: [] as Array<{
+      id: string;
+      productId: string;
+      inventoryLayerId: string | null;
+      serialNumber: string;
+      imei: string | null;
+    }>,
     productProjects: [{ productId: product.id, projectId: project.id, active: true }]
   };
 
@@ -260,7 +270,7 @@ function createPickWorld(opts?: { layerCount?: number; requestedQty?: string }) 
     return {
       ...line,
       product,
-      requisition: req,
+      requisition: { ...req, project },
       reservations: state.reservations.filter((reservation) => reservation.requisitionLineId === line.id)
     };
   }
@@ -456,8 +466,47 @@ function createPickWorld(opts?: { layerCount?: number; requestedQty?: string }) 
       }
     },
     inventorySerial: {
-      count: async ({ where }: { where: { inventoryLayerId: string } }) =>
-        state.serials.filter((row) => row.inventoryLayerId === where.inventoryLayerId).length
+      count: async ({ where }: { where: { inventoryLayerId?: string; id?: { in: string[] } } }) =>
+        state.serials.filter((row) => {
+          if (where.inventoryLayerId && row.inventoryLayerId !== where.inventoryLayerId) return false;
+          if (where.id?.in && !where.id.in.includes(row.id)) return false;
+          return true;
+        }).length,
+      findMany: async ({
+        where
+      }: {
+        where?: {
+          id?: { in: string[] };
+          productId?: string;
+          inventoryLayerId?: string | { in: string[] };
+        };
+      }) =>
+        state.serials.filter((row) => {
+          if (where?.id?.in && !where.id.in.includes(row.id)) return false;
+          if (where?.productId && row.productId !== where.productId) return false;
+          if (typeof where?.inventoryLayerId === "string" && row.inventoryLayerId !== where.inventoryLayerId) {
+            return false;
+          }
+          if (
+            where?.inventoryLayerId &&
+            typeof where.inventoryLayerId === "object" &&
+            where.inventoryLayerId.in &&
+            !where.inventoryLayerId.in.includes(row.inventoryLayerId || "")
+          ) {
+            return false;
+          }
+          return true;
+        }).map((row) => ({ ...row })),
+      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        state.serialUpdateCount += 1;
+        if (state.failOnSerialUpdate > 0 && state.serialUpdateCount >= state.failOnSerialUpdate) {
+          throw new Error("simulated serial update failure");
+        }
+        const row = state.serials.find((item) => item.id === where.id);
+        if (!row) throw new Error("serial not found");
+        if (data.inventoryLayerId !== undefined) row.inventoryLayerId = data.inventoryLayerId as string | null;
+        return { ...row };
+      }
     },
     $queryRaw: async (query: unknown, ...values: unknown[]) => {
       const parts = sqlParts(query, values);
@@ -465,6 +514,9 @@ function createPickWorld(opts?: { layerCount?: number; requestedQty?: string }) 
       const vals = parts.values;
       if (text.includes("FOR UPDATE") && text.includes("InventoryReservation")) {
         return state.reservations.map((row) => ({ id: row.id }));
+      }
+      if (text.includes("FOR UPDATE") && text.includes("InventorySerial")) {
+        return state.serials.map((row) => ({ id: row.id }));
       }
       if (text.includes("FOR UPDATE") && text.includes("InventoryLayer")) {
         return allLayers().map((layer) => ({ id: layer.id }));
@@ -589,7 +641,8 @@ function snapshotWorld(state: ReturnType<typeof createPickWorld>["state"]) {
     tasks: state.tasks.map((row) => ({ ...row })),
     movements: state.movements.slice(),
     activities: state.activities.slice(),
-    scanEvents: state.scanEvents.slice()
+    scanEvents: state.scanEvents.slice(),
+    serials: state.serials.map((row) => ({ ...row }))
   };
 }
 
@@ -603,6 +656,7 @@ function restoreWorld(state: ReturnType<typeof createPickWorld>["state"], snap: 
   state.movements.splice(0, state.movements.length, ...snap.movements);
   state.activities.splice(0, state.activities.length, ...snap.activities);
   state.scanEvents.splice(0, state.scanEvents.length, ...snap.scanEvents);
+  state.serials.splice(0, state.serials.length, ...snap.serials.map((row) => ({ ...row })));
 }
 
 async function reserveFifo(world: ReturnType<typeof createPickWorld>, qty: string) {
@@ -619,7 +673,13 @@ async function reserveFifo(world: ReturnType<typeof createPickWorld>, qty: strin
 async function pickFifo(
   world: ReturnType<typeof createPickWorld>,
   qty: string,
-  extra: { inventoryId?: string | null; allocationMode?: string; reservationId?: string; taskId?: string | null } = {}
+  extra: {
+    inventoryId?: string | null;
+    allocationMode?: string;
+    reservationId?: string;
+    taskId?: string | null;
+    serialIds?: string[];
+  } = {}
 ) {
   return consumeReservationPickInTransaction(world.tx as never, {
     qty: d(qty),
@@ -629,8 +689,26 @@ async function pickFifo(
     inventoryId: extra.inventoryId === undefined ? "inv-proj" : extra.inventoryId,
     allocationMode: extra.allocationMode ?? "FIFO",
     reservationId: extra.reservationId,
-    taskId: extra.taskId === undefined ? "task-pick-1" : extra.taskId
+    taskId: extra.taskId === undefined ? "task-pick-1" : extra.taskId,
+    serialIds: extra.serialIds
   });
+}
+
+function seedSerials(
+  world: ReturnType<typeof createPickWorld>,
+  rows: Array<{ id: string; layerId: string | null; serialNumber: string; imei?: string | null; productId?: string }>
+) {
+  world.state.serials.splice(
+    0,
+    world.state.serials.length,
+    ...rows.map((row) => ({
+      id: row.id,
+      productId: row.productId ?? world.product.id,
+      inventoryLayerId: row.layerId,
+      serialNumber: row.serialNumber,
+      imei: row.imei ?? null
+    }))
+  );
 }
 
 test("1 tres reservas de 1 se consumen en una acción", async () => {
@@ -965,7 +1043,11 @@ test("21 cancelación y picking no dejan negativos", async () => {
 test("22 seriales producen SERIAL_SELECTION_REQUIRED antes de mutar", async () => {
   const world = createPickWorld();
   await reserveFifo(world, "3");
-  world.state.serials.push({ inventoryLayerId: "layer-02" });
+  world.state.serials.push(
+    { id: "ser-01", productId: world.product.id, inventoryLayerId: "layer-01", serialNumber: "SN-01", imei: null },
+    { id: "ser-02", productId: world.product.id, inventoryLayerId: "layer-02", serialNumber: "SN-02", imei: null },
+    { id: "ser-03", productId: world.product.id, inventoryLayerId: "layer-03", serialNumber: "SN-03", imei: null }
+  );
   const before = snapshotWorld(world.state);
   await pickFifo(world, "3").then(
     () => {
@@ -1154,9 +1236,9 @@ test("33 separación visual Picking de requisición / Picking libre", () => {
   assert.match(html, /id="pickRequisitionSelect"/);
 });
 
-test("34 cache-buster v74", () => {
-  assert.match(html, /dashboard\.js\?v=77/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=72/);
+test("34 cache-buster v78", () => {
+  assert.match(html, /dashboard\.js\?v=78/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=77/);
 });
 
 test("35 Reubicación, Recepción y Salidas permanecen intactas", () => {
@@ -1180,4 +1262,188 @@ test("allocationMode inválido se rechaza", async () => {
       assert.equal(error.code, "INVALID_ALLOCATION_MODE");
     }
   );
+});
+
+async function expectFifoPickError(
+  world: ReturnType<typeof createPickWorld>,
+  qty: string,
+  extra: Parameters<typeof pickFifo>[2],
+  code: string
+) {
+  const before = snapshotWorld(world.state);
+  await pickFifo(world, qty, extra).then(
+    () => {
+      throw new Error(`expected ${code}`);
+    },
+    (error) => {
+      assert.ok(error instanceof RequisitionError, String(error));
+      assert.equal(error.code, code);
+    }
+  );
+  assert.equal(String(world.state.inventories[0]?.qty), String(before.inventories[0]?.qty));
+  assert.equal(String(world.state.inventories[0]?.reservedQty), String(before.inventories[0]?.reservedQty));
+  assert.equal(world.state.movements.length, before.movements.length);
+  assert.equal(world.state.scanEvents.length, before.scanEvents.length);
+  assert.equal(world.state.activities.length, before.activities.length);
+  assert.equal(String(world.state.lines[0]?.fulfilledQty), String(before.lines[0]?.fulfilledQty));
+  assert.deepEqual(
+    world.state.serials.map((row) => row.inventoryLayerId),
+    before.serials.map((row) => row.inventoryLayerId)
+  );
+  assert.ok(!world.state.activities.some((row) => row.subtype === "PICK_SUCCESS"));
+  assert.ok(!world.state.scanEvents.some((row) => row.result === "OK"));
+}
+
+test("GET elegibles solo devuelve series de las capas FIFO reservadas", async () => {
+  const world = createPickWorld();
+  await reserveFifo(world, "2");
+  seedSerials(world, [
+    { id: "ser-old", layerId: "layer-01", serialNumber: "SN-OLD", imei: "IMEI-OLD" },
+    { id: "ser-old-b", layerId: "layer-01", serialNumber: "SN-OLD-B", imei: null },
+    { id: "ser-new", layerId: "layer-02", serialNumber: "SN-NEW", imei: null },
+    { id: "ser-later", layerId: "layer-03", serialNumber: "SN-LATER", imei: null },
+    { id: "ser-fts", layerId: "layer-fts", serialNumber: "SN-FTS", imei: null },
+    { id: "ser-other", layerId: "layer-other", serialNumber: "SN-OTHER", imei: null },
+    { id: "ser-sku", layerId: "layer-01", serialNumber: "SN-OTHER-SKU", imei: null, productId: "prod-other" }
+  ]);
+  const plan = await getEligiblePickSerials(
+    { requisitionId: "req-1", lineId: "line-1", inventoryId: "inv-proj", quantity: 2 },
+    world.tx as never
+  );
+  assert.equal(plan.serialRequired, true);
+  assert.equal(plan.serialControlled, false);
+  assert.equal(plan.inventoryId, "inv-proj");
+  assert.equal(plan.layers.length, 2);
+  const ids = plan.layers.flatMap((layer) => layer.serials.map((serial) => serial.id));
+  assert.deepEqual(ids.sort(), ["ser-new", "ser-old", "ser-old-b"].sort());
+  assert.ok(!ids.includes("ser-later"));
+  assert.ok(!ids.includes("ser-fts"));
+  assert.ok(!ids.includes("ser-other"));
+  assert.ok(!ids.includes("ser-sku"));
+  assert.equal(plan.layers[0]?.inventoryLayerId, "layer-01");
+  assert.equal(plan.layers[0]?.requiredQty, "1");
+  assert.ok(plan.layers[0]?.serials.some((serial) => serial.imei === "IMEI-OLD"));
+});
+
+test("qty 2 exige exactamente dos IDs distintos y surte una pieza por serie", async () => {
+  const world = createPickWorld();
+  await reserveFifo(world, "2");
+  seedSerials(world, [
+    { id: "ser-a", layerId: "layer-01", serialNumber: "SN-A", imei: "IMEI-A" },
+    { id: "ser-b", layerId: "layer-02", serialNumber: "SN-B", imei: null }
+  ]);
+  await expectFifoPickError(world, "2", { serialIds: ["ser-a"] }, "SERIAL_COUNT_MISMATCH");
+  await expectFifoPickError(world, "2", { serialIds: ["ser-a", "ser-a"] }, "SERIAL_DUPLICATE");
+  const picked = await pickFifo(world, "2", { serialIds: ["ser-a", "ser-b"] });
+  assert.equal(picked.movements.length, 2);
+  assert.ok(picked.movements.every((row) => String(row.qty) === "1"));
+  assert.ok(picked.movements.every((row) => row.inventorySerialId));
+  assert.equal(world.state.scanEvents.length, 1);
+  assert.equal(world.state.scanEvents[0]?.result, "OK");
+  assert.equal(world.state.serials.find((row) => row.id === "ser-a")?.inventoryLayerId, null);
+  assert.equal(world.state.serials.find((row) => row.id === "ser-b")?.inventoryLayerId, null);
+  assert.equal(world.state.serials.length, 2);
+  assert.ok(world.state.activities.some((row) => row.subtype === "PICK_RESERVED_FIFO_SUCCESS"));
+  assert.ok(!world.state.activities.some((row) => row.subtype === "PICK_SUCCESS"));
+});
+
+test("serie incorrecta, duplicada, surtida o fuera de capa responde 409 sin mutar", async () => {
+  const world = createPickWorld();
+  await reserveFifo(world, "1");
+  seedSerials(world, [
+    { id: "ser-ok", layerId: "layer-01", serialNumber: "SN-OK", imei: null },
+    { id: "ser-shipped", layerId: null, serialNumber: "SN-SHIPPED", imei: null },
+    { id: "ser-other-sku", layerId: "layer-01", serialNumber: "SN-SKU", imei: null, productId: "prod-other" },
+    { id: "ser-other-layer", layerId: "layer-fts", serialNumber: "SN-FTS", imei: null }
+  ]);
+  await expectFifoPickError(world, "1", { serialIds: ["missing"] }, "SERIAL_NOT_FOUND");
+  await expectFifoPickError(world, "1", { serialIds: ["ser-other-sku"] }, "SERIAL_PRODUCT_MISMATCH");
+  await expectFifoPickError(world, "1", { serialIds: ["ser-shipped"] }, "SERIAL_ALREADY_SHIPPED");
+  await expectFifoPickError(world, "1", { serialIds: ["ser-other-layer"] }, "SERIAL_NOT_IN_RESERVED_LAYER");
+});
+
+test("FIFO 1+1 exige una serie de cada capa y rechaza dos de la capa nueva", async () => {
+  const world = createPickWorld();
+  await reserveFifo(world, "2");
+  seedSerials(world, [
+    { id: "ser-old", layerId: "layer-01", serialNumber: "SN-OLD", imei: null },
+    { id: "ser-new-1", layerId: "layer-02", serialNumber: "SN-NEW-1", imei: null },
+    { id: "ser-new-2", layerId: "layer-02", serialNumber: "SN-NEW-2", imei: null }
+  ]);
+  await expectFifoPickError(world, "2", { serialIds: ["ser-new-1", "ser-new-2"] }, "SERIAL_FIFO_LAYER_MISMATCH");
+  const picked = await pickFifo(world, "2", { serialIds: ["ser-old", "ser-new-1"] });
+  assert.equal(picked.movements.length, 2);
+  assert.equal(picked.movements[0]?.inventoryLayerId, "layer-01");
+  assert.equal(picked.movements[1]?.inventoryLayerId, "layer-02");
+  assert.ok(!picked.movements.some((row) => !row.inventorySerialId));
+});
+
+test("segundo serial inválido produce rollback total", async () => {
+  const world = createPickWorld();
+  await reserveFifo(world, "2");
+  seedSerials(world, [
+    { id: "ser-old", layerId: "layer-01", serialNumber: "SN-OLD", imei: null },
+    { id: "ser-new", layerId: "layer-02", serialNumber: "SN-NEW", imei: null }
+  ]);
+  await expectFifoPickError(world, "2", { serialIds: ["ser-old", "missing"] }, "SERIAL_NOT_FOUND");
+});
+
+test("fallo al actualizar la segunda serie produce rollback restaurable", async () => {
+  const world = createPickWorld();
+  await reserveFifo(world, "2");
+  seedSerials(world, [
+    { id: "ser-old", layerId: "layer-01", serialNumber: "SN-OLD", imei: null },
+    { id: "ser-new", layerId: "layer-02", serialNumber: "SN-NEW", imei: null }
+  ]);
+  const before = snapshotWorld(world.state);
+  world.state.failOnSerialUpdate = 2;
+  await pickFifo(world, "2", { serialIds: ["ser-old", "ser-new"] }).then(
+    () => {
+      throw new Error("second serial must fail");
+    },
+    (error) => {
+      assert.ok(error instanceof Error);
+    }
+  );
+  restoreWorld(world.state, before);
+  assert.equal(String(world.state.inventories[0]?.qty), "3");
+  assert.equal(world.state.movements.length, 0);
+  assert.equal(world.state.serials.find((row) => row.id === "ser-old")?.inventoryLayerId, "layer-01");
+  assert.equal(world.state.scanEvents.length, 0);
+});
+
+test("producto serialControlled sin series bloquea con SERIALS_MISSING_ON_LAYER", async () => {
+  const world = createPickWorld({ layerCount: 1, requestedQty: "1" });
+  world.product.serialControlled = true;
+  await reserveFifo(world, "1");
+  await expectFifoPickError(world, "1", {}, "SERIALS_MISSING_ON_LAYER");
+});
+
+test("capas mixtas bloquean con MIXED_SERIALIZATION_NOT_SUPPORTED", async () => {
+  const world = createPickWorld();
+  await reserveFifo(world, "3");
+  seedSerials(world, [{ id: "ser-mid", layerId: "layer-02", serialNumber: "SN-MID", imei: null }]);
+  await expectFifoPickError(world, "3", { serialIds: ["ser-mid"] }, "MIXED_SERIALIZATION_NOT_SUPPORTED");
+});
+
+test("picking FIFO no serializado permanece idéntico", async () => {
+  const world = createPickWorld();
+  await reserveFifo(world, "3");
+  const picked = await pickFifo(world, "3");
+  assert.equal(picked.movements.length, 3);
+  assert.ok(picked.movements.every((row) => !row.inventorySerialId));
+  assert.equal(world.state.scanEvents.length, 1);
+});
+
+test("cancelación no modifica series", async () => {
+  const world = createPickWorld();
+  await reserveFifo(world, "2");
+  seedSerials(world, [
+    { id: "ser-old", layerId: "layer-01", serialNumber: "SN-OLD", imei: null },
+    { id: "ser-new", layerId: "layer-02", serialNumber: "SN-NEW", imei: null }
+  ]);
+  await cancelRequisitionInTransaction(world.tx as never, "req-1", "admin-1");
+  assert.equal(world.state.serials.find((row) => row.id === "ser-old")?.inventoryLayerId, "layer-01");
+  assert.equal(world.state.serials.find((row) => row.id === "ser-new")?.inventoryLayerId, "layer-02");
+  assert.equal(world.state.serials.length, 2);
 });

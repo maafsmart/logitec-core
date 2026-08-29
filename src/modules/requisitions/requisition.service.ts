@@ -1,11 +1,11 @@
-import { Prisma } from "@prisma/client";
+import { InventoryAssignmentType, Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { HttpError } from "../../shared/http-error.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import type { UserRole } from "../../middlewares/auth.middleware.js";
 import { assignmentFromInventory, outboundAssignmentFields } from "../inventory/inventory-assignment.js";
 import { InventoryMutationError } from "../inventory/inventory-errors.js";
-import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
+import { isForbiddenInventoryProjectRecord, isOperationalProjectRecord } from "../inventory/inventory-project-rules.js";
 import { planRelocateFifoAllocation } from "../inventory/inventory-mutation.service.js";
 import { assertNoSerialAmbiguity } from "../inventory/inventory-serial-guard.js";
 
@@ -1084,6 +1084,7 @@ export type ConsumeReservationPickInput = {
   inventoryId?: string | null;
   allocationMode?: string;
   taskId?: string | null;
+  serialIds?: string[] | null;
 };
 
 type PickFifoReservation = {
@@ -1133,6 +1134,302 @@ async function lockReservationsById(tx: Prisma.TransactionClient, ids: string[])
   await tx.$queryRaw(
     Prisma.sql`SELECT "id" FROM "InventoryReservation" WHERE "id" IN (${Prisma.join(sorted)}) ORDER BY "id" FOR UPDATE`
   );
+}
+
+async function lockSerialsById(tx: Prisma.TransactionClient, ids: string[]) {
+  if (!ids.length) return;
+  const sorted = [...new Set(ids)].sort((a, b) => a.localeCompare(b));
+  await tx.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "InventorySerial" WHERE "id" IN (${Prisma.join(sorted)}) ORDER BY "id" FOR UPDATE`
+  );
+}
+
+function assertPositiveIntegerQty(qty: Prisma.Decimal) {
+  if (qty.lessThanOrEqualTo(0) || !qty.isInteger()) {
+    throw new RequisitionError("INVALID_QTY", "La cantidad serializada debe ser un entero positivo.");
+  }
+}
+
+function normalizeSerialIds(raw: string[] | null | undefined) {
+  return (Array.isArray(raw) ? raw : []).map((id) => String(id || "").trim()).filter(Boolean);
+}
+
+function assertDistinctSerialIds(ids: string[], qty: Prisma.Decimal) {
+  if (ids.length !== Number(qty)) {
+    throw new RequisitionError(
+      "SERIAL_COUNT_MISMATCH",
+      "La cantidad de series no coincide con las piezas a surtir."
+    );
+  }
+  if (new Set(ids).size !== ids.length) {
+    throw new RequisitionError("SERIAL_DUPLICATE", "Hay series duplicadas.");
+  }
+}
+
+type SerialLookupDb = {
+  inventorySerial: {
+    findMany: Prisma.TransactionClient["inventorySerial"]["findMany"];
+  };
+};
+
+async function countSerialsByLayer(db: SerialLookupDb, layerIds: string[]) {
+  const unique = [...new Set(layerIds.filter(Boolean))];
+  const counts = new Map<string, number>();
+  for (const id of unique) counts.set(id, 0);
+  if (!unique.length) return counts;
+  const rows = await db.inventorySerial.findMany({
+    where: { inventoryLayerId: { in: unique } },
+    select: { id: true, inventoryLayerId: true }
+  });
+  for (const row of rows) {
+    const layerId = row.inventoryLayerId || "";
+    if (!layerId) continue;
+    counts.set(layerId, (counts.get(layerId) || 0) + 1);
+  }
+  return counts;
+}
+
+type PickSerialRow = {
+  id: string;
+  productId: string;
+  inventoryLayerId: string | null;
+  serialNumber: string;
+  imei: string | null;
+};
+
+function assignSerialsToFifoSlices(
+  serials: PickSerialRow[],
+  productId: string,
+  allocations: Array<{ reservation: PickFifoReservation; qty: Prisma.Decimal }>
+) {
+  const planLayerIds = allocations
+    .map((slice) => slice.reservation.inventoryLayerId)
+    .filter((id): id is string => Boolean(id));
+  const planSet = new Set(planLayerIds);
+  for (const serial of serials) {
+    if (serial.productId !== productId) {
+      throw new RequisitionError("SERIAL_PRODUCT_MISMATCH", "La serie no pertenece al SKU de la línea.");
+    }
+    if (!serial.inventoryLayerId) {
+      throw new RequisitionError("SERIAL_ALREADY_SHIPPED", "La serie ya fue surtida.");
+    }
+    if (!planSet.has(serial.inventoryLayerId)) {
+      throw new RequisitionError(
+        "SERIAL_NOT_IN_RESERVED_LAYER",
+        "La serie no está en las capas reservadas de este cubo."
+      );
+    }
+  }
+  const grouped = new Map<string, PickSerialRow[]>();
+  for (const layerId of planLayerIds) grouped.set(layerId, []);
+  for (const serial of serials) {
+    const list = grouped.get(serial.inventoryLayerId!) || [];
+    list.push(serial);
+    grouped.set(serial.inventoryLayerId!, list);
+  }
+  return allocations.map((slice) => {
+    const layerId = slice.reservation.inventoryLayerId!;
+    const have = [...(grouped.get(layerId) || [])].sort((a, b) => a.id.localeCompare(b.id));
+    if (have.length !== Number(slice.qty)) {
+      throw new RequisitionError(
+        "SERIAL_FIFO_LAYER_MISMATCH",
+        "Las series no respetan el orden FIFO de las capas reservadas."
+      );
+    }
+    return { slice, serials: have };
+  });
+}
+
+function classifyFifoSerialization(
+  allocations: Array<{ reservation: PickFifoReservation; qty: Prisma.Decimal }>,
+  serialCounts: Map<string, number>,
+  serialControlled: boolean
+) {
+  const layerIds = allocations
+    .map((slice) => slice.reservation.inventoryLayerId)
+    .filter((id): id is string => Boolean(id));
+  if (layerIds.length !== allocations.length) {
+    throw new RequisitionError("LAYER_REQUIRED", "Una reserva FIFO no tiene capa.");
+  }
+  const serialized = layerIds.filter((id) => (serialCounts.get(id) || 0) > 0);
+  const unserialized = layerIds.filter((id) => (serialCounts.get(id) || 0) === 0);
+  if (serialized.length && unserialized.length) {
+    throw new RequisitionError(
+      "MIXED_SERIALIZATION_NOT_SUPPORTED",
+      "No se puede surtir un plan FIFO que mezcla capas serializadas y no serializadas."
+    );
+  }
+  if (serialControlled) {
+    for (const slice of allocations) {
+      const layerId = slice.reservation.inventoryLayerId!;
+      if ((serialCounts.get(layerId) || 0) === 0) {
+        throw new RequisitionError(
+          "SERIALS_MISSING_ON_LAYER",
+          "El producto es serializado y la capa no tiene series registradas."
+        );
+      }
+      if (new Prisma.Decimal(serialCounts.get(layerId) || 0).lessThan(slice.qty)) {
+        throw new RequisitionError(
+          "SERIALS_MISSING_ON_LAYER",
+          "El producto es serializado y la capa no tiene series suficientes para el tramo FIFO."
+        );
+      }
+    }
+  }
+  return {
+    layerIds,
+    serialRequired: serialized.length > 0 || serialControlled
+  };
+}
+
+type EligiblePickDb = {
+  requisitionLine: {
+    findUnique: Prisma.TransactionClient["requisitionLine"]["findUnique"];
+  };
+  inventory: {
+    findUnique: Prisma.TransactionClient["inventory"]["findUnique"];
+  };
+  inventoryReservation: {
+    findMany: Prisma.TransactionClient["inventoryReservation"]["findMany"];
+  };
+  inventorySerial: {
+    findMany: Prisma.TransactionClient["inventorySerial"]["findMany"];
+  };
+};
+
+async function loadActiveFifoReservations(db: EligiblePickDb, lineId: string) {
+  return (await db.inventoryReservation.findMany({
+    where: { requisitionLineId: lineId },
+    include: {
+      inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true, createdAt: true } }
+    }
+  })) as PickFifoReservation[];
+}
+
+function selectCubeReservations(
+  reservations: PickFifoReservation[],
+  requestedInventoryId: string,
+  qty: Prisma.Decimal,
+  pending: Prisma.Decimal
+) {
+  const activeReservations = reservations.filter(
+    (row) => row.status === "ACTIVE" && activeReserved(row.qty, row.consumedQty, row.releasedQty).greaterThan(0)
+  );
+  if (!activeReservations.length) {
+    throw new RequisitionError("NO_ACTIVE_RESERVATION", "La línea de requisición no tiene reserva activa.");
+  }
+  const cubeIds = [...new Set(activeReservations.map((row) => row.inventoryId))];
+  const requested = requestedInventoryId.trim();
+  if (!requested) {
+    if (cubeIds.length > 1) {
+      throw new RequisitionError(
+        "AMBIGUOUS_RESERVATION_INVENTORY",
+        "Hay reservas activas en varios cubos; indica inventoryId.",
+        { inventoryIds: cubeIds }
+      );
+    }
+  } else if (!cubeIds.includes(requested)) {
+    throw new RequisitionError("RESERVATION_INVENTORY_MISMATCH", "El cubo no tiene reservas activas de esta línea.");
+  }
+  const inventoryId = requested || cubeIds[0]!;
+  const cubeReservations = activeReservations.filter((row) => row.inventoryId === inventoryId);
+  const reservedActive = cubeReservations.reduce(
+    (sum, row) => sum.plus(activeReserved(row.qty, row.consumedQty, row.releasedQty)),
+    new Prisma.Decimal(0)
+  );
+  if (qty.greaterThan(reservedActive)) {
+    throw new RequisitionError("INSUFFICIENT_RESERVED", "La cantidad supera el reservado activo del cubo.");
+  }
+  if (qty.greaterThan(pending)) {
+    throw new RequisitionError("LINE_FULFILLMENT_EXCEEDED", "La cantidad excede el pendiente de la línea.");
+  }
+  const planned = planFifoReservationConsumption(cubeReservations, qty);
+  if (planned.remaining.greaterThan(0) || !planned.allocations.length) {
+    throw new RequisitionError("INSUFFICIENT_RESERVED", "La cantidad supera el reservado activo del cubo.");
+  }
+  return { inventoryId, cubeReservations, planned };
+}
+
+export async function getEligiblePickSerials(
+  input: { requisitionId: string; lineId: string; inventoryId: string; quantity: Prisma.Decimal | string | number },
+  db: EligiblePickDb = prisma
+) {
+  const qty = dec(input.quantity);
+  assertPositiveIntegerQty(qty);
+  const inventoryId = String(input.inventoryId || "").trim();
+  if (!inventoryId) {
+    throw new RequisitionError("INVENTORY_REQUIRED", "Indica el cubo de inventario.");
+  }
+  const line = await db.requisitionLine.findUnique({
+    where: { id: input.lineId },
+    include: { requisition: { include: { project: true } }, product: true }
+  });
+  if (!line || line.requisitionId !== input.requisitionId) {
+    throw new RequisitionError("LINE_NOT_FOUND", "Línea de requisición no encontrada.");
+  }
+  assertRequisitionAllowsPick(line.requisition.status);
+  if (!isOperationalProjectRecord(line.requisition.project)) {
+    throw new RequisitionError("PROJECT_NOT_AVAILABLE", "El proyecto de la requisición no es operativo.");
+  }
+  const inventory = await db.inventory.findUnique({
+    where: { id: inventoryId },
+    include: { location: true, project: { select: { id: true, code: true, name: true } } }
+  });
+  if (!inventory) throw new RequisitionError("INVENTORY_NOT_FOUND", "Línea de inventario no disponible.");
+  if (
+    inventory.productId !== line.productId ||
+    inventory.assignmentType !== "PROJECT" ||
+    inventory.projectId !== line.requisition.projectId
+  ) {
+    throw new RequisitionError(
+      "PICK_PROJECT_MISMATCH",
+      "La reserva no corresponde a inventario PROJECT del proyecto de la requisición."
+    );
+  }
+  const reservations = await loadActiveFifoReservations(db, line.id);
+  const pending = line.requestedQty.minus(line.fulfilledQty);
+  const { planned } = selectCubeReservations(reservations, inventoryId, qty, pending);
+  const layerIds = planned.allocations
+    .map((slice) => slice.reservation.inventoryLayerId)
+    .filter((id): id is string => Boolean(id));
+  const serialCounts = await countSerialsByLayer(db, layerIds);
+  const serialControlled = Boolean(line.product.serialControlled);
+  const classified = classifyFifoSerialization(planned.allocations, serialCounts, serialControlled);
+  const serials = classified.serialRequired
+    ? await db.inventorySerial.findMany({
+        where: { productId: line.productId, inventoryLayerId: { in: classified.layerIds } },
+        select: { id: true, serialNumber: true, imei: true, inventoryLayerId: true }
+      })
+    : [];
+  const serialsByLayer = new Map<string, Array<{ id: string; serialNumber: string; imei: string | null }>>();
+  for (const serial of serials) {
+    const layerId = serial.inventoryLayerId || "";
+    if (!layerId) continue;
+    const list = serialsByLayer.get(layerId) || [];
+    list.push({ id: serial.id, serialNumber: serial.serialNumber, imei: serial.imei });
+    serialsByLayer.set(layerId, list);
+  }
+  for (const list of serialsByLayer.values()) {
+    list.sort((a, b) => a.serialNumber.localeCompare(b.serialNumber, "es"));
+  }
+  return {
+    serialRequired: classified.serialRequired,
+    serialControlled,
+    quantity: qty.toString(),
+    inventoryId,
+    layers: planned.allocations.map((slice) => {
+      const layerId = slice.reservation.inventoryLayerId!;
+      const layer = slice.reservation.inventoryLayer;
+      return {
+        reservationId: slice.reservation.id,
+        inventoryLayerId: layerId,
+        lotNumber: layer?.lotNumber ?? null,
+        receivedAt: layer?.receivedAt ? layer.receivedAt.toISOString() : null,
+        requiredQty: slice.qty.toString(),
+        serials: serialsByLayer.get(layerId) || []
+      };
+    })
+  };
 }
 
 function assertRequisitionAllowsPick(status: string) {
@@ -1249,6 +1546,16 @@ export async function consumeReservationPickInTransaction(
       "No se puede indicar reservationId y allocationMode al mismo tiempo."
     );
   }
+  const serialIds = normalizeSerialIds(input.serialIds);
+  if (serialIds.length && reservationId) {
+    throw new RequisitionError(
+      "RESERVATION_ALLOCATION_CONFLICT",
+      "No se puede indicar serialIds y reservationId al mismo tiempo."
+    );
+  }
+  if (serialIds.length && allocationMode !== "FIFO") {
+    throw new RequisitionError("SERIAL_IDS_REQUIRE_FIFO", "Las series solo se pueden indicar en picking FIFO.");
+  }
   if (allocationMode === "FIFO") {
     return consumeFifoReservationPickInTransaction(tx, input);
   }
@@ -1256,6 +1563,190 @@ export async function consumeReservationPickInTransaction(
     throw new RequisitionError("RESERVATION_REQUIRED", "Indica reservationId o allocationMode FIFO.");
   }
   return consumeSingleReservationPickInTransaction(tx, { ...input, reservationId });
+}
+
+async function finishSerializedFifoPick(
+  tx: Prisma.TransactionClient,
+  args: {
+    input: ConsumeReservationPickInput;
+    qty: Prisma.Decimal;
+    inventoryId: string;
+    lockedInventory: {
+      qty: Prisma.Decimal;
+      status: string;
+      locationId: string;
+      assignmentType: InventoryAssignmentType;
+      projectId: string | null;
+      assignmentKey: string;
+      location: { code: string; warehouse: string };
+      project: { id: string; code: string; name: string } | null;
+    };
+    lockedLine: {
+      id: string;
+      productId: string;
+      requisitionId: string;
+      product: { id: string; sku: string; name: string; barcode: string | null };
+      requisition: { number: string; status: string; projectId: string };
+    };
+    movementTaskId: string | null;
+    assigned: Array<{
+      slice: { reservation: PickFifoReservation; qty: Prisma.Decimal };
+      serials: PickSerialRow[];
+    }>;
+  }
+) {
+  const { input, qty, inventoryId, lockedInventory, lockedLine, movementTaskId, assigned } = args;
+  const before = lockedInventory.qty;
+  const invRows = await tx.$queryRaw<Array<{ id: string; qty: Prisma.Decimal; reservedQty: Prisma.Decimal }>>`
+    UPDATE "Inventory"
+    SET qty = qty - ${qty}, "reservedQty" = "reservedQty" - ${qty}, "updatedAt" = NOW()
+    WHERE id = ${inventoryId}
+      AND qty >= ${qty}
+      AND "reservedQty" >= ${qty}
+    RETURNING id, qty, "reservedQty"
+  `;
+  if (!invRows.length) throw new RequisitionError("INSUFFICIENT_STOCK", "No se pudo consumir la reserva en inventario.");
+
+  for (const { slice } of assigned) {
+    const layerId = slice.reservation.inventoryLayerId!;
+    const layerRows = await tx.$queryRaw<Array<{ id: string; qty: Prisma.Decimal; reservedQty: Prisma.Decimal }>>`
+      UPDATE "InventoryLayer"
+      SET qty = qty - ${slice.qty}, "reservedQty" = "reservedQty" - ${slice.qty}, "updatedAt" = NOW()
+      WHERE id = ${layerId}
+        AND qty >= ${slice.qty}
+        AND "reservedQty" >= ${slice.qty}
+      RETURNING id, qty, "reservedQty"
+    `;
+    if (!layerRows.length) throw new RequisitionError("INSUFFICIENT_STOCK", "No se pudo consumir la reserva en la capa.");
+    const newConsumed = slice.reservation.consumedQty.plus(slice.qty);
+    const newActive = activeReserved(slice.reservation.qty, newConsumed, slice.reservation.releasedQty);
+    await tx.inventoryReservation.update({
+      where: { id: slice.reservation.id },
+      data: {
+        consumedQty: newConsumed,
+        status: newActive.lessThanOrEqualTo(0) ? "CONSUMED" : "ACTIVE"
+      }
+    });
+  }
+
+  const movements: Array<{ id: string }> = [];
+  const allocations: Prisma.InputJsonValue[] = [];
+  const serialMetadata: Prisma.InputJsonValue[] = [];
+  let runningQty = before;
+  for (const { slice, serials } of assigned) {
+    const layerId = slice.reservation.inventoryLayerId!;
+    const sliceSerialIds: string[] = [];
+    const sliceMovementIds: string[] = [];
+    for (const serial of serials) {
+      await tx.inventorySerial.update({
+        where: { id: serial.id },
+        data: { inventoryLayerId: null }
+      });
+      const quantityBefore = runningQty;
+      runningQty = runningQty.minus(1);
+      const movement = await tx.inventoryMovement.create({
+        data: {
+          productId: lockedLine.productId,
+          type: "PICK",
+          movementType: "OUT",
+          stockStatus: lockedInventory.status,
+          qty: new Prisma.Decimal(1),
+          warehouse: lockedInventory.location.warehouse,
+          fromLocationId: lockedInventory.locationId,
+          inventoryLayerId: layerId,
+          inventorySerialId: serial.id,
+          requisitionLineId: lockedLine.id,
+          quantityBefore,
+          quantityAfter: runningQty,
+          reference: lockedLine.requisition.number,
+          notes: `PICK FIFO reserved ${slice.reservation.id}`,
+          userId: input.userId,
+          taskId: movementTaskId,
+          ...outboundAssignmentFields(assignmentFromInventory(lockedInventory))
+        }
+      });
+      movements.push(movement);
+      sliceSerialIds.push(serial.id);
+      sliceMovementIds.push(movement.id);
+      serialMetadata.push({
+        id: serial.id,
+        serialNumber: serial.serialNumber,
+        imei: serial.imei,
+        inventoryLayerId: layerId,
+        movementId: movement.id
+      });
+    }
+    allocations.push({
+      reservationId: slice.reservation.id,
+      inventoryLayerId: layerId,
+      qty: slice.qty.toString(),
+      lotNumber: slice.reservation.inventoryLayer?.lotNumber ?? null,
+      receivedAt: slice.reservation.inventoryLayer?.receivedAt
+        ? slice.reservation.inventoryLayer.receivedAt.toISOString()
+        : null,
+      serialIds: sliceSerialIds,
+      movementIds: sliceMovementIds
+    });
+  }
+
+  await applyLineFulfillment(tx, lockedLine.id, lockedLine.requisitionId, lockedLine.requisition.status, qty);
+
+  const scanEvent = await tx.scanEvent.create({
+    data: {
+      scannedCode: input.scannedCode,
+      result: "OK",
+      userId: input.userId,
+      productId: lockedLine.productId,
+      warehouse: lockedInventory.location.warehouse,
+      location: lockedInventory.location.code,
+      taskId: movementTaskId
+    }
+  });
+  await logActivity(
+    {
+      type: "PICK",
+      subtype: "PICK_RESERVED_FIFO_SUCCESS",
+      reference: input.scannedCode,
+      userId: input.userId,
+      productId: lockedLine.productId,
+      customerId: lockedLine.requisition.projectId,
+      warehouse: lockedInventory.location.warehouse,
+      location: lockedInventory.location.code,
+      qty,
+      result: "OK",
+      taskId: movementTaskId,
+      metadata: {
+        allocationMode: "FIFO",
+        requisitionId: lockedLine.requisitionId,
+        requisitionLineId: lockedLine.id,
+        inventoryId,
+        requestedPickQty: qty.toString(),
+        taskId: movementTaskId,
+        scanEventId: scanEvent.id,
+        serialIds: assigned.flatMap((row) => row.serials.map((serial) => serial.id)),
+        serials: serialMetadata,
+        allocations
+      }
+    },
+    tx
+  );
+
+  return {
+    before,
+    after: invRows[0]!.qty,
+    movement: movements[0]!,
+    movements,
+    scanEvent,
+    product: lockedLine.product,
+    location: lockedInventory.location,
+    inventoryStatus: lockedInventory.status,
+    assignmentType: lockedInventory.assignmentType,
+    projectId: lockedInventory.projectId,
+    assignmentKey: lockedInventory.assignmentKey,
+    project: lockedInventory.project,
+    fifo: true as const,
+    allocations
+  };
 }
 
 async function consumeFifoReservationPickInTransaction(
@@ -1273,10 +1764,13 @@ async function consumeFifoReservationPickInTransaction(
 
   const line = await tx.requisitionLine.findUnique({
     where: { id: lineId },
-    include: { requisition: true, product: true }
+    include: { requisition: { include: { project: true } }, product: true }
   });
   if (!line) throw new RequisitionError("LINE_NOT_FOUND", "Línea de requisición no encontrada.");
   assertRequisitionAllowsPick(line.requisition.status);
+  if (!isOperationalProjectRecord(line.requisition.project)) {
+    throw new RequisitionError("PROJECT_NOT_AVAILABLE", "El proyecto de la requisición no es operativo.");
+  }
   if (!scannedCodeMatchesProduct(input.scannedCode, line.product)) {
     throw new RequisitionError("SKU_MISMATCH", "El código escaneado no corresponde al SKU de la línea.");
   }
@@ -1362,9 +1856,12 @@ async function consumeFifoReservationPickInTransaction(
 
   const lockedLine = await tx.requisitionLine.findUniqueOrThrow({
     where: { id: line.id },
-    include: { requisition: true, product: true }
+    include: { requisition: { include: { project: true } }, product: true }
   });
   assertRequisitionAllowsPick(lockedLine.requisition.status);
+  if (!isOperationalProjectRecord(lockedLine.requisition.project)) {
+    throw new RequisitionError("PROJECT_NOT_AVAILABLE", "El proyecto de la requisición no es operativo.");
+  }
   const lockedPending = lockedLine.requestedQty.minus(lockedLine.fulfilledQty);
   if (qty.greaterThan(lockedPending)) {
     throw new RequisitionError("LINE_FULFILLMENT_EXCEEDED", "La cantidad excede el pendiente de la línea.");
@@ -1393,6 +1890,75 @@ async function consumeFifoReservationPickInTransaction(
     .filter((id): id is string => Boolean(id));
   if (participatingLayerIds.length !== planned.allocations.length) {
     throw new RequisitionError("LAYER_REQUIRED", "Una reserva FIFO no tiene capa.");
+  }
+  const serialCounts = await countSerialsByLayer(tx, participatingLayerIds);
+  const classified = classifyFifoSerialization(
+    planned.allocations,
+    serialCounts,
+    Boolean(lockedLine.product.serialControlled)
+  );
+  const serialIds = normalizeSerialIds(input.serialIds);
+  if (classified.serialRequired) {
+    assertPositiveIntegerQty(qty);
+    if (!serialIds.length) {
+      throw new RequisitionError(
+        "SERIAL_SELECTION_REQUIRED",
+        "Debes seleccionar las series a surtir. No se modificó inventario."
+      );
+    }
+    assertDistinctSerialIds(serialIds, qty);
+    await lockSerialsById(tx, serialIds);
+    const relockedReservations = (await tx.inventoryReservation.findMany({
+      where: { id: { in: cubeReservations.map((row) => row.id) } },
+      include: {
+        inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true, createdAt: true } }
+      }
+    })) as PickFifoReservation[];
+    const relockedActive = relockedReservations.filter(
+      (row) =>
+        row.status === "ACTIVE" &&
+        row.inventoryId === inventoryId &&
+        row.requisitionLineId === line.id &&
+        activeReserved(row.qty, row.consumedQty, row.releasedQty).greaterThan(0)
+    );
+    const replanned = planFifoReservationConsumption(relockedActive, qty);
+    if (replanned.remaining.greaterThan(0) || !replanned.allocations.length) {
+      throw new RequisitionError("INSUFFICIENT_RESERVED", "La cantidad supera el reservado activo del cubo.");
+    }
+    const relockedLayerIds = replanned.allocations
+      .map((slice) => slice.reservation.inventoryLayerId)
+      .filter((id): id is string => Boolean(id));
+    const relockedCounts = await countSerialsByLayer(tx, relockedLayerIds);
+    classifyFifoSerialization(
+      replanned.allocations,
+      relockedCounts,
+      Boolean(lockedLine.product.serialControlled)
+    );
+    const lockedSerials = (await tx.inventorySerial.findMany({
+      where: { id: { in: serialIds } },
+      select: { id: true, productId: true, inventoryLayerId: true, serialNumber: true, imei: true }
+    })) as PickSerialRow[];
+    if (lockedSerials.length !== serialIds.length) {
+      throw new RequisitionError("SERIAL_NOT_FOUND", "Una o más series no existen.");
+    }
+    const serialById = new Map(lockedSerials.map((row) => [row.id, row]));
+    const orderedSerials = serialIds.map((id) => serialById.get(id)!);
+    const assigned = assignSerialsToFifoSlices(orderedSerials, lockedLine.productId, replanned.allocations);
+    return finishSerializedFifoPick(tx, {
+      input,
+      qty,
+      inventoryId,
+      lockedInventory,
+      lockedLine,
+      movementTaskId,
+      assigned
+    });
+  }
+  if (serialIds.length) {
+    throw new RequisitionError(
+      "SERIAL_COUNT_MISMATCH",
+      "La cantidad de series no coincide con las piezas a surtir."
+    );
   }
   await assertLayersHaveNoSerials(tx, participatingLayerIds);
 

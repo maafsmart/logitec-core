@@ -8999,7 +8999,7 @@ function maxReservedPickQty(line, cube) {
   return cap > 0 ? cap : 0;
 }
 
-function buildReservedFifoPickPayload(req, line, cube, qty) {
+function buildReservedFifoPickPayload(req, line, cube, qty, serialIds) {
   const sku = line?.product?.sku || "";
   /** @type {Record<string, unknown>} */
   const body = {
@@ -9011,7 +9011,182 @@ function buildReservedFifoPickPayload(req, line, cube, qty) {
   };
   const taskId = pickTaskIdFromRequisition(req);
   if (taskId) body.taskId = taskId;
+  if (Array.isArray(serialIds) && serialIds.length) body.serialIds = serialIds.slice();
   return body;
+}
+
+function flattenEligiblePickSerials(plan) {
+  const layers = Array.isArray(plan?.layers) ? plan.layers : [];
+  /** @type {Array<{ id: string, serialNumber: string, imei: string | null, inventoryLayerId: string, lotNumber: string | null, receivedAt: string | null }>} */
+  const rows = [];
+  for (const layer of layers) {
+    const serials = Array.isArray(layer?.serials) ? layer.serials : [];
+    for (const serial of serials) {
+      if (!serial?.id) continue;
+      rows.push({
+        id: String(serial.id),
+        serialNumber: String(serial.serialNumber || ""),
+        imei: serial.imei ? String(serial.imei) : null,
+        inventoryLayerId: String(layer.inventoryLayerId || ""),
+        lotNumber: layer.lotNumber ? String(layer.lotNumber) : null,
+        receivedAt: layer.receivedAt ? String(layer.receivedAt) : null
+      });
+    }
+  }
+  return rows;
+}
+
+function hideReqActionSerialField() {
+  const field = document.getElementById("reqActionSerialField");
+  if (field) field.classList.add("hidden");
+  const scan = document.getElementById("reqActionSerialScan");
+  if (scan) scan.value = "";
+  const eligible = document.getElementById("reqActionSerialEligible");
+  if (eligible) eligible.innerHTML = "";
+  const selected = document.getElementById("reqActionSerialSelected");
+  if (selected) selected.innerHTML = "";
+  const counter = document.getElementById("reqActionSerialCounter");
+  if (counter) counter.textContent = "0 de 0";
+}
+
+function reservedPickSerialNeeded() {
+  if (reqActionContext?.mode !== "pick" || !reqActionContext?.serialPlan?.serialRequired) return 0;
+  const qty = Number(reqActionContext.serialPlan.quantity);
+  return Number.isFinite(qty) && qty > 0 ? qty : 0;
+}
+
+function updateReservedPickConfirmState() {
+  const btn = document.getElementById("reqActionConfirmBtn");
+  if (!btn) return;
+  if (reqActionContext?.busy) {
+    btn.disabled = true;
+    return;
+  }
+  const needed = reservedPickSerialNeeded();
+  if (!needed) {
+    btn.disabled = false;
+    return;
+  }
+  const selected = Array.isArray(reqActionContext?.selectedSerialIds) ? reqActionContext.selectedSerialIds.length : 0;
+  btn.disabled = selected !== needed;
+}
+
+function formatEligibleSerialLabel(row) {
+  const lot = row.lotNumber ? `Lote ${row.lotNumber}` : "Sin lote";
+  const imei = row.imei ? ` · IMEI ${row.imei}` : "";
+  return `${row.serialNumber}${imei} · ${lot}`;
+}
+
+function renderReservedPickSerialUi() {
+  const needed = reservedPickSerialNeeded();
+  const selectedIds = Array.isArray(reqActionContext?.selectedSerialIds) ? reqActionContext.selectedSerialIds : [];
+  const counter = document.getElementById("reqActionSerialCounter");
+  if (counter) counter.textContent = `${selectedIds.length} de ${needed || 0}`;
+  const eligibleEl = document.getElementById("reqActionSerialEligible");
+  const selectedEl = document.getElementById("reqActionSerialSelected");
+  const rows = flattenEligiblePickSerials(reqActionContext?.serialPlan);
+  const selectedSet = new Set(selectedIds);
+  if (selectedEl) {
+    const selectedRows = selectedIds
+      .map((id) => rows.find((row) => row.id === id))
+      .filter(Boolean);
+    selectedEl.innerHTML = selectedRows
+      .map(
+        (row) =>
+          `<li><span>${escCell(formatEligibleSerialLabel(row))}</span><button type="button" class="btn-secondary" data-remove-serial="${escCell(row.id)}">Quitar</button></li>`
+      )
+      .join("");
+  }
+  if (eligibleEl) {
+    eligibleEl.innerHTML = rows
+      .map((row) => {
+        const taken = selectedSet.has(row.id);
+        return `<li><span>${escCell(formatEligibleSerialLabel(row))}</span><button type="button" class="btn-secondary" data-add-serial="${escCell(row.id)}" ${taken ? "disabled" : ""}>${taken ? "Seleccionada" : "Elegir"}</button></li>`;
+      })
+      .join("");
+  }
+  updateReservedPickConfirmState();
+}
+
+function addReservedPickSerialId(id) {
+  const serialId = String(id || "").trim();
+  if (!serialId || !reqActionContext) return { ok: false, message: "Serie no válida." };
+  const rows = flattenEligiblePickSerials(reqActionContext.serialPlan);
+  if (!rows.some((row) => row.id === serialId)) {
+    return { ok: false, message: "La serie no pertenece a las capas FIFO de este cubo." };
+  }
+  const selected = Array.isArray(reqActionContext.selectedSerialIds) ? reqActionContext.selectedSerialIds : [];
+  if (selected.includes(serialId)) {
+    return { ok: false, message: "La serie ya está seleccionada." };
+  }
+  const needed = reservedPickSerialNeeded();
+  if (needed && selected.length >= needed) {
+    return { ok: false, message: "Ya seleccionaste las series requeridas." };
+  }
+  reqActionContext.selectedSerialIds = [...selected, serialId];
+  renderReservedPickSerialUi();
+  return { ok: true };
+}
+
+function addReservedPickSerialFromScan(raw) {
+  const token = String(raw || "").trim();
+  if (!token) return { ok: false, message: "Indica una serie o IMEI." };
+  const rows = flattenEligiblePickSerials(reqActionContext?.serialPlan);
+  const upper = token.toUpperCase();
+  const match = rows.find(
+    (row) =>
+      String(row.serialNumber || "").toUpperCase() === upper || String(row.imei || "").toUpperCase() === upper
+  );
+  if (!match) {
+    return { ok: false, message: "La serie o IMEI no pertenece a las capas FIFO de este cubo." };
+  }
+  return addReservedPickSerialId(match.id);
+}
+
+function removeReservedPickSerialId(id) {
+  if (!reqActionContext) return;
+  const serialId = String(id || "").trim();
+  reqActionContext.selectedSerialIds = (reqActionContext.selectedSerialIds || []).filter((row) => row !== serialId);
+  renderReservedPickSerialUi();
+}
+
+async function refreshReservedPickEligibleSerials() {
+  if (reqActionContext?.mode !== "pick") return;
+  const req = reqActionContext.requisition;
+  const line = reqActionContext.line;
+  const cube = reqActionContext.cube;
+  if (!req?.id || !line?.id || !cube?.inventoryId) return;
+  const qty = reqQtyNumber(document.getElementById("reqActionQty")?.value);
+  reqActionContext.selectedSerialIds = [];
+  reqActionContext.serialFetchGen = (reqActionContext.serialFetchGen || 0) + 1;
+  const gen = reqActionContext.serialFetchGen;
+  if (!(qty > 0) || !Number.isInteger(qty)) {
+    reqActionContext.serialPlan = null;
+    hideReqActionSerialField();
+    updateReservedPickConfirmState();
+    return;
+  }
+  const response = await authenticatedFetch(
+    `/api/picking/requisitions/${encodeURIComponent(req.id)}/lines/${encodeURIComponent(line.id)}/eligible-serials?inventoryId=${encodeURIComponent(cube.inventoryId)}&quantity=${encodeURIComponent(String(qty))}`
+  );
+  if (!reqActionContext || reqActionContext.serialFetchGen !== gen) return;
+  const data = response ? await response.json().catch(() => ({})) : {};
+  if (!response?.ok) {
+    reqActionContext.serialPlan = null;
+    hideReqActionSerialField();
+    setReqActionMessage(data.message || data.code || "No se pudieron cargar las series elegibles.", false);
+    updateReservedPickConfirmState();
+    return;
+  }
+  reqActionContext.serialPlan = data;
+  if (!data.serialRequired) {
+    hideReqActionSerialField();
+    updateReservedPickConfirmState();
+    return;
+  }
+  const field = document.getElementById("reqActionSerialField");
+  if (field) field.classList.remove("hidden");
+  renderReservedPickSerialUi();
 }
 
 function buildReservedFifoConfirmMessage(req, line, cube, qty) {
@@ -9148,6 +9323,7 @@ function closeReqActionModal() {
   reqActionContext = null;
   setReqActionMessage("", true);
   hideReqActionCandidateFields();
+  hideReqActionSerialField();
 }
 
 function openReserveModal(req, line) {
@@ -9177,6 +9353,7 @@ function openReserveModal(req, line) {
     { label: "Disponible en proyecto", value: formatQty(projectAvailable) }
   ]);
   hideReqActionCandidateFields();
+  hideReqActionSerialField();
   fillReserveCubeSelect(cubes);
   const qtyEl = document.getElementById("reqActionQty");
   if (qtyEl) qtyEl.value = defaultQty > 0 ? String(defaultQty) : "";
@@ -9204,10 +9381,15 @@ function openReservedPickModal(req, line, cube) {
     { label: "Pendiente de la línea", value: formatQty(line.pendingQty) }
   ]);
   hideReqActionCandidateFields();
+  hideReqActionSerialField();
   const qtyEl = document.getElementById("reqActionQty");
   if (qtyEl) qtyEl.value = maxQty > 0 ? String(maxQty) : "";
+  reqActionContext.selectedSerialIds = [];
+  reqActionContext.serialPlan = null;
   setReqActionMessage("", true);
   openReqActionModal();
+  updateReservedPickConfirmState();
+  void refreshReservedPickEligibleSerials();
 }
 
 async function confirmReqActionModal() {
@@ -9219,6 +9401,7 @@ async function confirmReqActionModal() {
   }
   const btn = document.getElementById("reqActionConfirmBtn");
   if (btn) btn.disabled = true;
+  if (reqActionContext) reqActionContext.busy = true;
   try {
     if (reqActionContext.mode === "reserve") {
       await confirmReserveFromModal(qty);
@@ -9226,7 +9409,8 @@ async function confirmReqActionModal() {
       await confirmReservedPickFromModal(qty);
     }
   } finally {
-    if (btn) btn.disabled = false;
+    if (reqActionContext) reqActionContext.busy = false;
+    updateReservedPickConfirmState();
   }
 }
 
@@ -9277,7 +9461,7 @@ async function confirmReserveFromModal(qty) {
   await refreshRequisitionViews(req.id);
 }
 
-async function executeReservedFifoPick(req, line, cube, qty) {
+async function executeReservedFifoPick(req, line, cube, qty, serialIds) {
   const sku = line?.product?.sku || "";
   if (!sku) return { ok: false, cancelled: false, message: "La línea no tiene SKU." };
   if (!window.confirm(buildReservedFifoConfirmMessage(req, line, cube, qty))) {
@@ -9286,7 +9470,7 @@ async function executeReservedFifoPick(req, line, cube, qty) {
   const response = await authenticatedFetch("/api/picking/scan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildReservedFifoPickPayload(req, line, cube, qty))
+    body: JSON.stringify(buildReservedFifoPickPayload(req, line, cube, qty, serialIds))
   });
   const data = response ? await response.json().catch(() => ({})) : {};
   if (!response) return { ok: false, cancelled: false, message: "No se pudo surtir la reserva." };
@@ -9309,7 +9493,13 @@ async function confirmReservedPickFromModal(qty) {
     );
     return;
   }
-  const result = await executeReservedFifoPick(req, line, cube, qty);
+  const needed = reservedPickSerialNeeded();
+  const serialIds = Array.isArray(reqActionContext?.selectedSerialIds) ? reqActionContext.selectedSerialIds.slice() : [];
+  if (needed && serialIds.length !== needed) {
+    setReqActionMessage(`Debes seleccionar ${needed} series para surtir.`, false);
+    return;
+  }
+  const result = await executeReservedFifoPick(req, line, cube, qty, needed ? serialIds : undefined);
   if (result.cancelled) return;
   if (!result.ok) {
     setReqActionMessage(result.message || "No se pudo surtir la reserva.", false);
@@ -9324,6 +9514,10 @@ async function confirmReservedPickFromModal(qty) {
 function wireReqActionModal() {
   const confirmBtn = document.getElementById("reqActionConfirmBtn");
   const cancelBtn = document.getElementById("reqActionCancelBtn");
+  const qtyEl = document.getElementById("reqActionQty");
+  const scanEl = document.getElementById("reqActionSerialScan");
+  const selectedEl = document.getElementById("reqActionSerialSelected");
+  const eligibleEl = document.getElementById("reqActionSerialEligible");
   if (confirmBtn && confirmBtn.dataset.reqWired !== "1") {
     confirmBtn.dataset.reqWired = "1";
     confirmBtn.addEventListener("click", () => void confirmReqActionModal());
@@ -9331,6 +9525,45 @@ function wireReqActionModal() {
   if (cancelBtn && cancelBtn.dataset.reqWired !== "1") {
     cancelBtn.dataset.reqWired = "1";
     cancelBtn.addEventListener("click", () => closeReqActionModal());
+  }
+  if (qtyEl && qtyEl.dataset.reqSerialWired !== "1") {
+    qtyEl.dataset.reqSerialWired = "1";
+    qtyEl.addEventListener("input", () => {
+      if (reqActionContext?.mode !== "pick") return;
+      void refreshReservedPickEligibleSerials();
+    });
+  }
+  if (scanEl && scanEl.dataset.reqSerialWired !== "1") {
+    scanEl.dataset.reqSerialWired = "1";
+    scanEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      const result = addReservedPickSerialFromScan(scanEl.value);
+      if (!result.ok) {
+        setReqActionMessage(result.message || "No se pudo agregar la serie.", false);
+        return;
+      }
+      scanEl.value = "";
+      setReqActionMessage("", true);
+    });
+  }
+  if (selectedEl && selectedEl.dataset.reqSerialWired !== "1") {
+    selectedEl.dataset.reqSerialWired = "1";
+    selectedEl.addEventListener("click", (event) => {
+      const btn = event.target?.closest?.("[data-remove-serial]");
+      if (!btn) return;
+      removeReservedPickSerialId(btn.getAttribute("data-remove-serial"));
+    });
+  }
+  if (eligibleEl && eligibleEl.dataset.reqSerialWired !== "1") {
+    eligibleEl.dataset.reqSerialWired = "1";
+    eligibleEl.addEventListener("click", (event) => {
+      const btn = event.target?.closest?.("[data-add-serial]");
+      if (!btn) return;
+      const result = addReservedPickSerialId(btn.getAttribute("data-add-serial"));
+      if (!result.ok) setReqActionMessage(result.message || "No se pudo agregar la serie.", false);
+      else setReqActionMessage("", true);
+    });
   }
 }
 
