@@ -60,7 +60,7 @@ function makeRuntime(opts: {
     const NAV_SECTION_MODULES = {
       inicio: ["control", "tasks", "picking", "incidents"],
       operacion: ["inbound", "bulk-inbound", "requisitions", "picking", "relocate", "outbound"],
-      inventario: ["inventory", "catalog", "projects", "warehouses", "locations"],
+      inventario: ["inventory", "clients", "catalog", "projects", "warehouses", "locations"],
       control: ["incidents", "traceability", "reports"],
       sistema: ["users", "config", "account"]
     };
@@ -73,9 +73,9 @@ function makeRuntime(opts: {
     };
     const roleModules = {
       ADMIN: ["control", "tasks", "picking", "inbound", "bulk-inbound", "relocate", "requisitions", "outbound", "incidents", "inventory", "catalog", "projects", "warehouses", "locations", "clients", "traceability", "reports", "users", "config", "account"],
-      CLIENT: ["catalog", "account", "config"]
+      CLIENT: ["inventory", "catalog", "projects", "clients", "warehouses", "locations", "requisitions", "tasks", "traceability", "reports", "account", "config"]
     };
-    const defaultLandingModule = { ADMIN: "control", SUPERVISOR: "control", OPERATOR: "tasks", CLIENT: "catalog" };
+    const defaultLandingModule = { ADMIN: "control", SUPERVISOR: "control", OPERATOR: "tasks", CLIENT: "inventory" };
     let currentRole = ${JSON.stringify(role)};
     let currentModuleName = ${JSON.stringify(opts.currentModuleName ?? null)};
     let userSelectedNavDuringBoot = ${opts.userSelected ? "true" : "false"};
@@ -175,7 +175,7 @@ test("una ruta inválida o no autorizada abre la pantalla permitida", () => {
   forbidden.persistNavRoute("operacion", "relocate");
   assert.equal(forbidden.resolveStoredNavRoute("CLIENT"), null);
   forbidden.applySessionRoute();
-  assert.deepEqual(forbidden.navigations, [{ section: "inventario", module: "catalog" }]);
+  assert.deepEqual(forbidden.navigations, [{ section: "inventario", module: "inventory" }]);
 });
 
 test("cerrar sesión elimina la ruta guardada", () => {
@@ -195,7 +195,7 @@ test("la corrección no realiza escrituras de inventario", () => {
   assert.doesNotMatch(persistSrc, /\/api\/inventory/);
   assert.doesNotMatch(applySessionSrc, /\/api\/inventory/);
   assert.doesNotMatch(forceLogoutSrc, /\/api\//);
-  assert.match(html, /dashboard\.js\?v=79/);
+  assert.match(html, /dashboard\.js\?v=80/);
   assert.doesNotMatch(html, /dashboard\.js\?v=66/);
   assert.doesNotMatch(html, /dashboard\.js\?v=65/);
   assert.doesNotMatch(html, /dashboard\.js\?v=64/);

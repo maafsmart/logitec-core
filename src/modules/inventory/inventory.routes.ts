@@ -5,13 +5,20 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
 import {
+  adminClientMovementFilter,
   clientInventoryWhere,
   clientLayerWhere,
   clientMovementWhere,
   clientProductWhere,
   clientSerialWhere,
+  effectiveRequestedClientId,
   isClientRole
 } from "../clients/client-scope.js";
+import {
+  createLocationRecord,
+  setLocationActive,
+  updateLocationRecord
+} from "../master-data/master-data.service.js";
 import { parseMexicoCityDateFilter } from "../../shared/mexico-city-date.js";
 import { canExposeEconomicValuation } from "./inventory-economic-access.js";
 import { calculateInventoryValuation } from "./inventory-valuation.service.js";
@@ -416,10 +423,32 @@ inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "C
 });
 
 inventoryRouter.get("/locations", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const query = z
+    .object({
+      q: z.string().trim().min(1).max(120).optional(),
+      warehouse: z.string().trim().min(1).max(80).optional(),
+      includeInactive: z.coerce.boolean().optional().default(false)
+    })
+    .parse(req.query);
   const rows = await prisma.location.findMany({
-    where: isClientRole(req.auth!)
-      ? { inventories: { some: clientInventoryWhere(req.auth!) } }
-      : {},
+    where: {
+      AND: [
+        isClientRole(req.auth!)
+          ? { inventories: { some: clientInventoryWhere(req.auth!) } }
+          : {},
+        query.includeInactive ? {} : { active: true },
+        query.warehouse ? { warehouse: { equals: query.warehouse, mode: "insensitive" } } : {},
+        query.q
+          ? {
+              OR: [
+                { code: { contains: query.q, mode: "insensitive" } },
+                { description: { contains: query.q, mode: "insensitive" } },
+                { warehouse: { contains: query.q, mode: "insensitive" } }
+              ]
+            }
+          : {}
+      ]
+    },
     orderBy: [{ warehouse: "asc" }, { code: "asc" }],
     take: 500
   });
@@ -428,27 +457,45 @@ inventoryRouter.get("/locations", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
 
 const createLocationSchema = z.object({
   warehouse: z.string().min(1).max(80),
-  zone: z.string().min(1).max(20),
-  rack: z.string().min(1).max(20),
-  level: z.string().min(1).max(20),
-  position: z.string().min(1).max(20)
+  code: z.string().min(1).max(80).optional(),
+  description: z.string().max(250).optional(),
+  zone: z.string().max(20).optional(),
+  rack: z.string().max(20).optional(),
+  level: z.string().max(20).optional(),
+  position: z.string().max(20).optional(),
+  notes: z.string().max(2000).optional()
 });
 
 inventoryRouter.post("/locations", requireRole(["ADMIN"]), async (req, res) => {
   const data = createLocationSchema.parse(req.body);
-  const code = `${data.warehouse}-${data.zone}-${data.rack}-${data.level}-${data.position}`.toUpperCase();
-  const location = await prisma.location.create({
-    data: {
-      ...data,
-      warehouse: data.warehouse.trim().toUpperCase(),
-      zone: data.zone.trim().toUpperCase(),
-      rack: data.rack.trim().toUpperCase(),
-      level: data.level.trim().toUpperCase(),
-      position: data.position.trim().toUpperCase(),
-      code
+  const location = await createLocationRecord(prisma as never, data);
+  res.status(201).json(location);
+});
+
+inventoryRouter.get("/locations/:id", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const id = z.string().min(1).parse(req.params.id);
+  const location = await prisma.location.findFirst({
+    where: {
+      AND: [
+        { id },
+        isClientRole(req.auth!) ? { inventories: { some: clientInventoryWhere(req.auth!) } } : {}
+      ]
     }
   });
-  res.status(201).json(location);
+  if (!location) throw new HttpError(404, "Ubicación no encontrada.");
+  res.json(location);
+});
+
+inventoryRouter.put("/locations/:id", requireRole(["ADMIN"]), async (req, res) => {
+  const id = z.string().min(1).parse(req.params.id);
+  const data = createLocationSchema.partial().parse(req.body);
+  res.json(await updateLocationRecord(prisma as never, id, data));
+});
+
+inventoryRouter.patch("/locations/:id/active", requireRole(["ADMIN"]), async (req, res) => {
+  const id = z.string().min(1).parse(req.params.id);
+  const { active } = z.object({ active: z.coerce.boolean() }).parse(req.body);
+  res.json(await setLocationActive(prisma as never, id, active));
 });
 
 inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
@@ -490,7 +537,9 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
     ...(Object.keys(dateFilter).length ? [{ createdAt: dateFilter }] : []),
     ...(query.sku ? [{ product: { sku: { equals: query.sku, mode: "insensitive" as const } } }] : []),
     ...(query.productId ? [{ productId: query.productId }] : []),
-    ...(query.clientId ? [{ product: { customer: { clientId: query.clientId } } }] : []),
+    ...(effectiveRequestedClientId(req.auth!, query.clientId)
+      ? [adminClientMovementFilter(effectiveRequestedClientId(req.auth!, query.clientId))]
+      : []),
     ...(() => {
       const scoped = movementScopeWhere({
         projectId: query.projectId,

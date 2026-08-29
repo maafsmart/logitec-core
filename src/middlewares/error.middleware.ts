@@ -5,7 +5,7 @@ import { OperationalResetError, isProductionResetGuard } from "../scripts/operat
 
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
   if (err instanceof HttpError) {
-    res.status(err.statusCode).json({ message: err.message });
+    res.status(err.statusCode).json(err.code ? { message: err.message, code: err.code } : { message: err.message });
     return;
   }
 

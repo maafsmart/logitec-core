@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
-import { requireNonClient } from "../clients/client-scope.js";
+import { assertAccessibleRequisition, clientRequisitionWhere, isClientRole } from "../clients/client-scope.js";
 import {
   RequisitionError,
   addRequisitionLine,
@@ -19,10 +19,6 @@ import {
 const requisitionsRouter = Router();
 
 requisitionsRouter.use(requireAuth);
-requisitionsRouter.use((req, _res, next) => {
-  requireNonClient(req.auth!);
-  next();
-});
 
 function mapError(res: import("express").Response, error: unknown) {
   if (error instanceof RequisitionError) {
@@ -55,12 +51,14 @@ function mapError(res: import("express").Response, error: unknown) {
   return false;
 }
 
-requisitionsRouter.get("/", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (_req, res) => {
-  res.json(await listRequisitions());
+requisitionsRouter.get("/", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"]), async (req, res) => {
+  res.json(await listRequisitions(clientRequisitionWhere(req.auth!)));
 });
 
-requisitionsRouter.get("/:id", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
-  res.json(await getRequisition(z.string().min(1).parse(req.params.id)));
+requisitionsRouter.get("/:id", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"]), async (req, res) => {
+  const requisition = await getRequisition(z.string().min(1).parse(req.params.id));
+  await assertAccessibleRequisition(req.auth!, requisition);
+  res.json(requisition);
 });
 
 requisitionsRouter.post("/", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {

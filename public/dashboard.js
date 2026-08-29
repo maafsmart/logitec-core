@@ -159,6 +159,9 @@ const PRIMARY_CLIENT_AVIAT_NAME = "AVIAT";
 const LEGACY_AVIAT_PROJECT_FILTER_KEY = "logitec_aviat_project_filter";
 
 let inventoryProjectsCache = [];
+let realClientsCache = [];
+let warehousesCatalogCache = [];
+let locationsCatalogCache = [];
 let catalogProjectsCache = [];
 let inventoryScope = { projectId: "", assignmentType: "" };
 let inventorySkuSelectedContext = null;
@@ -286,7 +289,7 @@ function getAviatExportBasename(kind) {
 
 function fillInventoryProjectSelects() {
   const scope = getInventoryScope();
-  const options = [`<option value="">Todos los proyectos</option>`]
+  const options = [`<option value="">${typeof currentRole !== "undefined" && currentRole === "CLIENT" ? "Todos los proyectos de mi cliente" : "Todos los proyectos"}</option>`]
     .concat(
       inventoryProjectsCache.map(
         (p) =>
@@ -303,7 +306,13 @@ function fillInventoryProjectSelects() {
   document.querySelectorAll(".js-assignment-opt").forEach((btn) => {
     const value = btn.getAttribute("data-assignment") || "";
     btn.classList.toggle("active", value === (scope.projectId ? "PROJECT" : scope.assignmentType));
-    btn.disabled = Boolean(scope.projectId) && value === "FREE_TO_SALE";
+    btn.disabled =
+      (Boolean(scope.projectId) && value === "FREE_TO_SALE") ||
+      (typeof currentRole !== "undefined" && currentRole === "CLIENT" && value === "FREE_TO_SALE");
+    if (btn.style) {
+      if (typeof currentRole !== "undefined" && currentRole === "CLIENT" && value === "FREE_TO_SALE") btn.style.display = "none";
+      else if (value === "FREE_TO_SALE") btn.style.display = "";
+    }
   });
 }
 
@@ -616,14 +625,17 @@ const roleModules = {
     "control", "tasks", "picking", "inbound", "bulk-inbound", "relocate", "requisitions", "outbound",
     "incidents", "inventory", "catalog", "projects", "warehouses", "locations", "traceability", "config", "account"
   ],
-  CLIENT: ["catalog", "account", "config"]
+  CLIENT: [
+    "inventory", "catalog", "projects", "clients", "warehouses", "locations",
+    "requisitions", "tasks", "traceability", "reports", "account", "config"
+  ]
 };
 
 /** Secciones de menú. clients se mantiene en registry pero fuera del menú principal. */
 const NAV_SECTION_MODULES = {
   inicio: ["control", "tasks", "picking", "incidents"],
   operacion: ["inbound", "bulk-inbound", "requisitions", "picking", "relocate", "outbound"],
-  inventario: ["inventory", "catalog", "projects", "warehouses", "locations"],
+  inventario: ["inventory", "clients", "catalog", "projects", "warehouses", "locations"],
   control: ["incidents", "traceability", "reports"],
   sistema: ["users", "config", "account"]
 };
@@ -774,7 +786,7 @@ const defaultLandingModule = {
   ADMIN: "control",
   SUPERVISOR: "control",
   OPERATOR: "tasks",
-  CLIENT: "catalog"
+  CLIENT: "inventory"
 };
 
 const MODULE_REGISTRY = {
@@ -956,6 +968,9 @@ function navigateTo(sectionId, moduleName) {
   currentNavSection = section;
   currentModuleName = mod;
   persistNavRoute(section, mod);
+  document.querySelectorAll(".js-inv-master-tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.getAttribute("data-inv-master-tab") === mod);
+  });
 
   const activeEl = MODULE_REGISTRY[mod];
   if (activeEl) activeEl.classList.remove("hidden");
@@ -1006,7 +1021,10 @@ function navigateTo(sectionId, moduleName) {
   if (modulePlaceholder) modulePlaceholder.classList.toggle("hidden", hasKnownModule);
 
   if (showControl) refreshControlCenter();
-  if (showClients) renderClientsModule();
+  if (showClients) void loadRealClientsModule();
+  if (showProjects) renderProjectsModule();
+  if (showWarehouses) void loadWarehousesModule();
+  if (showLocations) void loadLocationsModule();
   if (showInventory) {
     updateAviatHeaderUi();
     applyInventoryFilters();
@@ -1037,9 +1055,6 @@ function navigateTo(sectionId, moduleName) {
     });
     if (typeof syncRelocateFormState === "function") syncRelocateFormState();
   }
-  if (showProjects) renderProjectsModule();
-  if (showWarehouses) renderWarehousesModule();
-  if (showLocations) renderLocationsModule();
   if (showConfig && currentRole === "ADMIN") {
     void refreshImportHistory();
     void probeResumableImport();
@@ -4428,11 +4443,11 @@ function catalogColumns() {
 const CATALOG_COLUMNS = catalogColumns();
 
 const CLIENTS_COLUMNS = [
-  { label: "Proyecto", sortKey: (r) => r.name || "" },
+  { label: "Cliente", sortKey: (r) => r.name || "" },
   { label: "Código", sortKey: (r) => r.code || "" },
-  { label: "Productos", align: "right", sortKey: (r) => r.products || 0, sortType: "number" },
-  { label: "Saldos asociados", align: "right", sortKey: (r) => r.stock || 0, sortType: "number" },
-  { label: "Estado", sortKey: (r) => (r.products > 0 ? "Activo" : "Sin catálogo") }
+  { label: "Proyectos", align: "right", sortKey: (r) => r.projectCount || 0, sortType: "number" },
+  { label: "RFC", sortKey: (r) => r.rfc || "" },
+  { label: "Estado", sortKey: (r) => (r.active === false ? "Inactivo" : "Activo") }
 ];
 
 function formatMexicoCityDateTime(value) {
@@ -4927,39 +4942,536 @@ function buildClientStatsMap() {
 }
 
 function renderClientsModule() {
+  void loadRealClientsModule();
+}
+
+function renderWarehousesModule() {
+  void loadWarehousesModule();
+}
+
+function renderLocationsModule() {
+  void loadLocationsModule();
+}
+
+function masterModal() {
+  return document.getElementById("masterDataModal");
+}
+
+function openMasterModal(title, fieldsHtml, onSubmit) {
+  const modal = masterModal();
+  const form = document.getElementById("masterDataForm");
+  const titleEl = document.getElementById("masterDataTitle");
+  const msg = document.getElementById("masterDataMessage");
+  if (!modal || !form || !titleEl) return;
+  titleEl.textContent = title;
+  if (msg) {
+    msg.textContent = "";
+    msg.classList.remove("ok", "error");
+  }
+  form.innerHTML = fieldsHtml;
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    if (msg) {
+      msg.textContent = "";
+      msg.classList.remove("ok", "error");
+    }
+    try {
+      await onSubmit(new FormData(form), msg);
+    } catch (error) {
+      if (msg) {
+        msg.textContent = error?.message || "No se pudo guardar.";
+        msg.classList.add("error");
+      }
+    }
+  };
+  modal.classList.add("open");
+  modal.setAttribute("aria-hidden", "false");
+}
+
+function closeMasterModal() {
+  const modal = masterModal();
+  if (!modal) return;
+  modal.classList.remove("open");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function masterField(name, label, { required = false, value = "", type = "text", span = false } = {}) {
+  return `<div class="field${span ? " field-span" : ""}"><label for="mf_${name}">${escCell(label)}${required ? " *" : ""}</label><input id="mf_${name}" name="${escCell(name)}" type="${escCell(type)}" value="${escCell(value || "")}" ${required ? "required" : ""} /></div>`;
+}
+
+function masterSelect(name, label, options, { required = false, value = "" } = {}) {
+  const opts = options
+    .map((opt) => `<option value="${escCell(opt.value)}" ${opt.value === value ? "selected" : ""}>${escCell(opt.label)}</option>`)
+    .join("");
+  return `<div class="field"><label for="mf_${name}">${escCell(label)}${required ? " *" : ""}</label><select id="mf_${name}" name="${escCell(name)}" ${required ? "required" : ""}>${opts}</select></div>`;
+}
+
+function formText(fd, name) {
+  return String(fd.get(name) || "").trim();
+}
+
+async function refreshMasterSelectors() {
+  await Promise.all([loadWarehousesQuiet(), loadLocationsQuiet(), loadRelocateLocationsCatalog()]);
+  await loadCatalogData();
+}
+
+async function loadRealClientsQuiet() {
+  const response = await authenticatedFetch("/api/clients");
+  realClientsCache = response?.ok ? await response.json() : [];
+  if (!Array.isArray(realClientsCache)) realClientsCache = [];
+  return realClientsCache;
+}
+
+async function loadWarehousesQuiet() {
+  const response = await authenticatedFetch("/api/warehouses");
+  warehousesCatalogCache = response?.ok ? await response.json() : [];
+  if (!Array.isArray(warehousesCatalogCache)) warehousesCatalogCache = [];
+  return warehousesCatalogCache;
+}
+
+async function loadLocationsQuiet() {
+  const q = document.getElementById("locationsSearch")?.value?.trim() || "";
+  const warehouse = document.getElementById("locationsWarehouseFilter")?.value?.trim() || "";
+  const params = new URLSearchParams();
+  if (currentRole === "ADMIN") params.set("includeInactive", "1");
+  if (q) params.set("q", q);
+  if (warehouse) params.set("warehouse", warehouse);
+  const response = await authenticatedFetch(`/api/inventory/locations?${params.toString()}`);
+  locationsCatalogCache = response?.ok ? await response.json() : [];
+  if (!Array.isArray(locationsCatalogCache)) locationsCatalogCache = [];
+  return locationsCatalogCache;
+}
+
+async function loadRealClientsModule() {
+  await loadRealClientsQuiet();
   if (!clientsModuleList) return;
-  const stats = buildClientStatsMap();
-  const rows = filterRowsByAviatProject(Array.from(stats.values()).sort((a, b) => a.name.localeCompare(b.name, "es")));
+  const rows = realClientsCache.slice().sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es"));
   const countEl = document.getElementById("clientsTableCount");
-  if (countEl) countEl.textContent = `Mostrando ${rows.length} proyecto${rows.length === 1 ? "" : "s"} de ${PRIMARY_CLIENT_AVIAT_NAME}`;
+  if (countEl) countEl.textContent = `Mostrando ${rows.length} cliente${rows.length === 1 ? "" : "s"}`;
+  const canAdmin = currentRole === "ADMIN";
   renderDataGrid(clientsModuleList, {
     gridId: "clients",
     columns: CLIENTS_COLUMNS,
     rowDataList: rows,
     rowCellsFn: (r) => [
-      renderCellEllipsis(r.name || r.code || "—"),
+      `<button type="button" class="linkish" data-open-client="${escCell(r.id)}">${escCell(r.tradeName || r.name || r.code || "—")}</button>`,
       `<span class="cell-nowrap">${escCell(r.code || "—")}</span>`,
-      String(r.products),
-      formatQty(r.stock),
-      `<span class="status-chip">${r.products > 0 ? "Activo" : "Sin catálogo"}</span>`
+      String(r._count?.projects ?? r.projectCount ?? 0),
+      escCell(r.rfc || "—"),
+      `<span class="status-chip">${r.active === false ? "Inactivo" : "Activo"}</span>`
     ],
     colsClass: "data-grid-cols-clients",
     sizeClass: "data-grid-size-catalog",
-    emptyMessage: "No hay proyectos detectados. Carga catálogo o inventario para ver proyectos de AVIAT."
+    emptyMessage: "No hay clientes. El ADMIN puede crear un cliente y luego sus proyectos."
   });
-  const adminZone = document.getElementById("clientsAdminZone");
-  const adminList = clientsAdminList;
-  if (adminZone && adminList && currentRole === "ADMIN") {
-    adminZone.classList.remove("hidden");
-    adminList.innerHTML = (Array.isArray(clientsCache) ? clientsCache : [])
-      .map(
-        (c) =>
-          `<div class="user-row"><strong>${escCell(c.code)}</strong> — ${escCell(c.name)}<button type="button" class="user-delete btn-compact btn-danger" data-delete-customer="${c.id}">Eliminar</button></div>`
-      )
-      .join("");
-  } else if (adminZone) {
-    adminZone.classList.add("hidden");
+  if (canAdmin) {
+    clientsModuleList.querySelectorAll("[data-open-client]").forEach((btn) => {
+      btn.addEventListener("click", () => void openClientDetail(btn.getAttribute("data-open-client")));
+    });
+  } else {
+    clientsModuleList.querySelectorAll("[data-open-client]").forEach((btn) => {
+      btn.addEventListener("click", () => void openClientDetail(btn.getAttribute("data-open-client")));
+    });
   }
+  const addBtn = document.getElementById("clientsAddBtn");
+  if (addBtn) addBtn.style.display = canAdmin ? "" : "none";
+}
+
+async function openClientDetail(clientId) {
+  const response = await authenticatedFetch(`/api/clients/${encodeURIComponent(clientId)}`);
+  if (!response?.ok) return;
+  const client = await response.json();
+  const projects = Array.isArray(client.projects) ? client.projects : [];
+  const projectHtml = projects.length
+    ? `<ul class="info-list">${projects
+        .map(
+          (p) =>
+            `<li><button type="button" class="linkish" data-open-project="${escCell(p.id)}">${escCell(p.name)} (${escCell(p.code)})</button> · ${p.active === false ? "Inactivo" : "Activo"}</li>`
+        )
+        .join("")}</ul>`
+    : `<p class="assignee-hint">Este cliente aún no tiene proyectos.</p>`;
+  const actions = currentRole === "ADMIN"
+    ? [
+        { id: "edit", label: "Editar", className: "btn-secondary", onClick: () => openClientForm(client) },
+        {
+          id: "toggle",
+          label: client.active === false ? "Reactivar" : "Desactivar",
+          className: "btn-secondary",
+          onClick: () => void toggleMasterActive("client", client)
+        },
+        { id: "add-project", label: "Agregar proyecto", className: "btn-primary", onClick: () => openProjectForm(null, client) }
+      ]
+    : [];
+  openDetailDrawer(client.tradeName || client.name || client.code, [
+    { label: "Código", value: client.code },
+    { label: "Nombre comercial", value: client.tradeName || client.name },
+    { label: "Razón social", value: client.legalName },
+    { label: "RFC", value: client.rfc },
+    { label: "Dirección", value: client.address },
+    { label: "Teléfono", value: client.phone },
+    { label: "Correo", value: client.email },
+    { label: "Contacto", value: client.primaryContact },
+    { label: "Puesto", value: client.contactTitle },
+    { label: "Tel. contacto", value: client.contactPhone },
+    { label: "Correo contacto", value: client.contactEmail },
+    { label: "Notas", value: client.notes },
+    { label: "Estado", value: client.active === false ? "Inactivo" : "Activo" },
+    { label: "Proyectos", html: true, value: projectHtml }
+  ], actions);
+  document.querySelectorAll("[data-open-project]").forEach((btn) => {
+    btn.addEventListener("click", () => void openProjectDetail(btn.getAttribute("data-open-project")));
+  });
+}
+
+function openClientForm(client) {
+  closeDetailDrawer();
+  openMasterModal(client ? "Editar cliente" : "Crear cliente", [
+    masterField("code", "Código", { required: true, value: client?.code || "" }),
+    masterField("name", "Nombre comercial", { required: true, value: client?.name || client?.tradeName || "" }),
+    masterField("legalName", "Razón social", { value: client?.legalName || "" }),
+    masterField("rfc", "RFC", { value: client?.rfc || "" }),
+    masterField("address", "Dirección", { value: client?.address || "", span: true }),
+    masterField("phone", "Teléfono", { value: client?.phone || "" }),
+    masterField("email", "Correo general", { type: "email", value: client?.email || "" }),
+    masterField("primaryContact", "Contacto principal", { value: client?.primaryContact || "" }),
+    masterField("contactTitle", "Puesto", { value: client?.contactTitle || "" }),
+    masterField("contactPhone", "Teléfono del contacto", { value: client?.contactPhone || "" }),
+    masterField("contactEmail", "Correo del contacto", { type: "email", value: client?.contactEmail || "" }),
+    masterField("notes", "Notas", { value: client?.notes || "", span: true })
+  ].join(""), async (fd, msg) => {
+    const payload = {
+      code: formText(fd, "code"),
+      name: formText(fd, "name"),
+      legalName: formText(fd, "legalName") || null,
+      rfc: formText(fd, "rfc") || null,
+      address: formText(fd, "address") || null,
+      phone: formText(fd, "phone") || null,
+      email: formText(fd, "email") || null,
+      primaryContact: formText(fd, "primaryContact") || null,
+      contactTitle: formText(fd, "contactTitle") || null,
+      contactPhone: formText(fd, "contactPhone") || null,
+      contactEmail: formText(fd, "contactEmail") || null,
+      notes: formText(fd, "notes") || null,
+      tradeName: formText(fd, "name") || null
+    };
+    const response = await authenticatedFetch(client ? `/api/clients/${encodeURIComponent(client.id)}` : "/api/clients", {
+      method: client ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || "No se pudo guardar el cliente.");
+    if (msg) {
+      msg.textContent = client ? "Cliente actualizado." : "Cliente creado correctamente.";
+      msg.classList.add("ok");
+    }
+    await refreshMasterSelectors();
+    await loadRealClientsModule();
+    closeMasterModal();
+    await openClientDetail(data.id);
+  });
+}
+
+async function openProjectDetail(projectId) {
+  const response = await authenticatedFetch(`/api/catalog/customers/${encodeURIComponent(projectId)}`);
+  if (!response?.ok) return;
+  const project = await response.json();
+  const inherited = project.inheritedClient || project.client;
+  openDetailDrawer(project.name, [
+    { label: "Cliente (heredado)", html: true, value: inherited ? `<div class="inherited-box">${escCell(inherited.tradeName || inherited.name)} · ${escCell(inherited.code || "")}</div>` : "—" },
+    { label: "Código", value: project.code },
+    { label: "Nombre", value: project.name },
+    { label: "Referencia operativa", value: project.tradeName },
+    { label: "Empresa atendida", value: project.legalName },
+    { label: "RFC del proyecto", value: project.rfc },
+    { label: "Dirección operativa", value: project.address },
+    { label: "Teléfono", value: project.phone },
+    { label: "Correo", value: project.email },
+    { label: "Contacto", value: project.primaryContact },
+    { label: "Estado", value: project.active === false ? "Inactivo" : "Activo" }
+  ], currentRole === "ADMIN"
+    ? [
+        { id: "edit", label: "Editar", className: "btn-secondary", onClick: () => openProjectForm(project, inherited) },
+        {
+          id: "toggle",
+          label: project.active === false ? "Reactivar" : "Desactivar",
+          className: "btn-secondary",
+          onClick: () => void toggleMasterActive("project", project)
+        }
+      ]
+    : []);
+}
+
+function openProjectForm(project, client) {
+  closeDetailDrawer();
+  const clientOptions = [{ value: "", label: "— Seleccionar cliente —" }].concat(
+    realClientsCache.filter((c) => c.active !== false).map((c) => ({ value: c.id, label: `${c.code} · ${c.tradeName || c.name}` }))
+  );
+  openMasterModal(project ? "Editar proyecto" : "Agregar proyecto", [
+    masterSelect("clientId", "Cliente propietario", clientOptions, { required: true, value: project?.clientId || client?.id || "" }),
+    masterField("code", "Código", { required: true, value: project?.code || "" }),
+    masterField("name", "Nombre", { required: true, value: project?.name || "" }),
+    masterField("tradeName", "Nombre comercial / referencia operativa", { value: project?.tradeName || "" }),
+    masterField("legalName", "Razón social o empresa atendida", { value: project?.legalName || "" }),
+    masterField("rfc", "RFC", { value: project?.rfc || "" }),
+    masterField("address", "Dirección operativa", { value: project?.address || "", span: true }),
+    masterField("phone", "Teléfono", { value: project?.phone || "" }),
+    masterField("email", "Correo", { type: "email", value: project?.email || "" }),
+    masterField("primaryContact", "Contacto principal", { value: project?.primaryContact || "" }),
+    masterField("contactTitle", "Puesto", { value: project?.contactTitle || "" }),
+    masterField("contactPhone", "Teléfono del contacto", { value: project?.contactPhone || "" }),
+    masterField("contactEmail", "Correo del contacto", { type: "email", value: project?.contactEmail || "" }),
+    masterField("notes", "Notas", { value: project?.notes || "", span: true })
+  ].join(""), async (fd, msg) => {
+    const payload = {
+      clientId: formText(fd, "clientId"),
+      code: formText(fd, "code"),
+      name: formText(fd, "name"),
+      tradeName: formText(fd, "tradeName") || null,
+      legalName: formText(fd, "legalName") || null,
+      rfc: formText(fd, "rfc") || null,
+      address: formText(fd, "address") || null,
+      phone: formText(fd, "phone") || null,
+      email: formText(fd, "email") || null,
+      primaryContact: formText(fd, "primaryContact") || null,
+      contactTitle: formText(fd, "contactTitle") || null,
+      contactPhone: formText(fd, "contactPhone") || null,
+      contactEmail: formText(fd, "contactEmail") || null,
+      notes: formText(fd, "notes") || null
+    };
+    const response = await authenticatedFetch(project ? `/api/catalog/customers/${encodeURIComponent(project.id)}` : "/api/catalog/customers", {
+      method: project ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || "No se pudo guardar el proyecto.");
+    await refreshMasterSelectors();
+    closeMasterModal();
+    if (payload.clientId) await openClientDetail(payload.clientId);
+  });
+}
+
+async function toggleMasterActive(kind, row) {
+  const active = row.active === false;
+  const url =
+    kind === "client"
+      ? `/api/clients/${encodeURIComponent(row.id)}/active`
+      : kind === "project"
+        ? `/api/catalog/customers/${encodeURIComponent(row.id)}/active`
+        : kind === "warehouse"
+          ? `/api/warehouses/${encodeURIComponent(row.id)}/active`
+          : `/api/inventory/locations/${encodeURIComponent(row.id)}/active`;
+  const response = await authenticatedFetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ active })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    window.alert(data.message || "No se pudo cambiar el estado.");
+    return;
+  }
+  closeDetailDrawer();
+  await refreshMasterSelectors();
+  if (kind === "client") await loadRealClientsModule();
+  if (kind === "warehouse") await loadWarehousesModule();
+  if (kind === "location") await loadLocationsModule();
+}
+
+async function loadWarehousesModule() {
+  await loadWarehousesQuiet();
+  const host = document.getElementById("warehousesModuleList");
+  const countEl = document.getElementById("warehousesTableCount");
+  if (!host) return;
+  const rows = warehousesCatalogCache.slice();
+  if (countEl) countEl.textContent = `Mostrando ${rows.length} almacén${rows.length === 1 ? "" : "es"}`;
+  const addBtn = document.getElementById("warehousesAddBtn");
+  if (addBtn) addBtn.style.display = currentRole === "ADMIN" ? "" : "none";
+  host.innerHTML = rows.length
+    ? `<table class="excel-table"><thead><tr><th>Código</th><th>Nombre</th><th>Ubicaciones</th><th>Cant. física</th><th>Reservada</th><th>Estado</th></tr></thead><tbody>${rows
+        .map(
+          (r) =>
+            `<tr data-open-warehouse="${escCell(r.id)}"><td>${escCell(r.code)}</td><td>${escCell(r.name)}</td><td>${escCell(r.stats?.locationCount ?? "—")}</td><td>${escCell(r.stats?.qty ?? "—")}</td><td>${escCell(r.stats?.reservedQty ?? "—")}</td><td>${r.active === false ? "Inactivo" : "Activo"}</td></tr>`
+        )
+        .join("")}</tbody></table>`
+    : `<p class="assignee-hint">No hay almacenes en el catálogo.</p>`;
+  host.querySelectorAll("[data-open-warehouse]").forEach((row) => {
+    row.style.cursor = "pointer";
+    row.addEventListener("click", () => void openWarehouseDetail(row.getAttribute("data-open-warehouse")));
+  });
+}
+
+async function openWarehouseDetail(id) {
+  const response = await authenticatedFetch(`/api/warehouses/${encodeURIComponent(id)}`);
+  if (!response?.ok) return;
+  const row = await response.json();
+  openDetailDrawer(row.name, [
+    { label: "Código", value: row.code },
+    { label: "Dirección", value: row.address },
+    { label: "Responsable", value: row.manager },
+    { label: "Teléfono", value: row.phone },
+    { label: "Correo", value: row.email },
+    { label: "Horario", value: row.hours },
+    { label: "Notas", value: row.notes },
+    { label: "Ubicaciones", value: row.stats?.locationCount },
+    { label: "Cantidad física", value: row.stats?.qty },
+    { label: "Cantidad reservada", value: row.stats?.reservedQty },
+    { label: "Estado", value: row.active === false ? "Inactivo" : "Activo" }
+  ], currentRole === "ADMIN"
+    ? [
+        { id: "edit", label: "Editar", className: "btn-secondary", onClick: () => openWarehouseForm(row) },
+        {
+          id: "toggle",
+          label: row.active === false ? "Reactivar" : "Desactivar",
+          className: "btn-secondary",
+          onClick: () => void toggleMasterActive("warehouse", row)
+        }
+      ]
+    : []);
+}
+
+function openWarehouseForm(row) {
+  closeDetailDrawer();
+  openMasterModal(row ? "Editar almacén" : "Crear almacén", [
+    masterField("code", "Código", { required: true, value: row?.code || "" }),
+    masterField("name", "Nombre", { required: true, value: row?.name || "" }),
+    masterField("address", "Dirección", { value: row?.address || "", span: true }),
+    masterField("manager", "Responsable", { value: row?.manager || "" }),
+    masterField("phone", "Teléfono", { value: row?.phone || "" }),
+    masterField("email", "Correo", { type: "email", value: row?.email || "" }),
+    masterField("hours", "Horario", { value: row?.hours || "" }),
+    masterField("notes", "Notas", { value: row?.notes || "", span: true })
+  ].join(""), async (fd) => {
+    const payload = {
+      code: formText(fd, "code"),
+      name: formText(fd, "name"),
+      address: formText(fd, "address") || null,
+      manager: formText(fd, "manager") || null,
+      phone: formText(fd, "phone") || null,
+      email: formText(fd, "email") || null,
+      hours: formText(fd, "hours") || null,
+      notes: formText(fd, "notes") || null
+    };
+    const response = await authenticatedFetch(row ? `/api/warehouses/${encodeURIComponent(row.id)}` : "/api/warehouses", {
+      method: row ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || "No se pudo guardar el almacén.");
+    await refreshMasterSelectors();
+    await loadWarehousesModule();
+    closeMasterModal();
+  });
+}
+
+async function loadLocationsModule() {
+  await loadWarehousesQuiet();
+  await loadLocationsQuiet();
+  const host = document.getElementById("locationsModuleList");
+  const countEl = document.getElementById("locationsTableCount");
+  const filter = document.getElementById("locationsWarehouseFilter");
+  if (filter && filter.dataset.wired !== "1") {
+    filter.addEventListener("change", () => void loadLocationsModule());
+    filter.dataset.wired = "1";
+  }
+  const search = document.getElementById("locationsSearch");
+  if (search && search.dataset.wired !== "1") {
+    search.addEventListener("input", () => {
+      clearTimeout(search._t);
+      search._t = setTimeout(() => void loadLocationsModule(), 250);
+    });
+    search.dataset.wired = "1";
+  }
+  if (filter) {
+    const prev = filter.value;
+    filter.innerHTML =
+      `<option value="">Todos los almacenes</option>` +
+      warehousesCatalogCache.map((w) => `<option value="${escCell(w.code)}">${escCell(w.code)} · ${escCell(w.name)}</option>`).join("");
+    if (prev) filter.value = prev;
+  }
+  if (!host) return;
+  const rows = locationsCatalogCache.slice();
+  if (countEl) countEl.textContent = `Mostrando ${rows.length} ubicación${rows.length === 1 ? "" : "es"}`;
+  const addBtn = document.getElementById("locationsAddBtn");
+  if (addBtn) addBtn.style.display = currentRole === "ADMIN" ? "" : "none";
+  host.innerHTML = rows.length
+    ? `<table class="excel-table"><thead><tr><th>Almacén</th><th>Código</th><th>Descripción</th><th>Zona</th><th>Estado</th></tr></thead><tbody>${rows
+        .map(
+          (r) =>
+            `<tr data-open-location="${escCell(r.id)}"><td>${escCell(r.warehouse)}</td><td>${escCell(r.code)}</td><td>${escCell(r.description || "—")}</td><td>${escCell([r.zone, r.rack, r.level, r.position].filter((x) => x && x !== "-").join(" / ") || "—")}</td><td>${r.active === false ? "Inactivo" : "Activo"}</td></tr>`
+        )
+        .join("")}</tbody></table>`
+    : `<p class="assignee-hint">No hay ubicaciones con los filtros actuales.</p>`;
+  host.querySelectorAll("[data-open-location]").forEach((row) => {
+    row.style.cursor = "pointer";
+    row.addEventListener("click", () => void openLocationDetail(row.getAttribute("data-open-location")));
+  });
+}
+
+async function openLocationDetail(id) {
+  const row = locationsCatalogCache.find((item) => item.id === id);
+  if (!row) return;
+  openDetailDrawer(row.code, [
+    { label: "Almacén", value: row.warehouse },
+    { label: "Código", value: row.code },
+    { label: "Descripción", value: row.description },
+    { label: "Zona", value: row.zone },
+    { label: "Rack", value: row.rack },
+    { label: "Nivel", value: row.level },
+    { label: "Posición", value: row.position },
+    { label: "Notas", value: row.notes },
+    { label: "Estado", value: row.active === false ? "Inactivo" : "Activo" }
+  ], currentRole === "ADMIN"
+    ? [
+        { id: "edit", label: "Editar", className: "btn-secondary", onClick: () => openLocationForm(row) },
+        {
+          id: "toggle",
+          label: row.active === false ? "Reactivar" : "Desactivar",
+          className: "btn-secondary",
+          onClick: () => void toggleMasterActive("location", row)
+        }
+      ]
+    : []);
+}
+
+function openLocationForm(row) {
+  closeDetailDrawer();
+  const warehouseOptions = [{ value: "", label: "— Seleccionar almacén —" }].concat(
+    warehousesCatalogCache.filter((w) => w.active !== false).map((w) => ({ value: w.code, label: `${w.code} · ${w.name}` }))
+  );
+  openMasterModal(row ? "Editar ubicación" : "Agregar ubicación", [
+    masterSelect("warehouse", "Almacén", warehouseOptions, { required: true, value: row?.warehouse || "" }),
+    masterField("code", "Código", { required: true, value: row?.code || "" }),
+    masterField("description", "Descripción", { value: row?.description || "", span: true }),
+    masterField("zone", "Zona", { value: row?.zone && row.zone !== "-" ? row.zone : "" }),
+    masterField("rack", "Pasillo / rack", { value: row?.rack && row.rack !== "-" ? row.rack : "" }),
+    masterField("level", "Nivel", { value: row?.level && row.level !== "-" ? row.level : "" }),
+    masterField("position", "Posición", { value: row?.position && row.position !== "-" ? row.position : "" }),
+    masterField("notes", "Notas", { value: row?.notes || "", span: true })
+  ].join(""), async (fd) => {
+    const payload = {
+      warehouse: formText(fd, "warehouse"),
+      code: formText(fd, "code"),
+      description: formText(fd, "description") || null,
+      zone: formText(fd, "zone") || null,
+      rack: formText(fd, "rack") || null,
+      level: formText(fd, "level") || null,
+      position: formText(fd, "position") || null,
+      notes: formText(fd, "notes") || null
+    };
+    const response = await authenticatedFetch(row ? `/api/inventory/locations/${encodeURIComponent(row.id)}` : "/api/inventory/locations", {
+      method: row ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || "No se pudo guardar la ubicación.");
+    await refreshMasterSelectors();
+    await loadLocationsModule();
+    closeMasterModal();
+  });
 }
 
 function renderControlCenterTable(rows) {
@@ -6182,10 +6694,20 @@ async function loadUsersModule(role) {
         currentUserId && user.id !== currentUserId && user.isActive !== false
           ? `<button type="button" class="user-delete" data-delete-user="${user.id}">Desactivar</button>`
           : "";
-      return `<div class="user-row"><strong>${user.fullName}</strong> - ${user.email} (${user.role})${inactiveTag}${delBtn}</div>`;
+      return `<div class="user-row"><strong>${user.fullName}</strong> - ${user.email} (${user.role}${user.client ? ` · ${user.client.tradeName || user.client.name}` : ""})${inactiveTag}${delBtn}</div>`;
     })
     .join("");
   renderUsersSummary(`Usuarios en sistema: ${Array.isArray(users) ? users.length : 0}`);
+  await loadRealClientsQuiet();
+  const clientSel = document.getElementById("newClientId");
+  if (clientSel) {
+    clientSel.innerHTML =
+      `<option value="">— Seleccionar cliente —</option>` +
+      realClientsCache
+        .filter((c) => c.active !== false)
+        .map((c) => `<option value="${escCell(c.id)}">${escCell(c.code)} · ${escCell(c.tradeName || c.name)}</option>`)
+        .join("");
+  }
 }
 
 async function loadScanEvents() {
@@ -6594,7 +7116,8 @@ function getKnownWarehouses() {
   );
   const fromMov = movementsRowsCache.map((m) => m.warehouse || m.location?.warehouse);
   const fromProducts = productsCache.map((p) => p.defaultWarehouse || p.warehouse);
-  return uniqueSortedStrings(["TULTITLAN24", ...fromStock, ...fromMov, ...fromProducts]);
+  const fromCatalog = warehousesCatalogCache.filter((w) => w.active !== false).map((w) => w.code);
+  return uniqueSortedStrings(["TULTITLAN24", ...fromStock, ...fromMov, ...fromProducts, ...fromCatalog]);
 }
 
 function getKnownLocations() {
@@ -6602,7 +7125,8 @@ function getKnownLocations() {
     (r) => r.location?.code || r.locationCode || r.location || r.Location?.code
   );
   const fromMov = movementsRowsCache.map((m) => m.location?.code || m.location || m.locationCode);
-  return uniqueSortedStrings(fromStock.concat(fromMov));
+  const fromCatalog = locationsCatalogCache.filter((l) => l.active !== false).map((l) => l.code);
+  return uniqueSortedStrings(fromStock.concat(fromMov).concat(fromCatalog));
 }
 
 function getKnownProjects() {
@@ -7357,6 +7881,7 @@ async function loadRelocateLocationsCatalog() {
     if (!response?.ok) return relocateLocationsCache;
     const rows = await response.json();
     relocateLocationsCache = Array.isArray(rows) ? rows : [];
+    locationsCatalogCache = relocateLocationsCache.slice();
   } catch (_e) {
     relocateLocationsCache = Array.isArray(relocateLocationsCache) ? relocateLocationsCache : [];
   }
@@ -7886,7 +8411,9 @@ function buildSkuSelectedCardHtml(context, detailHtml, scopeOverride) {
   const otherQty = escCell(formatQty(focus.otherProjectsQty));
   const projectQty = escCell(formatQty(focus.attQty));
   let breakdownSecondLine = `${escCell(focus.projectNameShort)}: ${projectQty} · Free to Sale: ${ftsQty} · otros proyectos: ${otherQty}`;
-  if (focus.mode === "FREE_TO_SALE") {
+    if (typeof currentRole !== "undefined" && currentRole === "CLIENT") {
+    breakdownSecondLine = `Proyectos de mi cliente: ${projectQty}`;
+  } else if (focus.mode === "FREE_TO_SALE") {
     breakdownSecondLine = `Free to Sale: ${ftsQty} · Total en proyectos: ${otherQty}`;
   } else if (focus.mode === "ALL") {
     breakdownSecondLine = `Total en proyectos: ${otherQty} · Free to Sale: ${ftsQty}`;
@@ -8502,25 +9029,9 @@ function renderProjectsModule() {
   updateInventoryScopeUi();
   const addBtn = document.getElementById("projectsAddBtn");
   const ccAdd = document.getElementById("ccAddProjectBtn");
-  const canAdd = currentRole === "ADMIN" || currentRole === "SUPERVISOR";
+  const canAdd = currentRole === "ADMIN";
   if (addBtn) addBtn.style.display = canAdd ? "" : "none";
   if (ccAdd) ccAdd.style.display = canAdd ? "" : "none";
-}
-
-function renderWarehousesModule() {
-  renderInfoList(
-    "warehousesKnownList",
-    getKnownWarehouses(),
-    "No hay almacenes detectados. Al capturar movimientos aparecerán aquí."
-  );
-}
-
-function renderLocationsModule() {
-  renderInfoList(
-    "locationsKnownList",
-    getKnownLocations(),
-    "No hay ubicaciones detectadas todavía."
-  );
 }
 
 function getCustomersForSelect() {
@@ -8560,7 +9071,9 @@ function fillCustomerSelect(selectId, clienteInputId) {
     sel.dataset.projectOtherWired = "1";
     sel.addEventListener("change", () => {
       if (sel.value === SMART_OTHER) {
-        activateModule("catalog");
+        if (currentRole === "ADMIN") {
+          void loadRealClientsQuiet().then(() => openProjectForm(null, null));
+        }
         sel.value = "";
       }
     });
@@ -10545,7 +11058,12 @@ function applyRoleNavigation(role) {
   }
 
   createProductForm.classList.toggle("hidden", role !== "ADMIN");
-  createCustomerForm.classList.toggle("hidden", role !== "ADMIN");
+  if (createCustomerForm) createCustomerForm.classList.add("hidden");
+  const newClientField = document.getElementById("newClientField");
+  if (newClientField) newClientField.classList.toggle("hidden", document.getElementById("newRole")?.value !== "CLIENT");
+  document.querySelectorAll(".js-assignment-opt[data-assignment='FREE_TO_SALE']").forEach((btn) => {
+    btn.style.display = role === "CLIENT" ? "none" : "";
+  });
   if (importSection) importSection.classList.remove("hidden");
   if (catalogImportSection) catalogImportSection.classList.remove("hidden");
   const inventoryOpsNavPanel = document.getElementById("inventoryOpsNavPanel");
@@ -10581,7 +11099,7 @@ function applyRoleNavigation(role) {
   if (exportTraceBtn) exportTraceBtn.style.display = canExportTrace ? "inline-block" : "none";
   if (exportProductsBtn) exportProductsBtn.style.display = canExportProducts ? "inline-block" : "none";
 
-  const canAddProject = role === "ADMIN" || role === "SUPERVISOR";
+  const canAddProject = role === "ADMIN";
   const projectsAddBtn = document.getElementById("projectsAddBtn");
   const ccAddProjectBtn = document.getElementById("ccAddProjectBtn");
   if (projectsAddBtn) projectsAddBtn.style.display = canAddProject ? "" : "none";
@@ -10795,11 +11313,12 @@ async function createUser(event) {
     fullName: newFullName.value.trim(),
     email: newEmail.value.trim(),
     password: newPassword.value,
-    role: newRole.value
+    role: newRole.value,
+    clientId: newRole.value === "CLIENT" ? document.getElementById("newClientId")?.value || null : null
   };
 
-  if (!payload.fullName || !payload.email || !payload.password || !payload.role) {
-    createUserError.textContent = "Completa todos los campos.";
+  if (payload.role === "CLIENT" && !payload.clientId) {
+    createUserError.textContent = "Los usuarios CLIENT requieren un cliente asignado.";
     createUserBtn.disabled = false;
     return;
   }
@@ -12663,8 +13182,34 @@ if (importCancelModal && importCancelModal.dataset.modalWired !== "1") {
 syncImportWizardUi();
 
 createUserForm.addEventListener("submit", createUser);
+newRole?.addEventListener("change", () => {
+  document.getElementById("newClientField")?.classList.toggle("hidden", newRole.value !== "CLIENT");
+});
+if (createCustomerForm) createCustomerForm.addEventListener("submit", createCustomer);
+document.querySelectorAll("[data-master-create]").forEach((btn) => {
+  btn.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (currentRole !== "ADMIN") return;
+    const kind = btn.getAttribute("data-master-create");
+    if (kind === "client") openClientForm(null);
+    if (kind === "project") void loadRealClientsQuiet().then(() => openProjectForm(null, null));
+    if (kind === "warehouse") openWarehouseForm(null);
+    if (kind === "location") void loadWarehousesQuiet().then(() => openLocationForm(null));
+  });
+});
+document.querySelectorAll(".js-inv-master-tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const mod = btn.getAttribute("data-inv-master-tab");
+    if (mod) navigateTo("inventario", mod);
+  });
+});
+document.querySelectorAll("[data-close-modal='masterDataModal']").forEach((el) => {
+  el.addEventListener("click", () => closeMasterModal());
+});
+masterModal()?.addEventListener("click", (event) => {
+  if (event.target === masterModal()) closeMasterModal();
+});
 changePasswordForm.addEventListener("submit", changePassword);
-createCustomerForm.addEventListener("submit", createCustomer);
 createProductForm.addEventListener("submit", createProduct);
 scanForm.addEventListener("submit", scanCode);
 importBtn.addEventListener("click", runImport);

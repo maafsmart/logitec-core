@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { HttpError } from "../../shared/http-error.js";
-import { clientInventoryWhere, clientProductWhere } from "../clients/client-scope.js";
+import { clientInventoryWhere, clientProductWhere, clientSerialWhere, isClientRole } from "../clients/client-scope.js";
 import type { UserRole } from "../../middlewares/auth.middleware.js";
 import { calculateInventoryValuation, summarizeStockAssignments } from "../inventory/inventory-valuation.service.js";
 import { canExposeEconomicValuation } from "../inventory/inventory-economic-access.js";
@@ -301,7 +301,9 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
       sourceType: layer.sourceType
     }))
   );
-  const serialCount = await prisma.inventorySerial.count({ where: { productId: product.id } });
+  const serialCount = await prisma.inventorySerial.count({
+    where: { AND: [{ productId: product.id }, clientSerialWhere(auth)] }
+  });
   const exposeEconomic = canExposeEconomicValuation(auth.role);
   const valuation = calculateInventoryValuation(
     product.inventories.flatMap((inventory) => inventory.layers)
@@ -331,18 +333,29 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
           ? { id: product.customer.id, code: product.customer.code, name: product.customer.name, historical: true }
           : null,
     stockAssignments,
-    assignmentBreakdown: {
-      projects: [...projectQty.values()]
-        .sort((a, b) => a.name.localeCompare(b.name, "es"))
-        .map((row) => ({
-          id: row.id,
-          code: row.code,
-          name: row.name,
-          ...qtyTriplet(row.qty, row.reservedQty)
-        })),
-      freeToSale: qtyTriplet(freeToSaleQty, freeToSaleReserved),
-      other: qtyTriplet(otherQty, otherReserved)
-    },
+    assignmentBreakdown: isClientRole(auth)
+      ? {
+          projects: [...projectQty.values()]
+            .sort((a, b) => a.name.localeCompare(b.name, "es"))
+            .map((row) => ({
+              id: row.id,
+              code: row.code,
+              name: row.name,
+              ...qtyTriplet(row.qty, row.reservedQty)
+            }))
+        }
+      : {
+          projects: [...projectQty.values()]
+            .sort((a, b) => a.name.localeCompare(b.name, "es"))
+            .map((row) => ({
+              id: row.id,
+              code: row.code,
+              name: row.name,
+              ...qtyTriplet(row.qty, row.reservedQty)
+            })),
+          freeToSale: qtyTriplet(freeToSaleQty, freeToSaleReserved),
+          other: qtyTriplet(otherQty, otherReserved)
+        },
     inventory: {
       totalQty: totalQty.toString(),
       totalReservedQty: totalReservedQty.toString(),

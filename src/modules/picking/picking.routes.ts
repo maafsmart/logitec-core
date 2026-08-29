@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
+import { clientScanWhere, isClientRole } from "../clients/client-scope.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { InventoryMutationError, mutateInventory } from "../inventory/inventory-mutation.service.js";
 import { RequisitionError, consumeReservationPick, getEligiblePickSerials } from "../requisitions/requisition.service.js";
@@ -74,7 +75,41 @@ function mapCandidate(row: {
   };
 }
 
-pickingRouter.use(requireAuth, requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]));
+pickingRouter.use(requireAuth);
+
+pickingRouter.get("/scans", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const isAdmin = req.auth!.role === "ADMIN";
+  const where = isAdmin
+    ? {}
+    : isClientRole(req.auth!)
+      ? clientScanWhere(req.auth!)
+      : { userId: req.auth!.userId };
+
+  const scans = await prisma.scanEvent.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    take: isAdmin || isClientRole(req.auth!) ? 150 : 50,
+    include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true
+        }
+      },
+      product: {
+        select: {
+          sku: true,
+          name: true
+        }
+      }
+    }
+  });
+
+  res.json(scans);
+});
+
+pickingRouter.use(requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"]));
 
 pickingRouter.get("/requisitions/:requisitionId/lines/:lineId/eligible-serials", async (req, res) => {
   try {
@@ -516,33 +551,6 @@ pickingRouter.post("/scan", async (req, res) => {
       message: "Error interno al procesar picking. No se registró PICK_SUCCESS."
     });
   }
-});
-
-pickingRouter.get("/scans", async (req, res) => {
-  const isAdmin = req.auth!.role === "ADMIN";
-
-  const scans = await prisma.scanEvent.findMany({
-    where: isAdmin ? {} : { userId: req.auth!.userId },
-    orderBy: { createdAt: "desc" },
-    take: isAdmin ? 150 : 50,
-    include: {
-      user: {
-        select: {
-          id: true,
-          fullName: true,
-          email: true
-        }
-      },
-      product: {
-        select: {
-          sku: true,
-          name: true
-        }
-      }
-    }
-  });
-
-  res.json(scans);
 });
 
 export { pickingRouter };

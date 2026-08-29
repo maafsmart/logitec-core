@@ -252,14 +252,14 @@ test("16 #assignDestProject usa fuente operativa", () => {
   assert.match(html, /id="assignDestProject"/);
 });
 
-test("17 catálogo administrativo conserva LOGITEC", () => {
+test("17 módulo Clientes usa clientes 3PL y no el catálogo de proyectos", () => {
   const admin = sliceFunction(js, "renderClientsModule");
-  const stats = sliceFunction(js, "buildClientStatsMap");
+  const load = sliceFunction(js, "loadRealClientsQuiet");
   const customers = sliceFunction(js, "getCustomersForSelect");
-  assert.match(admin, /clientsCache/);
+  assert.match(admin, /loadRealClientsModule/);
+  assert.match(load, /\/api\/clients/);
   assert.doesNotMatch(admin, /getOperationalProjectsForSelect/);
-  assert.doesNotMatch(admin, /isForbiddenProjectLabel/);
-  assert.match(stats, /clientsCache/);
+  assert.doesNotMatch(load, /clientsCache/);
   assert.match(customers, /productsCache/);
   assert.match(customers, /clientsCache/);
 });
@@ -438,7 +438,7 @@ test("28 reubicación, recepción y salidas no tienen regresiones", () => {
 });
 
 test("29 cache-buster v77", () => {
-  assert.match(html, /dashboard\.js\?v=79/);
+  assert.match(html, /dashboard\.js\?v=80/);
   assert.doesNotMatch(html, /dashboard\.js\?v=73/);
 });
 

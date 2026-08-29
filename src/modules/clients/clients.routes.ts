@@ -4,10 +4,13 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
 import { isClientRole, scopedClientId } from "./client-scope.js";
+import { createClientRecord, setClientActive, updateClientRecord } from "../master-data/master-data.service.js";
+import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
 
 const clientsRouter = Router();
 
 const clientFieldsSchema = z.object({
+  code: z.string().min(1).max(60).optional(),
   name: z.string().min(1).max(160).optional(),
   legalName: z.string().min(1).max(250).nullable().optional(),
   tradeName: z.string().min(1).max(250).nullable().optional(),
@@ -20,12 +23,21 @@ const clientFieldsSchema = z.object({
   alternatePhone: z.string().min(1).max(40).nullable().optional(),
   email: z.string().email().max(250).nullable().optional(),
   primaryContact: z.string().min(1).max(160).nullable().optional(),
+  contactTitle: z.string().max(160).nullable().optional(),
+  contactPhone: z.string().max(40).nullable().optional(),
+  contactEmail: z.string().email().max(250).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
   active: z.coerce.boolean().optional()
 });
 
+const createClientSchema = clientFieldsSchema.extend({
+  code: z.string().min(1).max(60),
+  name: z.string().min(1).max(160)
+});
+
 const clientSelect = {
   id: true,
+  code: true,
   name: true,
   legalName: true,
   tradeName: true,
@@ -38,6 +50,9 @@ const clientSelect = {
   alternatePhone: true,
   email: true,
   primaryContact: true,
+  contactTitle: true,
+  contactPhone: true,
+  contactEmail: true,
   notes: true,
   active: true,
   createdAt: true,
@@ -46,67 +61,20 @@ const clientSelect = {
 
 const projectClientSelect = {
   id: true,
+  code: true,
   name: true,
   legalName: true,
   tradeName: true,
+  rfc: true,
+  address: true,
+  phone: true,
+  email: true,
+  primaryContact: true,
+  contactTitle: true,
+  contactPhone: true,
+  contactEmail: true,
   active: true
 } as const;
-
-function optionalText(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  return trimmed || null;
-}
-
-function createClientData(data: z.infer<typeof clientFieldsSchema>) {
-  const legalName = optionalText(data.legalName);
-  const tradeName = optionalText(data.tradeName);
-
-  return {
-    name: optionalText(data.name) || tradeName || legalName || "Cliente sin nombre",
-    legalName,
-    tradeName,
-    rfc: optionalText(data.rfc),
-    address: optionalText(data.address),
-    city: optionalText(data.city),
-    state: optionalText(data.state),
-    postalCode: optionalText(data.postalCode),
-    phone: optionalText(data.phone),
-    alternatePhone: optionalText(data.alternatePhone),
-    email: optionalText(data.email)?.toLowerCase() || null,
-    primaryContact: optionalText(data.primaryContact),
-    notes: optionalText(data.notes)
-  };
-}
-
-function updateClientData(data: z.infer<typeof clientFieldsSchema>) {
-  const update: Record<string, string | null> = {};
-  const fields = [
-    "legalName",
-    "tradeName",
-    "rfc",
-    "address",
-    "city",
-    "state",
-    "postalCode",
-    "phone",
-    "alternatePhone",
-    "primaryContact",
-    "notes"
-  ] as const;
-
-  for (const field of fields) {
-    if (data[field] !== undefined) {
-      update[field] = optionalText(data[field]);
-    }
-  }
-  if (data.email !== undefined) {
-    update.email = optionalText(data.email)?.toLowerCase() || null;
-  }
-  if (data.name !== undefined) {
-    update.name = optionalText(data.name) || "Cliente sin nombre";
-  }
-  return update;
-}
 
 clientsRouter.use(requireAuth);
 
@@ -120,14 +88,21 @@ clientsRouter.get("/", async (req, res) => {
       _count: { select: { projects: true } }
     }
   });
-  res.json(clients);
+  res.json(clients.filter((row) => !isForbiddenInventoryProjectRecord({ code: row.code, name: row.name })));
 });
 
 clientsRouter.post("/", requireRole(["ADMIN"]), async (req, res) => {
-  const data = clientFieldsSchema.parse(req.body);
-  const client = await prisma.client.create({
-    data: { ...createClientData(data), active: data.active ?? true },
-    select: clientSelect
+  const data = createClientSchema.parse(req.body);
+  const created = await createClientRecord(prisma as never, data);
+  const client = await prisma.client.findUnique({
+    where: { id: created.id },
+    select: {
+      ...clientSelect,
+      projects: {
+        orderBy: { createdAt: "desc" },
+        select: { id: true, code: true, name: true, active: true, createdAt: true }
+      }
+    }
   });
   res.status(201).json(client);
 });
@@ -135,7 +110,7 @@ clientsRouter.post("/", requireRole(["ADMIN"]), async (req, res) => {
 clientsRouter.get("/:id", async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   if (isClientRole(req.auth!) && id !== scopedClientId(req.auth!)) {
-    throw new HttpError(403, "No autorizado para consultar otro cliente.");
+    throw new HttpError(404, "Cliente no encontrado.");
   }
   const client = await prisma.client.findUnique({
     where: { id },
@@ -143,7 +118,15 @@ clientsRouter.get("/:id", async (req, res) => {
       ...clientSelect,
       projects: {
         orderBy: { createdAt: "desc" },
-        select: { id: true, code: true, name: true, active: true, createdAt: true }
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          tradeName: true,
+          legalName: true,
+          active: true,
+          createdAt: true
+        }
       }
     }
   });
@@ -156,9 +139,12 @@ clientsRouter.get("/:id", async (req, res) => {
 clientsRouter.get("/:id/projects", async (req, res) => {
   const clientId = z.string().min(1).parse(req.params.id);
   if (isClientRole(req.auth!) && clientId !== scopedClientId(req.auth!)) {
-    throw new HttpError(403, "No autorizado para consultar proyectos de otro cliente.");
+    throw new HttpError(404, "Cliente no encontrado.");
   }
-  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { id: true } });
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: projectClientSelect
+  });
   if (!client) {
     throw new HttpError(404, "Cliente no encontrado.");
   }
@@ -167,39 +153,22 @@ clientsRouter.get("/:id/projects", async (req, res) => {
     orderBy: { createdAt: "desc" },
     include: { client: { select: projectClientSelect } }
   });
-  res.json(projects);
+  res.json(projects.map((project) => ({ ...project, inheritedClient: client })));
 });
 
 clientsRouter.put("/:id", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   const data = clientFieldsSchema.parse(req.body);
-  const existing = await prisma.client.findUnique({ where: { id }, select: { active: true } });
-  if (!existing) {
-    throw new HttpError(404, "Cliente no encontrado.");
-  }
-  const client = await prisma.client.update({
-    where: { id },
-    data: {
-      ...updateClientData(data),
-      active: data.active ?? existing.active
-    },
-    select: clientSelect
-  });
+  const updated = await updateClientRecord(prisma as never, id, data);
+  const client = await prisma.client.findUnique({ where: { id: updated.id }, select: clientSelect });
   res.json(client);
 });
 
 clientsRouter.patch("/:id/active", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   const { active } = z.object({ active: z.coerce.boolean() }).parse(req.body);
-  const existing = await prisma.client.findUnique({ where: { id }, select: { id: true } });
-  if (!existing) {
-    throw new HttpError(404, "Cliente no encontrado.");
-  }
-  const client = await prisma.client.update({
-    where: { id },
-    data: { active },
-    select: clientSelect
-  });
+  const updated = await setClientActive(prisma as never, id, active);
+  const client = await prisma.client.findUnique({ where: { id: updated.id }, select: clientSelect });
   res.json(client);
 });
 

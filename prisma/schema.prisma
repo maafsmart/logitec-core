@@ -170,6 +170,7 @@ model Client {
   // Legacy display name retained for compatibility. New records derive it from
   // tradeName or legalName when a separate name is not supplied.
   name           String
+  code           String     @unique
   legalName      String?
   tradeName      String?
   rfc            String?
@@ -181,6 +182,9 @@ model Client {
   alternatePhone String?
   email          String?    @unique
   primaryContact String?
+  contactTitle   String?
+  contactPhone   String?
+  contactEmail   String?
   notes          String?
   active         Boolean    @default(true)
   createdAt      DateTime   @default(now())
@@ -190,22 +194,48 @@ model Client {
 }
 
 model Customer {
-  id        String    @id @default(cuid())
-  clientId  String?
-  code      String    @unique
-  name      String
-  active    Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  products  Product[]
-  activityLogs ActivityLog[]
-  requisitions Requisition[]
-  inventories Inventory[] @relation("InventoryProject")
+  id             String    @id @default(cuid())
+  clientId       String?
+  code           String    @unique
+  name           String
+  tradeName      String?
+  legalName      String?
+  rfc            String?
+  address        String?
+  phone          String?
+  email          String?
+  primaryContact String?
+  contactTitle   String?
+  contactPhone   String?
+  contactEmail   String?
+  notes          String?
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  client         Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  products       Product[]
+  activityLogs   ActivityLog[]
+  requisitions   Requisition[]
+  inventories    Inventory[] @relation("InventoryProject")
   productProjects ProductProject[]
-  movementsFrom InventoryMovement[] @relation("MovementFromProject")
-  movementsTo   InventoryMovement[] @relation("MovementToProject")
+  movementsFrom  InventoryMovement[] @relation("MovementFromProject")
+  movementsTo    InventoryMovement[] @relation("MovementToProject")
 
   @@index([clientId])
+}
+
+model Warehouse {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  address   String?
+  manager   String?
+  phone     String?
+  email     String?
+  hours     String?
+  notes     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Location {
@@ -216,6 +246,8 @@ model Location {
   level            String
   position         String
   code             String              @unique
+  description      String?
+  notes            String?
   active           Boolean             @default(true)
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt

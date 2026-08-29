@@ -2801,6 +2801,48 @@
         min-width: 260px;
         max-width: 420px;
       }
+      .inventory-master-tabs {
+        display: flex;
+        gap: 6px;
+        margin: 0 0 10px;
+      }
+      .inventory-master-tabs button {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--text);
+        border-radius: 999px;
+        padding: 4px 12px;
+        font-size: 0.82rem;
+        font-weight: 650;
+        cursor: pointer;
+      }
+      .inventory-master-tabs button.active {
+        background: var(--accent-dark);
+        border-color: var(--accent-dark);
+        color: #fff;
+      }
+      .master-toolbar {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .master-inline-form {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px 10px;
+      }
+      .master-inline-form .field-span {
+        grid-column: 1 / -1;
+      }
+      .inherited-box {
+        background: var(--accent-soft);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-size: 0.82rem;
+      }
       .assignment-seg {
         display: inline-flex;
         border: 1px solid var(--line);
@@ -3307,6 +3349,10 @@
                   <span class="module-btn-label">Existencias</span>
                   <span class="module-btn-desc">Saldos por proyecto, lote y ubicación</span>
                 </button>
+                <button class="module-btn" data-module="clients" id="btnClients" type="button">
+                  <span class="module-btn-label">Clientes</span>
+                  <span class="module-btn-desc">Clientes 3PL y sus proyectos</span>
+                </button>
                 <button class="module-btn" data-module="catalog" id="btnCatalog" type="button">
                   <span class="module-btn-label">Catálogo y productos</span>
                   <span class="module-btn-desc">Maestro de productos AVIAT</span>
@@ -3317,11 +3363,11 @@
                 </button>
                 <button class="module-btn" data-module="warehouses" id="btnWarehouses" type="button">
                   <span class="module-btn-label">Almacenes</span>
-                  <span class="module-btn-desc">Almacenes detectados en operación</span>
+                  <span class="module-btn-desc">Catálogo y estado de almacenes</span>
                 </button>
                 <button class="module-btn" data-module="locations" id="btnLocations" type="button">
                   <span class="module-btn-label">Ubicaciones</span>
-                  <span class="module-btn-desc">Ubicaciones detectadas en inventarios</span>
+                  <span class="module-btn-desc">Catálogo operativo de ubicaciones</span>
                 </button>
               </div>
               <div class="nav-section-panel" data-nav-section-panel="control" data-nav-group="control">
@@ -3370,7 +3416,7 @@
             </div>
             <div class="project-actions-row">
               <button type="button" class="btn-secondary btn-compact" data-goto-module="projects">Ver proyectos</button>
-              <button type="button" id="ccAddProjectBtn" class="btn-primary btn-compact" data-goto-module="catalog">Agregar proyecto</button>
+              <button type="button" id="ccAddProjectBtn" class="btn-primary btn-compact" data-master-create="project">Agregar proyecto</button>
             </div>
             <p id="aviatScopeControl" class="operational-table-meta" style="margin:0 0 10px;font-weight:600">Proyecto: Todos los proyectos · Asignación: Todas</p>
             <div class="inventory-scope-bar" data-inventory-scope>
@@ -3540,6 +3586,12 @@
                     <option value="SUPERVISOR">SUPERVISOR</option>
                     <option value="CLIENT">CLIENT</option>
                     <option value="ADMIN">ADMIN</option>
+                  </select>
+                </div>
+                <div class="field hidden" id="newClientField">
+                  <label for="newClientId">Cliente (obligatorio para CLIENT)</label>
+                  <select id="newClientId">
+                    <option value="">— Seleccionar cliente —</option>
                   </select>
                 </div>
               </div>
@@ -3984,6 +4036,10 @@
               <h3 id="inventoryModuleTitle">Inventario de AVIAT</h3>
               <p class="module-lead">Consulta existencias por proyecto, lote y ubicación. Base del control diario de almacén.</p>
             </div>
+            <div class="inventory-master-tabs" role="tablist" aria-label="Inventario">
+              <button type="button" class="js-inv-master-tab active" data-inv-master-tab="inventory">Existencias</button>
+              <button type="button" class="js-inv-master-tab" data-inv-master-tab="clients">Clientes</button>
+            </div>
             <div class="aviat-context-bar">
               <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
               <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
@@ -4296,8 +4352,8 @@
               <div id="productsList"></div>
             </div>
             <div id="clientsList" class="hidden" aria-hidden="true"></div>
-            <form id="createCustomerForm" class="hidden">
-              <h4 style="margin: 18px 0 8px">Crear cliente</h4>
+            <form id="createCustomerForm" class="hidden" hidden>
+              <h4 style="margin: 18px 0 8px">Crear proyecto (legado)</h4>
               <div class="form-grid">
                 <div class="field">
                   <label for="customerCode">Código</label>
@@ -4340,9 +4396,16 @@
             </form>
           </div>
           <div id="moduleClients" class="module-pane hidden">
-            <div class="module-screen-header">
+            <div class="module-screen-header module-header-band">
               <h3>Clientes</h3>
-              <p class="module-lead">Resumen de clientes a partir de catálogo e inventario cargado.</p>
+              <p class="module-lead">Clientes 3PL y los proyectos que les pertenecen. Un proyecto siempre tiene un cliente propietario.</p>
+            </div>
+            <div class="inventory-master-tabs" role="tablist" aria-label="Inventario">
+              <button type="button" class="js-inv-master-tab" data-inv-master-tab="inventory">Existencias</button>
+              <button type="button" class="js-inv-master-tab active" data-inv-master-tab="clients">Clientes</button>
+            </div>
+            <div class="master-toolbar">
+              <button type="button" class="btn-primary btn-compact js-admin-only" id="clientsAddBtn" data-master-create="client">Crear cliente</button>
             </div>
             <p id="clientsTableCount" class="operational-table-meta card-panel" style="margin-bottom:0;border-radius:12px 12px 0 0">Mostrando 0 clientes</p>
             <div class="grid-toolbar card-panel" style="margin:0;border-radius:0;border-top:0;padding:8px 16px" data-grid-toolbar="clients">
@@ -4353,10 +4416,7 @@
               <button type="button" class="btn-secondary btn-compact" data-reset-grid="clients">Restablecer columnas</button>
             </div>
             <div id="clientsModuleList" class="card-panel" style="border-top:0;border-radius:0 0 12px 12px;padding:0"></div>
-            <div id="clientsAdminZone" class="clients-admin-zone hidden">
-              <h4>Administración de clientes</h4>
-              <div id="clientsAdminList"></div>
-            </div>
+            <div id="clientsAdminZone" class="clients-admin-zone hidden"></div>
           </div>
           <div id="moduleReports" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
@@ -4771,7 +4831,7 @@
               <p class="module-lead">Proyectos con existencias asignadas en inventario.</p>
             </div>
             <div class="project-actions-row">
-              <button type="button" class="btn-primary btn-compact" id="projectsAddBtn" data-goto-module="catalog">Agregar proyecto</button>
+              <button type="button" class="btn-primary btn-compact" id="projectsAddBtn" data-master-create="project">Agregar proyecto</button>
               <button type="button" class="btn-secondary btn-compact" data-goto-module="inventory">Ir a existencias</button>
             </div>
             <div class="card-panel">
@@ -4797,20 +4857,26 @@
           <div id="moduleWarehouses" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Almacenes</h3>
-              <p class="module-lead">Almacenes detectados en existencias y movimientos. Puedes usar “Otro almacén” en capturas operativas.</p>
+              <p class="module-lead">Catálogo de almacenes. Los inactivos conservan historial y no aparecen en operaciones nuevas.</p>
             </div>
-            <div class="card-panel">
-              <ul id="warehousesKnownList" class="info-list"></ul>
+            <div class="master-toolbar">
+              <button type="button" class="btn-primary btn-compact js-admin-only" id="warehousesAddBtn" data-master-create="warehouse">Crear almacén</button>
             </div>
+            <p id="warehousesTableCount" class="operational-table-meta">Mostrando 0 almacenes</p>
+            <div id="warehousesModuleList" class="card-panel"></div>
           </div>
           <div id="moduleLocations" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Ubicaciones</h3>
-              <p class="module-lead">Ubicaciones detectadas en operación. Las nuevas capturas aparecen aquí en la siguiente carga de datos.</p>
+              <p class="module-lead">Catálogo de ubicaciones. Las altas aparecen de inmediato en recepción, movimiento interno e importación.</p>
             </div>
-            <div class="card-panel">
-              <ul id="locationsKnownList" class="info-list"></ul>
+            <div class="master-toolbar">
+              <input id="locationsSearch" type="search" placeholder="Buscar código o descripción" style="min-width:180px" />
+              <select id="locationsWarehouseFilter"><option value="">Todos los almacenes</option></select>
+              <button type="button" class="btn-primary btn-compact js-admin-only" id="locationsAddBtn" data-master-create="location">Agregar ubicación</button>
             </div>
+            <p id="locationsTableCount" class="operational-table-meta">Mostrando 0 ubicaciones</p>
+            <div id="locationsModuleList" class="card-panel"></div>
           </div>
           <div id="moduleConfig" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
@@ -5221,6 +5287,21 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=79"></script>
+    <div id="masterDataModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-labelledby="masterDataTitle" style="max-width:720px;width:min(720px,94vw);max-height:90vh;overflow:auto">
+        <div class="modal-header">
+          <h3 id="masterDataTitle">Datos maestros</h3>
+          <button type="button" class="modal-close" data-close-modal="masterDataModal" aria-label="Cerrar">×</button>
+        </div>
+        <p id="masterDataMessage" class="ops-message"></p>
+        <form id="masterDataForm" class="master-inline-form"></form>
+        <div class="page-toolbar" style="margin-top:12px">
+          <button type="submit" form="masterDataForm" class="btn-primary btn-compact" id="masterDataSaveBtn">Guardar</button>
+          <button type="button" class="btn-secondary btn-compact" data-close-modal="masterDataModal">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/dashboard.js?v=80"></script>
   </body>
 </html>

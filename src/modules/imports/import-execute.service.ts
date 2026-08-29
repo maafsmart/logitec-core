@@ -142,19 +142,27 @@ export async function executeImportBatch(input: {
       try {
         let clientId = n.clientId ? String(n.clientId) : null;
         if (!clientId) {
-          const created = await prisma.client.create({
-            data: {
-              name: String(n.client || n.tradeName || n.legalName || "Cliente"),
-              tradeName: n.tradeName ? String(n.tradeName) : null,
-              legalName: n.legalName ? String(n.legalName) : null,
-              rfc: n.rfc ? String(n.rfc) : null,
-              email: n.email ? String(n.email) : null,
-              phone: n.phone ? String(n.phone) : null,
-              notes: n.notes ? String(n.notes) : null,
-              active: true
-            }
-          });
-          clientId = created.id;
+          const rawName = String(n.client || n.tradeName || n.legalName || "Cliente");
+          const code = rawName.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 60) || "CLIENTE";
+          const existingClient = await prisma.client.findUnique({ where: { code } });
+          if (existingClient) {
+            clientId = existingClient.id;
+          } else {
+            const created = await prisma.client.create({
+              data: {
+                code,
+                name: rawName,
+                tradeName: n.tradeName ? String(n.tradeName) : null,
+                legalName: n.legalName ? String(n.legalName) : null,
+                rfc: n.rfc ? String(n.rfc) : null,
+                email: n.email ? String(n.email) : null,
+                phone: n.phone ? String(n.phone) : null,
+                notes: n.notes ? String(n.notes) : null,
+                active: true
+              }
+            });
+            clientId = created.id;
+          }
         }
         const projectCode = String(n.project || "").toUpperCase().replace(/\s+/g, "_").slice(0, 60);
         const existing = await prisma.customer.findUnique({ where: { code: projectCode } });

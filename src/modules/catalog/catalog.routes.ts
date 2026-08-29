@@ -4,8 +4,15 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
-import { clientCustomerWhere, clientInventoryWhere, clientProductWhere } from "../clients/client-scope.js";
+import { clientCustomerWhere, clientInventoryWhere, clientProductWhere, isClientRole } from "../clients/client-scope.js";
+import {
+  MASTER_DEACTIVATE_CODES,
+  createProjectRecord,
+  setProjectActive,
+  updateProjectRecord
+} from "../master-data/master-data.service.js";
 import { getSkuContext, searchSkuProducts } from "./sku-search.service.js";
+import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
 import { ensureCanonicalProductProject } from "../inventory/inventory-assignment.js";
 import { canExposeEconomicValuation } from "../inventory/inventory-economic-access.js";
 import {
@@ -31,14 +38,36 @@ const createCustomerSchema = z.object({
   code: z.string().min(1).max(60),
   name: z.string().min(1).max(160),
   active: z.coerce.boolean().default(true),
-  clientId: z.string().min(1).nullable().optional()
+  clientId: z.string().min(1),
+  tradeName: z.string().max(250).nullable().optional(),
+  legalName: z.string().max(250).nullable().optional(),
+  rfc: z.string().max(20).nullable().optional(),
+  address: z.string().max(500).nullable().optional(),
+  phone: z.string().max(40).nullable().optional(),
+  email: z.string().email().max(250).nullable().optional(),
+  primaryContact: z.string().max(160).nullable().optional(),
+  contactTitle: z.string().max(160).nullable().optional(),
+  contactPhone: z.string().max(40).nullable().optional(),
+  contactEmail: z.string().email().max(250).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional()
 });
+
+const updateCustomerSchema = createCustomerSchema.partial();
 
 const projectClientSelect = {
   id: true,
+  code: true,
   name: true,
   legalName: true,
   tradeName: true,
+  rfc: true,
+  address: true,
+  phone: true,
+  email: true,
+  primaryContact: true,
+  contactTitle: true,
+  contactPhone: true,
+  contactEmail: true,
   active: true
 } as const;
 
@@ -201,78 +230,68 @@ catalogRouter.post("/products", requireRole(["ADMIN"]), async (req, res) => {
 
 catalogRouter.get("/customers", async (req, res) => {
   const customers = await prisma.customer.findMany({
-    where: clientCustomerWhere(req.auth!),
+    where: {
+      AND: [clientCustomerWhere(req.auth!), isClientRole(req.auth!) ? { active: true } : {}]
+    },
     orderBy: { createdAt: "desc" },
     take: 200,
     include: { client: { select: projectClientSelect } }
   });
-  res.json(customers);
+  res.json(customers.filter((row) => !isForbiddenInventoryProjectRecord(row)));
 });
 
 catalogRouter.post("/customers", requireRole(["ADMIN"]), async (req, res) => {
   const data = createCustomerSchema.parse(req.body);
-  const clientId = data.clientId?.trim() || null;
-  if (clientId) {
-    const client = await prisma.client.findUnique({ where: { id: clientId }, select: { id: true } });
-    if (!client) {
-      throw new HttpError(400, "Cliente real no encontrado.");
-    }
-  }
-  const customer = await prisma.customer.create({
-    data: {
-      code: data.code.trim().toUpperCase(),
-      name: data.name.trim(),
-      active: data.active,
-      clientId
-    },
+  const customer = await createProjectRecord(prisma as never, data);
+  res.status(201).json(customer);
+});
+
+catalogRouter.get("/customers/:id", async (req, res) => {
+  const id = z.string().min(1).parse(req.params.id);
+  const customer = await prisma.customer.findFirst({
+    where: { AND: [{ id }, clientCustomerWhere(req.auth!)] },
     include: { client: { select: projectClientSelect } }
   });
-  res.status(201).json(customer);
+  if (!customer) {
+    throw new HttpError(404, "Proyecto no encontrado.");
+  }
+  res.json({ ...customer, inheritedClient: customer.client });
+});
+
+catalogRouter.put("/customers/:id", requireRole(["ADMIN"]), async (req, res) => {
+  const id = z.string().min(1).parse(req.params.id);
+  const data = updateCustomerSchema.parse(req.body);
+  res.json(await updateProjectRecord(prisma as never, id, data));
+});
+
+catalogRouter.patch("/customers/:id/active", requireRole(["ADMIN"]), async (req, res) => {
+  const id = z.string().min(1).parse(req.params.id);
+  const { active } = z.object({ active: z.coerce.boolean() }).parse(req.body);
+  res.json(await setProjectActive(prisma as never, id, active));
 });
 
 // Legacy compatibility for current UI label "clientes" (Customer = proyecto).
 catalogRouter.get("/clients", async (req, res) => {
   const customers = await prisma.customer.findMany({
-    where: clientCustomerWhere(req.auth!),
+    where: {
+      AND: [clientCustomerWhere(req.auth!), isClientRole(req.auth!) ? { active: true } : {}]
+    },
     orderBy: { createdAt: "desc" },
     take: 200
   });
-  res.json(customers.map((c) => ({ id: c.id, code: c.code, name: c.name, email: null, active: c.active })));
+  res.json(
+    customers
+      .filter((c) => !isForbiddenInventoryProjectRecord(c))
+      .map((c) => ({ id: c.id, code: c.code, name: c.name, email: null, active: c.active }))
+  );
 });
 
-catalogRouter.delete("/customers/:id", requireRole(["ADMIN"]), async (req, res) => {
-  const id = z.string().min(1).parse(req.params.id);
-  const customer = await prisma.customer.findUnique({ where: { id } });
-  if (!customer) {
-    throw new HttpError(404, "Cliente no encontrado.");
-  }
-
-  const linkedProducts = await prisma.product.count({
-    where: { customerId: id }
-  });
-  if (linkedProducts > 0) {
-    throw new HttpError(
-      400,
-      `No se puede eliminar cliente ${customer.code}: tiene ${linkedProducts} productos ligados.`
-    );
-  }
-  const linkedCatalog = await prisma.productProject.count({ where: { projectId: id } });
-  if (linkedCatalog > 0) {
-    throw new HttpError(
-      400,
-      `No se puede eliminar cliente ${customer.code}: tiene ${linkedCatalog} relaciones de catálogo.`
-    );
-  }
-  const linkedInventory = await prisma.inventory.count({ where: { projectId: id } });
-  if (linkedInventory > 0) {
-    throw new HttpError(
-      400,
-      `No se puede eliminar cliente ${customer.code}: tiene ${linkedInventory} existencias asignadas.`
-    );
-  }
-
-  await prisma.customer.delete({ where: { id } });
-  res.json({ message: "Cliente eliminado.", id });
+catalogRouter.delete("/customers/:id", requireRole(["ADMIN"]), async (_req, _res) => {
+  throw new HttpError(
+    409,
+    "No se permite el borrado físico de proyectos. Desactívelo si ya no debe usarse en operaciones nuevas.",
+    MASTER_DEACTIVATE_CODES.PHYSICAL_DELETE_DISABLED
+  );
 });
 
 catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) => {

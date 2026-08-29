@@ -278,7 +278,8 @@ function serializeRequisition(row: Awaited<ReturnType<typeof loadRequisition>>) 
     project: {
       id: row.project.id,
       code: row.project.code,
-      name: row.project.name
+      name: row.project.name,
+      clientId: row.project.clientId
     },
     client: row.project.client
       ? {
@@ -390,8 +391,9 @@ async function withReserveCubes<
   };
 }
 
-export async function listRequisitions() {
+export async function listRequisitions(where: Prisma.RequisitionWhereInput = {}) {
   const rows = await prisma.requisition.findMany({
+    where,
     orderBy: [{ createdAt: "desc" }],
     take: 200,
     include: {
