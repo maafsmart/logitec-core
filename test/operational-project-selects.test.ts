@@ -265,7 +265,7 @@ test("17 catálogo administrativo conserva LOGITEC", () => {
 });
 
 test("18 registros históricos conservan nombre LOGITEC", () => {
-  assert.match(js, /t\.project \? `\$\{t\.project\.name\} \(\$\{t\.project\.code\}\)`/);
+  assert.match(sliceFunction(js, "formatReqTableProject"), /isForbiddenProjectLabel/);
   assert.match(js, /req\.project \? `\$\{req\.project\.name\} \(\$\{req\.project\.code\}\)`/);
   assert.match(serviceSrc, /name: row\.project\.name/);
   assert.doesNotMatch(sliceFunction(serviceSrc, "listRequisitions"), /requireOperationalProject/);
@@ -438,7 +438,7 @@ test("28 reubicación, recepción y salidas no tienen regresiones", () => {
 });
 
 test("29 cache-buster v77", () => {
-  assert.match(html, /dashboard\.js\?v=78/);
+  assert.match(html, /dashboard\.js\?v=79/);
   assert.doesNotMatch(html, /dashboard\.js\?v=73/);
 });
 

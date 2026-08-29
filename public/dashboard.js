@@ -183,6 +183,9 @@ function inventoryScopeFromAssignmentOpt(assignmentType) {
   return { projectId: "", assignmentType: "" };
 }
 
+let requisitionSkuSelectedContext = null;
+let requisitionSkuSelectedListEl = null;
+
 function rememberInventorySkuSelectedContext(listEl, context) {
   if (listEl?.id !== "invFilterSkuSuggestions" || !context?.product) return;
   inventorySkuSelectedContext = context;
@@ -199,6 +202,20 @@ function refreshInventorySkuSelectedCard() {
   const listEl = inventorySkuSelectedListEl || document.getElementById("invFilterSkuSuggestions");
   if (!listEl) return;
   renderSkuContext(listEl, inventorySkuSelectedContext);
+}
+
+function rememberRequisitionSkuSelectedContext(listEl, context) {
+  const prefix = typeof opsPrefixFromTypeahead === "function" ? opsPrefixFromTypeahead(listEl, null) : "";
+  if ((prefix !== "req" && listEl?.id !== "reqSkuSuggestions") || !context?.product) return;
+  requisitionSkuSelectedContext = context;
+  requisitionSkuSelectedListEl = listEl;
+}
+
+function refreshRequisitionSkuSelectedCard() {
+  if (!requisitionSkuSelectedContext?.product) return;
+  const listEl = requisitionSkuSelectedListEl || document.getElementById("reqSkuSuggestions");
+  if (!listEl) return;
+  renderSkuContext(listEl, requisitionSkuSelectedContext);
 }
 
 function getInventoryScope() {
@@ -4677,19 +4694,33 @@ const OPS_MOVEMENT_COLUMNS = [
   { label: "Cantidad", align: "right", sortKey: (m) => Number(m.qty) || 0, sortType: "number", render: (m) => formatQty(m.qty) }
 ];
 
+function formatReqTableClient(row) {
+  return canonicalClientDisplay(row);
+}
+
+function formatReqTableProject(row) {
+  const project = row?.project;
+  if (!project) return "—";
+  if (isForbiddenProjectLabel(project.code) || isForbiddenProjectLabel(project.name)) return "—";
+  const name = String(project.name || "").trim();
+  const code = String(project.code || "").trim();
+  if (name && code) return `${name} (${code})`;
+  return name || code || "—";
+}
+
 const REQ_COLUMNS = [
   { label: "Requisición", sortKey: (t) => t.number || "", render: (t) => renderCellWithClamp(t.number, "cell-truncate", 18), title: (t) => t.number || "" },
   {
     label: "Cliente",
-    sortKey: (t) => t.client?.tradeName || t.client?.name || "",
-    render: (t) => renderCellWithClamp(t.client?.tradeName || t.client?.legalName || t.client?.name || "—", "cell-truncate", 22),
-    title: (t) => t.client?.tradeName || t.client?.name || ""
+    sortKey: (t) => formatReqTableClient(t),
+    render: (t) => renderCellWithClamp(formatReqTableClient(t), "cell-truncate", 22),
+    title: (t) => formatReqTableClient(t)
   },
   {
     label: "Proyecto",
-    sortKey: (t) => t.project?.code || "",
-    render: (t) => renderCellWithClamp(t.project ? `${t.project.name} (${t.project.code})` : "—", "cell-truncate", 24),
-    title: (t) => (t.project ? `${t.project.name} (${t.project.code})` : "")
+    sortKey: (t) => formatReqTableProject(t),
+    render: (t) => renderCellWithClamp(formatReqTableProject(t), "cell-truncate", 24),
+    title: (t) => formatReqTableProject(t)
   },
   {
     label: "Prioridad",
@@ -7690,11 +7721,45 @@ function skuCardResolveScopedProject(scopeId, breakdown, focusedRows) {
   return { id: scopeId, name: "Proyecto seleccionado", code: "" };
 }
 
-function skuCardFocusFromContext(context) {
+function requisitionFormSkuCardScope() {
+  const sel = typeof document !== "undefined" ? document.getElementById("reqCustomer") : null;
+  const code = String(sel?.value || "").trim();
+  if (!code || (typeof SMART_OTHER !== "undefined" && code === SMART_OTHER)) {
+    return { projectId: "", assignmentType: "" };
+  }
+  const catalogs = [];
+  if (typeof getOperationalProjectsForSelect === "function") {
+    const rows = getOperationalProjectsForSelect();
+    if (Array.isArray(rows)) catalogs.push(...rows);
+  }
+  if (typeof inventoryProjectsCache !== "undefined" && Array.isArray(inventoryProjectsCache)) {
+    catalogs.push(...inventoryProjectsCache);
+  }
+  const match = catalogs.find((p) => p && (String(p.code || "") === code || String(p.id || "") === code));
+  if (match?.id) return { projectId: String(match.id), assignmentType: "PROJECT" };
+  return { projectId: "", assignmentType: "" };
+}
+
+function skuCardScopeFromTypeahead(listEl) {
+  const prefix = typeof opsPrefixFromTypeahead === "function" ? opsPrefixFromTypeahead(listEl, null) : "";
+  if (prefix === "req" || listEl?.id === "reqSkuSuggestions") return requisitionFormSkuCardScope();
+  return null;
+}
+
+function skuCardFocusFromContext(context, scopeOverride) {
   const locations = Array.isArray(context?.inventory?.locations) ? context.inventory.locations : [];
   const breakdown = context?.assignmentBreakdown || null;
   const scope =
-    typeof getInventoryScope === "function" ? getInventoryScope() || {} : { projectId: "", assignmentType: "" };
+    scopeOverride && typeof scopeOverride === "object"
+      ? {
+          projectId: String(scopeOverride.projectId || "").trim(),
+          assignmentType: String(scopeOverride.projectId || "").trim()
+            ? "PROJECT"
+            : String(scopeOverride.assignmentType || "").trim().toUpperCase()
+        }
+      : typeof getInventoryScope === "function"
+        ? getInventoryScope() || {}
+        : { projectId: "", assignmentType: "" };
   const scopeId = String(scope.projectId || "").trim();
   const assignmentType = scopeId ? "PROJECT" : String(scope.assignmentType || "").trim().toUpperCase();
   const operationalLocations = locations.filter((row) => {
@@ -7796,9 +7861,9 @@ function skuCardFocusFromContext(context) {
   };
 }
 
-function buildSkuSelectedCardHtml(context, detailHtml) {
+function buildSkuSelectedCardHtml(context, detailHtml, scopeOverride) {
   const product = context?.product || {};
-  const focus = skuCardFocusFromContext(context);
+  const focus = skuCardFocusFromContext(context, scopeOverride);
   const availableValue = focus.showAvailableDash ? "—" : formatQty(focus.qty);
   const reservedValue = focus.showAvailableDash ? "—" : formatQty(focus.reservedQty);
   const unreservedValue = focus.showAvailableDash ? "—" : formatQty(focus.unreservedQty);
@@ -7853,8 +7918,15 @@ function renderSkuContext(listEl, context) {
   panel.hidden = false;
   const locations = Array.isArray(context.inventory?.locations) ? context.inventory.locations : [];
   const pickingSelector = Boolean(document.getElementById("pickCandidates") && listEl?.id === "scanSkuSuggestions");
-  panel.innerHTML = buildSkuSelectedCardHtml(context, buildSkuContextDetailHtml(context, { pickingSelector }));
+  panel.innerHTML = buildSkuSelectedCardHtml(
+    context,
+    buildSkuContextDetailHtml(context, { pickingSelector }),
+    typeof skuCardScopeFromTypeahead === "function" ? skuCardScopeFromTypeahead(listEl) : null
+  );
   rememberInventorySkuSelectedContext(listEl, context);
+  if (typeof rememberRequisitionSkuSelectedContext === "function") {
+    rememberRequisitionSkuSelectedContext(listEl, context);
+  }
   const input = wrap?.querySelector("input");
   panel.querySelector(".sku-change-btn")?.addEventListener("click", () => {
     beginSkuChange(listEl, input);
@@ -9268,22 +9340,22 @@ function setPickRequisitionMessage(message, ok) {
 
 async function fetchRequisitionById(id) {
   if (!id) return null;
-  const response = await authenticatedFetch(`/api/requisitions/${encodeURIComponent(id)}`);
+  const response = await authenticatedFetch(`/api/requisitions/${encodeURIComponent(id)}`, { cache: "no-store" });
   if (!response?.ok) return null;
   return response.json();
 }
 
 async function refreshRequisitionViews(reqId) {
+  if (reqId) {
+    const fresh = await fetchRequisitionById(reqId);
+    if (fresh) renderRequisitionDetail(fresh);
+  }
   await loadRequisitionsList();
   await loadTasks();
   await loadStockStrip();
   await loadInventoryMovements();
   if (typeof loadTraceability === "function") await loadTraceability();
   if (typeof loadScanEvents === "function") await loadScanEvents();
-  if (reqId) {
-    const fresh = await fetchRequisitionById(reqId);
-    if (fresh) renderRequisitionDetail(fresh);
-  }
 }
 
 function setReqActionMessage(text, ok) {
@@ -9940,6 +10012,7 @@ async function cancelRequisitionFromDetail(row) {
     return;
   }
   setOpsMessage("reqMessage", `Requisición ${folio} cancelada. Las reservas fueron liberadas.`, true);
+  if (data && data.id) renderRequisitionDetail(data);
   await refreshRequisitionViews(row.id);
 }
 
@@ -10158,6 +10231,7 @@ function wireOperationalForms() {
           const inp = document.getElementById(clienteId);
           if (inp) inp.value = match?.name || "";
         }
+        if (custId === "reqCustomer") refreshRequisitionSkuSelectedCard();
       });
     }
     const sku = document.getElementById(skuId);
