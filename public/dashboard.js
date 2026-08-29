@@ -138,9 +138,11 @@ const physicalInventoryResetSuccess = document.getElementById("physicalInventory
 let physicalInventoryResetBusy = false;
 
 let currentRole = null;
+let currentUserId = null;
+let currentUserClient = null;
+let adminSelectedClientId = "";
 let movementsNextCursor = null;
 let movementsRows = [];
-let currentUserId = null;
 let catalogApplyCompleted = false;
 let stockRowsCache = [];
 /** @type {Array<{ id?: string, code?: string, warehouse?: string, active?: boolean }>} */
@@ -252,7 +254,10 @@ function inventoryScopeQueryString() {
     params.set("assignmentType", scope.assignmentType);
   }
   const qs = params.toString();
-  return qs ? `?${qs}` : "";
+  const clientId = selectedAdminClientId();
+  if (clientId) params.set("clientId", clientId);
+  const withClient = params.toString();
+  return withClient ? `?${withClient}` : "";
 }
 
 function inventoryScopeLabel() {
@@ -272,24 +277,44 @@ function inventoryAssignmentScopeLabel() {
 }
 
 function getAviatScopeSummaryText() {
-  return `Proyecto: ${inventoryScopeLabel()} · Asignación: ${inventoryAssignmentScopeLabel()}`;
+  return `Cliente: ${owningClientDisplayName()} · Proyecto: ${inventoryScopeLabel()} · Asignación: ${inventoryAssignmentScopeLabel()}`;
 }
 
 function getAviatExportBasename(kind) {
   const scope = getInventoryScope();
+  const clientToken = owningClientExportToken();
   if (scope.projectId) {
     const project = inventoryProjectsCache.find((p) => p.id === scope.projectId);
     const token = String(project?.code || scope.projectId).replace(/[^\w]+/g, "_");
-    return `${kind}_AVIAT_${token}`;
+    return `${kind}_${clientToken}_${token}`;
   }
-  if (scope.assignmentType === "FREE_TO_SALE") return `${kind}_AVIAT_FREE_TO_SALE`;
-  if (scope.assignmentType === "PROJECT") return `${kind}_AVIAT_PROJECT`;
-  return `${kind}_AVIAT`;
+  if (scope.assignmentType === "FREE_TO_SALE") return `${kind}_${clientToken}_FREE_TO_SALE`;
+  if (scope.assignmentType === "PROJECT") return `${kind}_${clientToken}_PROJECT`;
+  return `${kind}_${clientToken}`;
 }
 
 function fillInventoryProjectSelects() {
   const scope = getInventoryScope();
-  const options = [`<option value="">${typeof currentRole !== "undefined" && currentRole === "CLIENT" ? "Todos los proyectos de mi cliente" : "Todos los proyectos"}</option>`]
+  const isClient = typeof currentRole !== "undefined" && currentRole === "CLIENT";
+  document.querySelectorAll(".js-inventory-client-select").forEach((sel) => {
+    const wrap = sel.closest(".js-admin-client-filter") || sel.parentElement;
+    if (wrap) wrap.classList.toggle("hidden", isClient);
+    if (isClient) return;
+    const clients = (realClientsCache || []).filter(
+      (row) => row.active !== false && !isForbiddenProjectLabel(row.code) && !isForbiddenProjectLabel(row.name)
+    );
+    const current = selectedAdminClientId();
+    sel.innerHTML =
+      `<option value="">Todos los clientes</option>` +
+      clients
+        .map(
+          (client) =>
+            `<option value="${escCell(client.id)}">${escCell(client.tradeName || client.name)} (${escCell(client.code)})</option>`
+        )
+        .join("");
+    sel.value = current && clients.some((client) => client.id === current) ? current : "";
+  });
+  const options = [`<option value="">${isClient ? "Todos los proyectos de mi cliente" : "Todos los proyectos"}</option>`]
     .concat(
       inventoryProjectsCache.map(
         (p) =>
@@ -306,21 +331,17 @@ function fillInventoryProjectSelects() {
   document.querySelectorAll(".js-assignment-opt").forEach((btn) => {
     const value = btn.getAttribute("data-assignment") || "";
     btn.classList.toggle("active", value === (scope.projectId ? "PROJECT" : scope.assignmentType));
-    btn.disabled =
-      (Boolean(scope.projectId) && value === "FREE_TO_SALE") ||
-      (typeof currentRole !== "undefined" && currentRole === "CLIENT" && value === "FREE_TO_SALE");
-    if (btn.style) {
-      if (typeof currentRole !== "undefined" && currentRole === "CLIENT" && value === "FREE_TO_SALE") btn.style.display = "none";
-      else if (value === "FREE_TO_SALE") btn.style.display = "";
-    }
+    btn.disabled = Boolean(scope.projectId) && value === "FREE_TO_SALE";
+    if (btn.style) btn.style.display = "";
   });
 }
 
 function updateInventoryScopeUi() {
   const projectLabel = inventoryScopeLabel();
   const assignmentLabel = inventoryAssignmentScopeLabel();
+  const clientLabel = owningClientDisplayName();
   document.querySelectorAll("[data-aviat-primary-label]").forEach((el) => {
-    el.textContent = PRIMARY_CLIENT_AVIAT_NAME;
+    el.textContent = clientLabel;
   });
   document.querySelectorAll("[data-aviat-project-label]").forEach((el) => {
     el.textContent = projectLabel;
@@ -334,11 +355,11 @@ function updateInventoryScopeUi() {
     if (el) el.textContent = scopeText;
   });
   const ccTitle = document.getElementById("ccModuleTitle");
-  if (ccTitle) ccTitle.textContent = `Centro de Control — ${PRIMARY_CLIENT_AVIAT_NAME}`;
+  if (ccTitle) ccTitle.textContent = `Centro de Control — ${clientLabel}`;
   const invTitle = document.getElementById("inventoryModuleTitle");
-  if (invTitle) invTitle.textContent = `Inventario de ${PRIMARY_CLIENT_AVIAT_NAME}`;
+  if (invTitle) invTitle.textContent = `Inventario de ${clientLabel}`;
   const catTitle = document.getElementById("catalogModuleTitle");
-  if (catTitle) catTitle.textContent = `Catálogo de ${PRIMARY_CLIENT_AVIAT_NAME}`;
+  if (catTitle) catTitle.textContent = `Catálogo de ${clientLabel}`;
   fillInventoryProjectSelects();
   renderProjectsStockList();
 }
@@ -430,6 +451,15 @@ function wireInventoryScopeUi() {
     return;
   }
   inventoryScopeWired = true;
+  document.querySelectorAll(".js-inventory-client-select").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      adminSelectedClientId = sel.value || "";
+      document.querySelectorAll(".js-inventory-client-select").forEach((other) => {
+        if (other !== sel) other.value = adminSelectedClientId;
+      });
+      void setInventoryScope(getInventoryScope());
+    });
+  });
   document.querySelectorAll(".js-inventory-project-select").forEach((sel) => {
     sel.addEventListener("change", () => {
       const projectId = sel.value || "";
@@ -494,19 +524,51 @@ function historicalNonOperationalAssignmentLabel() {
   return "Asignación histórica/no operativa";
 }
 
+function owningClientDisplayName() {
+  if (currentRole === "CLIENT") {
+    const client = currentUserClient;
+    return String(client?.tradeName || client?.legalName || client?.name || "").trim() || "Mi cliente";
+  }
+  if (adminSelectedClientId) {
+    const client = realClientsCache.find((row) => row.id === adminSelectedClientId);
+    return String(client?.tradeName || client?.name || "").trim() || "Cliente seleccionado";
+  }
+  return "Todos los clientes";
+}
+
+function owningClientExportToken() {
+  if (currentRole === "CLIENT") {
+    return String(currentUserClient?.code || currentUserClient?.name || "CLIENT").replace(/[^\w]+/g, "_");
+  }
+  if (adminSelectedClientId) {
+    const client = realClientsCache.find((row) => row.id === adminSelectedClientId);
+    return String(client?.code || client?.name || "CLIENT").replace(/[^\w]+/g, "_");
+  }
+  return "ALL_CLIENTS";
+}
+
+function selectedAdminClientId() {
+  if (typeof currentRole !== "undefined" && currentRole === "CLIENT") return "";
+  return String(adminSelectedClientId || "").trim();
+}
+
 function canonicalClientDisplay(source) {
   const candidates = [
     source?.client?.tradeName,
     source?.client?.legalName,
     source?.client?.name,
+    source?.project?.client?.tradeName,
+    source?.project?.client?.legalName,
+    source?.project?.client?.name,
     source?.tradeName,
-    source?.legalName
+    source?.legalName,
+    source?.code
   ];
   for (const value of candidates) {
     const label = String(value || "").trim();
     if (label && !isForbiddenProjectLabel(label)) return label;
   }
-  return PRIMARY_CLIENT_AVIAT_NAME;
+  return typeof owningClientDisplayName === "function" ? owningClientDisplayName() : "—";
 }
 
 function isSuggestedOperationalProject(item) {
@@ -2013,7 +2075,7 @@ function openInventoryDetail(row) {
     });
   }
   const fields = [
-    { label: "Cliente principal", value: PRIMARY_CLIENT_AVIAT_NAME },
+    { label: "Cliente", value: owningClientDisplayName() },
     { label: isFreeToSaleRow(row) ? "Asignación" : "Proyecto", value: inventoryProjectOrAssignmentLabel(row) },
     { label: "Lote", value: extractLoteFromRow(row) },
     { label: "SKU / Código de barras", value: formatSkuBarcode(p) },
@@ -2624,7 +2686,7 @@ function wireLayerPricePanel() {
 
 function openCatalogDetail(product) {
   const fields = [
-    { label: "Cliente principal", value: PRIMARY_CLIENT_AVIAT_NAME },
+    { label: "Cliente", value: owningClientDisplayName() },
     { label: "Proyectos con existencias", value: catalogProjectsWithStockLabel(product) },
     { label: "Lote", value: "N/D" },
     { label: "SKU / Código de barras", value: formatSkuBarcode(product) },
@@ -7411,13 +7473,14 @@ function fillInboundProjectSelect() {
   const sel = document.getElementById("inboundProjectId");
   if (!(sel instanceof HTMLSelectElement)) return;
   const prev = sel.value;
-  const projects = realActiveCatalogProjects(inboundSelectedSkuClientId());
+  const ownerClientId = inboundSelectedOwnerClientId();
+  const projects = realActiveCatalogProjects(ownerClientId);
   sel.innerHTML =
     '<option value="">— Seleccionar proyecto —</option>' +
     projects
       .map(
         (project) =>
-          `<option value="${escCell(project.id)}" data-code="${escCell(project.code)}" data-name="${escCell(project.name)}">${escCell(
+          `<option value="${escCell(project.id)}" data-code="${escCell(project.code)}" data-name="${escCell(project.name)}" data-client-id="${escCell(project.clientId || "")}">${escCell(
             project.name
           )} (${escCell(project.code)})</option>`
       )
@@ -7426,12 +7489,36 @@ function fillInboundProjectSelect() {
   else sel.value = "";
 }
 
+function inboundSelectedOwnerClientId() {
+  return String(document.getElementById("inboundClientId")?.value || "").trim();
+}
+
+function fillInboundClientSelect() {
+  const sel = document.getElementById("inboundClientId");
+  if (!(sel instanceof HTMLSelectElement)) return;
+  const prev = sel.value;
+  const clients = (realClientsCache || []).filter((row) => row.active !== false && !isForbiddenProjectLabel(row.code) && !isForbiddenProjectLabel(row.name));
+  sel.innerHTML =
+    '<option value="">— Seleccionar cliente —</option>' +
+    clients
+      .map(
+        (client) =>
+          `<option value="${escCell(client.id)}">${escCell(client.tradeName || client.name)} (${escCell(client.code)})</option>`
+      )
+      .join("");
+  if (prev && clients.some((client) => client.id === prev)) sel.value = prev;
+  else if (clients.length === 1) sel.value = clients[0].id;
+}
+
 function syncInboundAssignmentUi() {
   const type = inboundAssignmentTypeValue();
-  const field = document.getElementById("inboundProjectField");
+  const projectField = document.getElementById("inboundProjectField");
+  const clientField = document.getElementById("inboundClientField");
   const sel = document.getElementById("inboundProjectId");
-  if (field) field.classList.toggle("hidden", type !== "PROJECT");
+  if (projectField) projectField.classList.toggle("hidden", type !== "PROJECT");
+  if (clientField) clientField.classList.toggle("hidden", type !== "FREE_TO_SALE");
   if (sel && type !== "PROJECT") sel.value = "";
+  fillInboundClientSelect();
   if (type === "PROJECT") fillInboundProjectSelect();
   syncInboundSubmitEnabled();
 }
@@ -7440,6 +7527,7 @@ function inboundFormIsComplete() {
   const assignmentType = inboundAssignmentTypeValue();
   if (assignmentType !== "FREE_TO_SALE" && assignmentType !== "PROJECT") return false;
   if (assignmentType === "PROJECT" && !inboundSelectedProjectId()) return false;
+  if (assignmentType === "FREE_TO_SALE" && !inboundSelectedOwnerClientId()) return false;
   if (!inboundHasSystemSkuSelection()) return false;
   const qty = Number(document.getElementById("inboundQty")?.value);
   if (!Number.isFinite(qty) || qty <= 0) return false;
@@ -9280,6 +9368,7 @@ async function submitOperationalMovement(kind) {
     if (kind === "in") {
       payload.assignmentType = inboundAssignmentType;
       payload.projectId = inboundAssignmentType === "FREE_TO_SALE" ? null : inboundProjectId;
+      if (inboundAssignmentType === "FREE_TO_SALE") payload.clientId = inboundSelectedOwnerClientId();
       if (lote) payload.lotNumber = lote;
       const price = parseInboundUnitPriceMxn();
       if (!price.empty && price.value != null && (typeof canSeeEconomicValuation !== "function" || canSeeEconomicValuation())) {
@@ -10797,6 +10886,14 @@ function wireOperationalForms() {
     inboundAssignment.dataset.opsWired = "1";
     inboundAssignment.addEventListener("change", () => syncInboundAssignmentUi());
   }
+  const inboundClient = document.getElementById("inboundClientId");
+  if (inboundClient && inboundClient.dataset.opsWired !== "1") {
+    inboundClient.dataset.opsWired = "1";
+    inboundClient.addEventListener("change", () => {
+      fillInboundProjectSelect();
+      syncInboundSubmitEnabled();
+    });
+  }
   [
     "inboundProjectId",
     "inboundQty",
@@ -11062,7 +11159,7 @@ function applyRoleNavigation(role) {
   const newClientField = document.getElementById("newClientField");
   if (newClientField) newClientField.classList.toggle("hidden", document.getElementById("newRole")?.value !== "CLIENT");
   document.querySelectorAll(".js-assignment-opt[data-assignment='FREE_TO_SALE']").forEach((btn) => {
-    btn.style.display = role === "CLIENT" ? "none" : "";
+    btn.style.display = "";
   });
   if (importSection) importSection.classList.remove("hidden");
   if (catalogImportSection) catalogImportSection.classList.remove("hidden");
@@ -11793,6 +11890,11 @@ async function validateSession() {
     if (!user) return;
     currentRole = user.role || "CLIENT";
     currentUserId = user.id || null;
+    currentUserClient = user.client
+      ? { ...user.client, id: user.client.id || user.clientId, code: user.client.code }
+      : user.clientId
+        ? { id: user.clientId }
+        : null;
     applyRoleNavigation(currentRole);
     applyEconomicVisibility();
     void initLabResetAvailability();
@@ -11810,6 +11912,8 @@ async function validateSession() {
     applySessionRoute();
     await loadUsersModule(currentRole);
     await loadCatalogData();
+    await loadRealClientsQuiet().catch(() => {});
+    updateInventoryScopeUi();
     if (currentRole === "ADMIN" || currentRole === "OPERATOR" || currentRole === "SUPERVISOR") {
       await loadStockStrip();
       await loadInventoryMovements();

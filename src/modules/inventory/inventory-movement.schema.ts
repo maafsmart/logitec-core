@@ -19,7 +19,8 @@ export const createMovementSchema = z
     unitPriceMxn: z.unknown().optional(),
     unitPriceUsd: z.coerce.number().nonnegative().optional(),
     assignmentType: z.enum(["PROJECT", "FREE_TO_SALE"]).optional(),
-    projectId: z.string().min(1).nullable().optional()
+    projectId: z.string().min(1).nullable().optional(),
+    clientId: z.string().min(1).nullable().optional()
   })
   .superRefine((data, ctx) => {
     if (data.type === "ADJUST_SET") {
@@ -46,6 +47,12 @@ export const createMovementSchema = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "FREE TO SALE no admite projectId."
+        });
+      }
+      if (data.assignmentType === "FREE_TO_SALE" && !data.clientId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "FREE TO SALE requiere el cliente propietario."
         });
       }
     }

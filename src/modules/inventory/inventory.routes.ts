@@ -5,14 +5,18 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
 import {
-  adminClientMovementFilter,
+  assertAccessibleLayer,
+  assertAccessibleMovement,
+  assertAccessibleSerial,
   clientInventoryWhere,
   clientLayerWhere,
   clientMovementWhere,
   clientProductWhere,
   clientSerialWhere,
   effectiveRequestedClientId,
-  isClientRole
+  isClientRole,
+  scopedInventoryWhere,
+  scopedMovementWhere
 } from "../clients/client-scope.js";
 import {
   createLocationRecord,
@@ -53,6 +57,7 @@ const optionalId = z.preprocess(
 );
 const inventoryScopeQuerySchema = z.object({
   projectId: optionalId,
+  clientId: optionalId,
   assignmentType: z.preprocess(
     (value) => (value == null || String(value).trim() === "" ? undefined : String(value).trim().toUpperCase()),
     z.enum(["PROJECT", "FREE_TO_SALE"]).optional()
@@ -72,10 +77,10 @@ inventoryRouter.get("/statuses", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR",
 inventoryRouter.get("/summary", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   const scope = inventoryScopeQuerySchema.parse(req.query);
   const inventoryWhere: Prisma.InventoryWhereInput = {
-    AND: [clientInventoryWhere(req.auth!), inventoryScopeWhere(scope), { qty: { gt: 0 } }]
+    AND: [scopedInventoryWhere(req.auth!, scope.clientId), inventoryScopeWhere(scope), { qty: { gt: 0 } }]
   };
   const movementWhere: Prisma.InventoryMovementWhereInput = {
-    AND: [clientMovementWhere(req.auth!), movementScopeWhere(scope)]
+    AND: [scopedMovementWhere(req.auth!, scope.clientId), movementScopeWhere(scope)]
   };
   const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
   const [cubes, qtyAgg, productIds, locationIds, projectIds, movements, catalogProducts, layers, serials, activeReservations, layersForValuation] = await Promise.all([
@@ -124,11 +129,12 @@ inventoryRouter.get("/summary", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", 
 });
 
 inventoryRouter.get("/projects", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const scope = inventoryScopeQuerySchema.parse(req.query);
   const grouped = await prisma.inventory.groupBy({
     by: ["projectId"],
     where: {
       AND: [
-        clientInventoryWhere(req.auth!),
+        scopedInventoryWhere(req.auth!, scope.clientId),
         { assignmentType: "PROJECT", projectId: { not: null }, qty: { gt: 0 } }
       ]
     },
@@ -148,7 +154,7 @@ inventoryRouter.get("/projects", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR",
     ? await prisma.inventory.findMany({
         where: {
           AND: [
-            clientInventoryWhere(req.auth!),
+            scopedInventoryWhere(req.auth!, scope.clientId),
             { assignmentType: "PROJECT", projectId: { in: ids }, qty: { gt: 0 } }
           ]
         },
@@ -350,6 +356,9 @@ inventoryRouter.get("/products/:productId/serials", requireRole(["ADMIN", "OPERA
     select: { id: true }
   });
   if (!product) throw new HttpError(404, "Producto no encontrado.");
+  if (query.layerId) {
+    await assertAccessibleLayer(req.auth!, query.layerId, prisma);
+  }
   const serialWhere: Prisma.InventorySerialWhereInput = {
     AND: [
       { productId, ...(query.layerId ? { inventoryLayerId: query.layerId } : {}) },
@@ -381,7 +390,7 @@ inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "C
   const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
   const rows = await prisma.inventory.findMany({
     where: {
-      AND: [clientInventoryWhere(req.auth!), inventoryScopeWhere(scope), { qty: { gt: 0 } }]
+      AND: [scopedInventoryWhere(req.auth!, scope.clientId), inventoryScopeWhere(scope), { qty: { gt: 0 } }]
     },
     orderBy: [{ location: { warehouse: "asc" } }, { updatedAt: "desc" }],
     take: 20000,
@@ -390,6 +399,7 @@ inventoryRouter.get("/stock", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "C
         select: { sku: true, name: true, active: true, barcode: true }
       },
       location: true,
+      client: { select: { id: true, code: true, name: true, tradeName: true, legalName: true } },
       project: {
         select: {
           id: true,
@@ -437,7 +447,15 @@ inventoryRouter.get("/locations", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
           ? { inventories: { some: clientInventoryWhere(req.auth!) } }
           : {},
         query.includeInactive ? {} : { active: true },
-        query.warehouse ? { warehouse: { equals: query.warehouse, mode: "insensitive" } } : {},
+        query.warehouse
+          ? {
+              OR: [
+                { warehouseId: query.warehouse },
+                { warehouse: { equals: query.warehouse, mode: "insensitive" } },
+                { catalogWarehouse: { code: { equals: query.warehouse, mode: "insensitive" } } }
+              ]
+            }
+          : {},
         query.q
           ? {
               OR: [
@@ -455,8 +473,9 @@ inventoryRouter.get("/locations", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
   res.json(rows);
 });
 
-const createLocationSchema = z.object({
-  warehouse: z.string().min(1).max(80),
+const locationFieldsSchema = z.object({
+  warehouseId: z.string().min(1).max(80).optional(),
+  warehouse: z.string().min(1).max(80).optional(),
   code: z.string().min(1).max(80).optional(),
   description: z.string().max(250).optional(),
   zone: z.string().max(20).optional(),
@@ -464,6 +483,12 @@ const createLocationSchema = z.object({
   level: z.string().max(20).optional(),
   position: z.string().max(20).optional(),
   notes: z.string().max(2000).optional()
+});
+
+const createLocationSchema = locationFieldsSchema.superRefine((data, ctx) => {
+  if (!data.warehouseId && !data.warehouse) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "La ubicación requiere warehouseId." });
+  }
 });
 
 inventoryRouter.post("/locations", requireRole(["ADMIN"]), async (req, res) => {
@@ -488,7 +513,7 @@ inventoryRouter.get("/locations/:id", requireRole(["ADMIN", "OPERATOR", "SUPERVI
 
 inventoryRouter.put("/locations/:id", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
-  const data = createLocationSchema.partial().parse(req.body);
+  const data = locationFieldsSchema.partial().parse(req.body);
   res.json(await updateLocationRecord(prisma as never, id, data));
 });
 
@@ -533,13 +558,10 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
     dateFilter.lte = date;
   }
   const conditions: Prisma.InventoryMovementWhereInput[] = [
-    clientMovementWhere(req.auth!),
+    scopedMovementWhere(req.auth!, query.clientId),
     ...(Object.keys(dateFilter).length ? [{ createdAt: dateFilter }] : []),
     ...(query.sku ? [{ product: { sku: { equals: query.sku, mode: "insensitive" as const } } }] : []),
     ...(query.productId ? [{ productId: query.productId }] : []),
-    ...(effectiveRequestedClientId(req.auth!, query.clientId)
-      ? [adminClientMovementFilter(effectiveRequestedClientId(req.auth!, query.clientId))]
-      : []),
     ...(() => {
       const scoped = movementScopeWhere({
         projectId: query.projectId,
@@ -716,6 +738,43 @@ inventoryRouter.get("/movements", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR"
   });
 });
 
+inventoryRouter.get("/movements/:id", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const id = z.string().min(1).parse(req.params.id);
+  await assertAccessibleMovement(req.auth!, id, prisma);
+  const row = await prisma.inventoryMovement.findFirst({
+    where: { AND: [{ id }, clientMovementWhere(req.auth!)] },
+    include: {
+      product: { select: { id: true, sku: true, name: true } },
+      fromProject: { select: { id: true, code: true, name: true } },
+      toProject: { select: { id: true, code: true, name: true } },
+      client: { select: { id: true, code: true, name: true } }
+    }
+  });
+  if (!row) throw new HttpError(404, "Movimiento no encontrado.");
+  res.json(row);
+});
+
+inventoryRouter.get("/serials/:serialId", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const serialId = z.string().min(1).parse(req.params.serialId);
+  await assertAccessibleSerial(req.auth!, serialId, prisma);
+  const serial = await prisma.inventorySerial.findFirst({
+    where: { AND: [{ id: serialId }, clientSerialWhere(req.auth!)] },
+    select: { id: true, productId: true, serialNumber: true, imei: true, inventoryLayerId: true, clientId: true }
+  });
+  if (!serial) throw new HttpError(404, "Serie no encontrada.");
+  res.json(serial);
+});
+
+inventoryRouter.get("/layers/:layerId", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const layerId = z.string().min(1).parse(req.params.layerId);
+  await assertAccessibleLayer(req.auth!, layerId, prisma);
+  const layer = await prisma.inventoryLayer.findFirst({
+    where: { AND: [{ id: layerId }, clientLayerWhere(req.auth!)] }
+  });
+  if (!layer) throw new HttpError(404, "Capa no encontrada.");
+  res.json(layer);
+});
+
 inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
   const body = createMovementSchema.parse(req.body);
   if (
@@ -783,6 +842,7 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
       unitPriceUsd: body.unitPriceUsd == null ? null : dec(body.unitPriceUsd),
       assignmentType: body.assignmentType,
       projectId: body.projectId === undefined ? undefined : body.projectId,
+      clientId: body.clientId === undefined ? undefined : body.clientId,
       activity: {
         type: body.type === "IN" ? "RECEIVE" : body.type === "OUT" ? "OUTBOUND" : "ADJUSTMENT",
         subtype: body.type === "IN" ? "MANUAL_IN" : body.type === "OUT" ? "MANUAL_OUT" : "MANUAL_ADJUSTMENT",

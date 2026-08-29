@@ -114,7 +114,8 @@ function createReqWorld(opts?: { layerCount?: number; requestedQty?: string }) {
         reservedQty: d("0"),
         assignmentType: "PROJECT",
         assignmentKey: `P:${project.id}`,
-        projectId: project.id
+        projectId: project.id,
+        clientId: "client-aviat"
       },
       {
         id: "inv-fts",
@@ -124,8 +125,9 @@ function createReqWorld(opts?: { layerCount?: number; requestedQty?: string }) {
         qty: d("5"),
         reservedQty: d("0"),
         assignmentType: "FREE_TO_SALE",
-        assignmentKey: "FREE_TO_SALE",
-        projectId: null as string | null
+        assignmentKey: "FREE_TO_SALE:client-aviat",
+        projectId: null as string | null,
+        clientId: "client-aviat"
       },
       {
         id: "inv-other",
@@ -136,7 +138,8 @@ function createReqWorld(opts?: { layerCount?: number; requestedQty?: string }) {
         reservedQty: d("0"),
         assignmentType: "PROJECT",
         assignmentKey: `P:${otherProject.id}`,
-        projectId: otherProject.id
+        projectId: otherProject.id,
+        clientId: "client-aviat"
       }
     ],
     layers: [] as Array<{
@@ -907,7 +910,7 @@ test("21 encabezado completo y cache-buster v72", () => {
   assert.match(html, /#moduleRequisitions \.req-stock-hint/);
   assert.match(html, /white-space:\s*normal/);
   assert.match(html, /max-height:\s*52px/);
-  assert.match(html, /dashboard\.js\?v=80/);
+  assert.match(html, /dashboard\.js\?v=81/);
   assert.doesNotMatch(html, /dashboard\.js\?v=72/);
 });
 

@@ -81,6 +81,7 @@ const ATT_SKU_CONTEXT = {
 function skuCardHarnessSource() {
   return [
     "const PRIMARY_CLIENT_AVIAT_NAME = 'AVIAT';",
+    "function owningClientDisplayName(){ return 'AVIAT'; }",
     sliceFunction(js, "isForbiddenProjectLabel"),
     sliceFunction(js, "isOperationalProjectRecord"),
     sliceFunction(js, "canonicalClientDisplay"),
@@ -246,6 +247,7 @@ function loadReqSkuHarness(document: unknown) {
 function reqTableFns() {
   return new Function(
     `const PRIMARY_CLIENT_AVIAT_NAME = "AVIAT";
+    function owningClientDisplayName(){ return "AVIAT"; }
     ${sliceFunction(js, "isForbiddenProjectLabel")}
     ${sliceFunction(js, "canonicalClientDisplay")}
     ${sliceFunction(js, "formatReqTableClient")}
@@ -258,8 +260,8 @@ function reqTableFns() {
   };
 }
 
-test("cache-buster dashboard.js?v=80 para consistencia visual de requisiciones", () => {
-  assert.match(html, /dashboard\.js\?v=80/);
+test("cache-buster dashboard.js?v=81 para consistencia visual de requisiciones", () => {
+  assert.match(html, /dashboard\.js\?v=81/);
   assert.doesNotMatch(html, /dashboard\.js\?v=78/);
 });
 
@@ -514,6 +516,7 @@ test("cancelación con panel abierto reemplaza el contenido inmediatamente sin c
   const renderRequisitionDetail = new Function(
     "openDetailDrawer",
     `const PRIMARY_CLIENT_AVIAT_NAME = "AVIAT";
+    function owningClientDisplayName(){ return "AVIAT"; }
     let currentRole = "ADMIN";
     ${sliceFunction(js, "isForbiddenProjectLabel")}
     ${sliceFunction(js, "canonicalClientDisplay")}
@@ -586,6 +589,6 @@ test("regresiones: picking FIFO serializado, cancelación e Inventario/AVIAT int
   assert.match(sliceFunction(js, "skuCardFocusFromContext"), /FREE_TO_SALE/);
   assert.match(sliceFunction(js, "refreshInventorySkuSelectedCard"), /inventorySkuSelectedContext/);
   assert.doesNotMatch(sliceFunction(js, "skuCardFocusFromContext"), /reqCustomer/);
-  assert.match(sliceFunction(js, "canonicalClientDisplay"), /PRIMARY_CLIENT_AVIAT_NAME/);
+  assert.match(sliceFunction(js, "canonicalClientDisplay"), /owningClientDisplayName/);
   assert.match(sliceFunction(js, "isForbiddenProjectLabel"), /LOGITEC/);
 });

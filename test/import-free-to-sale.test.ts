@@ -214,10 +214,10 @@ test("cancelación elimina staging y declara inventoryChanged false", () => {
 
 test("confirmación aislada crea cubo FREE_TO_SALE con projectId null y conserva lote", () => {
   const classified = classifyImportAssignment({ customer: "", lotNumber: "FREE TO SALE" });
-  const assignment = buildAssignment(classified.assignmentType, classified.projectId);
+  const assignment = buildAssignment(classified.assignmentType, classified.projectId, "client-aviat");
   assert.equal(assignment.assignmentType, "FREE_TO_SALE");
   assert.equal(assignment.projectId, null);
-  assert.equal(assignment.assignmentKey, "FREE_TO_SALE");
+  assert.equal(assignment.assignmentKey, "FREE_TO_SALE:client-aviat");
   assert.match(bulk, /lotNumber: n\.lotNumber \? String\(n\.lotNumber\) : null/);
   assert.match(bulk, /assignmentType !== "LEGACY_UNASSIGNED"/);
   assert.match(bulk, /assignmentType === "PROJECT" \? String\(n\.projectId \|\| ""\) : null/);
@@ -269,7 +269,7 @@ test("LOGITEC, CUSTOMER OWNS, CUSTOMR OWNS y ASO no se clasifican como proyecto"
     assert.equal(classified.assignmentType, "LEGACY_UNASSIGNED", customer);
     assert.equal(classified.projectId, null, customer);
     assert.equal(classified.createsProject, false, customer);
-    const assignment = buildAssignment("LEGACY_UNASSIGNED", classified.projectId);
+    const assignment = buildAssignment("LEGACY_UNASSIGNED", classified.projectId, "client-aviat");
     assert.equal(assignment.assignmentType, "LEGACY_UNASSIGNED", customer);
     assert.equal(assignment.projectId, null, customer);
   }

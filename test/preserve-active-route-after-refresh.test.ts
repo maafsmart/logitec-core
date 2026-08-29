@@ -195,7 +195,7 @@ test("la corrección no realiza escrituras de inventario", () => {
   assert.doesNotMatch(persistSrc, /\/api\/inventory/);
   assert.doesNotMatch(applySessionSrc, /\/api\/inventory/);
   assert.doesNotMatch(forceLogoutSrc, /\/api\//);
-  assert.match(html, /dashboard\.js\?v=80/);
+  assert.match(html, /dashboard\.js\?v=81/);
   assert.doesNotMatch(html, /dashboard\.js\?v=66/);
   assert.doesNotMatch(html, /dashboard\.js\?v=65/);
   assert.doesNotMatch(html, /dashboard\.js\?v=64/);

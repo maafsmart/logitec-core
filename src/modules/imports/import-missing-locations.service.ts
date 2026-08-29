@@ -42,7 +42,7 @@ export function normalizeMissingLocationCodes(
 
 async function resolveLocationTemplate() {
   const warehouses = await prisma.location.groupBy({
-    by: ["warehouse"],
+    by: ["warehouseId"],
     _count: { _all: true }
   });
   if (warehouses.length !== 1) {
@@ -51,12 +51,12 @@ async function resolveLocationTemplate() {
       "No se puede determinar el almacén de forma inequívoca. No se crearon ubicaciones."
     );
   }
-  const warehouse = warehouses[0].warehouse;
+  const warehouseId = warehouses[0].warehouseId;
   const template = await prisma.location.findFirst({
-    where: { warehouse, active: true },
-    select: { warehouse: true, zone: true, rack: true, level: true, position: true }
+    where: { warehouseId, active: true },
+    select: { warehouseId: true, warehouse: true, zone: true, rack: true, level: true, position: true }
   });
-  if (!template?.warehouse || !template.zone || !template.rack || !template.level || !template.position) {
+  if (!template?.warehouseId || !template.warehouse || !template.zone || !template.rack || !template.level || !template.position) {
     throw new HttpError(
       409,
       "No hay una plantilla de ubicación existente para completar zona/rack/nivel/posición."
@@ -99,6 +99,7 @@ export async function createMissingImportLocations(input: {
     if (toCreate.length) {
       await prisma.location.createMany({
         data: toCreate.map((code) => ({
+          warehouseId: template.warehouseId,
           warehouse: template.warehouse,
           zone: template.zone,
           rack: template.rack,

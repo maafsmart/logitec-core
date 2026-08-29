@@ -128,7 +128,8 @@ function createRelocateTx(opts?: {
   };
   const assignmentType = opts?.assignmentType ?? "FREE_TO_SALE";
   const projectId = assignmentType === "PROJECT" ? opts?.projectId ?? "proj-att" : null;
-  const assignmentKey = assignmentType === "PROJECT" ? `P:${projectId}` : "FREE_TO_SALE";
+  const clientId = "client-aviat";
+  const assignmentKey = assignmentType === "PROJECT" ? `P:${projectId}` : `FREE_TO_SALE:${clientId}`;
   const reserved = d(opts?.reserved ?? "0");
   const receivedAt = new Date("2026-03-01T00:00:00Z");
   const unitPriceMxn = opts?.price === undefined ? d("100") : opts.price == null ? null : d(opts.price);
@@ -144,7 +145,8 @@ function createRelocateTx(opts?: {
         reservedQty: reserved,
         assignmentType,
         assignmentKey,
-        projectId
+        projectId,
+        clientId
       }
     ] as Array<{
       id: string;
@@ -156,6 +158,7 @@ function createRelocateTx(opts?: {
       assignmentType: string;
       assignmentKey: string;
       projectId: string | null;
+      clientId: string;
     }>,
     layers: [
       {
@@ -201,7 +204,8 @@ function createRelocateTx(opts?: {
       reservedQty: d("0"),
       assignmentType,
       assignmentKey,
-      projectId
+      projectId,
+      clientId
     });
   }
 
@@ -258,7 +262,8 @@ function createRelocateTx(opts?: {
           reservedQty: d(String(data.reservedQty ?? 0)),
           assignmentType: String(data.assignmentType),
           assignmentKey: String(data.assignmentKey),
-          projectId: (data.projectId as string | null) ?? null
+          projectId: (data.projectId as string | null) ?? null,
+          clientId: String(data.clientId || clientId)
         };
         state.inventories.push(created);
         return hydrateInventory(created);
@@ -527,8 +532,8 @@ function makeRelocateDom(opts?: Record<string, string>) {
   };
 }
 
-test("dashboard.js usa cache-buster v=80 para reubicación", () => {
-  assert.match(html, /dashboard\.js\?v=80/);
+test("dashboard.js usa cache-buster v=81 para reubicación", () => {
+  assert.match(html, /dashboard\.js\?v=81/);
   assert.doesNotMatch(html, /dashboard\.js\?v=70/);
 });
 

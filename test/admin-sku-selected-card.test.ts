@@ -183,8 +183,8 @@ function loadSkuFns(document: unknown) {
   )(document);
 }
 
-test("dashboard.js usa cache-buster v=80 para la tarjeta de SKU", () => {
-  assert.match(html, /dashboard\.js\?v=80/);
+test("dashboard.js usa cache-buster v=81 para la tarjeta de SKU", () => {
+  assert.match(html, /dashboard\.js\?v=81/);
   assert.doesNotMatch(html, /dashboard\.js\?v=76/);
 });
 
@@ -232,6 +232,7 @@ test("hideProductTypeaheadList vacía y oculta las sugerencias", () => {
 test("la tarjeta compacta muestra cliente, proyecto, disponible del proyecto y ubicación o saldos", () => {
   const src = [
     "const PRIMARY_CLIENT_AVIAT_NAME = 'AVIAT';",
+    "function owningClientDisplayName(){ return 'AVIAT'; }",
     sliceFunction(js, "isForbiddenProjectLabel"),
     sliceFunction(js, "isOperationalProjectRecord"),
     sliceFunction(js, "canonicalClientDisplay"),
@@ -251,6 +252,7 @@ test("la tarjeta compacta muestra cliente, proyecto, disponible del proyecto y u
   const { skuSelectedLocationLabel, buildSkuSelectedCardHtml } = new Function(
     `function getInventoryScope(){ return globalThis.__skuScope || { projectId: "", assignmentType: "" }; }
     function inventoryStatusRecord(){ return null; }
+    function owningClientDisplayName(){ return "AVIAT"; }
     ${src}; return { skuSelectedLocationLabel, buildSkuSelectedCardHtml };`
   )();
 

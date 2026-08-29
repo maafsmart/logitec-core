@@ -111,7 +111,7 @@ test("el panel ADMIN dirige a Operación con las claves canónicas", () => {
   );
   const applyRoleSrc = sliceFunction(js, "applyRoleNavigation");
   assert.match(applyRoleSrc, /inventoryOpsNavPanel[\s\S]*classList\.toggle\("hidden", role !== "ADMIN"\)/);
-  assert.match(html, /dashboard\.js\?v=80/);
+  assert.match(html, /dashboard\.js\?v=81/);
 });
 
 test("los tres botones navegan al módulo canónico y no mutan inventario", () => {
@@ -191,7 +191,8 @@ test("el schema Zod de IN acepta Free to Sale y Proyecto y rechaza asignación a
     quantity: 1,
     location: "AN14-F",
     assignmentType: "FREE_TO_SALE",
-    projectId: null
+    projectId: null,
+    clientId: "client-aviat"
   });
   assert.equal(fts.success, true, fts.success ? "" : JSON.stringify(fts.error.issues));
 

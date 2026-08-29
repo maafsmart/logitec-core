@@ -4,10 +4,10 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import {
-  clientInventoryWhere,
-  clientMovementWhere,
   clientProductWhere,
-  isClientRole
+  isClientRole,
+  scopedInventoryWhere,
+  scopedMovementWhere
 } from "../clients/client-scope.js";
 import { parseMexicoCityDateFilter } from "../../shared/mexico-city-date.js";
 
@@ -27,11 +27,13 @@ function toCsv(headers: string[], rows: Array<Array<unknown>>): string {
 exportsRouter.use(requireAuth);
 
 exportsRouter.get("/inventory.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"]), async (req, res) => {
+  const clientId = z.string().min(1).optional().parse(req.query.clientId);
   const rows = await prisma.inventory.findMany({
-    where: clientInventoryWhere(req.auth!),
+    where: scopedInventoryWhere(req.auth!, clientId),
     include: {
       product: { include: { customer: { include: { client: true } } } },
       location: true,
+      client: true,
       project: { include: { client: true } },
       layers: true
     },
@@ -41,7 +43,7 @@ exportsRouter.get("/inventory.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATO
   const csv = toCsv(
     ["cliente", "proyecto", "sku", "producto", "ubicacion", "estado", "qty", "reservedQty", "freeQty", "lotes"],
     rows.map((r) => [
-      r.project?.client?.tradeName || r.project?.client?.name || r.product.customer?.client?.tradeName || r.product.customer?.client?.name || "",
+      r.client?.tradeName || r.client?.name || r.project?.client?.tradeName || r.project?.client?.name || "",
       r.assignmentType === "FREE_TO_SALE"
         ? "FREE TO SALE"
         : r.project?.code || r.product.customer?.code || r.assignmentKey,
@@ -67,6 +69,7 @@ exportsRouter.get("/movements.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATO
       to: z.string().optional(),
       sku: z.string().optional(),
       movementType: z.string().optional(),
+      clientId: z.string().min(1).optional(),
       limit: z.coerce.number().int().min(1).max(20000).default(5000)
     })
     .parse(req.query);
@@ -82,7 +85,7 @@ exportsRouter.get("/movements.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATO
   const rows = await prisma.inventoryMovement.findMany({
     where: {
       AND: [
-        clientMovementWhere(req.auth!),
+        scopedMovementWhere(req.auth!, query.clientId),
         ...(Object.keys(createdAt).length ? [{ createdAt }] : []),
         ...(query.sku ? [{ product: { sku: { equals: query.sku, mode: "insensitive" as const } } }] : []),
         ...(query.movementType
@@ -92,6 +95,7 @@ exportsRouter.get("/movements.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATO
     },
     include: {
       product: { include: { customer: { include: { client: true } } } },
+      client: true,
       fromLocation: true,
       toLocation: true,
       user: true,
@@ -105,7 +109,7 @@ exportsRouter.get("/movements.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATO
     ["fecha", "cliente", "proyecto", "sku", "tipo", "qty", "antes", "despues", "origen", "destino", "estado", "lote", "usuario", "requisicion", "referencia"],
     rows.map((r) => [
       r.createdAt.toISOString(),
-      r.product.customer?.client?.tradeName || r.product.customer?.client?.name || "",
+      r.client?.tradeName || r.client?.name || "",
       r.product.customer?.code || "",
       r.product.sku,
       r.movementType,
@@ -193,20 +197,23 @@ exportsRouter.get("/products.csv", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
 });
 
 exportsRouter.get("/inventory.xlsx", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"]), async (req, res) => {
+  const clientId = z.string().min(1).optional().parse(req.query.clientId);
   const inventories = await prisma.inventory.findMany({
-    where: clientInventoryWhere(req.auth!),
+    where: scopedInventoryWhere(req.auth!, clientId),
     include: {
       product: { include: { customer: { include: { client: true } } } },
       location: true,
+      client: true,
       project: { include: { client: true } },
       layers: { include: { serials: true } }
     },
     take: 20000
   });
   const movements = await prisma.inventoryMovement.findMany({
-    where: clientMovementWhere(req.auth!),
+    where: scopedMovementWhere(req.auth!, clientId),
     include: {
       product: { include: { customer: { include: { client: true } } } },
+      client: true,
       fromLocation: true,
       toLocation: true,
       user: true,
@@ -224,7 +231,7 @@ exportsRouter.get("/inventory.xlsx", requireRole(["ADMIN", "SUPERVISOR", "OPERAT
   const detail: any[] = [];
   const serials: any[] = [];
   for (const inv of inventories) {
-    const client = inv.project?.client?.tradeName || inv.project?.client?.name || inv.product.customer?.client?.tradeName || inv.product.customer?.client?.name || "";
+    const client = inv.client?.tradeName || inv.client?.name || inv.project?.client?.tradeName || inv.project?.client?.name || "";
     const project =
       inv.assignmentType === "FREE_TO_SALE"
         ? "FREE TO SALE"

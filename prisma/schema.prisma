@@ -120,7 +120,9 @@ model InventoryMovement {
   toAssignmentType   InventoryAssignmentType?
   toProjectId        String?
   toAssignmentKey    String?
+  clientId        String
   createdAt       DateTime @default(now())
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
   product         Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
   fromLocation    Location? @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
   toLocation      Location? @relation("MovementTo", fields: [toLocationId], references: [id], onDelete: SetNull)
@@ -144,6 +146,7 @@ model InventoryMovement {
   @@index([toProjectId])
   @@index([fromAssignmentKey])
   @@index([toAssignmentKey])
+  @@index([clientId])
 }
 
 model ScanEvent {
@@ -156,13 +159,16 @@ model ScanEvent {
   location    String?
   createdAt   DateTime @default(now())
   taskId      String?
+  clientId    String?
   user        User     @relation(fields: [userId], references: [id])
   product     Product? @relation(fields: [productId], references: [id])
   task        Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  client      Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
   @@index([scannedCode])
   @@index([taskId])
+  @@index([clientId])
 }
 
 model Client {
@@ -191,11 +197,16 @@ model Client {
   updatedAt      DateTime   @updatedAt
   projects       Customer[]
   users          User[]
+  inventories    Inventory[]
+  movements      InventoryMovement[]
+  serials        InventorySerial[]
+  scanEvents     ScanEvent[]
+  activityLogs   ActivityLog[]
 }
 
 model Customer {
   id             String    @id @default(cuid())
-  clientId       String?
+  clientId       String
   code           String    @unique
   name           String
   tradeName      String?
@@ -211,7 +222,7 @@ model Customer {
   notes          String?
   active         Boolean   @default(true)
   createdAt      DateTime  @default(now())
-  client         Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  client         Client    @relation(fields: [clientId], references: [id], onDelete: Restrict)
   products       Product[]
   activityLogs   ActivityLog[]
   requisitions   Requisition[]
@@ -236,10 +247,12 @@ model Warehouse {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  locations Location[] @relation("LocationWarehouse")
 }
 
 model Location {
   id               String              @id @default(cuid())
+  warehouseId      String
   warehouse        String
   zone             String
   rack             String
@@ -251,11 +264,14 @@ model Location {
   active           Boolean             @default(true)
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
+  catalogWarehouse Warehouse            @relation("LocationWarehouse", fields: [warehouseId], references: [id], onDelete: Restrict)
   inventories      Inventory[]
   movementsFrom    InventoryMovement[] @relation("MovementFrom")
   movementsTo      InventoryMovement[] @relation("MovementTo")
 
+  @@unique([warehouseId, code])
   @@index([warehouse])
+  @@index([warehouseId])
 }
 
 model Inventory {
@@ -268,10 +284,12 @@ model Inventory {
   assignmentType InventoryAssignmentType
   projectId      String?
   assignmentKey  String
+  clientId       String
   updatedAt      DateTime                 @updatedAt
   product        Product                  @relation(fields: [productId], references: [id], onDelete: Restrict)
   location       Location                 @relation(fields: [locationId], references: [id], onDelete: Restrict)
   project        Customer?                @relation("InventoryProject", fields: [projectId], references: [id], onDelete: Restrict)
+  client         Client                   @relation(fields: [clientId], references: [id], onDelete: Restrict)
   layers         InventoryLayer[]
   reservations   InventoryReservation[]
 
@@ -280,6 +298,7 @@ model Inventory {
   @@index([projectId])
   @@index([assignmentType])
   @@index([assignmentKey])
+  @@index([clientId])
 }
 
 model ProductProject {
@@ -383,14 +402,17 @@ model InventorySerial {
   serialNumber     String
   imei             String?         @unique
   receivedAt       DateTime?
+  clientId         String
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
   product          Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
   inventoryLayer   InventoryLayer? @relation(fields: [inventoryLayerId], references: [id], onDelete: SetNull)
+  client           Client          @relation(fields: [clientId], references: [id], onDelete: Restrict)
   movements        InventoryMovement[]
 
   @@unique([productId, serialNumber])
   @@index([inventoryLayerId])
+  @@index([clientId])
 }
 
 model InventoryStatusDefinition {
@@ -481,12 +503,14 @@ model ActivityLog {
   result      String?
   metadata    Json?
   taskId      String?
+  clientId    String?
   createdAt   DateTime  @default(now())
 
   user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   product     Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
   customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   task        Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  client      Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([type, createdAt])
@@ -494,6 +518,7 @@ model ActivityLog {
   @@index([userId])
   @@index([productId])
   @@index([taskId])
+  @@index([clientId])
 }
 
 model Task {

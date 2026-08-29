@@ -79,7 +79,8 @@ function serializeAssignment(assignment: InventoryAssignment) {
   return {
     assignmentType: assignment.assignmentType,
     projectId: assignment.projectId,
-    assignmentKey: assignment.assignmentKey
+    assignmentKey: assignment.assignmentKey,
+    clientId: assignment.clientId
   };
 }
 
@@ -161,10 +162,6 @@ export async function transferAssignment(input: AssignmentTransferInput) {
   if (input.qty.lessThanOrEqualTo(0)) {
     throw new InventoryMutationError("INVALID_QTY", "La cantidad a reasignar debe ser mayor a 0.");
   }
-  const destinationAssignment = buildAssignment(
-    input.destinationAssignmentType,
-    input.destinationAssignmentType === "FREE_TO_SALE" ? null : input.destinationProjectId ?? null
-  );
 
   return prisma.$transaction(
     async (tx) => {
@@ -181,6 +178,36 @@ export async function transferAssignment(input: AssignmentTransferInput) {
         );
       }
 
+      let destinationAssignment: InventoryAssignment;
+      if (input.destinationAssignmentType === "FREE_TO_SALE") {
+        if (input.destinationProjectId) {
+          throw new InventoryMutationError("PROJECT_MUST_BE_NULL", "FREE TO SALE no admite projectId.");
+        }
+        destinationAssignment = buildAssignment("FREE_TO_SALE", null, source.clientId);
+      } else {
+        const projectId = input.destinationProjectId ?? null;
+        if (!projectId) {
+          throw new InventoryMutationError("PROJECT_REQUIRED", "La asignación PROJECT requiere projectId.");
+        }
+        const project = await tx.customer.findUnique({
+          where: { id: projectId },
+          select: { id: true, code: true, name: true, active: true, clientId: true }
+        });
+        if (!project || isForbiddenInventoryProjectRecord(project) || !project.clientId) {
+          throw new InventoryMutationError("PROJECT_NOT_FOUND", "Proyecto destino no encontrado.");
+        }
+        if (!project.active) {
+          throw new InventoryMutationError("PROJECT_INACTIVE", "El proyecto destino no está activo.");
+        }
+        if (project.clientId !== source.clientId) {
+          throw new InventoryMutationError(
+            "CROSS_CLIENT_TRANSFER",
+            "No se puede reasignar inventario a un proyecto de otro cliente."
+          );
+        }
+        destinationAssignment = buildAssignment("PROJECT", project.id, project.clientId);
+      }
+
       const sourceAssignment = assignmentFromInventory(source);
       if (
         sourceAssignment.assignmentType === destinationAssignment.assignmentType &&
@@ -194,16 +221,6 @@ export async function transferAssignment(input: AssignmentTransferInput) {
       await assertNoSerialAmbiguity(tx, sourceLayer.id);
 
       if (destinationAssignment.assignmentType === "PROJECT") {
-        const project = await tx.customer.findUnique({
-          where: { id: destinationAssignment.projectId! },
-          select: { id: true, code: true, name: true, active: true }
-        });
-        if (!project || isForbiddenInventoryProjectRecord(project)) {
-          throw new InventoryMutationError("PROJECT_NOT_FOUND", "Proyecto destino no encontrado.");
-        }
-        if (!project.active) {
-          throw new InventoryMutationError("PROJECT_INACTIVE", "El proyecto destino no está activo.");
-        }
         await ensureCanonicalProductProject(tx, source.productId, destinationAssignment.projectId);
       }
 
@@ -320,6 +337,7 @@ export async function transferAssignment(input: AssignmentTransferInput) {
           userId: input.userId,
           productId: source.productId,
           customerId: destinationAssignment.projectId ?? sourceAssignment.projectId ?? source.product.customerId,
+          clientId: source.clientId,
           warehouse: source.location.warehouse,
           location: source.location.code,
           qty: input.qty,

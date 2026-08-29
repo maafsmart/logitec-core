@@ -38,6 +38,7 @@ export type InventoryMutationInput = {
   scannedCode?: string | null;
   assignmentType?: "PROJECT" | "FREE_TO_SALE";
   projectId?: string | null;
+  clientId?: string | null;
   activity: LogActivityInput;
 };
 
@@ -106,6 +107,12 @@ export async function ensureInventory(
     include: { location: true, product: true }
   });
   if (existing) {
+    if (existing.clientId !== assignment.clientId) {
+      throw new InventoryMutationError(
+        "CROSS_CLIENT_TRANSFER",
+        "No se puede mezclar inventario de otro cliente en este cubo."
+      );
+    }
     const locked = await lockInventory(tx, existing.id);
     if (!locked) throw new InventoryMutationError("INVENTORY_NOT_FOUND", "Línea de inventario no encontrada.");
     return locked;
@@ -120,7 +127,8 @@ export async function ensureInventory(
         reservedQty: 0,
         assignmentType: assignment.assignmentType,
         projectId: assignment.projectId,
-        assignmentKey: assignment.assignmentKey
+        assignmentKey: assignment.assignmentKey,
+        clientId: assignment.clientId
       },
       include: { location: true, product: true }
     });
@@ -354,7 +362,8 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
     if (!product) throw new InventoryMutationError("PRODUCT_NOT_FOUND", "Producto no encontrado.");
     const assignment = await resolveInboundAssignment(tx, product, {
       assignmentType: input.assignmentType,
-      projectId: input.projectId
+      projectId: input.projectId,
+      clientId: input.clientId
     });
     const inventory = await ensureInventory(tx, input.productId, input.locationId, status, assignment);
     if (inventory.productId !== input.productId) {
@@ -387,6 +396,7 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
         ...input.activity,
         productId: input.productId,
         customerId: inventory.product.customerId,
+        clientId: assignment.clientId,
         warehouse: inventory.location.warehouse,
         location: inventory.location.code,
         qty: input.qty,
@@ -541,6 +551,7 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
           ...input.activity,
           productId: input.productId,
           customerId: sourceReloaded.product.customerId,
+          clientId: sourceAssignment.clientId,
           warehouse: sourceReloaded.location.warehouse,
           location: `${sourceReloaded.location.code} → ${destReloaded.location.code}`,
           qty: input.qty,
@@ -615,6 +626,7 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
         ...input.activity,
         productId: input.productId,
         customerId: sourceFresh.product.customerId,
+        clientId: sourceAssignment.clientId,
         warehouse: sourceFresh.location.warehouse,
         location: `${sourceFresh.location.code} → ${destFresh.location.code}`,
         qty: input.qty,
@@ -699,6 +711,7 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
         ...input.activity,
         productId: input.productId,
         customerId: inventory.product.customerId,
+        clientId: inventory.clientId,
         warehouse: inventory.location.warehouse,
         location: inventory.location.code,
         qty: input.qty,
@@ -744,7 +757,8 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
           productId: input.productId,
           warehouse: inventory.location.warehouse,
           location: inventory.location.code,
-          taskId: input.taskId ?? null
+          taskId: input.taskId ?? null,
+          clientId: inventory.clientId
         }
       })
     : null;
@@ -753,6 +767,7 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
       ...input.activity,
       productId: input.productId,
       customerId: inventory.product.customerId,
+      clientId: inventory.clientId,
       warehouse: inventory.location.warehouse,
       location: inventory.location.code,
       qty: input.qty,

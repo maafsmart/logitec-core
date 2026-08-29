@@ -68,14 +68,15 @@ function sameAssignment(left: InventoryAssignment, right: InventoryAssignment) {
   return (
     left.assignmentType === right.assignmentType &&
     left.projectId === right.projectId &&
-    left.assignmentKey === right.assignmentKey
+    left.assignmentKey === right.assignmentKey &&
+    left.clientId === right.clientId
   );
 }
 
 async function assertDestinationProject(
   tx: Prisma.TransactionClient,
   projectId: string,
-  product: { id: string; customerId: string | null; customer?: { id: string; clientId: string | null } | null }
+  ownerClientId: string
 ) {
   const project = await tx.customer.findUnique({
     where: { id: projectId },
@@ -87,10 +88,9 @@ async function assertDestinationProject(
   if (!project.active) {
     throw new LayerPriceError("PROJECT_INACTIVE", "El proyecto destino no está activo.", 409);
   }
-  const ownerClientId = product.customer?.clientId ?? null;
-  if (ownerClientId && project.clientId !== ownerClientId) {
+  if (project.clientId !== ownerClientId) {
     throw new LayerPriceError(
-      "PROJECT_WRONG_CLIENT",
+      "CROSS_CLIENT_TRANSFER",
       "No se puede asignar a un proyecto de otro cliente.",
       409
     );
@@ -141,7 +141,8 @@ function serializeAssignment(assignment: InventoryAssignment) {
   return {
     assignmentType: assignment.assignmentType,
     projectId: assignment.projectId,
-    assignmentKey: assignment.assignmentKey
+    assignmentKey: assignment.assignmentKey,
+    clientId: assignment.clientId
   };
 }
 
@@ -195,13 +196,13 @@ export async function valueAndAssignUnpricedLayer(
   let requestedKeep = destinationType === "KEEP";
   let destinationAssignment = sourceAssignment;
   if (destinationType === "FREE_TO_SALE") {
-    destinationAssignment = buildAssignment("FREE_TO_SALE", null);
+    destinationAssignment = buildAssignment("FREE_TO_SALE", null, sourceAssignment.clientId);
   } else if (destinationType === "PROJECT") {
     const projectId = input.projectId == null ? "" : String(input.projectId).trim();
     if (!projectId) {
       throw new LayerPriceError("PROJECT_REQUIRED", "Selecciona un proyecto destino.");
     }
-    destinationAssignment = buildAssignment("PROJECT", projectId);
+    destinationAssignment = buildAssignment("PROJECT", projectId, sourceAssignment.clientId);
   }
   if (sameAssignment(sourceAssignment, destinationAssignment)) {
     requestedKeep = true;
@@ -296,7 +297,7 @@ export async function valueAndAssignUnpricedLayer(
         await assertNoSerialAmbiguity(tx, layer.id);
 
         if (destinationAssignment.assignmentType === "PROJECT") {
-          await assertDestinationProject(tx, destinationAssignment.projectId!, layer.inventory.product);
+          await assertDestinationProject(tx, destinationAssignment.projectId!, sourceLocked.clientId);
           await ensureCanonicalProductProject(tx, layer.inventory.product.id, destinationAssignment.projectId);
         }
 
@@ -448,6 +449,7 @@ export async function valueAndAssignUnpricedLayer(
             userId: input.userId,
             productId: layer.inventory.product.id,
             customerId: destinationAssignment.projectId || layer.inventory.product.customerId,
+            clientId: sourceAssignment.clientId,
             warehouse: layer.inventory.location.warehouse,
             location: layer.inventory.location.code,
             qty: qtyToValue,

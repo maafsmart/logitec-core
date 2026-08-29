@@ -247,7 +247,7 @@ test("HTML de existencias, proyectos y catálogo muestra la vista económica", (
   assert.match(html, /id="sumStockCubes"/);
   assert.match(html, /id="sumStockTotal"[\s\S]{0,120}Piezas/);
   assert.match(html, /id="sumStockCubes"[\s\S]{0,120}Saldos/);
-  assert.match(html, /dashboard\.js\?v=80/);
+  assert.match(html, /dashboard\.js\?v=81/);
   assert.doesNotMatch(html, /dashboard\.js\?v=64/);
   assert.doesNotMatch(html, /dashboard\.js\?v=62/);
   assert.doesNotMatch(html, /dashboard\.js\?v=61/);

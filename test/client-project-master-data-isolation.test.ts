@@ -22,7 +22,9 @@ import {
   createProjectRecord,
   createWarehouseRecord,
   setLocationActive,
-  setProjectActive
+  setProjectActive,
+  updateProjectRecord,
+  updateWarehouseRecord
 } from "../src/modules/master-data/master-data.service.js";
 
 const html = readFileSync(new URL("../public/dashboard.html", import.meta.url), "utf8");
@@ -52,6 +54,9 @@ function makeDb() {
   let reservationCount = 0;
   let requisitionCount = 0;
   let taskCount = 0;
+  let layerCount = 0;
+  let movementCount = 0;
+  let activityCount = 0;
   const id = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 8)}`;
   const db = {
     _setInventory(n: number) {
@@ -59,6 +64,15 @@ function makeDb() {
     },
     _setReservations(n: number) {
       reservationCount = n;
+    },
+    _setLayers(n: number) {
+      layerCount = n;
+    },
+    _setMovements(n: number) {
+      movementCount = n;
+    },
+    _setActivity(n: number) {
+      activityCount = n;
     },
     client: {
       findUnique: async ({ where }: any) =>
@@ -109,6 +123,19 @@ function makeDb() {
     location: {
       findUnique: async ({ where }: any) =>
         locations.find((row) => row.id === where.id || row.code === where.code) || null,
+      findFirst: async ({ where }: any) =>
+        locations.find((row) => {
+          if (where?.OR) {
+            return where.OR.some(
+              (clause: any) =>
+                (clause.code && row.code === clause.code) ||
+                (clause.warehouseId && clause.code && row.warehouseId === clause.warehouseId && row.code === clause.code)
+            );
+          }
+          if (where?.id) return row.id === where.id;
+          if (where?.code) return row.code === where.code;
+          return false;
+        }) || null,
       create: async ({ data }: any) => {
         const row = { id: id("loc"), active: true, ...data };
         locations.push(row);
@@ -130,7 +157,9 @@ function makeDb() {
     task: { count: async () => taskCount },
     product: { count: async () => 0 },
     productProject: { count: async () => 0 },
-    inventoryMovement: { count: async () => 0 }
+    inventoryMovement: { count: async () => movementCount },
+    inventoryLayer: { count: async () => layerCount },
+    activityLog: { count: async () => activityCount }
   };
   return db;
 }
@@ -142,14 +171,14 @@ test("CLIENT no autoriza inventario ni movimientos con product.customer", () => 
   const inventoryWhere = JSON.stringify(clientInventoryWhere(aviatAuth));
   assert.equal(productWhere.includes('"customer":{"clientId"'), false);
   assert.equal(movementWhere.includes('"customer":{"clientId"'), false);
-  assert.match(inventoryWhere, /"assignmentType":"PROJECT"/);
-  assert.match(inventoryWhere, /"clientId":"client-aviat"/);
+  assert.deepEqual(clientInventoryWhere(aviatAuth), { clientId: "client-aviat" });
+  assert.equal(inventoryWhere.includes("assignmentType"), false);
   assert.deepEqual(clientCustomerWhere(aviatAuth), { clientId: "client-aviat" });
   assert.deepEqual(clientRequisitionWhere(aviatAuth), { project: { clientId: "client-aviat" } });
   assert.ok(clientTaskWhere(aviatAuth).requisition);
-  assert.ok(clientScanWhere(aviatAuth).OR);
-  assert.ok(clientSerialWhere(aviatAuth).OR);
-  assert.ok(clientActivityWhere(aviatAuth).OR);
+  assert.deepEqual(clientScanWhere(aviatAuth), { clientId: "client-aviat" });
+  assert.deepEqual(clientSerialWhere(aviatAuth), { clientId: "client-aviat" });
+  assert.deepEqual(clientActivityWhere(aviatAuth), { clientId: "client-aviat" });
 });
 
 test("cambiar clientId en query no amplía el alcance CLIENT", () => {
@@ -239,8 +268,8 @@ test("rutas CLIENT auditadas quedan protegidas en servidor", () => {
   assert.match(pickingSrc, /requireRole\(\["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"\]\)/);
   assert.match(pickingSrc, /clientScanWhere/);
   assert.match(tasksSrc, /clientTaskWhere/);
-  assert.match(exportsSrc, /clientInventoryWhere/);
-  assert.match(exportsSrc, /clientMovementWhere/);
+  assert.match(exportsSrc, /scopedInventoryWhere/);
+  assert.match(exportsSrc, /scopedMovementWhere/);
   assert.match(exportsSrc, /clientProductWhere/);
   assert.match(appSrc, /\/api\/warehouses/);
   assert.match(usersSrc, /Los usuarios CLIENT requieren un cliente asignado/);
@@ -257,8 +286,8 @@ test("Crear producto manual no crea inventario ficticio", () => {
   assert.doesNotMatch(block, /qty:\s*1/);
 });
 
-test("frontend Clientes, catálogos y cache-buster v=80", () => {
-  assert.match(html, /dashboard\.js\?v=80/);
+test("frontend Clientes, catálogos y cache-buster v=81", () => {
+  assert.match(html, /dashboard\.js\?v=81/);
   assert.doesNotMatch(html, /dashboard\.js\?v=79/);
   assert.match(html, /id="btnClients"/);
   assert.match(html, /data-inv-master-tab="clients"/);
@@ -268,6 +297,8 @@ test("frontend Clientes, catálogos y cache-buster v=80", () => {
   assert.match(html, /id="locationsSearch"/);
   assert.match(html, /id="newClientId"/);
   assert.match(html, /id="masterDataModal"/);
+  assert.match(html, /id="inboundClientField"/);
+  assert.match(html, /class="js-inventory-client-select"/);
   assert.match(js, /CLIENT: "inventory"/);
   assert.match(js, /openClientForm/);
   assert.match(js, /openProjectForm/);
@@ -275,5 +306,55 @@ test("frontend Clientes, catálogos y cache-buster v=80", () => {
   assert.match(js, /loadLocationsModule/);
   assert.match(js, /Todos los proyectos de mi cliente/);
   assert.match(js, /Los usuarios CLIENT requieren un cliente asignado/);
-  assert.match(js, /data-assignment='FREE_TO_SALE'[\s\S]{0,200}CLIENT/);
+  assert.match(js, /owningClientDisplayName/);
+  assert.match(js, /inboundSelectedOwnerClientId/);
+  assert.match(js, /payload\.clientId = inboundSelectedOwnerClientId/);
+  assert.doesNotMatch(js, /btn\.style\.display = role === "CLIENT" \? "none"/);
+});
+
+test("cambiar cliente de proyecto con historial queda bloqueado", async () => {
+  const db = makeDb();
+  const aviat = await createClientRecord(db as never, { code: "AVIAT", name: "AVIAT" });
+  const client2 = await createClientRecord(db as never, { code: "CLI2", name: "Cliente 2" });
+  const project = await createProjectRecord(db as never, { clientId: aviat.id, code: "ATT", name: "AT&T" });
+  db._setInventory(1);
+  await assert.rejects(
+    () => updateProjectRecord(db as never, project.id, { clientId: client2.id }),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === MASTER_DEACTIVATE_CODES.PROJECT_HAS_OPERATIONAL_HISTORY
+  );
+});
+
+test("proyecto vacío sin historial puede reasignarse; uno nuevo exige cliente", async () => {
+  const db = makeDb();
+  const aviat = await createClientRecord(db as never, { code: "AVIAT", name: "AVIAT" });
+  const client2 = await createClientRecord(db as never, { code: "CLI2", name: "Cliente 2" });
+  const empty = await createProjectRecord(db as never, { clientId: aviat.id, code: "EMPTY", name: "Vacío" });
+  const updated = await updateProjectRecord(db as never, empty.id, { clientId: client2.id });
+  assert.equal(updated.clientId, client2.id);
+  await assert.rejects(
+    () => createProjectRecord(db as never, { clientId: "", code: "NOCLIENT", name: "Huérfano" }),
+    (error: unknown) => error instanceof HttpError && error.code === MASTER_DEACTIVATE_CODES.PROJECT_CLIENT_REQUIRED
+  );
+});
+
+test("Warehouse/Location por ID, duplicado y código inmutable", async () => {
+  const db = makeDb();
+  const warehouse = await createWarehouseRecord(db as never, { code: "TULTITLAN24", name: "Tultitlán 24" });
+  const location = await createLocationRecord(db as never, { warehouse: "tultitlan24", code: "AN22-A" });
+  assert.equal(location.warehouseId, warehouse.id);
+  assert.equal(location.warehouse, "TULTITLAN24");
+  await assert.rejects(
+    () => createLocationRecord(db as never, { warehouseId: warehouse.id, code: "AN22-A" }),
+    (error: unknown) => error instanceof HttpError && error.code === MASTER_DEACTIVATE_CODES.DUPLICATE_CODE
+  );
+  await assert.rejects(
+    () => updateWarehouseRecord(db as never, warehouse.id, { code: "OTRO" }),
+    (error: unknown) => error instanceof HttpError && error.code === MASTER_DEACTIVATE_CODES.WAREHOUSE_CODE_IMMUTABLE
+  );
+  const renamed = await updateWarehouseRecord(db as never, warehouse.id, { name: "CEDIS Tultitlán" });
+  assert.equal(renamed.code, "TULTITLAN24");
+  assert.equal(renamed.name, "CEDIS Tultitlán");
 });

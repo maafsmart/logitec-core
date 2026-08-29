@@ -74,7 +74,8 @@ const projectClientSelect = {
 const catalogImportSchema = z.object({
   csv: z.string().min(1),
   mode: z.enum(["preview", "apply"]).default("preview"),
-  autoCreateCustomers: z.coerce.boolean().default(false)
+  autoCreateCustomers: z.coerce.boolean().default(false),
+  clientId: z.string().min(1).optional()
 });
 
 function parseCsvLine(line: string): string[] {
@@ -134,7 +135,8 @@ catalogRouter.get("/products/search", async (req, res) => {
 
 catalogRouter.get("/products/:id/context", async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
-  res.json(await getSkuContext(id, req.auth!));
+  const clientId = z.string().min(1).optional().parse(req.query.clientId);
+  res.json(await getSkuContext(id, req.auth!, clientId));
 });
 
 catalogRouter.get("/products", async (req, res) => {
@@ -295,7 +297,7 @@ catalogRouter.delete("/customers/:id", requireRole(["ADMIN"]), async (_req, _res
 });
 
 catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) => {
-  const { csv, mode, autoCreateCustomers } = catalogImportSchema.parse(req.body);
+  const { csv, mode, autoCreateCustomers, clientId: ownerClientId } = catalogImportSchema.parse(req.body);
 
   const lines = csv
     .split(/\r?\n/)
@@ -363,10 +365,22 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
         skipped += 1;
         continue;
       }
+      if (!ownerClientId) {
+        preview.push({ sku, action: "SKIP", reason: "proyecto nuevo requiere cliente propietario" });
+        skipped += 1;
+        continue;
+      }
+      const owner = await prisma.client.findUnique({ where: { id: ownerClientId }, select: { id: true, active: true } });
+      if (!owner?.active) {
+        preview.push({ sku, action: "SKIP", reason: "cliente propietario no encontrado o inactivo" });
+        skipped += 1;
+        continue;
+      }
       customer = await prisma.customer.create({
         data: {
           code: customerCode,
           name: customerDisplayName || customerInput || customerCode,
+          clientId: owner.id,
           active: true
         }
       });

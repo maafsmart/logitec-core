@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { Prisma } from "@prisma/client";
 import { HttpError } from "../src/shared/http-error.js";
-import { InventoryMutationError } from "../src/modules/inventory/inventory-errors.js";
 import {
   LayerPriceError,
   inboundUnitPriceWasProvided,
@@ -105,6 +104,7 @@ function createInboundTx(opts?: { existing?: boolean; existingPrice?: string | n
       assignmentType: string;
       assignmentKey: string;
       projectId: string | null;
+      clientId: string;
     }>,
     layers: [] as Array<{
       id: string;
@@ -131,8 +131,9 @@ function createInboundTx(opts?: { existing?: boolean; existingPrice?: string | n
       qty: d("10"),
       reservedQty: d("0"),
       assignmentType: "FREE_TO_SALE",
-      assignmentKey: "FREE_TO_SALE",
-      projectId: null
+      assignmentKey: "FREE_TO_SALE:client-aviat",
+      projectId: null,
+      clientId: "client-aviat"
     });
     state.layers.push({
       id: "layer-old",
@@ -162,6 +163,17 @@ function createInboundTx(opts?: { existing?: boolean; existingPrice?: string | n
         if (where.id === aviatProject.id) return aviatProject;
         if (where.id === otherProject.id) return otherProject;
         if (where.id === product.customerId) return product.customer;
+        return null;
+      }
+    },
+    client: {
+      findUnique: async ({ where }: { where: { id: string } }) => {
+        if (where.id === "client-aviat") {
+          return { id: "client-aviat", code: "AVIAT", name: "AVIAT", tradeName: "AVIAT", legalName: "AVIAT", active: true };
+        }
+        if (where.id === "client-other") {
+          return { id: "client-other", code: "CLI2", name: "Cliente 2", tradeName: "Cliente 2", legalName: "Cliente 2", active: true };
+        }
         return null;
       }
     },
@@ -195,7 +207,8 @@ function createInboundTx(opts?: { existing?: boolean; existingPrice?: string | n
           reservedQty: d(String(data.reservedQty ?? 0)),
           assignmentType: String(data.assignmentType),
           assignmentKey: String(data.assignmentKey),
-          projectId: (data.projectId as string | null) ?? null
+          projectId: (data.projectId as string | null) ?? null,
+          clientId: String(data.clientId || "client-aviat")
         };
         state.inventories.push(created);
         return hydrateInventory(created);
@@ -269,6 +282,7 @@ async function receiveIn(
     unitPriceMxn?: Prisma.Decimal | null;
     assignmentType?: "FREE_TO_SALE" | "PROJECT";
     projectId?: string | null;
+    clientId?: string | null;
     lotNumber?: string | null;
     reference?: string | null;
   } = {}
@@ -286,6 +300,7 @@ async function receiveIn(
     unitPriceMxn: opts.unitPriceMxn === undefined ? null : opts.unitPriceMxn,
     assignmentType: opts.assignmentType ?? "FREE_TO_SALE",
     projectId: opts.projectId ?? null,
+    clientId: opts.clientId ?? (opts.assignmentType === "PROJECT" ? null : "client-aviat"),
     activity: { type: "RECEIVE", subtype: "MANUAL_IN", userId: "admin-1", result: "OK" }
   });
 }
@@ -305,6 +320,7 @@ function loadInboundUi() {
     sliceFunction(js, "inboundHasSystemSkuSelection"),
     sliceFunction(js, "inboundAssignmentTypeValue"),
     sliceFunction(js, "inboundSelectedProjectId"),
+    sliceFunction(js, "inboundSelectedOwnerClientId"),
     sliceFunction(js, "inboundFormIsComplete")
   ].join("\n");
   return src;
@@ -323,7 +339,7 @@ test("la UI de recepción tiene precio opcional, valor y ayuda", () => {
   assert.match(html, /#inboundSubmitBtn:disabled/);
   assert.match(html, /background:\s*#94a3b8/);
   assert.match(html, /cursor:\s*not-allowed/);
-  assert.match(html, /dashboard\.js\?v=80/);
+  assert.match(html, /dashboard\.js\?v=81/);
 });
 
 test("vacío, null y espacios son null; 0 explícito no se convierte desde vacío", () => {
@@ -345,6 +361,7 @@ test("vacío, null y espacios son null; 0 explícito no se convierte desde vací
     location: "AN22-A",
     assignmentType: "FREE_TO_SALE",
     projectId: null,
+    clientId: "client-aviat",
     unitPriceMxn: ""
   });
   assert.equal(parseOptionalUnitPriceMxn(emptyParsed.unitPriceMxn), null);
@@ -422,14 +439,16 @@ test("precio distinto crea capa separada y el mismo precio combina atributos can
   assert.equal(combine.state.inventories[0]?.qty.toString(), "60");
 });
 
-test("proyecto de otro cliente se rechaza y no hay movimientos ajenos", async () => {
+test("entrada a proyecto de otro cliente conserva al propietario del proyecto", async () => {
   const world = createInboundTx();
-  await assert.rejects(
-    () => receiveIn(world.tx, { assignmentType: "PROJECT", projectId: "proj-other", unitPriceMxn: d("100") }),
-    (err: unknown) => err instanceof InventoryMutationError && err.code === "PROJECT_WRONG_CLIENT"
-  );
-  assert.equal(world.state.movements.length, 0);
-  assert.equal(world.state.layers.length, 0);
+  const result = await receiveIn(world.tx, {
+    assignmentType: "PROJECT",
+    projectId: "proj-other",
+    unitPriceMxn: d("100")
+  });
+  assert.equal(result.movement.clientId, "client-other");
+  assert.equal(world.state.inventories[0]?.clientId, "client-other");
+  assert.equal(world.state.movements.length, 1);
 });
 
 test("OPERATOR y SUPERVISOR no pueden enviar precio; entrada sin precio sigue permitida", () => {
@@ -510,11 +529,12 @@ test("el botón se habilita sin precio y se desactiva con precio inválido", () 
     inboundWarehouse: { value: "TULTITLAN24" },
     inboundLocation: { value: "AN22-A" },
     inboundStatus: { value: "AVAILABLE" },
+    inboundClientId: { value: "client-aviat" },
     inboundUnitPriceMxn: { value: "" }
   };
   const inboundFormIsComplete = new Function(
     "document",
-    `${sliceFunction(js, "inboundHasSystemSkuSelection")}\n${sliceFunction(js, "inboundAssignmentTypeValue")}\n${sliceFunction(js, "inboundSelectedProjectId")}\n${sliceFunction(js, "inboundFormIsComplete")}; return inboundFormIsComplete;`
+    `${sliceFunction(js, "inboundHasSystemSkuSelection")}\n${sliceFunction(js, "inboundAssignmentTypeValue")}\n${sliceFunction(js, "inboundSelectedProjectId")}\n${sliceFunction(js, "inboundSelectedOwnerClientId")}\n${sliceFunction(js, "inboundFormIsComplete")}; return inboundFormIsComplete;`
   )({ getElementById: (id: string) => fields[id] || null });
   assert.equal(inboundFormIsComplete(), true, "vacío no bloquea");
   fields.inboundUnitPriceMxn.value = "100";

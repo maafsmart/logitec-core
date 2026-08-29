@@ -407,7 +407,8 @@ pickingRouter.post("/scan", async (req, res) => {
           productId: product.id,
           warehouse: normalizedWarehouse || product.warehouse,
           location: normalizedLocation,
-          taskId
+          taskId,
+          clientId: null
         },
         select: { id: true, result: true, scannedCode: true, createdAt: true }
       });

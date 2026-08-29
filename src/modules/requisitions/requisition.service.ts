@@ -1610,6 +1610,7 @@ async function finishSerializedFifoPick(
       assignmentType: InventoryAssignmentType;
       projectId: string | null;
       assignmentKey: string;
+      clientId: string;
       location: { code: string; warehouse: string };
       project: { id: string; code: string; name: string } | null;
     };
@@ -1737,7 +1738,8 @@ async function finishSerializedFifoPick(
       productId: lockedLine.productId,
       warehouse: lockedInventory.location.warehouse,
       location: lockedInventory.location.code,
-      taskId: movementTaskId
+      taskId: movementTaskId,
+      clientId: lockedInventory.clientId
     }
   });
   await logActivity(
@@ -1748,6 +1750,7 @@ async function finishSerializedFifoPick(
       userId: input.userId,
       productId: lockedLine.productId,
       customerId: lockedLine.requisition.projectId,
+      clientId: lockedInventory.clientId,
       warehouse: lockedInventory.location.warehouse,
       location: lockedInventory.location.code,
       qty,
@@ -2081,7 +2084,8 @@ async function consumeFifoReservationPickInTransaction(
       productId: lockedLine.productId,
       warehouse: lockedInventory.location.warehouse,
       location: lockedInventory.location.code,
-      taskId: movementTaskId
+      taskId: movementTaskId,
+      clientId: lockedInventory.clientId
     }
   });
   await logActivity(
@@ -2092,6 +2096,7 @@ async function consumeFifoReservationPickInTransaction(
       userId: input.userId,
       productId: lockedLine.productId,
       customerId: lockedLine.requisition.projectId,
+      clientId: lockedInventory.clientId,
       warehouse: lockedInventory.location.warehouse,
       location: lockedInventory.location.code,
       qty,
@@ -2282,7 +2287,8 @@ async function consumeSingleReservationPickInTransaction(
       productId: reservation.requisitionLine.productId,
       warehouse: reservation.inventory.location.warehouse,
       location: reservation.inventory.location.code,
-      taskId: movementTaskId
+      taskId: movementTaskId,
+      clientId: lockedInventory.clientId
     }
   });
   await logActivity(
@@ -2293,6 +2299,7 @@ async function consumeSingleReservationPickInTransaction(
       userId: input.userId,
       productId: reservation.requisitionLine.productId,
       customerId: reservation.requisitionLine.requisition.projectId,
+      clientId: lockedInventory.clientId,
       warehouse: reservation.inventory.location.warehouse,
       location: reservation.inventory.location.code,
       qty: input.qty,

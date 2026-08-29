@@ -8,6 +8,7 @@ export type LogActivityInput = {
   userId?: string | null;
   productId?: string | null;
   customerId?: string | null;
+  clientId?: string | null;
   warehouse?: string | null;
   location?: string | null;
   qty?: Prisma.Decimal | number | string | null;
@@ -29,6 +30,7 @@ export async function logActivity(input: LogActivityInput, tx?: Prisma.Transacti
     userId: input.userId ?? null,
     productId: input.productId ?? null,
     customerId: input.customerId ?? null,
+    clientId: input.clientId ?? null,
     warehouse: input.warehouse ?? null,
     location: input.location ?? null,
     qty,

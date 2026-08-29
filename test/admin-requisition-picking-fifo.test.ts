@@ -110,7 +110,8 @@ function createPickWorld(opts?: { layerCount?: number; requestedQty?: string }) 
         reservedQty: d("0"),
         assignmentType: "PROJECT",
         assignmentKey: `P:${project.id}`,
-        projectId: project.id
+        projectId: project.id,
+        clientId: "client-aviat"
       },
       {
         id: "inv-fts",
@@ -120,8 +121,9 @@ function createPickWorld(opts?: { layerCount?: number; requestedQty?: string }) 
         qty: d("5"),
         reservedQty: d("0"),
         assignmentType: "FREE_TO_SALE",
-        assignmentKey: "FREE_TO_SALE",
-        projectId: null as string | null
+        assignmentKey: "FREE_TO_SALE:client-aviat",
+        projectId: null as string | null,
+        clientId: "client-aviat"
       },
       {
         id: "inv-other",
@@ -132,7 +134,8 @@ function createPickWorld(opts?: { layerCount?: number; requestedQty?: string }) 
         reservedQty: d("0"),
         assignmentType: "PROJECT",
         assignmentKey: `P:${otherProject.id}`,
-        projectId: otherProject.id
+        projectId: otherProject.id,
+        clientId: "client-aviat"
       }
     ],
     layers: [] as Array<{
@@ -1253,7 +1256,7 @@ test("33 separación visual Picking de requisición / Picking libre", () => {
 });
 
 test("34 cache-buster v78", () => {
-  assert.match(html, /dashboard\.js\?v=80/);
+  assert.match(html, /dashboard\.js\?v=81/);
   assert.doesNotMatch(html, /dashboard\.js\?v=77/);
 });
 

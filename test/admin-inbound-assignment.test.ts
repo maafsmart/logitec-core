@@ -46,11 +46,22 @@ function inboundHtml() {
   return html.slice(start, end);
 }
 
-function mockTx(projects: Record<string, { id: string; code: string; name: string; active: boolean; clientId: string | null }>) {
+function mockTx(
+  projects: Record<string, { id: string; code: string; name: string; active: boolean; clientId: string | null }>,
+  clients: Record<string, { id: string; code: string; name: string; tradeName: string; legalName: string; active: boolean }> = {
+    "client-aviat": { id: "client-aviat", code: "AVIAT", name: "AVIAT", tradeName: "AVIAT", legalName: "AVIAT", active: true },
+    "client-other": { id: "client-other", code: "CLI2", name: "Cliente 2", tradeName: "Cliente 2", legalName: "Cliente 2", active: true }
+  }
+) {
   return {
     customer: {
       async findUnique({ where }: { where: { id: string } }) {
         return projects[where.id] || null;
+      }
+    },
+    client: {
+      async findUnique({ where }: { where: { id: string } }) {
+        return clients[where.id] || null;
       }
     }
   };
@@ -127,12 +138,14 @@ test("Registrar entrada se desactiva con datos incompletos y exige SKU del siste
     sliceFunction(js, "inboundHasSystemSkuSelection"),
     sliceFunction(js, "inboundAssignmentTypeValue"),
     sliceFunction(js, "inboundSelectedProjectId"),
+    sliceFunction(js, "inboundSelectedOwnerClientId"),
     sliceFunction(js, "inboundFormIsComplete")
   ].join("\n");
   const fields: Record<string, { value: string }> = {
     inboundProductId: { value: "prod-1" },
     inboundAssignmentType: { value: "FREE_TO_SALE" },
     inboundProjectId: { value: "" },
+    inboundClientId: { value: "client-aviat" },
     inboundQty: { value: "2" },
     inboundWarehouse: { value: "TULTITLAN24" },
     inboundLocation: { value: "AN14-F" },
@@ -175,6 +188,7 @@ test("pasar de Proyecto a Free to Sale limpia projectId y oculta el campo", () =
     getElementById(id: string) {
       if (id === "inboundAssignmentType") return assignment;
       if (id === "inboundProjectField") return field;
+      if (id === "inboundClientField") return { classList: { toggle() {} } };
       if (id === "inboundProjectId") return project;
       if (id === "inboundSubmitBtn") return submit;
       if (id === "inboundProductId") return { value: "prod-1" };
@@ -182,14 +196,17 @@ test("pasar de Proyecto a Free to Sale limpia projectId y oculta el campo", () =
       if (id === "inboundWarehouse") return { value: "TULTITLAN24" };
       if (id === "inboundLocation") return { value: "AN14-F" };
       if (id === "inboundStatus") return { value: "AVAILABLE" };
+      if (id === "inboundClientId") return { value: "client-aviat" };
       return null;
     }
   };
   const src = [
     "function fillInboundProjectSelect() {}",
+    "function fillInboundClientSelect() {}",
     sliceFunction(js, "inboundHasSystemSkuSelection"),
     sliceFunction(js, "inboundAssignmentTypeValue"),
     sliceFunction(js, "inboundSelectedProjectId"),
+    sliceFunction(js, "inboundSelectedOwnerClientId"),
     sliceFunction(js, "inboundFormIsComplete"),
     sliceFunction(js, "syncInboundSubmitEnabled"),
     sliceFunction(js, "syncInboundAssignmentUi")
@@ -215,18 +232,20 @@ test("recepción Free to Sale usa helpers canónicos con projectId null", async 
   const tx = mockTx({ "proj-att": aviatProject });
   const assignment = await resolveInboundAssignment(tx as never, product, {
     assignmentType: "FREE_TO_SALE",
-    projectId: null
+    projectId: null,
+    clientId: "client-aviat"
   });
   assert.equal(assignment.assignmentType, "FREE_TO_SALE");
   assert.equal(assignment.projectId, null);
-  assert.equal(assignment.assignmentKey, "FREE_TO_SALE");
+  assert.equal(assignment.assignmentKey, "FREE_TO_SALE:client-aviat");
+  assert.equal(assignment.clientId, "client-aviat");
   await assert.rejects(
     () => resolveInboundAssignment(tx as never, product, { assignmentType: "FREE_TO_SALE", projectId: "proj-att" }),
     (err: unknown) => err instanceof InventoryMutationError && err.code === "PROJECT_MUST_BE_NULL"
   );
 });
 
-test("recepción por proyecto exige proyecto activo del mismo cliente", async () => {
+test("recepción por proyecto usa el cliente del proyecto; clientId ajeno se rechaza", async () => {
   const tx = mockTx({
     "proj-att": aviatProject,
     "proj-other": otherClientProject,
@@ -239,6 +258,14 @@ test("recepción por proyecto exige proyecto activo del mismo cliente", async ()
   assert.equal(ok.assignmentType, "PROJECT");
   assert.equal(ok.projectId, "proj-att");
   assert.equal(ok.assignmentKey, "P:proj-att");
+  assert.equal(ok.clientId, "client-aviat");
+
+  const other = await resolveInboundAssignment(tx as never, product, {
+    assignmentType: "PROJECT",
+    projectId: "proj-other"
+  });
+  assert.equal(other.clientId, "client-other");
+  assert.equal(other.assignmentKey, "P:proj-other");
 
   await assert.rejects(
     () => resolveInboundAssignment(tx as never, product, { assignmentType: "PROJECT" }),
@@ -249,7 +276,12 @@ test("recepción por proyecto exige proyecto activo del mismo cliente", async ()
     (err: unknown) => err instanceof InventoryMutationError && err.code === "PROJECT_INACTIVE"
   );
   await assert.rejects(
-    () => resolveInboundAssignment(tx as never, product, { assignmentType: "PROJECT", projectId: "proj-other" }),
+    () =>
+      resolveInboundAssignment(tx as never, product, {
+        assignmentType: "PROJECT",
+        projectId: "proj-att",
+        clientId: "client-other"
+      }),
     (err: unknown) => err instanceof InventoryMutationError && err.code === "PROJECT_WRONG_CLIENT"
   );
 });
@@ -261,8 +293,8 @@ test("no infiere proyecto por SKU ni por customerId del producto", async () => {
     (err: unknown) => err instanceof InventoryMutationError && err.code === "ASSIGNMENT_REQUIRED"
   );
   assert.doesNotMatch(assignmentSrc, /product\.customerId\) \{\s*\n\s*const owner/);
-  assert.match(assignmentSrc, /buildAssignment\("FREE_TO_SALE", null\)/);
-  assert.match(assignmentSrc, /buildAssignment\("PROJECT", project\.id\)/);
+  assert.match(assignmentSrc, /buildAssignment\("FREE_TO_SALE", null, client\.id\)/);
+  assert.match(assignmentSrc, /buildAssignment\("PROJECT", project\.id, project\.clientId\)/);
   assert.match(routes, /createMovementSchema\.parse\(req\.body\)/);
   assert.match(movementSchemaSrc, /data\.type === "IN"/);
   assert.match(movementSchemaSrc, /assignmentType !== "PROJECT" && data\.assignmentType !== "FREE_TO_SALE"/);

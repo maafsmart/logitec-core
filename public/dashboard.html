@@ -3269,7 +3269,7 @@
         </div>
         <div class="app-topbar-meta">
           <div class="aviat-context-bar">
-            <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
+            <span>Cliente: <strong data-aviat-primary-label>—</strong></span>
             <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
             <span>Asignación: <strong data-aviat-assignment-label>Todas</strong></span>
           </div>
@@ -3410,7 +3410,7 @@
               <p class="cc-tagline">Control operativo de almacén, inventario y movimientos</p>
             </header>
             <div class="aviat-context-bar">
-              <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
+              <span>Cliente: <strong data-aviat-primary-label>—</strong></span>
               <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
               <span>Asignación: <strong data-aviat-assignment-label>Todas</strong></span>
             </div>
@@ -3420,6 +3420,12 @@
             </div>
             <p id="aviatScopeControl" class="operational-table-meta" style="margin:0 0 10px;font-weight:600">Proyecto: Todos los proyectos · Asignación: Todas</p>
             <div class="inventory-scope-bar" data-inventory-scope>
+              <div class="field compact js-admin-client-filter">
+                <label>Cliente</label>
+                <select class="js-inventory-client-select">
+                  <option value="">Todos los clientes</option>
+                </select>
+              </div>
               <div class="field compact">
                 <label for="ccInventoryProjectSelect">Proyecto</label>
                 <select id="ccInventoryProjectSelect" class="js-inventory-project-select">
@@ -4041,12 +4047,18 @@
               <button type="button" class="js-inv-master-tab" data-inv-master-tab="clients">Clientes</button>
             </div>
             <div class="aviat-context-bar">
-              <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
+              <span>Cliente: <strong data-aviat-primary-label>—</strong></span>
               <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
               <span>Asignación: <strong data-aviat-assignment-label>Todas</strong></span>
             </div>
             <p id="aviatScopeInventory" class="operational-table-meta" style="margin:0 0 8px;font-weight:600">Proyecto: Todos los proyectos · Asignación: Todas</p>
             <div class="inventory-scope-bar" data-inventory-scope>
+              <div class="field compact js-admin-client-filter">
+                <label>Cliente</label>
+                <select class="js-inventory-client-select">
+                  <option value="">Todos los clientes</option>
+                </select>
+              </div>
               <div class="field compact">
                 <label for="inventoryProjectSelect">Proyecto</label>
                 <select id="inventoryProjectSelect" class="js-inventory-project-select">
@@ -4305,7 +4317,7 @@
               <p class="module-lead">Productos maestros de AVIAT. Los proyectos se gestionan desde aquí y se listan en Inventario › Proyectos.</p>
             </div>
             <div class="aviat-context-bar">
-              <span>Cliente principal: <strong data-aviat-primary-label>AVIAT</strong></span>
+              <span>Cliente: <strong data-aviat-primary-label>—</strong></span>
               <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
               <span>Asignación: <strong data-aviat-assignment-label>Todas</strong></span>
             </div>
@@ -4444,7 +4456,7 @@
               <p class="module-lead">Registra mercancía recibida y aumenta existencias por proyecto, lote y ubicación. Usado en recepción de almacén.</p>
             </div>
             <div class="card-panel ops-form-panel">
-              <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong></p>
+              <p class="ops-aviat-banner">Cliente: <strong data-aviat-primary-label>—</strong></p>
               <h4 class="secondary-panel-title">Registrar entrada</h4>
               <p class="module-hint" style="margin:0 0 10px">Primero selecciona la asignación. Si eliges Proyecto, indica el proyecto destino. Después selecciona un SKU de las sugerencias.</p>
               <div class="form-grid">
@@ -4454,6 +4466,12 @@
                     <option value="">— Seleccionar asignación —</option>
                     <option value="FREE_TO_SALE">Free to Sale</option>
                     <option value="PROJECT">Proyecto</option>
+                  </select>
+                </div>
+                    <div class="field hidden" id="inboundClientField">
+                  <label for="inboundClientId">Cliente propietario</label>
+                  <select id="inboundClientId">
+                    <option value="">— Seleccionar cliente —</option>
                   </select>
                 </div>
                 <div class="field hidden" id="inboundProjectField">
@@ -4549,7 +4567,7 @@
               <p class="module-lead">Confirma la salida final de mercancía y descuenta existencias.</p>
             </div>
             <div class="card-panel ops-form-panel">
-              <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong></p>
+              <p class="ops-aviat-banner">Cliente: <strong data-aviat-primary-label>—</strong></p>
               <h4 class="secondary-panel-title">Registrar salida</h4>
               <div class="form-grid">
                 <div class="field">
@@ -4638,7 +4656,7 @@
               La requisición no descuenta inventario. El stock se descuenta únicamente al surtir mediante Picking/Salida.
             </p>
             <div class="card-panel ops-form-panel">
-              <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong> · No registra entrada de inventario</p>
+              <p class="ops-aviat-banner">Cliente: <strong data-aviat-primary-label>—</strong> · No registra entrada de inventario</p>
               <p class="module-hint" style="margin:0 0 12px">
                 <strong>Entrada masiva</strong> aumenta existencias. <strong>Órdenes de surtido</strong> solicitan preparación de salida.
                 <strong>Picking</strong> ejecuta el surtido y puede descontar. <strong>Salidas</strong> confirman el despacho.
@@ -4736,7 +4754,7 @@
               <p class="module-lead">Solicita reubicación entre ubicaciones dentro del almacén. No es picking ni salida.</p>
             </div>
             <div class="card-panel ops-form-panel">
-              <p class="ops-aviat-banner">Cliente principal: <strong>AVIAT</strong> · Control operativo de reubicación</p>
+              <p class="ops-aviat-banner">Cliente: <strong data-aviat-primary-label>—</strong> · Control operativo de reubicación</p>
               <p class="module-lead" style="margin:0 0 12px">
                 Reubicación atómica: descuenta origen y acredita destino en una sola transacción. Si el saldo tiene varias capas, la cantidad se asigna en FIFO conservando lote y precio de cada tramo.
               </p>
@@ -4836,6 +4854,12 @@
             </div>
             <div class="card-panel">
               <div class="inventory-scope-bar" data-inventory-scope>
+                <div class="field compact js-admin-client-filter">
+                  <label>Cliente</label>
+                  <select class="js-inventory-client-select">
+                    <option value="">Todos los clientes</option>
+                  </select>
+                </div>
                 <div class="field compact">
                   <label for="projectsViewProjectSelect">Proyecto</label>
                   <select id="projectsViewProjectSelect" class="js-inventory-project-select">
@@ -5302,6 +5326,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=80"></script>
+    <script src="/dashboard.js?v=81"></script>
   </body>
 </html>

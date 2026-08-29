@@ -33,14 +33,14 @@ const createWarehouseSchema = warehouseFieldsSchema.extend({
 warehousesRouter.use(requireAuth);
 
 warehousesRouter.get("/", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
-  let where: { code?: { in: string[] } } = {};
+  let where: { id?: { in: string[] } } = {};
   if (isClientRole(req.auth!)) {
     const visible = await prisma.location.findMany({
       where: { inventories: { some: clientInventoryWhere(req.auth!) } },
-      distinct: ["warehouse"],
-      select: { warehouse: true }
+      distinct: ["warehouseId"],
+      select: { warehouseId: true }
     });
-    where = { code: { in: visible.map((row) => row.warehouse) } };
+    where = { id: { in: visible.map((row) => row.warehouseId) } };
   }
   const rows = await prisma.warehouse.findMany({
     where,
@@ -50,7 +50,7 @@ warehousesRouter.get("/", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIEN
   const withStats = await Promise.all(
     rows.map(async (row) => ({
       ...row,
-      stats: await warehouseOperationalStats(prisma as never, row.code)
+      stats: await warehouseOperationalStats(prisma as never, row)
     }))
   );
   res.json(withStats);
@@ -68,13 +68,13 @@ warehousesRouter.get("/:id", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CL
   if (!warehouse) throw new HttpError(404, "Almacén no encontrado.");
   if (isClientRole(req.auth!)) {
     const visible = await prisma.location.count({
-      where: { warehouse: warehouse.code, inventories: { some: clientInventoryWhere(req.auth!) } }
+      where: { warehouseId: warehouse.id, inventories: { some: clientInventoryWhere(req.auth!) } }
     });
     if (!visible) throw new HttpError(404, "Almacén no encontrado.");
   }
   res.json({
     ...warehouse,
-    stats: await warehouseOperationalStats(prisma as never, warehouse.code)
+    stats: await warehouseOperationalStats(prisma as never, warehouse)
   });
 });
 

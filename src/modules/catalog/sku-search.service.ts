@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { HttpError } from "../../shared/http-error.js";
-import { clientInventoryWhere, clientProductWhere, clientSerialWhere, isClientRole } from "../clients/client-scope.js";
+import { clientProductWhere, clientSerialWhere, isClientRole, scopedInventoryWhere } from "../clients/client-scope.js";
 import type { UserRole } from "../../middlewares/auth.middleware.js";
 import { calculateInventoryValuation, summarizeStockAssignments } from "../inventory/inventory-valuation.service.js";
 import { canExposeEconomicValuation } from "../inventory/inventory-economic-access.js";
@@ -78,6 +78,9 @@ function matchScore(product: {
 }
 
 export async function searchSkuProducts(query: string, auth: AuthContext, take = 30) {
+  if (isClientRole(auth) && !auth.clientId) {
+    throw new HttpError(403, "Usuario CLIENT sin cliente asignado.");
+  }
   const q = query.trim();
   if (!q) return [];
   const where: Prisma.ProductWhereInput = {
@@ -167,7 +170,7 @@ export async function searchSkuProducts(query: string, auth: AuthContext, take =
     }));
 }
 
-export async function getSkuContext(productId: string, auth: AuthContext) {
+export async function getSkuContext(productId: string, auth: AuthContext, requestedClientId?: string | null) {
   const product = await prisma.product.findFirst({
     where: { AND: [{ id: productId }, clientProductWhere(auth)] },
     include: {
@@ -179,10 +182,13 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
         }
       },
       inventories: {
-        where: clientInventoryWhere(auth),
+        where: scopedInventoryWhere(auth, requestedClientId),
         orderBy: [{ location: { warehouse: "asc" } }, { location: { code: "asc" } }],
         include: {
           location: { select: { id: true, code: true, warehouse: true } },
+          client: {
+            select: { id: true, code: true, name: true, legalName: true, tradeName: true, active: true }
+          },
           project: {
             select: {
               id: true,
@@ -233,7 +239,7 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
         inventory.assignmentType === "PROJECT" && inventory.project && !operationalProject
           ? "HISTORICAL_NON_OPERATIONAL"
           : null,
-      client: mapSkuClient(inventory.project?.client),
+      client: mapSkuClient(inventory.client || inventory.project?.client),
       warehouse: inventory.location.warehouse,
       locationId: inventory.location.id,
       locationCode: inventory.location.code,
@@ -279,13 +285,14 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
     otherReserved = otherReserved.plus(inventory.reservedQty);
   }
   const operationalClient = mapSkuClient(
-    product.inventories.find(
-      (inventory) =>
-        inventory.assignmentType === "PROJECT" &&
-        inventory.project &&
-        !isForbiddenInventoryProjectRecord(inventory.project) &&
-        inventory.project.client
-    )?.project?.client
+    product.inventories.find((inventory) => inventory.client)?.client ||
+      product.inventories.find(
+        (inventory) =>
+          inventory.assignmentType === "PROJECT" &&
+          inventory.project &&
+          !isForbiddenInventoryProjectRecord(inventory.project) &&
+          inventory.project.client
+      )?.project?.client
   );
   const layers = product.inventories.flatMap((inventory) =>
     inventory.layers.map((layer) => ({
@@ -333,29 +340,18 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
           ? { id: product.customer.id, code: product.customer.code, name: product.customer.name, historical: true }
           : null,
     stockAssignments,
-    assignmentBreakdown: isClientRole(auth)
-      ? {
-          projects: [...projectQty.values()]
-            .sort((a, b) => a.name.localeCompare(b.name, "es"))
-            .map((row) => ({
-              id: row.id,
-              code: row.code,
-              name: row.name,
-              ...qtyTriplet(row.qty, row.reservedQty)
-            }))
-        }
-      : {
-          projects: [...projectQty.values()]
-            .sort((a, b) => a.name.localeCompare(b.name, "es"))
-            .map((row) => ({
-              id: row.id,
-              code: row.code,
-              name: row.name,
-              ...qtyTriplet(row.qty, row.reservedQty)
-            })),
-          freeToSale: qtyTriplet(freeToSaleQty, freeToSaleReserved),
-          other: qtyTriplet(otherQty, otherReserved)
-        },
+    assignmentBreakdown: {
+      projects: [...projectQty.values()]
+        .sort((a, b) => a.name.localeCompare(b.name, "es"))
+        .map((row) => ({
+          id: row.id,
+          code: row.code,
+          name: row.name,
+          ...qtyTriplet(row.qty, row.reservedQty)
+        })),
+      freeToSale: qtyTriplet(freeToSaleQty, freeToSaleReserved),
+      other: qtyTriplet(otherQty, otherReserved)
+    },
     inventory: {
       totalQty: totalQty.toString(),
       totalReservedQty: totalReservedQty.toString(),

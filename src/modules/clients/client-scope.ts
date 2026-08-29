@@ -42,38 +42,26 @@ export function clientTaskWhere(auth: AuthContext): Prisma.TaskWhereInput {
 }
 
 /**
- * CLIENT product visibility comes from project assignment, never from product.customer.
+ * CLIENT product visibility comes from owned inventory or active project links.
+ * Never from product.customer.
  */
 export function clientProductWhere(auth: AuthContext): Prisma.ProductWhereInput {
   if (!isClientRole(auth)) return {};
   const clientId = scopedClientId(auth);
   return {
     OR: [
-      { inventories: { some: { assignmentType: "PROJECT", project: { clientId } } } },
+      { inventories: { some: { clientId } } },
       { productProjects: { some: { active: true, project: { clientId } } } }
     ]
   };
 }
 
 export function clientInventoryWhere(auth: AuthContext): Prisma.InventoryWhereInput {
-  if (!isClientRole(auth)) return {};
-  const clientId = scopedClientId(auth);
-  return {
-    assignmentType: "PROJECT",
-    project: { clientId }
-  };
+  return isClientRole(auth) ? { clientId: scopedClientId(auth) } : {};
 }
 
 export function clientMovementWhere(auth: AuthContext): Prisma.InventoryMovementWhereInput {
-  if (!isClientRole(auth)) return {};
-  const clientId = scopedClientId(auth);
-  return {
-    OR: [
-      { toProject: { clientId } },
-      { fromProject: { clientId } },
-      { requisitionLine: { requisition: { project: { clientId } } } }
-    ]
-  };
+  return isClientRole(auth) ? { clientId: scopedClientId(auth) } : {};
 }
 
 export function clientLayerWhere(auth: AuthContext): Prisma.InventoryLayerWhereInput {
@@ -81,36 +69,15 @@ export function clientLayerWhere(auth: AuthContext): Prisma.InventoryLayerWhereI
 }
 
 export function clientSerialWhere(auth: AuthContext): Prisma.InventorySerialWhereInput {
-  if (!isClientRole(auth)) return {};
-  return {
-    OR: [
-      { inventoryLayer: { inventory: clientInventoryWhere(auth) } },
-      { AND: [{ inventoryLayerId: null }, { product: clientProductWhere(auth) }] }
-    ]
-  };
+  return isClientRole(auth) ? { clientId: scopedClientId(auth) } : {};
 }
 
 export function clientActivityWhere(auth: AuthContext): Prisma.ActivityLogWhereInput {
-  if (!isClientRole(auth)) return {};
-  const clientId = scopedClientId(auth);
-  return {
-    OR: [
-      { customer: { clientId } },
-      { task: { requisition: { project: { clientId } } } },
-      { product: { inventories: { some: { assignmentType: "PROJECT", project: { clientId } } } } }
-    ]
-  };
+  return isClientRole(auth) ? { clientId: scopedClientId(auth) } : {};
 }
 
 export function clientScanWhere(auth: AuthContext): Prisma.ScanEventWhereInput {
-  if (!isClientRole(auth)) return {};
-  const clientId = scopedClientId(auth);
-  return {
-    OR: [
-      { task: { requisition: { project: { clientId } } } },
-      { product: { inventories: { some: { assignmentType: "PROJECT", project: { clientId } } } } }
-    ]
-  };
+  return isClientRole(auth) ? { clientId: scopedClientId(auth) } : {};
 }
 
 export function emptyIdWhere(): { id: { in: string[] } } {
@@ -125,13 +92,38 @@ export function effectiveRequestedClientId(auth: AuthContext, requested?: string
 }
 
 export function adminClientInventoryFilter(clientId: string | undefined): Prisma.InventoryWhereInput {
-  return clientId ? { project: { clientId } } : {};
+  return clientId ? { clientId } : {};
 }
 
 export function adminClientMovementFilter(clientId: string | undefined): Prisma.InventoryMovementWhereInput {
-  if (!clientId) return {};
+  return clientId ? { clientId } : {};
+}
+
+export function scopedInventoryWhere(
+  auth: AuthContext,
+  requestedClientId?: string | null,
+  extra: Prisma.InventoryWhereInput[] = []
+): Prisma.InventoryWhereInput {
   return {
-    OR: [{ toProject: { clientId } }, { fromProject: { clientId } }, { requisitionLine: { requisition: { project: { clientId } } } }]
+    AND: [
+      clientInventoryWhere(auth),
+      adminClientInventoryFilter(effectiveRequestedClientId(auth, requestedClientId)),
+      ...extra
+    ]
+  };
+}
+
+export function scopedMovementWhere(
+  auth: AuthContext,
+  requestedClientId?: string | null,
+  extra: Prisma.InventoryMovementWhereInput[] = []
+): Prisma.InventoryMovementWhereInput {
+  return {
+    AND: [
+      clientMovementWhere(auth),
+      adminClientMovementFilter(effectiveRequestedClientId(auth, requestedClientId)),
+      ...extra
+    ]
   };
 }
 
@@ -169,6 +161,60 @@ export async function assertAccessibleInventory(
   });
   if (!row) {
     throw new HttpError(404, "Línea de inventario no encontrada.", "INVENTORY_NOT_FOUND");
+  }
+}
+
+export async function assertAccessibleLayer(
+  auth: AuthContext,
+  layerId: string,
+  db: {
+    inventoryLayer: {
+      findFirst: (args: { where: Prisma.InventoryLayerWhereInput; select: { id: true } }) => Promise<{ id: string } | null>;
+    };
+  }
+): Promise<void> {
+  const row = await db.inventoryLayer.findFirst({
+    where: { AND: [{ id: layerId }, clientLayerWhere(auth)] },
+    select: { id: true }
+  });
+  if (!row) {
+    throw new HttpError(404, "Capa no encontrada.", "LAYER_NOT_FOUND");
+  }
+}
+
+export async function assertAccessibleSerial(
+  auth: AuthContext,
+  serialId: string,
+  db: {
+    inventorySerial: {
+      findFirst: (args: { where: Prisma.InventorySerialWhereInput; select: { id: true } }) => Promise<{ id: string } | null>;
+    };
+  }
+): Promise<void> {
+  const row = await db.inventorySerial.findFirst({
+    where: { AND: [{ id: serialId }, clientSerialWhere(auth)] },
+    select: { id: true }
+  });
+  if (!row) {
+    throw new HttpError(404, "Serie no encontrada.", "SERIAL_NOT_FOUND");
+  }
+}
+
+export async function assertAccessibleMovement(
+  auth: AuthContext,
+  movementId: string,
+  db: {
+    inventoryMovement: {
+      findFirst: (args: { where: Prisma.InventoryMovementWhereInput; select: { id: true } }) => Promise<{ id: string } | null>;
+    };
+  }
+): Promise<void> {
+  const row = await db.inventoryMovement.findFirst({
+    where: { AND: [{ id: movementId }, clientMovementWhere(auth)] },
+    select: { id: true }
+  });
+  if (!row) {
+    throw new HttpError(404, "Movimiento no encontrado.", "MOVEMENT_NOT_FOUND");
   }
 }
 

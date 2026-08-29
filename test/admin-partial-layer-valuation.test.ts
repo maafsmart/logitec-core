@@ -59,8 +59,9 @@ function makeCube(opts?: {
     qty,
     reservedQty,
     assignmentType: opts?.assignmentType ?? "FREE_TO_SALE",
-    assignmentKey: opts?.assignmentType === "PROJECT" ? `PROJECT:${opts.projectId}` : "FREE_TO_SALE",
+    assignmentKey: opts?.assignmentType === "PROJECT" ? `PROJECT:${opts.projectId}` : "FREE_TO_SALE:client-aviat",
     projectId: opts?.projectId ?? null,
+    clientId: "client-aviat",
     product: { id: "prod-1", sku: "2223158-4", name: "Equipo", customerId: "cust-1" },
     location: { id: "loc-1", code: "AN14-F", warehouse: "TULTITLAN24" },
     project: opts?.projectId ? { id: opts.projectId, code: "P1", name: "Proyecto 1" } : null
@@ -178,7 +179,8 @@ function createSplitDb(seed: ReturnType<typeof makeCube>) {
             reservedQty: working.inventory.reservedQty,
             assignmentType: working.inventory.assignmentType,
             assignmentKey: working.inventory.assignmentKey,
-            projectId: working.inventory.projectId
+            projectId: working.inventory.projectId,
+            clientId: working.inventory.clientId
           };
         }
       },
@@ -519,6 +521,6 @@ test("endpoint, roles, PATCH intacto y UI de valuación parcial", () => {
   assert.match(msg, /Se asignará un precio unitario de \$\{priceLabel\} MXN a \$\{formatQty\(qtyRaw\)\} piezas/);
   assert.match(msg, /Quedarán \$\{formatQty\(remainingRaw\)\} piezas sin precio/);
   assert.match(msg, /El saldo total de \$\{formatQty\(totalRaw\)\} piezas no cambia/);
-  assert.match(html, /dashboard\.js\?v=80/);
+  assert.match(html, /dashboard\.js\?v=81/);
   assert.match(js, /logitec_active_nav/);
 });

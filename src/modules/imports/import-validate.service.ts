@@ -115,7 +115,9 @@ export async function validateMappedRows(
     const key = normalizeImportLabel(project.name);
     projectsByName.set(key, [...(projectsByName.get(key) || []), project]);
   }
-  const clients = await prisma.client.findMany({ select: { id: true, name: true, tradeName: true, legalName: true } });
+  const clients = await prisma.client.findMany({
+    select: { id: true, code: true, name: true, tradeName: true, legalName: true }
+  });
   const existingSerials = await prisma.inventorySerial.findMany({ select: { serialNumber: true, imei: true, productId: true } });
   const serialSet = new Set(existingSerials.map((s) => s.serialNumber.toUpperCase()));
   const imeiSet = new Set(existingSerials.filter((s) => s.imei).map((s) => s.imei!.toUpperCase()));
@@ -371,10 +373,13 @@ export async function validateMappedRows(
 
     const clientName = asText(mapped.client);
     if (clientName && !normalized.clientId) {
-      const matches = clients.filter((c) => {
-        const names = [c.name, c.tradeName, c.legalName].filter(Boolean).map((n) => n!.toUpperCase());
-        return names.includes(clientName.toUpperCase());
-      });
+      const byCode = clients.filter((c) => c.code.toUpperCase() === clientName.toUpperCase());
+      const matches = byCode.length
+        ? byCode
+        : clients.filter((c) => {
+            const names = [c.name, c.tradeName, c.legalName].filter(Boolean).map((n) => n!.toUpperCase());
+            return names.includes(clientName.toUpperCase());
+          });
       if (matches.length === 1) {
         normalized.clientId = matches[0]!.id;
         normalized.clientName = matches[0]!.tradeName || matches[0]!.name;
@@ -386,6 +391,19 @@ export async function validateMappedRows(
       } else {
         warnings.push({ field: "client", value: clientName, code: "CLIENT_UNRESOLVED", message: "Cliente no resuelto.", severity: "WARNING" });
       }
+    }
+    if (
+      isInventoryImport &&
+      (normalized.assignmentType === "FREE_TO_SALE" || normalized.assignmentType === "LEGACY_UNASSIGNED") &&
+      !normalized.clientId
+    ) {
+      errors.push({
+        field: "client",
+        value: clientName,
+        code: "CLIENT_REQUIRED",
+        message: "Free to Sale y existencias sin proyecto requieren un cliente propietario explícito.",
+        severity: "ERROR"
+      });
     }
 
     const serialInput = asText(mapped.serialNumber).toUpperCase();

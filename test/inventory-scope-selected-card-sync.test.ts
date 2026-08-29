@@ -229,6 +229,7 @@ function loadHarness(document: unknown) {
     "function hideProductTypeaheadList(){}",
     "function buildSkuContextDetailHtml(){ return ''; }",
     "function inventoryStatusRecord(){ return null; }",
+    "function owningClientDisplayName(){ return 'AVIAT'; }",
     sliceFunction(js, "escCell"),
     sliceFunction(js, "isForbiddenProjectLabel"),
     sliceFunction(js, "isOperationalProjectRecord"),
@@ -274,8 +275,8 @@ function loadHarness(document: unknown) {
   )(document);
 }
 
-test("dashboard.js usa cache-buster v=80 para sincronizar alcance y tarjeta", () => {
-  assert.match(html, /dashboard\.js\?v=80/);
+test("dashboard.js usa cache-buster v=81 para sincronizar alcance y tarjeta", () => {
+  assert.match(html, /dashboard\.js\?v=81/);
   assert.doesNotMatch(html, /dashboard\.js\?v=76/);
   assert.match(sliceFunction(js, "setInventoryScope"), /refreshInventorySkuSelectedCard\(\)/);
   assert.match(sliceFunction(js, "wireInventoryScopeUi"), /inventoryScopeFromAssignmentOpt\(assignmentType\)/);
@@ -371,7 +372,7 @@ test("Con proyecto sin selección no inventa un proyecto y no hay fallback a otr
 });
 
 test("AVIAT sigue como cliente, LOGITEC queda fuera, FIFO y cancelación permanecen", () => {
-  assert.match(sliceFunction(js, "canonicalClientDisplay"), /PRIMARY_CLIENT_AVIAT_NAME/);
+  assert.match(sliceFunction(js, "canonicalClientDisplay"), /owningClientDisplayName/);
   assert.match(js, /function isForbiddenProjectLabel/);
   assert.match(fifoReserveSrc, /planRelocateFifoAllocation/);
   assert.match(fifoReserveSrc, /allocationMode: "FIFO"/);

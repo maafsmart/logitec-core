@@ -284,7 +284,8 @@ export async function executeInventoryImportBulk(input: {
           reservedQty: new Prisma.Decimal(0),
           assignmentType: cube.assignment.assignmentType,
           projectId: cube.assignment.projectId,
-          assignmentKey: cube.assignment.assignmentKey
+          assignmentKey: cube.assignment.assignmentKey,
+          clientId: cube.assignment.clientId
         });
         inventoryByCube.set(key, { id, qty: new Prisma.Decimal(0), existing: false });
       }
@@ -349,7 +350,8 @@ export async function executeInventoryImportBulk(input: {
             inventoryLayerId: layerId,
             serialNumber: row.serialNumber,
             imei: row.imei,
-            receivedAt
+            receivedAt,
+            clientId: row.assignment.clientId
           });
         }
         activities.push({
@@ -359,6 +361,7 @@ export async function executeInventoryImportBulk(input: {
           userId: input.userId,
           productId: row.productId,
           customerId: product.customerId,
+          clientId: row.assignment.clientId,
           warehouse: location.warehouse,
           location: location.code,
           qty: row.qty,
@@ -450,9 +453,13 @@ function prepareRow(row: ExecRow, context: ImportContext): PreparedRow {
   if (assignmentType === "PROJECT" && !projectId) {
     throw new ImportExecuteError("PROJECT_REQUIRED", row.sourceRow);
   }
+  const clientId = String(n.clientId || "").trim();
+  if (!clientId) {
+    throw new ImportExecuteError("CLIENT_REQUIRED", row.sourceRow);
+  }
   let assignment: InventoryAssignment;
   try {
-    assignment = buildAssignment(assignmentType as InventoryAssignmentType, projectId);
+    assignment = buildAssignment(assignmentType as InventoryAssignmentType, projectId, clientId);
   } catch (error) {
     throw new ImportExecuteError(error instanceof Error ? error.message : "ASSIGNMENT_REQUIRED", row.sourceRow);
   }

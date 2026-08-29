@@ -13,7 +13,9 @@ export const MASTER_DEACTIVATE_CODES = {
   DUPLICATE_CODE: "DUPLICATE_CODE",
   PROJECT_CLIENT_REQUIRED: "PROJECT_CLIENT_REQUIRED",
   FORBIDDEN_MASTER_LABEL: "FORBIDDEN_MASTER_LABEL",
-  PHYSICAL_DELETE_DISABLED: "PHYSICAL_DELETE_DISABLED"
+  PHYSICAL_DELETE_DISABLED: "PHYSICAL_DELETE_DISABLED",
+  PROJECT_HAS_OPERATIONAL_HISTORY: "PROJECT_HAS_OPERATIONAL_HISTORY",
+  WAREHOUSE_CODE_IMMUTABLE: "WAREHOUSE_CODE_IMMUTABLE"
 } as const;
 
 export type MasterDataDb = {
@@ -54,6 +56,8 @@ export type MasterDataDb = {
   product: { count: (args: unknown) => Promise<number> };
   productProject: { count: (args: unknown) => Promise<number> };
   inventoryMovement: { count: (args: unknown) => Promise<number> };
+  inventoryLayer: { count: (args: unknown) => Promise<number> };
+  activityLog: { count: (args: unknown) => Promise<number> };
 };
 
 function optionalText(value: string | null | undefined): string | null {
@@ -213,14 +217,14 @@ export async function setClientActive(db: MasterDataDb, id: string, active: bool
         "No se puede desactivar el cliente: tiene proyectos activos."
       );
     }
-    const inventory = await countPhysicalInventory(db, { project: { clientId: id } });
+    const inventory = await countPhysicalInventory(db, { clientId: id });
     if (inventory > 0) {
       conflict(
         MASTER_DEACTIVATE_CODES.HAS_PHYSICAL_INVENTORY,
         "No se puede desactivar el cliente: tiene inventario físico."
       );
     }
-    const reservations = await countActiveReservations(db, { inventory: { project: { clientId: id } } });
+    const reservations = await countActiveReservations(db, { inventory: { clientId: id } });
     if (reservations > 0) {
       conflict(
         MASTER_DEACTIVATE_CODES.HAS_ACTIVE_RESERVATIONS,
@@ -308,6 +312,25 @@ export async function updateProjectRecord(db: MasterDataDb, id: string, input: P
   if (code !== existing.code) {
     const duplicate = await db.customer.findUnique({ where: { code } });
     if (duplicate) conflict(MASTER_DEACTIVATE_CODES.DUPLICATE_CODE, `Ya existe un proyecto con código ${code}.`);
+  }
+  if (clientId !== existing.clientId) {
+    const [inventory, layers, reservations, requisitions, tasks, movements, activity] = await Promise.all([
+      db.inventory.count({ where: { projectId: id } }),
+      db.inventoryLayer.count({ where: { inventory: { projectId: id } } }),
+      db.inventoryReservation.count({ where: { inventory: { projectId: id } } }),
+      db.requisition.count({ where: { projectId: id } }),
+      db.task.count({ where: { requisition: { projectId: id } } }),
+      db.inventoryMovement.count({
+        where: { OR: [{ fromProjectId: id }, { toProjectId: id }] }
+      }),
+      db.activityLog.count({ where: { customerId: id } })
+    ]);
+    if (inventory + layers + reservations + requisitions + tasks + movements + activity > 0) {
+      conflict(
+        MASTER_DEACTIVATE_CODES.PROJECT_HAS_OPERATIONAL_HISTORY,
+        "No se puede cambiar el cliente de un proyecto con inventario, reservas, requisiciones, tareas, movimientos o historial."
+      );
+    }
   }
   return db.customer.update({
     where: { id },
@@ -397,6 +420,18 @@ export async function updateWarehouseRecord(db: MasterDataDb, id: string, input:
   if (code !== existing.code) {
     const duplicate = await db.warehouse.findUnique({ where: { code } });
     if (duplicate) conflict(MASTER_DEACTIVATE_CODES.DUPLICATE_CODE, `Ya existe un almacén con código ${code}.`);
+    const locationCount = await db.location.count({
+      where: { OR: [{ warehouseId: id }, { warehouse: existing.code }] }
+    });
+    const movements = await db.inventoryMovement.count({
+      where: { warehouse: existing.code }
+    });
+    if (locationCount > 0 || movements > 0) {
+      conflict(
+        MASTER_DEACTIVATE_CODES.WAREHOUSE_CODE_IMMUTABLE,
+        "No se puede cambiar el código de un almacén con ubicaciones o historial."
+      );
+    }
   }
   return db.warehouse.update({
     where: { id },
@@ -418,11 +453,11 @@ export async function setWarehouseActive(db: MasterDataDb, id: string, active: b
   const existing = await db.warehouse.findUnique({ where: { id } });
   if (!existing) throw new HttpError(404, "Almacén no encontrado.");
   if (!active) {
-    const inventory = await countPhysicalInventory(db, { location: { warehouse: existing.code } });
+    const inventory = await countPhysicalInventory(db, { location: { warehouseId: existing.id } });
     if (inventory > 0) {
       conflict(MASTER_DEACTIVATE_CODES.HAS_PHYSICAL_INVENTORY, "No se puede desactivar el almacén: tiene inventario físico.");
     }
-    const reservations = await countActiveReservations(db, { inventory: { location: { warehouse: existing.code } } });
+    const reservations = await countActiveReservations(db, { inventory: { location: { warehouseId: existing.id } } });
     if (reservations > 0) {
       conflict(MASTER_DEACTIVATE_CODES.HAS_ACTIVE_RESERVATIONS, "No se puede desactivar el almacén: tiene reservas activas.");
     }
@@ -430,7 +465,7 @@ export async function setWarehouseActive(db: MasterDataDb, id: string, active: b
     if (tasks > 0) {
       conflict(MASTER_DEACTIVATE_CODES.HAS_ACTIVE_TASKS, "No se puede desactivar el almacén: tiene tareas activas.");
     }
-    const activeLocations = await db.location.count({ where: { warehouse: existing.code, active: true } });
+    const activeLocations = await db.location.count({ where: { warehouseId: existing.id, active: true } });
     if (activeLocations > 0) {
       conflict(MASTER_DEACTIVATE_CODES.HAS_ACTIVE_LOCATIONS, "No se puede desactivar el almacén: tiene ubicaciones activas.");
     }
@@ -439,7 +474,8 @@ export async function setWarehouseActive(db: MasterDataDb, id: string, active: b
 }
 
 export type LocationWriteInput = {
-  warehouse: string;
+  warehouseId?: string | null;
+  warehouse?: string;
   code?: string | null;
   description?: string | null;
   zone?: string | null;
@@ -450,7 +486,24 @@ export type LocationWriteInput = {
   active?: boolean;
 };
 
-function composeLocationCode(input: LocationWriteInput): string {
+async function resolveWarehouseRecord(
+  db: MasterDataDb,
+  input: { warehouseId?: string | null; warehouse?: string | null }
+) {
+  const warehouseId = optionalText(input.warehouseId);
+  if (warehouseId) {
+    const byId = await db.warehouse.findUnique({ where: { id: warehouseId } });
+    if (!byId) throw new HttpError(400, "Almacén no encontrado.");
+    return byId;
+  }
+  const code = input.warehouse ? normalizeMasterCode(input.warehouse) : "";
+  if (!code) throw new HttpError(400, "El almacén es obligatorio.");
+  const byCode = await db.warehouse.findUnique({ where: { code } });
+  if (!byCode) throw new HttpError(400, "Almacén no encontrado.");
+  return byCode;
+}
+
+function composeLocationCode(input: LocationWriteInput & { warehouse: string }): string {
   const explicit = optionalText(input.code);
   if (explicit) return normalizeMasterCode(explicit);
   const warehouse = normalizeMasterCode(input.warehouse);
@@ -462,16 +515,19 @@ function composeLocationCode(input: LocationWriteInput): string {
 }
 
 export async function createLocationRecord(db: MasterDataDb, input: LocationWriteInput) {
-  const warehouse = normalizeMasterCode(input.warehouse);
-  if (!warehouse) throw new HttpError(400, "El almacén es obligatorio.");
+  const warehouseRow = await resolveWarehouseRecord(db, input);
+  const warehouse = warehouseRow.code;
   const code = composeLocationCode({ ...input, warehouse });
-  const duplicate = await db.location.findUnique({ where: { code } });
+  const duplicate = await db.location.findFirst({
+    where: { OR: [{ code }, { warehouseId: warehouseRow.id, code }] }
+  });
   if (duplicate) {
     conflict(MASTER_DEACTIVATE_CODES.DUPLICATE_CODE, `Ya existe una ubicación con código ${code}.`);
   }
   try {
     return await db.location.create({
       data: {
+        warehouseId: warehouseRow.id,
         warehouse,
         code,
         description: optionalText(input.description),
@@ -494,9 +550,23 @@ export async function createLocationRecord(db: MasterDataDb, input: LocationWrit
 export async function updateLocationRecord(db: MasterDataDb, id: string, input: Partial<LocationWriteInput>) {
   const existing = await db.location.findUnique({ where: { id } });
   if (!existing) throw new HttpError(404, "Ubicación no encontrada.");
-  const warehouse = input.warehouse !== undefined ? normalizeMasterCode(input.warehouse) : existing.warehouse;
+  const warehouseRow =
+    input.warehouseId !== undefined || input.warehouse !== undefined
+      ? await resolveWarehouseRecord(db, {
+          warehouseId: input.warehouseId ?? existing.warehouseId,
+          warehouse: input.warehouse ?? existing.warehouse
+        })
+      : await resolveWarehouseRecord(db, {
+          warehouseId: existing.warehouseId,
+          warehouse: existing.warehouse
+        });
+  const warehouse = warehouseRow.code;
   const code =
-    input.code !== undefined || input.warehouse !== undefined || input.zone !== undefined || input.rack !== undefined
+    input.code !== undefined ||
+    input.warehouse !== undefined ||
+    input.warehouseId !== undefined ||
+    input.zone !== undefined ||
+    input.rack !== undefined
       ? composeLocationCode({
           warehouse,
           code: input.code !== undefined ? input.code : existing.code,
@@ -506,13 +576,16 @@ export async function updateLocationRecord(db: MasterDataDb, id: string, input: 
           position: input.position !== undefined ? input.position : existing.position
         })
       : existing.code;
-  if (code !== existing.code) {
-    const duplicate = await db.location.findUnique({ where: { code } });
+  if (code !== existing.code || warehouseRow.id !== existing.warehouseId) {
+    const duplicate = await db.location.findFirst({
+      where: { AND: [{ OR: [{ code }, { warehouseId: warehouseRow.id, code }] }, { id: { not: id } }] }
+    });
     if (duplicate) conflict(MASTER_DEACTIVATE_CODES.DUPLICATE_CODE, `Ya existe una ubicación con código ${code}.`);
   }
   return db.location.update({
     where: { id },
     data: {
+      warehouseId: warehouseRow.id,
       warehouse,
       code,
       ...(input.description !== undefined ? { description: optionalText(input.description) } : {}),
@@ -546,11 +619,11 @@ export async function setLocationActive(db: MasterDataDb, id: string, active: bo
   return db.location.update({ where: { id }, data: { active } });
 }
 
-export async function warehouseOperationalStats(db: MasterDataDb, warehouseCode: string) {
+export async function warehouseOperationalStats(db: MasterDataDb, warehouse: { id: string; code: string }) {
   const [locationCount, qtyAgg] = await Promise.all([
-    db.location.count({ where: { warehouse: warehouseCode } }),
+    db.location.count({ where: { warehouseId: warehouse.id } }),
     db.inventory.aggregate({
-      where: { location: { warehouse: warehouseCode }, qty: { gt: 0 } },
+      where: { location: { warehouseId: warehouse.id }, qty: { gt: 0 } },
       _sum: { qty: true, reservedQty: true }
     })
   ]);

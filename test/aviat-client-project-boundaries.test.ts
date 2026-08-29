@@ -118,6 +118,7 @@ const ATT_SKU_CONTEXT = {
 function skuCardHarnessSource() {
   return [
     "const PRIMARY_CLIENT_AVIAT_NAME = 'AVIAT';",
+    "function owningClientDisplayName(){ return 'AVIAT'; }",
     sliceFunction(js, "isForbiddenProjectLabel"),
     sliceFunction(js, "isOperationalProjectRecord"),
     sliceFunction(js, "canonicalClientDisplay"),
@@ -227,19 +228,20 @@ test("la tarjeta conserva ancho legible y no nace en la columna compacta", () =>
   assert.match(css, /max-height:\s*160px/);
   assert.match(html, /id="inventorySkuSelectedHost"/);
   assert.match(sliceFunction(js, "renderSkuContext"), /inventorySkuSelectedHost/);
-  assert.match(html, /dashboard\.js\?v=80/);
+  assert.match(html, /dashboard\.js\?v=81/);
 });
 
-test("OS-2026-001 muestra Cliente AVIAT y no deriva el proyecto del catálogo", () => {
+test("OS-2026-001 muestra el cliente real del proyecto y no pinta AVIAT por constante", () => {
   const render = sliceFunction(js, "renderRequisitionDetail");
   assert.match(render, /canonicalClientDisplay\(row\)/);
   assert.match(render, /row\.project \? `\$\{row\.project\.name\} \(\$\{row\.project\.code\}\)`/);
   const canon = sliceFunction(js, "canonicalClientDisplay");
-  assert.match(canon, /PRIMARY_CLIENT_AVIAT_NAME/);
+  assert.match(canon, /owningClientDisplayName/);
   assert.match(canon, /isForbiddenProjectLabel/);
+  assert.doesNotMatch(canon, /PRIMARY_CLIENT_AVIAT_NAME/);
   assert.equal(
     new Function(
-      `${sliceFunction(js, "isForbiddenProjectLabel")}; const PRIMARY_CLIENT_AVIAT_NAME = "AVIAT"; ${canon}; return canonicalClientDisplay({ client: null });`
+      `${sliceFunction(js, "isForbiddenProjectLabel")}; function owningClientDisplayName(){ return "AVIAT"; } ${canon}; return canonicalClientDisplay({ client: { name: "AVIAT", tradeName: "AVIAT" } });`
     )(),
     "AVIAT"
   );

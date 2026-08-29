@@ -76,8 +76,9 @@ function makeWorld(opts?: {
     qty,
     reservedQty,
     assignmentType,
-    assignmentKey: assignmentType === "PROJECT" && projectId ? projectAssignmentKey(projectId) : "FREE_TO_SALE",
+    assignmentKey: assignmentType === "PROJECT" && projectId ? projectAssignmentKey(projectId) : "FREE_TO_SALE:client-aviat",
     projectId,
+    clientId: "client-aviat",
     product,
     location,
     project: projectId ? { id: projectId, code: "ATT", name: "AT&T" } : null
@@ -93,6 +94,7 @@ function makeWorld(opts?: {
         assignmentType: "PROJECT" as const,
         assignmentKey: projectAssignmentKey("proj-att"),
         projectId: "proj-att",
+        clientId: "client-aviat",
         product,
         location,
         project: { id: "proj-att", code: "ATT", name: "AT&T" }
@@ -295,6 +297,7 @@ function createValueAssignDb(seed: ReturnType<typeof makeWorld>) {
             assignmentType: data.assignmentType as "PROJECT" | "FREE_TO_SALE",
             assignmentKey: String(data.assignmentKey),
             projectId: (data.projectId as string | null) ?? null,
+            clientId: String(data.clientId || "client-aviat"),
             product: seed.source.product,
             location: seed.source.location,
             project:
@@ -546,7 +549,7 @@ test("proyectos inválidos, reservas, seriales, concurrencia y rollback", async 
         },
         createValueAssignDb(makeWorld()) as never
       ),
-    (error: LayerPriceError) => error.code === "PROJECT_WRONG_CLIENT"
+    (error: LayerPriceError) => error.code === "CROSS_CLIENT_TRANSFER"
   );
   await assert.rejects(
     () =>
@@ -666,7 +669,7 @@ test("endpoint, PATCH y price-split intactos, roles y UI de destino", () => {
   assert.match(html, /id="priceDestType"/);
   assert.match(html, /Conservar asignación actual/);
   assert.match(html, /id="priceDestProject"/);
-  assert.match(html, /dashboard\.js\?v=80/);
+  assert.match(html, /dashboard\.js\?v=81/);
   assert.match(js, /\/api\/inventory\/layers\/\$\{encodeURIComponent\(layer\.id\)\}\/price-split/);
   assert.match(js, /\/api\/inventory\/layers\/\$\{encodeURIComponent\(layer\.id\)\}\/value-and-assign/);
   assert.match(js, /layerValueAssignConfirmMessage/);
