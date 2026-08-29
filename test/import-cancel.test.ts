@@ -136,5 +136,5 @@ test("la interfaz llama /cancel y conserva ambos botones y el modal", () => {
   assert.doesNotMatch(html, /Descartar de la interfaz/);
   assert.doesNotMatch(js, /discardResumableImportUi/);
   assert.match(html, /data-import-cancel-version="server-cancel-v1"/);
-  assert.match(html, /dashboard\.js\?v=72/);
+  assert.match(html, /dashboard\.js\?v=73/);
 });

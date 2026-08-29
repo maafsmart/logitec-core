@@ -1155,6 +1155,49 @@
         font-size: 0.9rem;
         line-height: 1.45;
       }
+      .picking-mode-card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px 18px;
+        background: linear-gradient(180deg, #101b36 0%, #0d1730 100%);
+      }
+      .picking-mode-card h4 {
+        margin: 0 0 6px;
+        font-size: 1.02rem;
+      }
+      .picking-mode-lead {
+        margin: 0 0 12px;
+        color: #bfd0ff;
+        font-size: 0.88rem;
+        line-height: 1.45;
+      }
+      .pick-req-cube {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin: 8px 0;
+        background: rgba(12, 21, 40, 0.65);
+      }
+      .pick-req-cube strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+      .pick-req-cube .pick-req-meta {
+        margin: 0 0 8px;
+        font-size: 0.84rem;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      .pick-req-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .pick-req-actions input {
+        width: 110px;
+        min-height: 36px;
+      }
       .btn-scan {
         width: 100%;
         min-height: 52px;
@@ -2351,6 +2394,17 @@
       }
       .picking-hint {
         color: var(--muted);
+      }
+      .picking-mode-card {
+        background: var(--panel-solid);
+        border: 1px solid var(--line);
+      }
+      .picking-mode-lead,
+      .pick-req-cube .pick-req-meta {
+        color: var(--muted);
+      }
+      .pick-req-cube {
+        background: #fff;
       }
       .btn-scan {
         background: linear-gradient(90deg, var(--ok), #10b981);
@@ -3785,6 +3839,27 @@
                 Evento registrado
               </div>
             </div>
+            <section class="picking-mode-card" id="pickingRequisitionMode">
+              <h4>Picking de requisición</h4>
+              <p class="picking-mode-lead">
+                Consume reservas FIFO de una requisición aprobada o en progreso. El inventario físico y el
+                reservado bajan juntos; no descuenta saldo libre.
+              </p>
+              <div class="field">
+                <label for="pickRequisitionSelect">Requisición (folio)</label>
+                <select id="pickRequisitionSelect">
+                  <option value="">— Selecciona una requisición aprobada o en progreso —</option>
+                </select>
+              </div>
+              <div id="pickRequisitionMeta" class="pick-req-meta"></div>
+              <div id="pickRequisitionCubes"></div>
+            </section>
+            <section class="picking-mode-card" id="pickingFreeMode">
+              <h4>Picking libre</h4>
+              <p class="picking-mode-lead">
+                Utiliza únicamente saldo no reservado (cantidad menos reservedQty). No puede consumir
+                inventario apartado por una requisición.
+              </p>
             <form id="scanForm" class="picking-scan-card">
               <div class="field full">
                 <label for="scanInput">Código de barras / SKU</label>
@@ -3834,7 +3909,7 @@
                 </div>
               </div>
               <p class="picking-hint">
-                El sistema descuenta solo la línea exacta de inventario (proyecto, ubicación y estatus).
+                El sistema descuenta solo la línea exacta de inventario no reservado (proyecto, ubicación y estatus).
                 Si el SKU está en varias líneas, debes seleccionarlas: no se descuenta al azar.
                 Primero puede escanearse el código; si hay ambigüedad, elige ubicación/estatus y vuelve a confirmar.
               </p>
@@ -3842,6 +3917,7 @@
               <p id="scanHint" class="inline-error"></p>
               <button id="scanBtn" class="btn-scan" type="submit">Confirmar surtido / escaneo</button>
             </form>
+            </section>
             <div id="scanResult" class="scan-result-box" role="status" aria-live="polite"></div>
             <section class="picking-history card-panel">
               <h4 class="secondary-panel-title">Historial de escaneos</h4>
@@ -5091,6 +5167,6 @@
     </div>
 
     <script src="/vendor/xlsx.full.min.js"></script>
-    <script src="/dashboard.js?v=72"></script>
+    <script src="/dashboard.js?v=73"></script>
   </body>
 </html>

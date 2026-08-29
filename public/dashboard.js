@@ -951,6 +951,7 @@ function navigateTo(sectionId, moduleName) {
     resetPickingFlow();
     populatePickContextSelects();
     clearPickCandidates();
+    void loadPickRequisitions();
     setTimeout(() => scanInput?.focus(), 0);
   }
 
@@ -4759,6 +4760,7 @@ function wireModals() {
   wireAssignmentTransferPanel();
   wireLayerPricePanel();
   wireReqActionModal();
+  wirePickRequisitionMode();
   const rStock = document.getElementById("reportsExportStock");
   const rStockX = document.getElementById("reportsExportStockXlsx");
   const rMov = document.getElementById("reportsExportMovements");
@@ -8700,6 +8702,95 @@ function pickTaskIdFromRequisition(req) {
   return openPick?.id || tasks.find((t) => t.type === "PICK")?.id || "";
 }
 
+function groupRequisitionLineCubes(line) {
+  const groups = new Map();
+  for (const reservation of Array.isArray(line?.reservations) ? line.reservations : []) {
+    const activeQty = reqQtyNumber(reservation.activeQty);
+    if (activeQty <= 0) continue;
+    const inventoryId = reservation.inventoryId || "";
+    if (!inventoryId) continue;
+    if (!groups.has(inventoryId)) {
+      groups.set(inventoryId, {
+        inventoryId,
+        location: reservation.location || "—",
+        warehouse: reservation.warehouse || "",
+        inventoryStatus: reservation.inventoryStatus || "",
+        activeQty: 0,
+        layerIds: new Set(),
+        reservationCount: 0
+      });
+    }
+    const group = groups.get(inventoryId);
+    group.activeQty += activeQty;
+    group.reservationCount += 1;
+    if (reservation.inventoryLayerId) group.layerIds.add(reservation.inventoryLayerId);
+  }
+  return [...groups.values()].map((group) => ({
+    inventoryId: group.inventoryId,
+    location: group.location,
+    warehouse: group.warehouse,
+    inventoryStatus: group.inventoryStatus,
+    activeQty: group.activeQty,
+    reservationCount: group.reservationCount,
+    layerCount: group.layerIds.size || group.reservationCount
+  }));
+}
+
+function maxReservedPickQty(line, cube) {
+  const pending = reqQtyNumber(line?.pendingQty);
+  const active = reqQtyNumber(cube?.activeQty);
+  const cap = Math.min(pending, active);
+  return cap > 0 ? cap : 0;
+}
+
+function buildReservedFifoPickPayload(req, line, cube, qty) {
+  const sku = line?.product?.sku || "";
+  /** @type {Record<string, unknown>} */
+  const body = {
+    code: sku,
+    quantity: qty,
+    requisitionLineId: line.id,
+    inventoryId: cube.inventoryId,
+    allocationMode: "FIFO"
+  };
+  const taskId = pickTaskIdFromRequisition(req);
+  if (taskId) body.taskId = taskId;
+  return body;
+}
+
+function buildReservedFifoConfirmMessage(req, line, cube, qty) {
+  const sku = line?.product?.sku || "SKU";
+  const product = line?.product?.name || "—";
+  const project = req?.project ? `${req.project.name} (${req.project.code})` : "—";
+  const layers = cube?.layerCount || cube?.reservationCount || 1;
+  const statusLabel =
+    typeof formatInventoryStatus === "function"
+      ? formatInventoryStatus(cube?.inventoryStatus) || cube?.inventoryStatus || "—"
+      : cube?.inventoryStatus || "—";
+  return [
+    `Folio: ${req?.number || "—"}`,
+    `Proyecto: ${project}`,
+    `SKU/producto: ${sku} · ${product}`,
+    `Ubicación: ${cube?.location || "—"}`,
+    `Cantidad: ${formatQty(qty)}`,
+    `Estatus: ${statusLabel}`,
+    `Picking FIFO sobre ${layers} reservas/capas`
+  ].join("\n");
+}
+
+function setPickRequisitionMessage(message, ok) {
+  const box = document.getElementById("pickRequisitionMeta");
+  if (!box) return;
+  const existing = box.querySelector("[data-pick-req-msg]");
+  if (existing) existing.remove();
+  if (!message) return;
+  const note = document.createElement("p");
+  note.dataset.pickReqMsg = "1";
+  note.className = ok ? "inline-ok" : "inline-error";
+  note.textContent = message;
+  box.appendChild(note);
+}
+
 async function fetchRequisitionById(id) {
   if (!id) return null;
   const response = await authenticatedFetch(`/api/requisitions/${encodeURIComponent(id)}`);
@@ -8837,27 +8928,28 @@ function openReserveModal(req, line) {
   openReqActionModal();
 }
 
-function openReservedPickModal(req, line, reservation) {
+function openReservedPickModal(req, line, cube) {
   if (!canPickReservedUi()) return;
   const sku = line.product?.sku || line.productId || "SKU";
-  const activeQty = reqQtyNumber(reservation.activeQty);
-  reqActionContext = { mode: "pick", requisition: req, line, reservation };
+  const maxQty = maxReservedPickQty(line, cube);
+  reqActionContext = { mode: "pick", requisition: req, line, cube };
   const title = document.getElementById("reqActionTitle");
   if (title) title.textContent = "Surtir reservado";
   const qtyLabel = document.getElementById("reqActionQtyLabel");
-  if (qtyLabel) qtyLabel.textContent = `Cantidad a surtir (máximo ${formatQty(activeQty)})`;
+  if (qtyLabel) qtyLabel.textContent = `Cantidad a surtir (máximo ${formatQty(maxQty)})`;
   fillReqActionSummary([
     { label: "SKU", value: sku },
     { label: "Producto", value: line.product?.name || "—" },
     { label: "Proyecto", value: req.project ? `${req.project.name} (${req.project.code})` : "—" },
-    { label: "Reserva activa", value: formatQty(activeQty) },
-    { label: "Reservado original", value: formatQty(reservation.qty) },
-    { label: "Consumido", value: formatQty(reservation.consumedQty) },
-    { label: "Inventario", value: reservation.inventoryId || "—" }
+    { label: "Ubicación", value: cube.location || "—" },
+    { label: "Estatus", value: cube.inventoryStatus || "—" },
+    { label: "Reservado activo del cubo", value: formatQty(cube.activeQty) },
+    { label: "Capas internas", value: String(cube.layerCount || cube.reservationCount || 0) },
+    { label: "Pendiente de la línea", value: formatQty(line.pendingQty) }
   ]);
   hideReqActionCandidateFields();
   const qtyEl = document.getElementById("reqActionQty");
-  if (qtyEl) qtyEl.value = "";
+  if (qtyEl) qtyEl.value = maxQty > 0 ? String(maxQty) : "";
   setReqActionMessage("", true);
   openReqActionModal();
 }
@@ -8929,48 +9021,48 @@ async function confirmReserveFromModal(qty) {
   await refreshRequisitionViews(req.id);
 }
 
-async function confirmReservedPickFromModal(qty) {
-  const req = reqActionContext?.requisition;
-  const line = reqActionContext?.line;
-  const reservation = reqActionContext?.reservation;
-  if (!req?.id || !line?.id || !reservation?.id) return;
-  const activeQty = reqQtyNumber(reservation.activeQty);
-  if (qty > activeQty) {
-    setReqActionMessage(`La cantidad no puede superar la reserva activa (${formatQty(activeQty)}).`, false);
-    return;
+async function executeReservedFifoPick(req, line, cube, qty) {
+  const sku = line?.product?.sku || "";
+  if (!sku) return { ok: false, cancelled: false, message: "La línea no tiene SKU." };
+  if (!window.confirm(buildReservedFifoConfirmMessage(req, line, cube, qty))) {
+    return { ok: false, cancelled: true };
   }
-  const sku = line.product?.sku || "";
-  if (!sku) {
-    setReqActionMessage("La línea no tiene SKU.", false);
-    return;
-  }
-  if (!window.confirm(`Surtir ${formatQty(qty)} piezas reservadas del SKU ${sku}?`)) return;
-  /** @type {Record<string, unknown>} */
-  const body = {
-    code: sku,
-    quantity: qty,
-    reservationId: reservation.id,
-    requisitionLineId: line.id
-  };
-  const taskId = pickTaskIdFromRequisition(req);
-  if (taskId) body.taskId = taskId;
   const response = await authenticatedFetch("/api/picking/scan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
+    body: JSON.stringify(buildReservedFifoPickPayload(req, line, cube, qty))
   });
   const data = response ? await response.json().catch(() => ({})) : {};
-  if (!response) {
-    setReqActionMessage("No se pudo surtir la reserva.", false);
+  if (!response) return { ok: false, cancelled: false, message: "No se pudo surtir la reserva." };
+  if (!response.ok) {
+    return { ok: false, cancelled: false, message: data.message || data.code || "No se pudo surtir la reserva." };
+  }
+  return { ok: true, cancelled: false, data };
+}
+
+async function confirmReservedPickFromModal(qty) {
+  const req = reqActionContext?.requisition;
+  const line = reqActionContext?.line;
+  const cube = reqActionContext?.cube;
+  if (!req?.id || !line?.id || !cube?.inventoryId) return;
+  const maxQty = maxReservedPickQty(line, cube);
+  if (qty > maxQty) {
+    setReqActionMessage(
+      `La cantidad no puede superar el menor entre reservado activo y pendiente (${formatQty(maxQty)}).`,
+      false
+    );
     return;
   }
-  if (!response.ok) {
-    setReqActionMessage(data.message || data.code || "No se pudo surtir la reserva.", false);
+  const result = await executeReservedFifoPick(req, line, cube, qty);
+  if (result.cancelled) return;
+  if (!result.ok) {
+    setReqActionMessage(result.message || "No se pudo surtir la reserva.", false);
     return;
   }
   closeReqActionModal();
-  setOpsMessage("reqMessage", "Picking reservado registrado. Se descontó stock de la reserva, no del saldo libre.", true);
+  setOpsMessage("reqMessage", "Picking FIFO reservado. Se descontó stock de las reservas, no del saldo libre.", true);
   await refreshRequisitionViews(req.id);
+  if (typeof loadPickRequisitions === "function") await loadPickRequisitions();
 }
 
 function wireReqActionModal() {
@@ -8983,6 +9075,144 @@ function wireReqActionModal() {
   if (cancelBtn && cancelBtn.dataset.reqWired !== "1") {
     cancelBtn.dataset.reqWired = "1";
     cancelBtn.addEventListener("click", () => closeReqActionModal());
+  }
+}
+
+async function loadPickRequisitions() {
+  const select = document.getElementById("pickRequisitionSelect");
+  if (!select) return;
+  const previous = select.value;
+  try {
+    const response = await authenticatedFetch("/api/requisitions");
+    const rows = response?.ok ? await response.json().catch(() => []) : [];
+    const open = (Array.isArray(rows) ? rows : []).filter(
+      (row) => row.status === "APPROVED" || row.status === "IN_PROGRESS"
+    );
+    select.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "— Selecciona una requisición aprobada o en progreso —";
+    select.appendChild(placeholder);
+    for (const row of open) {
+      const option = document.createElement("option");
+      option.value = row.id;
+      const project = row.project ? `${row.project.code}` : "";
+      option.textContent = `${row.number || row.id}${project ? ` · ${project}` : ""} · ${row.status}`;
+      select.appendChild(option);
+    }
+    if (previous && open.some((row) => row.id === previous)) {
+      select.value = previous;
+      await renderPickRequisitionMode(previous);
+    } else {
+      select.value = "";
+      await renderPickRequisitionMode("");
+    }
+  } catch (_error) {
+    select.innerHTML = '<option value="">— No se pudieron cargar requisiciones —</option>';
+  }
+}
+
+async function renderPickRequisitionMode(requisitionId) {
+  const meta = document.getElementById("pickRequisitionMeta");
+  const cubesBox = document.getElementById("pickRequisitionCubes");
+  if (meta) meta.innerHTML = "";
+  if (cubesBox) cubesBox.innerHTML = "";
+  if (!requisitionId) {
+    if (meta) meta.textContent = "Selecciona un folio para ver líneas y cubos reservados.";
+    return;
+  }
+  const req = await fetchRequisitionById(requisitionId);
+  if (!req) {
+    if (meta) meta.textContent = "No se pudo cargar la requisición.";
+    return;
+  }
+  const taskId = pickTaskIdFromRequisition(req);
+  const task = (Array.isArray(req.tasks) ? req.tasks : []).find((row) => row.id === taskId);
+  if (meta) {
+    const summary = document.createElement("p");
+    summary.className = "pick-req-meta";
+    summary.textContent = `Folio ${req.number || "—"} · Proyecto ${
+      req.project ? `${req.project.name} (${req.project.code})` : "—"
+    } · Tarea ${task ? `${task.type} ${task.status}` : "sin PICK abierta"}`;
+    meta.appendChild(summary);
+  }
+  if (!cubesBox) return;
+  const lines = Array.isArray(req.lines) ? req.lines : [];
+  let cards = 0;
+  for (const line of lines) {
+    const cubes = groupRequisitionLineCubes(line);
+    for (const cube of cubes) {
+      cards += 1;
+      const maxQty = maxReservedPickQty(line, cube);
+      const sku = line.product?.sku || "SKU";
+      const card = document.createElement("div");
+      card.className = "pick-req-cube";
+      card.dataset.lineId = line.id;
+      card.dataset.inventoryId = cube.inventoryId;
+      const title = document.createElement("strong");
+      title.textContent = `${sku} · ${line.product?.name || "producto"}`;
+      const details = document.createElement("p");
+      details.className = "pick-req-meta";
+      details.textContent =
+        `Ubicación ${cube.location || "—"} · ${cube.inventoryStatus || "—"} · solicitado ${formatQty(line.requestedQty)} · ` +
+        `surtido ${formatQty(line.fulfilledQty)} · pendiente ${formatQty(line.pendingQty)} · ` +
+        `reservado activo ${formatQty(cube.activeQty)} · ${cube.layerCount} capa(s) interna(s)`;
+      const actions = document.createElement("div");
+      actions.className = "pick-req-actions";
+      const qtyInput = document.createElement("input");
+      qtyInput.type = "number";
+      qtyInput.min = "0.0001";
+      qtyInput.step = "0.0001";
+      qtyInput.value = maxQty > 0 ? String(maxQty) : "";
+      qtyInput.setAttribute("aria-label", `Cantidad a surtir ${sku}`);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn-primary btn-compact";
+      button.textContent = "Surtir reservado";
+      button.addEventListener("click", () => {
+        void (async () => {
+          const qty = reqQtyNumber(qtyInput.value);
+          if (!(qty > 0) || qty > maxQty) {
+            setPickRequisitionMessage(
+              `Indica una cantidad mayor a 0 y no mayor a ${formatQty(maxQty)}.`,
+              false
+            );
+            return;
+          }
+          const result = await executeReservedFifoPick(req, line, cube, qty);
+          if (result.cancelled) return;
+          if (!result.ok) {
+            setPickRequisitionMessage(result.message || "No se pudo surtir la reserva.", false);
+            return;
+          }
+          setPickRequisitionMessage("Picking FIFO registrado.", true);
+          await loadPickRequisitions();
+          await refreshRequisitionViews(req.id);
+        })();
+      });
+      actions.appendChild(qtyInput);
+      actions.appendChild(button);
+      card.appendChild(title);
+      card.appendChild(details);
+      card.appendChild(actions);
+      cubesBox.appendChild(card);
+    }
+  }
+  if (!cards && meta) {
+    const empty = document.createElement("p");
+    empty.className = "pick-req-meta";
+    empty.textContent = "Esta requisición no tiene reservas activas para surtir.";
+    meta.appendChild(empty);
+  }
+}
+
+function wirePickRequisitionMode() {
+  const select = document.getElementById("pickRequisitionSelect");
+  if (select && select.dataset.pickReqWired !== "1") {
+    select.dataset.pickReqWired = "1";
+    select.addEventListener("change", () => {
+      void renderPickRequisitionMode(select.value);
+    });
   }
 }
 
@@ -9018,6 +9248,13 @@ function renderRequisitionDetail(row) {
       value: `${formatQty(line.stock?.otherProjectsAvailable)} — informativo; requiere reasignación para usarse`
     });
     const reservations = Array.isArray(line.reservations) ? line.reservations : [];
+    const cubes = groupRequisitionLineCubes(line);
+    for (const cube of cubes) {
+      fields.push({
+        label: `${sku} · Cubo reservado`,
+        value: `${cube.location || "—"} · ${cube.inventoryStatus || "—"} · activo ${formatQty(cube.activeQty)} · ${cube.layerCount} capa(s) · inventario ${cube.inventoryId}`
+      });
+    }
     for (const reservation of reservations) {
       const activeQty = reqQtyNumber(reservation.activeQty);
       if (activeQty <= 0) continue;
@@ -9062,13 +9299,13 @@ function renderRequisitionDetail(row) {
   if (!closed && (row.status === "APPROVED" || row.status === "IN_PROGRESS") && canPickReservedUi()) {
     for (const line of lines) {
       const sku = line.product?.sku || "SKU";
-      for (const reservation of Array.isArray(line.reservations) ? line.reservations : []) {
-        if (reqQtyNumber(reservation.activeQty) <= 0) continue;
+      const cubes = groupRequisitionLineCubes(line);
+      for (const cube of cubes) {
         actions.push({
-          id: `pick-${reservation.id}`,
-          label: `Surtir reservado${lines.length > 1 ? ` · ${sku}` : ""}`,
+          id: `pick-${line.id}-${cube.inventoryId}`,
+          label: `Surtir reservado${lines.length > 1 ? ` · ${sku}` : ""}${cubes.length > 1 ? ` · ${cube.location}` : ""}`,
           className: "btn-primary",
-          onClick: () => openReservedPickModal(row, line, reservation)
+          onClick: () => openReservedPickModal(row, line, cube)
         });
       }
     }

@@ -24,6 +24,7 @@ const scanSchema = z.object({
   layerId: z.string().min(1).optional(),
   reservationId: z.string().min(1).optional(),
   requisitionLineId: z.string().min(1).optional(),
+  allocationMode: z.string().max(20).optional(),
   taskId: z.string().optional()
 });
 
@@ -89,6 +90,7 @@ pickingRouter.post("/scan", async (req, res) => {
       layerId: layerIdOpt,
       reservationId: reservationIdOpt,
       requisitionLineId: requisitionLineIdOpt,
+      allocationMode: allocationModeOpt,
       taskId: taskIdOpt
     } = parsed;
 
@@ -102,12 +104,61 @@ pickingRouter.post("/scan", async (req, res) => {
     const layerId = layerIdOpt?.trim() || null;
     const reservationId = reservationIdOpt?.trim() || null;
     const requisitionLineId = requisitionLineIdOpt?.trim() || null;
+    const allocationMode = allocationModeOpt?.trim() || null;
     const statusFilter = statusInput?.trim()
       ? await assertActiveInventoryStatus(statusInput)
       : null;
 
-    if (reservationId || requisitionLineId) {
+    if (reservationId && allocationMode) {
+      res.status(409).json({
+        code: "RESERVATION_ALLOCATION_CONFLICT",
+        message: "No se puede indicar reservationId y allocationMode al mismo tiempo."
+      });
+      return;
+    }
+
+    if (allocationMode || reservationId || requisitionLineId) {
       try {
+        if (allocationMode) {
+          const reserved = await consumeReservationPick({
+            qty: pickQty,
+            userId: req.auth!.userId,
+            scannedCode: normalizedCode,
+            requisitionLineId,
+            inventoryId,
+            allocationMode,
+            taskId
+          });
+          res.json({
+            message: "Picking FIFO reservado OK: stock y reservas consumidos atómicamente.",
+            deducted: true,
+            reserved: true,
+            fifo: true,
+            product: {
+              id: reserved.product.id,
+              sku: reserved.product.sku,
+              name: reserved.product.name,
+              barcode: reserved.product.barcode,
+              warehouse: reserved.location.warehouse,
+              projectCode: reserved.project?.code || null,
+              projectName: reserved.project?.name || null,
+              assignmentType: reserved.assignmentType,
+              assignmentKey: reserved.assignmentKey
+            },
+            location: reserved.location.code,
+            warehouse: reserved.location.warehouse,
+            status: reserved.inventoryStatus,
+            quantityBefore: reserved.before.toString(),
+            quantityAfter: reserved.after.toString(),
+            pickedQty: pickQty.toString(),
+            scanEvent: reserved.scanEvent,
+            movementId: reserved.movement.id,
+            movementIds: reserved.movements.map((row) => row.id),
+            allocations: reserved.allocations ?? []
+          });
+          return;
+        }
+
         let resolvedReservationId = reservationId;
         if (!resolvedReservationId && requisitionLineId) {
           const activeReservations = await prisma.inventoryReservation.findMany({

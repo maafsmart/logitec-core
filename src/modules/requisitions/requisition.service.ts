@@ -4,6 +4,7 @@ import { HttpError } from "../../shared/http-error.js";
 import { logActivity } from "../activity/activity-log.service.js";
 import type { UserRole } from "../../middlewares/auth.middleware.js";
 import { assignmentFromInventory, outboundAssignmentFields } from "../inventory/inventory-assignment.js";
+import { InventoryMutationError } from "../inventory/inventory-errors.js";
 import { planRelocateFifoAllocation } from "../inventory/inventory-mutation.service.js";
 import { assertNoSerialAmbiguity } from "../inventory/inventory-serial-guard.js";
 
@@ -194,7 +195,14 @@ async function loadRequisition(id: string) {
           product: { select: { id: true, sku: true, name: true, barcode: true, customerId: true } },
           reservations: {
             include: {
-              inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true } }
+              inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true, createdAt: true } },
+              inventory: {
+                select: {
+                  id: true,
+                  status: true,
+                  location: { select: { code: true, warehouse: true } }
+                }
+              }
             }
           }
         },
@@ -288,7 +296,10 @@ function serializeRequisition(row: Awaited<ReturnType<typeof loadRequisition>>) 
           status: r.status,
           createdAt: r.createdAt,
           lotNumber: r.inventoryLayer?.lotNumber ?? null,
-          receivedAt: r.inventoryLayer?.receivedAt ? r.inventoryLayer.receivedAt.toISOString() : null
+          receivedAt: r.inventoryLayer?.receivedAt ? r.inventoryLayer.receivedAt.toISOString() : null,
+          location: r.inventory?.location?.code ?? null,
+          warehouse: r.inventory?.location?.warehouse ?? null,
+          inventoryStatus: r.inventory?.status ?? null
         }))
       };
     }),
@@ -367,7 +378,14 @@ export async function listRequisitions() {
           product: { select: { id: true, sku: true, name: true, barcode: true, customerId: true } },
           reservations: {
             include: {
-              inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true } }
+              inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true, createdAt: true } },
+              inventory: {
+                select: {
+                  id: true,
+                  status: true,
+                  location: { select: { code: true, warehouse: true } }
+                }
+              }
             }
           }
         }
@@ -1010,184 +1028,649 @@ export async function cancelRequisitionInTransaction(tx: Prisma.TransactionClien
   );
 }
 
-export async function consumeReservationPick(input: {
-  reservationId: string;
+export type ConsumeReservationPickInput = {
   qty: Prisma.Decimal;
   userId: string;
   scannedCode: string;
-  taskId?: string | null;
+  reservationId?: string | null;
   requisitionLineId?: string | null;
-}) {
-  return prisma.$transaction(async (tx) => {
-    const reservation = await tx.inventoryReservation.findUnique({
-      where: { id: input.reservationId },
-      include: {
-        requisitionLine: { include: { requisition: true, product: true } },
-        inventory: { include: { location: true, project: { select: { id: true, code: true, name: true } } } }
-      }
-    });
-    if (!reservation) throw new RequisitionError("RESERVATION_NOT_FOUND", "Reserva no encontrada.");
-    if (input.requisitionLineId && reservation.requisitionLineId !== input.requisitionLineId) {
-      throw new RequisitionError("LINE_MISMATCH", "La reserva no corresponde a la línea indicada.");
-    }
-    if (reservation.status !== "ACTIVE") throw new RequisitionError("RESERVATION_INACTIVE", "La reserva no está activa.");
-    if (["CANCELLED", "REJECTED"].includes(reservation.requisitionLine.requisition.status)) {
-      throw new RequisitionError("REQUISITION_CLOSED", "La requisición no permite picking.");
-    }
-    const projectId = reservation.requisitionLine.requisition.projectId;
-    if (
-      reservation.inventory.productId !== reservation.requisitionLine.productId ||
-      reservation.inventory.assignmentType !== "PROJECT" ||
-      reservation.inventory.projectId !== projectId
-    ) {
-      throw new RequisitionError(
-        "PICK_PROJECT_MISMATCH",
-        "La reserva no corresponde a inventario PROJECT del proyecto de la requisición."
-      );
-    }
+  inventoryId?: string | null;
+  allocationMode?: string;
+  taskId?: string | null;
+};
+
+type PickFifoReservation = {
+  id: string;
+  requisitionLineId: string;
+  inventoryId: string;
+  inventoryLayerId: string | null;
+  qty: Prisma.Decimal;
+  consumedQty: Prisma.Decimal;
+  releasedQty: Prisma.Decimal;
+  status: string;
+  inventoryLayer: { id: string; lotNumber: string | null; receivedAt: Date | null; createdAt: Date } | null;
+};
+
+export function comparePickFifoReservations(a: PickFifoReservation, b: PickFifoReservation) {
+  const aReceived = a.inventoryLayer?.receivedAt ? a.inventoryLayer.receivedAt.getTime() : Number.POSITIVE_INFINITY;
+  const bReceived = b.inventoryLayer?.receivedAt ? b.inventoryLayer.receivedAt.getTime() : Number.POSITIVE_INFINITY;
+  if (aReceived !== bReceived) return aReceived - bReceived;
+  const aCreated = a.inventoryLayer?.createdAt.getTime() ?? 0;
+  const bCreated = b.inventoryLayer?.createdAt.getTime() ?? 0;
+  if (aCreated !== bCreated) return aCreated - bCreated;
+  const layerCmp = String(a.inventoryLayerId || a.inventoryLayer?.id || "").localeCompare(
+    String(b.inventoryLayerId || b.inventoryLayer?.id || "")
+  );
+  if (layerCmp !== 0) return layerCmp;
+  return a.id.localeCompare(b.id);
+}
+
+function planFifoReservationConsumption(reservations: PickFifoReservation[], requested: Prisma.Decimal) {
+  const allocations: Array<{ reservation: PickFifoReservation; qty: Prisma.Decimal }> = [];
+  let remaining = requested;
+  for (const reservation of [...reservations].sort(comparePickFifoReservations)) {
+    if (remaining.lessThanOrEqualTo(0)) break;
+    if (reservation.status !== "ACTIVE") continue;
     const active = activeReserved(reservation.qty, reservation.consumedQty, reservation.releasedQty);
-    if (input.qty.greaterThan(active)) {
-      throw new RequisitionError("INSUFFICIENT_RESERVATION", "La reserva activa es insuficiente.");
-    }
-    const pending = reservation.requisitionLine.requestedQty.minus(reservation.requisitionLine.fulfilledQty);
-    if (input.qty.greaterThan(pending)) {
-      throw new RequisitionError("LINE_FULFILLED", "La línea ya está surtida o la cantidad excede el pendiente.");
-    }
-    if (!reservation.inventoryLayerId) {
-      throw new RequisitionError("LAYER_REQUIRED", "La reserva no tiene capa.");
-    }
+    if (active.lessThanOrEqualTo(0)) continue;
+    const take = active.lessThan(remaining) ? active : remaining;
+    allocations.push({ reservation, qty: take });
+    remaining = remaining.minus(take);
+  }
+  return { allocations, remaining };
+}
 
-    await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Inventory" WHERE "id" = ${reservation.inventoryId} FOR UPDATE`);
-    await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "InventoryLayer" WHERE "id" = ${reservation.inventoryLayerId} FOR UPDATE`);
-    await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "InventoryReservation" WHERE "id" = ${reservation.id} FOR UPDATE`);
+async function lockReservationsById(tx: Prisma.TransactionClient, ids: string[]) {
+  if (!ids.length) return;
+  const sorted = [...new Set(ids)].sort((a, b) => a.localeCompare(b));
+  await tx.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "InventoryReservation" WHERE "id" IN (${Prisma.join(sorted)}) ORDER BY "id" FOR UPDATE`
+  );
+}
 
-    const lockedInventory = await tx.inventory.findUniqueOrThrow({ where: { id: reservation.inventoryId } });
-    if (
-      lockedInventory.productId !== reservation.requisitionLine.productId ||
-      lockedInventory.assignmentType !== "PROJECT" ||
-      lockedInventory.projectId !== projectId
-    ) {
+function assertRequisitionAllowsPick(status: string) {
+  if (!["APPROVED", "IN_PROGRESS"].includes(status)) {
+    throw new RequisitionError("REQUISITION_CLOSED", "La requisición no permite picking.");
+  }
+}
+
+function scannedCodeMatchesProduct(code: string, product: { sku: string; barcode: string | null }) {
+  const token = code.trim();
+  if (!token) return true;
+  const sku = String(product.sku || "").trim();
+  const barcode = String(product.barcode || "").trim();
+  return token.toUpperCase() === sku.toUpperCase() || (barcode && token.toUpperCase() === barcode.toUpperCase());
+}
+
+async function resolvePickTaskId(
+  tx: Prisma.TransactionClient,
+  requisitionId: string,
+  clientTaskId: string | null | undefined
+) {
+  const requested = clientTaskId?.trim() || "";
+  if (requested) {
+    const claimed = await tx.task.findUnique({
+      where: { id: requested },
+      select: { id: true, type: true, requisitionId: true }
+    });
+    if (!claimed || claimed.type !== "PICK" || claimed.requisitionId !== requisitionId) {
+      throw new RequisitionError("TASK_MISMATCH", "El taskId no pertenece a la requisición de esta reserva.");
+    }
+  }
+  const open = await tx.task.findFirst({
+    where: {
+      requisitionId,
+      type: "PICK",
+      status: { notIn: ["COMPLETED", "CANCELLED", "REJECTED"] }
+    },
+    orderBy: { createdAt: "asc" },
+    select: { id: true }
+  });
+  return open?.id ?? null;
+}
+
+async function completeOpenPickTasks(tx: Prisma.TransactionClient, requisitionId: string) {
+  await tx.task.updateMany({
+    where: {
+      requisitionId,
+      type: "PICK",
+      status: { notIn: ["COMPLETED", "CANCELLED", "REJECTED"] }
+    },
+    data: { status: "COMPLETED" }
+  });
+}
+
+async function assertLayersHaveNoSerials(tx: Prisma.TransactionClient, layerIds: string[]) {
+  const unique = [...new Set(layerIds.filter(Boolean))];
+  for (const layerId of unique) {
+    try {
+      await assertNoSerialAmbiguity(tx, layerId);
+    } catch (error) {
+      if (error instanceof InventoryMutationError && error.code === "SERIAL_SELECTION_REQUIRED") {
+        throw new RequisitionError(
+          "SERIAL_SELECTION_REQUIRED",
+          "No se puede surtir: hay series en una o más capas FIFO y el picking de requisición aún no admite seleccionar seriales. No se modificó inventario."
+        );
+      }
+      throw error;
+    }
+  }
+}
+
+async function applyLineFulfillment(
+  tx: Prisma.TransactionClient,
+  lineId: string,
+  requisitionId: string,
+  previousStatus: string,
+  total: Prisma.Decimal
+) {
+  const lineRows = await tx.$queryRaw<Array<{ id: string; fulfilledQty: Prisma.Decimal }>>`
+    UPDATE "RequisitionLine"
+    SET "fulfilledQty" = "fulfilledQty" + ${total}, "updatedAt" = NOW()
+    WHERE id = ${lineId}
+      AND "fulfilledQty" + ${total} <= "requestedQty"
+    RETURNING id, "fulfilledQty"
+  `;
+  if (!lineRows.length) {
+    throw new RequisitionError("LINE_FULFILLMENT_EXCEEDED", "La cantidad excede el pendiente de la línea.");
+  }
+  const allLines = await tx.requisitionLine.findMany({ where: { requisitionId } });
+  const fulfillment = fulfillmentState(allLines);
+  const nextStatus = fulfillment === "SURTIDA" ? "COMPLETED" : fulfillment === "PARCIAL" ? "IN_PROGRESS" : previousStatus;
+  if (nextStatus !== previousStatus) {
+    await tx.requisition.update({ where: { id: requisitionId }, data: { status: nextStatus } });
+  }
+  if (nextStatus === "COMPLETED") {
+    await completeOpenPickTasks(tx, requisitionId);
+  }
+  return { newFulfilled: lineRows[0]!.fulfilledQty, nextStatus, fulfillment };
+}
+
+export async function consumeReservationPick(input: ConsumeReservationPickInput) {
+  return prisma.$transaction(async (tx) => consumeReservationPickInTransaction(tx, input));
+}
+
+export async function consumeReservationPickInTransaction(
+  tx: Prisma.TransactionClient,
+  input: ConsumeReservationPickInput
+) {
+  const allocationMode = parseAllocationMode(input.allocationMode);
+  const reservationId = input.reservationId?.trim() || "";
+  if (reservationId && allocationMode) {
+    throw new RequisitionError(
+      "RESERVATION_ALLOCATION_CONFLICT",
+      "No se puede indicar reservationId y allocationMode al mismo tiempo."
+    );
+  }
+  if (allocationMode === "FIFO") {
+    return consumeFifoReservationPickInTransaction(tx, input);
+  }
+  if (!reservationId) {
+    throw new RequisitionError("RESERVATION_REQUIRED", "Indica reservationId o allocationMode FIFO.");
+  }
+  return consumeSingleReservationPickInTransaction(tx, { ...input, reservationId });
+}
+
+async function consumeFifoReservationPickInTransaction(
+  tx: Prisma.TransactionClient,
+  input: ConsumeReservationPickInput
+) {
+  const lineId = input.requisitionLineId?.trim() || "";
+  if (!lineId) {
+    throw new RequisitionError("REQUISITION_LINE_REQUIRED", "El picking FIFO requiere requisitionLineId.");
+  }
+  const qty = dec(input.qty);
+  if (qty.lessThanOrEqualTo(0)) {
+    throw new RequisitionError("INVALID_QTY", "La cantidad a surtir debe ser mayor a 0.");
+  }
+
+  const line = await tx.requisitionLine.findUnique({
+    where: { id: lineId },
+    include: { requisition: true, product: true }
+  });
+  if (!line) throw new RequisitionError("LINE_NOT_FOUND", "Línea de requisición no encontrada.");
+  assertRequisitionAllowsPick(line.requisition.status);
+  if (!scannedCodeMatchesProduct(input.scannedCode, line.product)) {
+    throw new RequisitionError("SKU_MISMATCH", "El código escaneado no corresponde al SKU de la línea.");
+  }
+
+  const loadedReservations = (await tx.inventoryReservation.findMany({
+    where: { requisitionLineId: lineId },
+    include: {
+      inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true, createdAt: true } }
+    }
+  })) as PickFifoReservation[];
+  const activeReservations = loadedReservations.filter(
+    (row) => row.status === "ACTIVE" && activeReserved(row.qty, row.consumedQty, row.releasedQty).greaterThan(0)
+  );
+  if (!activeReservations.length) {
+    throw new RequisitionError("NO_ACTIVE_RESERVATION", "La línea de requisición no tiene reserva activa.");
+  }
+
+  const cubeIds = [...new Set(activeReservations.map((row) => row.inventoryId))];
+  const requestedInventoryId = input.inventoryId?.trim() || "";
+  if (!requestedInventoryId) {
+    if (cubeIds.length > 1) {
       throw new RequisitionError(
-        "PICK_PROJECT_MISMATCH",
-        "La reserva no corresponde a inventario PROJECT del proyecto de la requisición."
+        "AMBIGUOUS_RESERVATION_INVENTORY",
+        "Hay reservas activas en varios cubos; indica inventoryId.",
+        { inventoryIds: cubeIds }
       );
     }
+  } else if (!cubeIds.includes(requestedInventoryId)) {
+    throw new RequisitionError("RESERVATION_INVENTORY_MISMATCH", "El cubo no tiene reservas activas de esta línea.");
+  }
+  const inventoryId = requestedInventoryId || cubeIds[0]!;
+  const cubeReservations = activeReservations.filter((row) => row.inventoryId === inventoryId);
+  const reservedActive = cubeReservations.reduce(
+    (sum, row) => sum.plus(activeReserved(row.qty, row.consumedQty, row.releasedQty)),
+    new Prisma.Decimal(0)
+  );
+  if (qty.greaterThan(reservedActive)) {
+    throw new RequisitionError("INSUFFICIENT_RESERVED", "La cantidad supera el reservado activo del cubo.");
+  }
+  const pending = line.requestedQty.minus(line.fulfilledQty);
+  if (qty.greaterThan(pending)) {
+    throw new RequisitionError("LINE_FULFILLMENT_EXCEEDED", "La cantidad excede el pendiente de la línea.");
+  }
 
-    await assertNoSerialAmbiguity(tx, reservation.inventoryLayerId);
+  const inventoryPreview = await tx.inventory.findUnique({
+    where: { id: inventoryId },
+    include: { location: true, project: { select: { id: true, code: true, name: true } } }
+  });
+  if (!inventoryPreview) throw new RequisitionError("INVENTORY_NOT_FOUND", "Línea de inventario no disponible.");
+  if (
+    inventoryPreview.productId !== line.productId ||
+    inventoryPreview.assignmentType !== "PROJECT" ||
+    inventoryPreview.projectId !== line.requisition.projectId
+  ) {
+    throw new RequisitionError(
+      "PICK_PROJECT_MISMATCH",
+      "La reserva no corresponde a inventario PROJECT del proyecto de la requisición."
+    );
+  }
 
-    const before = lockedInventory.qty;
+  const movementTaskId = await resolvePickTaskId(tx, line.requisitionId, input.taskId);
+
+  await lockInventoryAndLayers(tx, inventoryId);
+  await lockReservationsById(
+    tx,
+    cubeReservations.map((row) => row.id)
+  );
+
+  const lockedInventory = await tx.inventory.findUniqueOrThrow({
+    where: { id: inventoryId },
+    include: { location: true, project: { select: { id: true, code: true, name: true } } }
+  });
+  if (
+    lockedInventory.productId !== line.productId ||
+    lockedInventory.assignmentType !== "PROJECT" ||
+    lockedInventory.projectId !== line.requisition.projectId
+  ) {
+    throw new RequisitionError(
+      "PICK_PROJECT_MISMATCH",
+      "La reserva no corresponde a inventario PROJECT del proyecto de la requisición."
+    );
+  }
+
+  const lockedLine = await tx.requisitionLine.findUniqueOrThrow({
+    where: { id: line.id },
+    include: { requisition: true, product: true }
+  });
+  assertRequisitionAllowsPick(lockedLine.requisition.status);
+  const lockedPending = lockedLine.requestedQty.minus(lockedLine.fulfilledQty);
+  if (qty.greaterThan(lockedPending)) {
+    throw new RequisitionError("LINE_FULFILLMENT_EXCEEDED", "La cantidad excede el pendiente de la línea.");
+  }
+
+  const lockedReservations = (await tx.inventoryReservation.findMany({
+    where: { id: { in: cubeReservations.map((row) => row.id) } },
+    include: {
+      inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true, createdAt: true } }
+    }
+  })) as PickFifoReservation[];
+  const stillActive = lockedReservations.filter(
+    (row) =>
+      row.status === "ACTIVE" &&
+      row.inventoryId === inventoryId &&
+      row.requisitionLineId === line.id &&
+      activeReserved(row.qty, row.consumedQty, row.releasedQty).greaterThan(0)
+  );
+  const planned = planFifoReservationConsumption(stillActive, qty);
+  if (planned.remaining.greaterThan(0) || !planned.allocations.length) {
+    throw new RequisitionError("INSUFFICIENT_RESERVED", "La cantidad supera el reservado activo del cubo.");
+  }
+
+  const participatingLayerIds = planned.allocations
+    .map((slice) => slice.reservation.inventoryLayerId)
+    .filter((id): id is string => Boolean(id));
+  if (participatingLayerIds.length !== planned.allocations.length) {
+    throw new RequisitionError("LAYER_REQUIRED", "Una reserva FIFO no tiene capa.");
+  }
+  await assertLayersHaveNoSerials(tx, participatingLayerIds);
+
+  const before = lockedInventory.qty;
+  const invRows = await tx.$queryRaw<Array<{ id: string; qty: Prisma.Decimal; reservedQty: Prisma.Decimal }>>`
+    UPDATE "Inventory"
+    SET qty = qty - ${qty}, "reservedQty" = "reservedQty" - ${qty}, "updatedAt" = NOW()
+    WHERE id = ${inventoryId}
+      AND qty >= ${qty}
+      AND "reservedQty" >= ${qty}
+    RETURNING id, qty, "reservedQty"
+  `;
+  if (!invRows.length) throw new RequisitionError("INSUFFICIENT_STOCK", "No se pudo consumir la reserva en inventario.");
+
+  const movements = [];
+  const allocations: Prisma.InputJsonValue[] = [];
+  let runningQty = before;
+  for (const slice of planned.allocations) {
+    const layerId = slice.reservation.inventoryLayerId!;
     const layerRows = await tx.$queryRaw<Array<{ id: string; qty: Prisma.Decimal; reservedQty: Prisma.Decimal }>>`
       UPDATE "InventoryLayer"
-      SET qty = qty - ${input.qty}, "reservedQty" = "reservedQty" - ${input.qty}, "updatedAt" = NOW()
-      WHERE id = ${reservation.inventoryLayerId}
-        AND qty >= ${input.qty}
-        AND "reservedQty" >= ${input.qty}
+      SET qty = qty - ${slice.qty}, "reservedQty" = "reservedQty" - ${slice.qty}, "updatedAt" = NOW()
+      WHERE id = ${layerId}
+        AND qty >= ${slice.qty}
+        AND "reservedQty" >= ${slice.qty}
       RETURNING id, qty, "reservedQty"
     `;
     if (!layerRows.length) throw new RequisitionError("INSUFFICIENT_STOCK", "No se pudo consumir la reserva en la capa.");
-    const invRows = await tx.$queryRaw<Array<{ id: string; qty: Prisma.Decimal; reservedQty: Prisma.Decimal }>>`
-      UPDATE "Inventory"
-      SET qty = qty - ${input.qty}, "reservedQty" = "reservedQty" - ${input.qty}, "updatedAt" = NOW()
-      WHERE id = ${reservation.inventoryId}
-        AND qty >= ${input.qty}
-        AND "reservedQty" >= ${input.qty}
-      RETURNING id, qty, "reservedQty"
-    `;
-    if (!invRows.length) throw new RequisitionError("INSUFFICIENT_STOCK", "No se pudo consumir la reserva en inventario.");
 
-    const newConsumed = reservation.consumedQty.plus(input.qty);
-    const newActive = activeReserved(reservation.qty, newConsumed, reservation.releasedQty);
+    const newConsumed = slice.reservation.consumedQty.plus(slice.qty);
+    const newActive = activeReserved(slice.reservation.qty, newConsumed, slice.reservation.releasedQty);
     await tx.inventoryReservation.update({
-      where: { id: reservation.id },
+      where: { id: slice.reservation.id },
       data: {
         consumedQty: newConsumed,
         status: newActive.lessThanOrEqualTo(0) ? "CONSUMED" : "ACTIVE"
       }
     });
 
-    const newFulfilled = reservation.requisitionLine.fulfilledQty.plus(input.qty);
-    await tx.requisitionLine.update({
-      where: { id: reservation.requisitionLineId },
-      data: { fulfilledQty: newFulfilled }
-    });
-
-    const allLines = await tx.requisitionLine.findMany({ where: { requisitionId: reservation.requisitionLine.requisitionId } });
-    const fulfillment = fulfillmentState(allLines.map((l) => (l.id === reservation.requisitionLineId ? { ...l, fulfilledQty: newFulfilled } : l)));
-    const nextStatus =
-      fulfillment === "SURTIDA" ? "COMPLETED" : fulfillment === "PARCIAL" ? "IN_PROGRESS" : reservation.requisitionLine.requisition.status;
-    if (nextStatus !== reservation.requisitionLine.requisition.status) {
-      await tx.requisition.update({
-        where: { id: reservation.requisitionLine.requisitionId },
-        data: { status: nextStatus }
-      });
-    }
-
+    const quantityBefore = runningQty;
+    runningQty = runningQty.minus(slice.qty);
     const movement = await tx.inventoryMovement.create({
       data: {
-        productId: reservation.requisitionLine.productId,
+        productId: lockedLine.productId,
         type: "PICK",
         movementType: "OUT",
-        stockStatus: reservation.inventory.status,
-        qty: input.qty,
-        warehouse: reservation.inventory.location.warehouse,
-        fromLocationId: reservation.inventory.locationId,
-        inventoryLayerId: reservation.inventoryLayerId,
-        requisitionLineId: reservation.requisitionLineId,
-        quantityBefore: before,
-        quantityAfter: invRows[0]!.qty,
-        reference: reservation.requisitionLine.requisition.number,
-        notes: `PICK reserved ${input.reservationId}`,
+        stockStatus: lockedInventory.status,
+        qty: slice.qty,
+        warehouse: lockedInventory.location.warehouse,
+        fromLocationId: lockedInventory.locationId,
+        inventoryLayerId: layerId,
+        requisitionLineId: lockedLine.id,
+        quantityBefore,
+        quantityAfter: runningQty,
+        reference: lockedLine.requisition.number,
+        notes: `PICK FIFO reserved ${slice.reservation.id}`,
         userId: input.userId,
-        taskId: input.taskId ?? null,
+        taskId: movementTaskId,
         ...outboundAssignmentFields(assignmentFromInventory(lockedInventory))
       }
     });
-    const scanEvent = await tx.scanEvent.create({
-      data: {
-        scannedCode: input.scannedCode,
-        result: "OK",
-        userId: input.userId,
-        productId: reservation.requisitionLine.productId,
-        warehouse: reservation.inventory.location.warehouse,
-        location: reservation.inventory.location.code,
-        taskId: input.taskId ?? null
-      }
+    movements.push(movement);
+    allocations.push({
+      reservationId: slice.reservation.id,
+      inventoryLayerId: layerId,
+      qty: slice.qty.toString(),
+      lotNumber: slice.reservation.inventoryLayer?.lotNumber ?? null,
+      receivedAt: slice.reservation.inventoryLayer?.receivedAt
+        ? slice.reservation.inventoryLayer.receivedAt.toISOString()
+        : null,
+      movementId: movement.id
     });
-    await logActivity(
-      {
-        type: "PICK",
-        subtype: "PICK_RESERVED_SUCCESS",
-        reference: input.scannedCode,
-        userId: input.userId,
-        productId: reservation.requisitionLine.productId,
-        customerId: reservation.requisitionLine.requisition.projectId,
-        warehouse: reservation.inventory.location.warehouse,
-        location: reservation.inventory.location.code,
-        qty: input.qty,
-        result: "OK",
-        taskId: input.taskId ?? null,
-        metadata: {
-          reservationId: reservation.id,
-          requisitionId: reservation.requisitionLine.requisitionId,
-          requisitionLineId: reservation.requisitionLineId,
-          movementId: movement.id,
-          scanEventId: scanEvent.id
-        }
-      },
-      tx
-    );
-    return {
-      before,
-      after: invRows[0]!.qty,
-      movement,
-      scanEvent,
-      product: reservation.requisitionLine.product,
-      location: reservation.inventory.location,
-      inventoryStatus: reservation.inventory.status,
-      assignmentType: lockedInventory.assignmentType,
-      projectId: lockedInventory.projectId,
-      assignmentKey: lockedInventory.assignmentKey,
-      project: reservation.inventory.project
-    };
+  }
+
+  await applyLineFulfillment(tx, lockedLine.id, lockedLine.requisitionId, lockedLine.requisition.status, qty);
+
+  const scanEvent = await tx.scanEvent.create({
+    data: {
+      scannedCode: input.scannedCode,
+      result: "OK",
+      userId: input.userId,
+      productId: lockedLine.productId,
+      warehouse: lockedInventory.location.warehouse,
+      location: lockedInventory.location.code,
+      taskId: movementTaskId
+    }
   });
+  await logActivity(
+    {
+      type: "PICK",
+      subtype: "PICK_RESERVED_FIFO_SUCCESS",
+      reference: input.scannedCode,
+      userId: input.userId,
+      productId: lockedLine.productId,
+      customerId: lockedLine.requisition.projectId,
+      warehouse: lockedInventory.location.warehouse,
+      location: lockedInventory.location.code,
+      qty,
+      result: "OK",
+      taskId: movementTaskId,
+      metadata: {
+        allocationMode: "FIFO",
+        requisitionId: lockedLine.requisitionId,
+        requisitionLineId: lockedLine.id,
+        inventoryId,
+        requestedPickQty: qty.toString(),
+        taskId: movementTaskId,
+        scanEventId: scanEvent.id,
+        allocations
+      }
+    },
+    tx
+  );
+
+  return {
+    before,
+    after: invRows[0]!.qty,
+    movement: movements[0]!,
+    movements,
+    scanEvent,
+    product: lockedLine.product,
+    location: lockedInventory.location,
+    inventoryStatus: lockedInventory.status,
+    assignmentType: lockedInventory.assignmentType,
+    projectId: lockedInventory.projectId,
+    assignmentKey: lockedInventory.assignmentKey,
+    project: lockedInventory.project,
+    fifo: true as const,
+    allocations
+  };
+}
+
+async function consumeSingleReservationPickInTransaction(
+  tx: Prisma.TransactionClient,
+  input: ConsumeReservationPickInput & { reservationId: string }
+) {
+  const reservation = await tx.inventoryReservation.findUnique({
+    where: { id: input.reservationId },
+    include: {
+      requisitionLine: { include: { requisition: true, product: true } },
+      inventory: { include: { location: true, project: { select: { id: true, code: true, name: true } } } },
+      inventoryLayer: { select: { id: true, lotNumber: true, receivedAt: true, createdAt: true } }
+    }
+  });
+  if (!reservation) throw new RequisitionError("RESERVATION_NOT_FOUND", "Reserva no encontrada.");
+  if (input.requisitionLineId && reservation.requisitionLineId !== input.requisitionLineId) {
+    throw new RequisitionError("LINE_MISMATCH", "La reserva no corresponde a la línea indicada.");
+  }
+  if (reservation.status !== "ACTIVE") throw new RequisitionError("RESERVATION_INACTIVE", "La reserva no está activa.");
+  assertRequisitionAllowsPick(reservation.requisitionLine.requisition.status);
+  const projectId = reservation.requisitionLine.requisition.projectId;
+  if (
+    reservation.inventory.productId !== reservation.requisitionLine.productId ||
+    reservation.inventory.assignmentType !== "PROJECT" ||
+    reservation.inventory.projectId !== projectId
+  ) {
+    throw new RequisitionError(
+      "PICK_PROJECT_MISMATCH",
+      "La reserva no corresponde a inventario PROJECT del proyecto de la requisición."
+    );
+  }
+  const active = activeReserved(reservation.qty, reservation.consumedQty, reservation.releasedQty);
+  if (input.qty.greaterThan(active)) {
+    throw new RequisitionError("INSUFFICIENT_RESERVATION", "La reserva activa es insuficiente.");
+  }
+  const pending = reservation.requisitionLine.requestedQty.minus(reservation.requisitionLine.fulfilledQty);
+  if (input.qty.greaterThan(pending)) {
+    throw new RequisitionError("LINE_FULFILLED", "La línea ya está surtida o la cantidad excede el pendiente.");
+  }
+  if (!reservation.inventoryLayerId) {
+    throw new RequisitionError("LAYER_REQUIRED", "La reserva no tiene capa.");
+  }
+
+  const movementTaskId = await resolvePickTaskId(tx, reservation.requisitionLine.requisitionId, input.taskId);
+
+  await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Inventory" WHERE "id" = ${reservation.inventoryId} FOR UPDATE`);
+  await tx.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "InventoryLayer" WHERE "id" = ${reservation.inventoryLayerId} FOR UPDATE`
+  );
+  await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "InventoryReservation" WHERE "id" = ${reservation.id} FOR UPDATE`);
+
+  const lockedReservation = await tx.inventoryReservation.findUniqueOrThrow({
+    where: { id: reservation.id }
+  });
+  if (lockedReservation.status !== "ACTIVE") {
+    throw new RequisitionError("RESERVATION_INACTIVE", "La reserva no está activa.");
+  }
+  const lockedActive = activeReserved(
+    lockedReservation.qty,
+    lockedReservation.consumedQty,
+    lockedReservation.releasedQty
+  );
+  if (input.qty.greaterThan(lockedActive)) {
+    throw new RequisitionError("INSUFFICIENT_RESERVATION", "La reserva activa es insuficiente.");
+  }
+
+  const lockedInventory = await tx.inventory.findUniqueOrThrow({ where: { id: reservation.inventoryId } });
+  if (
+    lockedInventory.productId !== reservation.requisitionLine.productId ||
+    lockedInventory.assignmentType !== "PROJECT" ||
+    lockedInventory.projectId !== projectId
+  ) {
+    throw new RequisitionError(
+      "PICK_PROJECT_MISMATCH",
+      "La reserva no corresponde a inventario PROJECT del proyecto de la requisición."
+    );
+  }
+
+  const lockedLine = await tx.requisitionLine.findUniqueOrThrow({
+    where: { id: reservation.requisitionLineId },
+    include: { requisition: true }
+  });
+  assertRequisitionAllowsPick(lockedLine.requisition.status);
+  if (input.qty.greaterThan(lockedLine.requestedQty.minus(lockedLine.fulfilledQty))) {
+    throw new RequisitionError("LINE_FULFILLED", "La línea ya está surtida o la cantidad excede el pendiente.");
+  }
+
+  await assertLayersHaveNoSerials(tx, [reservation.inventoryLayerId]);
+
+  const before = lockedInventory.qty;
+  const layerRows = await tx.$queryRaw<Array<{ id: string; qty: Prisma.Decimal; reservedQty: Prisma.Decimal }>>`
+    UPDATE "InventoryLayer"
+    SET qty = qty - ${input.qty}, "reservedQty" = "reservedQty" - ${input.qty}, "updatedAt" = NOW()
+    WHERE id = ${reservation.inventoryLayerId}
+      AND qty >= ${input.qty}
+      AND "reservedQty" >= ${input.qty}
+    RETURNING id, qty, "reservedQty"
+  `;
+  if (!layerRows.length) throw new RequisitionError("INSUFFICIENT_STOCK", "No se pudo consumir la reserva en la capa.");
+  const invRows = await tx.$queryRaw<Array<{ id: string; qty: Prisma.Decimal; reservedQty: Prisma.Decimal }>>`
+    UPDATE "Inventory"
+    SET qty = qty - ${input.qty}, "reservedQty" = "reservedQty" - ${input.qty}, "updatedAt" = NOW()
+    WHERE id = ${reservation.inventoryId}
+      AND qty >= ${input.qty}
+      AND "reservedQty" >= ${input.qty}
+    RETURNING id, qty, "reservedQty"
+  `;
+  if (!invRows.length) throw new RequisitionError("INSUFFICIENT_STOCK", "No se pudo consumir la reserva en inventario.");
+
+  const newConsumed = lockedReservation.consumedQty.plus(input.qty);
+  const newActive = activeReserved(lockedReservation.qty, newConsumed, lockedReservation.releasedQty);
+  await tx.inventoryReservation.update({
+    where: { id: reservation.id },
+    data: {
+      consumedQty: newConsumed,
+      status: newActive.lessThanOrEqualTo(0) ? "CONSUMED" : "ACTIVE"
+    }
+  });
+
+  await applyLineFulfillment(
+    tx,
+    reservation.requisitionLineId,
+    reservation.requisitionLine.requisitionId,
+    lockedLine.requisition.status,
+    input.qty
+  );
+
+  const movement = await tx.inventoryMovement.create({
+    data: {
+      productId: reservation.requisitionLine.productId,
+      type: "PICK",
+      movementType: "OUT",
+      stockStatus: reservation.inventory.status,
+      qty: input.qty,
+      warehouse: reservation.inventory.location.warehouse,
+      fromLocationId: reservation.inventory.locationId,
+      inventoryLayerId: reservation.inventoryLayerId,
+      requisitionLineId: reservation.requisitionLineId,
+      quantityBefore: before,
+      quantityAfter: invRows[0]!.qty,
+      reference: reservation.requisitionLine.requisition.number,
+      notes: `PICK reserved ${input.reservationId}`,
+      userId: input.userId,
+      taskId: movementTaskId,
+      ...outboundAssignmentFields(assignmentFromInventory(lockedInventory))
+    }
+  });
+  const scanEvent = await tx.scanEvent.create({
+    data: {
+      scannedCode: input.scannedCode,
+      result: "OK",
+      userId: input.userId,
+      productId: reservation.requisitionLine.productId,
+      warehouse: reservation.inventory.location.warehouse,
+      location: reservation.inventory.location.code,
+      taskId: movementTaskId
+    }
+  });
+  await logActivity(
+    {
+      type: "PICK",
+      subtype: "PICK_RESERVED_SUCCESS",
+      reference: input.scannedCode,
+      userId: input.userId,
+      productId: reservation.requisitionLine.productId,
+      customerId: reservation.requisitionLine.requisition.projectId,
+      warehouse: reservation.inventory.location.warehouse,
+      location: reservation.inventory.location.code,
+      qty: input.qty,
+      result: "OK",
+      taskId: movementTaskId,
+      metadata: {
+        reservationId: reservation.id,
+        requisitionId: reservation.requisitionLine.requisitionId,
+        requisitionLineId: reservation.requisitionLineId,
+        movementId: movement.id,
+        scanEventId: scanEvent.id
+      }
+    },
+    tx
+  );
+  return {
+    before,
+    after: invRows[0]!.qty,
+    movement,
+    movements: [movement],
+    scanEvent,
+    product: reservation.requisitionLine.product,
+    location: reservation.inventory.location,
+    inventoryStatus: reservation.inventory.status,
+    assignmentType: lockedInventory.assignmentType,
+    projectId: lockedInventory.projectId,
+    assignmentKey: lockedInventory.assignmentKey,
+    project: reservation.inventory.project,
+    fifo: false as const,
+    allocations: [] as Prisma.InputJsonValue[]
+  };
 }

@@ -666,7 +666,7 @@ test("endpoint, PATCH y price-split intactos, roles y UI de destino", () => {
   assert.match(html, /id="priceDestType"/);
   assert.match(html, /Conservar asignación actual/);
   assert.match(html, /id="priceDestProject"/);
-  assert.match(html, /dashboard\.js\?v=72/);
+  assert.match(html, /dashboard\.js\?v=73/);
   assert.match(js, /\/api\/inventory\/layers\/\$\{encodeURIComponent\(layer\.id\)\}\/price-split/);
   assert.match(js, /\/api\/inventory\/layers\/\$\{encodeURIComponent\(layer\.id\)\}\/value-and-assign/);
   assert.match(js, /layerValueAssignConfirmMessage/);
