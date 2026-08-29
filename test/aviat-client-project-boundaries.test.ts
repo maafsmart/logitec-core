@@ -77,8 +77,46 @@ test("autocompletar SKU no escribe LOGITEC como proyecto", () => {
   assert.doesNotMatch(suggested, /product\.customer/);
 });
 
-test("la tarjeta con AT&T activo muestra AVIAT, AT&T y disponible 2 no 25", () => {
-  const src = [
+const ATT_SKU_CONTEXT = {
+  product: { sku: "004740-000005-000001", name: "Radio" },
+  client: { name: "AVIAT", tradeName: "AVIAT" },
+  project: { id: "logitec", code: "LOGITEC", name: "LOGITEC" },
+  assignmentBreakdown: {
+    projects: [
+      { id: "p-att", code: "ATT", name: "AT&T COMUNICACIONES DIGITALES", qty: "2", reservedQty: "0", unreservedQty: "2" },
+      { id: "p-other", code: "AIRBUS", name: "AIRBUS", qty: "2", reservedQty: "0", unreservedQty: "2" }
+    ],
+    freeToSale: { qty: "21", reservedQty: "0", unreservedQty: "21" },
+    other: { qty: "0", reservedQty: "0", unreservedQty: "0" }
+  },
+  inventory: {
+    totalQty: "25",
+    totalUnreservedQty: "25",
+    locations: [
+      {
+        project: { id: "p-att", code: "ATT", name: "AT&T COMUNICACIONES DIGITALES" },
+        assignmentType: "PROJECT",
+        locationCode: "AN22-A",
+        status: "OPERATIONS",
+        qty: "2",
+        reservedQty: "0",
+        unreservedQty: "2"
+      },
+      { assignmentType: "FREE_TO_SALE", locationCode: "AN10-A", qty: "21", reservedQty: "0", unreservedQty: "21" },
+      {
+        project: { id: "p-other", code: "AIRBUS", name: "AIRBUS" },
+        assignmentType: "PROJECT",
+        locationCode: "AN01-A",
+        qty: "2",
+        reservedQty: "0",
+        unreservedQty: "2"
+      }
+    ]
+  }
+};
+
+function skuCardHarnessSource() {
+  return [
     "const PRIMARY_CLIENT_AVIAT_NAME = 'AVIAT';",
     sliceFunction(js, "isForbiddenProjectLabel"),
     sliceFunction(js, "isOperationalProjectRecord"),
@@ -88,67 +126,93 @@ test("la tarjeta con AT&T activo muestra AVIAT, AT&T y disponible 2 no 25", () =
     sliceFunction(js, "formatInventoryStatus"),
     sliceFunction(js, "skuQtyNumber"),
     sliceFunction(js, "skuSelectedLocationLabel"),
+    sliceFunction(js, "skuCardProjectLabel"),
+    sliceFunction(js, "skuCardSumRows"),
+    sliceFunction(js, "skuCardResolveScopedProject"),
     sliceFunction(js, "skuCardFocusFromContext"),
     sliceFunction(js, "escCell"),
     sliceFunction(js, "formatQty"),
     sliceFunction(js, "buildSkuSelectedCardHtml")
   ].join("\n");
+}
+
+function renderSkuCard(
+  scope: { projectId: string; assignmentType: string },
+  context: typeof ATT_SKU_CONTEXT = ATT_SKU_CONTEXT,
+  cache: Array<{ id: string; code: string; name: string }> = []
+) {
   const { buildSkuSelectedCardHtml } = new Function(
-    `function getInventoryScope(){ return { projectId: "p-att", assignmentType: "PROJECT" }; }
+    `function getInventoryScope(){ return ${JSON.stringify(scope)}; }
+    var inventoryProjectsCache = ${JSON.stringify(cache)};
     function inventoryStatusRecord(){ return null; }
-    ${src}; return { buildSkuSelectedCardHtml };`
+    ${skuCardHarnessSource()}; return { buildSkuSelectedCardHtml };`
   )();
-  const htmlCard = buildSkuSelectedCardHtml(
-    {
-      product: { sku: "004740-000005-000001", name: "Radio" },
-      client: { name: "AVIAT", tradeName: "AVIAT" },
-      project: { id: "logitec", code: "LOGITEC", name: "LOGITEC" },
-      assignmentBreakdown: {
-        projects: [
-          { id: "p-att", code: "ATT", name: "AT&T COMUNICACIONES DIGITALES", qty: "2", reservedQty: "0", unreservedQty: "2" },
-          { id: "p-other", code: "AIRBUS", name: "AIRBUS", qty: "2", reservedQty: "0", unreservedQty: "2" }
-        ],
-        freeToSale: { qty: "21", reservedQty: "0", unreservedQty: "21" },
-        other: { qty: "0", reservedQty: "0", unreservedQty: "0" }
-      },
-      inventory: {
-        totalQty: "25",
-        totalUnreservedQty: "25",
-        locations: [
-          {
-            project: { id: "p-att", code: "ATT", name: "AT&T COMUNICACIONES DIGITALES" },
-            assignmentType: "PROJECT",
-            locationCode: "AN22-A",
-            status: "OPERATIONS",
-            qty: "2",
-            reservedQty: "0",
-            unreservedQty: "2"
-          },
-          { assignmentType: "FREE_TO_SALE", locationCode: "AN10-A", qty: "21", reservedQty: "0", unreservedQty: "21" },
-          {
-            project: { id: "p-other", code: "AIRBUS", name: "AIRBUS" },
-            assignmentType: "PROJECT",
-            locationCode: "AN01-A",
-            qty: "2",
-            reservedQty: "0",
-            unreservedQty: "2"
-          }
-        ]
-      }
-    },
-    ""
-  );
+  return buildSkuSelectedCardHtml(context, "");
+}
+
+test("la tarjeta con AT&T activo muestra AVIAT, AT&T y disponible 2 no 25", () => {
+  const htmlCard = renderSkuCard({ projectId: "p-att", assignmentType: "PROJECT" });
   assert.match(htmlCard, /<dt>Cliente<\/dt><dd>AVIAT<\/dd>/);
   assert.match(htmlCard, /AT&amp;T COMUNICACIONES DIGITALES/);
   assert.match(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>2<\/dd>/);
   assert.match(htmlCard, /<dt>Ubicación<\/dt><dd>AN22-A/);
+  assert.match(htmlCard, /<dt>Estatus<\/dt><dd>OPERATIONS<\/dd>/);
   assert.match(htmlCard, /<dt>Reservado<\/dt><dd>0<\/dd>/);
   assert.match(htmlCard, /<dt>No reservado<\/dt><dd>2<\/dd>/);
   assert.match(htmlCard, /Total global: 25/);
   assert.match(htmlCard, /Free to Sale: 21/);
   assert.match(htmlCard, /otros proyectos: 2/);
   assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>25<\/dd>/);
+  assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>4<\/dd>/);
   assert.doesNotMatch(htmlCard, />LOGITEC</);
+});
+
+test("proyecto seleccionado sin saldo muestra 0 y no usa otro proyecto", () => {
+  assert.doesNotMatch(sliceFunction(js, "skuCardFocusFromContext"), /scoped\.length \? scoped : operationalLocations/);
+  const htmlCard = renderSkuCard(
+    { projectId: "p-operbes", assignmentType: "PROJECT" },
+    ATT_SKU_CONTEXT,
+    [{ id: "p-operbes", code: "OPERBES", name: "OPERBES" }]
+  );
+  assert.match(htmlCard, /<dt>Cliente<\/dt><dd>AVIAT<\/dd>/);
+  assert.match(htmlCard, /OPERBES/);
+  assert.match(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>0<\/dd>/);
+  assert.match(htmlCard, /Sin existencia en este proyecto/);
+  assert.doesNotMatch(htmlCard, /<dt>Ubicación<\/dt><dd>AN22-A/);
+  assert.doesNotMatch(htmlCard, /<dt>Ubicación<\/dt><dd>AN01-A/);
+  assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>2<\/dd>/);
+  assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>21<\/dd>/);
+  assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>25<\/dd>/);
+  assert.doesNotMatch(htmlCard, />LOGITEC</);
+  assert.match(htmlCard, /Total global: 25/);
+  assert.match(htmlCard, /otros proyectos: 4/);
+});
+
+test("alcance Todos no atribuye la suma al primer proyecto ni cambia filtros", () => {
+  const htmlCard = renderSkuCard({ projectId: "", assignmentType: "" });
+  assert.match(htmlCard, /<dt>Proyecto<\/dt><dd>Selecciona un proyecto<\/dd>/);
+  assert.match(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>—<\/dd>/);
+  assert.match(htmlCard, /Total global: 25/);
+  assert.doesNotMatch(htmlCard, /AT&amp;T COMUNICACIONES DIGITALES/);
+  assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>2<\/dd>/);
+  assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>4<\/dd>/);
+  assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt><dd>25<\/dd>/);
+  assert.doesNotMatch(htmlCard, /<dt>Ubicación<\/dt><dd>AN22-A/);
+  assert.doesNotMatch(sliceFunction(js, "skuCardFocusFromContext"), /invFilterCustomer|invFilterCliente|inventoryScope\.projectId\s*=/);
+  assert.doesNotMatch(sliceFunction(js, "buildSkuSelectedCardHtml"), /invFilterCustomer|inventoryScope\.projectId\s*=/);
+});
+
+test("alcance FREE_TO_SALE muestra exclusivamente Free to Sale", () => {
+  const htmlCard = renderSkuCard({ projectId: "", assignmentType: "FREE_TO_SALE" });
+  assert.match(htmlCard, /<dt>Asignación<\/dt><dd>FREE TO SALE<\/dd>/);
+  assert.match(htmlCard, /<dt>Disponible en Free to Sale<\/dt><dd>21<\/dd>/);
+  assert.match(htmlCard, /<dt>Ubicación<\/dt><dd>AN10-A/);
+  assert.doesNotMatch(htmlCard, /<dt>Proyecto<\/dt>/);
+  assert.doesNotMatch(htmlCard, /AT&amp;T COMUNICACIONES DIGITALES/);
+  assert.doesNotMatch(htmlCard, /<dt>Disponible en este proyecto<\/dt>/);
+  assert.doesNotMatch(htmlCard, /<dt>Disponible en Free to Sale<\/dt><dd>25<\/dd>/);
+  assert.doesNotMatch(htmlCard, /<dt>Disponible en Free to Sale<\/dt><dd>2<\/dd>/);
+  assert.match(htmlCard, /Total global: 25/);
 });
 
 test("la tarjeta conserva ancho legible y no nace en la columna compacta", () => {
@@ -197,10 +261,21 @@ test("backend no presenta LOGITEC como proyecto del SKU y sigue rechazándolo en
   assert.match(ctx, /assignmentBreakdown/);
   assert.match(ctx, /isForbiddenInventoryProjectRecord/);
   assert.doesNotMatch(ctx, /project: product\.customer/);
+  assert.doesNotMatch(ctx, /mapSkuClient\(product\.customer\?\.client\)/);
+  assert.match(ctx, /catalogOwner:/);
   assert.match(serviceSrc, /PROJECT_NOT_AVAILABLE/);
   assert.equal(isForbiddenInventoryProjectRecord({ code: "LOGITEC", name: "LOGITEC" }), true);
   assert.equal(isOperationalProjectRecord({ code: "LOGITEC", name: "LOGITEC", active: true }), false);
   assert.equal(isOperationalProjectRecord({ code: "ATT", name: "AT&T COMUNICACIONES DIGITALES", active: true }), true);
+});
+
+test("backend no deriva el cliente operativo desde product.customer.client", () => {
+  const ctx = sliceFunction(skuSearchSrc, "getSkuContext");
+  assert.match(ctx, /const operationalClient = mapSkuClient\(/);
+  assert.match(ctx, /inventory\.assignmentType === "PROJECT"/);
+  assert.match(ctx, /inventory\.project\.client/);
+  assert.doesNotMatch(ctx, /mapSkuClient\(product\.customer\?\.client\)/);
+  assert.doesNotMatch(ctx, /\|\| mapSkuClient\(product\.customer/);
 });
 
 test("FIFO reserva/picking y cancelación v75 permanecen intactos", () => {

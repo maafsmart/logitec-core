@@ -240,6 +240,9 @@ test("la tarjeta compacta muestra cliente, proyecto, disponible del proyecto y u
     sliceFunction(js, "formatInventoryStatus"),
     sliceFunction(js, "skuQtyNumber"),
     sliceFunction(js, "skuSelectedLocationLabel"),
+    sliceFunction(js, "skuCardProjectLabel"),
+    sliceFunction(js, "skuCardSumRows"),
+    sliceFunction(js, "skuCardResolveScopedProject"),
     sliceFunction(js, "skuCardFocusFromContext"),
     sliceFunction(js, "escCell"),
     sliceFunction(js, "formatQty"),
@@ -276,9 +279,10 @@ test("la tarjeta compacta muestra cliente, proyecto, disponible del proyecto y u
   assert.match(oneLoc, /<dt>SKU<\/dt><dd>2223158-4<\/dd>/);
   assert.match(oneLoc, /<dt>Producto<\/dt><dd>Equipo de radio<\/dd>/);
   assert.match(oneLoc, /<dt>Cliente<\/dt>/);
-  assert.match(oneLoc, /<dt>Proyecto<\/dt>/);
-  assert.match(oneLoc, /<dt>Disponible en este proyecto<\/dt>/);
-  assert.match(oneLoc, /<dt>Ubicación<\/dt><dd>AN14-F · TULTITLAN24<\/dd>/);
+  assert.match(oneLoc, /<dt>Proyecto<\/dt><dd>Selecciona un proyecto<\/dd>/);
+  assert.match(oneLoc, /<dt>Disponible en este proyecto<\/dt><dd>—<\/dd>/);
+  assert.doesNotMatch(oneLoc, /<dt>Ubicación<\/dt><dd>AN14-F · TULTITLAN24<\/dd>/);
+  assert.match(oneLoc, /Total global: 12/);
   assert.match(oneLoc, /sku-selected-card-breakdown/);
   assert.match(oneLoc, />Cambiar SKU</);
   assert.match(oneLoc, /<details class="sku-selected-detail">/);
@@ -292,8 +296,44 @@ test("la tarjeta compacta muestra cliente, proyecto, disponible del proyecto y u
     },
     "detalle extenso"
   );
-  assert.match(manyLoc, /<dt>Saldos<\/dt><dd>3 saldos<\/dd>/);
+  assert.match(manyLoc, /<dt>Proyecto<\/dt><dd>Selecciona un proyecto<\/dd>/);
+  assert.doesNotMatch(manyLoc, /3 saldos/);
+  assert.doesNotMatch(manyLoc, /<dt>Disponible en este proyecto<\/dt><dd>4<\/dd>/);
   assert.ok(manyLoc.indexOf("Ver detalle") < manyLoc.indexOf("detalle extenso"));
+
+  (globalThis as { __skuScope?: { projectId: string; assignmentType: string } }).__skuScope = {
+    projectId: "p-in",
+    assignmentType: "PROJECT"
+  };
+  const scopedLoc = buildSkuSelectedCardHtml(
+    {
+      product: { sku: "2223158-4", name: "Equipo de radio" },
+      assignmentBreakdown: {
+        projects: [{ id: "p-in", code: "ATT", name: "AT&T", qty: "12", reservedQty: "2", unreservedQty: "10" }],
+        freeToSale: { qty: "0", reservedQty: "0", unreservedQty: "0" }
+      },
+      inventory: {
+        totalQty: "12",
+        totalUnreservedQty: "10",
+        locations: [
+          {
+            project: { id: "p-in", code: "ATT", name: "AT&T" },
+            assignmentType: "PROJECT",
+            locationCode: "AN14-F",
+            warehouse: "TULTITLAN24",
+            qty: "12",
+            reservedQty: "2",
+            unreservedQty: "10"
+          }
+        ]
+      }
+    },
+    "Capas: 3 · Valor MXN 1,000.00"
+  );
+  delete (globalThis as { __skuScope?: unknown }).__skuScope;
+  assert.match(scopedLoc, /<dt>Disponible en este proyecto<\/dt><dd>12<\/dd>/);
+  assert.match(scopedLoc, /<dt>Ubicación<\/dt><dd>AN14-F · TULTITLAN24<\/dd>/);
+  assert.match(scopedLoc, /<dt>Saldos<\/dt>|<dt>Ubicación<\/dt>/);
 });
 
 test("Cambiar SKU limpia productId, SKU y producto y reabre la búsqueda sin tocar proyecto, almacén ni ubicación", () => {

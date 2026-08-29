@@ -278,16 +278,15 @@ export async function getSkuContext(productId: string, auth: AuthContext) {
     otherQty = otherQty.plus(inventory.qty);
     otherReserved = otherReserved.plus(inventory.reservedQty);
   }
-  const operationalClient =
-    mapSkuClient(
-      product.inventories.find(
-        (inventory) =>
-          inventory.assignmentType === "PROJECT" &&
-          inventory.project &&
-          !isForbiddenInventoryProjectRecord(inventory.project) &&
-          inventory.project.client
-      )?.project?.client
-    ) || mapSkuClient(product.customer?.client);
+  const operationalClient = mapSkuClient(
+    product.inventories.find(
+      (inventory) =>
+        inventory.assignmentType === "PROJECT" &&
+        inventory.project &&
+        !isForbiddenInventoryProjectRecord(inventory.project) &&
+        inventory.project.client
+    )?.project?.client
+  );
   const layers = product.inventories.flatMap((inventory) =>
     inventory.layers.map((layer) => ({
       id: layer.id,
