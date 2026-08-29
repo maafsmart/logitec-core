@@ -211,6 +211,11 @@ function rememberRequisitionSkuSelectedContext(listEl, context) {
   requisitionSkuSelectedListEl = listEl;
 }
 
+function clearRequisitionSkuSelectedContext() {
+  requisitionSkuSelectedContext = null;
+  requisitionSkuSelectedListEl = null;
+}
+
 function refreshRequisitionSkuSelectedCard() {
   if (!requisitionSkuSelectedContext?.product) return;
   const listEl = requisitionSkuSelectedListEl || document.getElementById("reqSkuSuggestions");
@@ -7586,6 +7591,13 @@ function hideSkuSelectedCard(listEl) {
     });
     if (host.id === "inventorySkuSelectedHost") clearInventorySkuSelectedContext();
   }
+  const prefix = typeof opsPrefixFromTypeahead === "function" ? opsPrefixFromTypeahead(listEl, null) : "";
+  if (
+    (prefix === "req" || listEl?.id === "reqSkuSuggestions") &&
+    typeof clearRequisitionSkuSelectedContext === "function"
+  ) {
+    clearRequisitionSkuSelectedContext();
+  }
 }
 
 function clearSkuSelectionFields(prefix, input, { keepSkuText = false } = {}) {
@@ -7630,6 +7642,9 @@ function clearSkuSelectionFields(prefix, input, { keepSkuText = false } = {}) {
   if (prefix === "incident" || input?.id === "incidentProductSku") {
     const incidentId = document.getElementById("incidentProductId");
     if (incidentId) incidentId.value = "";
+  }
+  if (prefix === "req" && typeof clearRequisitionSkuSelectedContext === "function") {
+    clearRequisitionSkuSelectedContext();
   }
 }
 

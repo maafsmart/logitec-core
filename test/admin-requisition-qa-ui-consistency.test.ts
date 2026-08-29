@@ -116,6 +116,133 @@ function renderSkuCard(
   return buildSkuSelectedCardHtml(context, "", formScope);
 }
 
+function classListFor(el: { className: string }) {
+  return {
+    add(name: string) {
+      const parts = new Set(String(el.className || "").split(/\s+/).filter(Boolean));
+      parts.add(name);
+      el.className = [...parts].join(" ");
+    },
+    remove(name: string) {
+      el.className = String(el.className || "")
+        .split(/\s+/)
+        .filter((part) => part && part !== name)
+        .join(" ");
+    },
+    contains(name: string) {
+      return String(el.className || "")
+        .split(/\s+/)
+        .includes(name);
+    }
+  };
+}
+
+function makeReqSkuDom() {
+  const wrap: Record<string, unknown> = {};
+  const sku: {
+    id: string;
+    value: string;
+    dataset: Record<string, string | undefined>;
+    focused: boolean;
+    focus: () => void;
+    closest: (sel: string) => unknown;
+  } = {
+    id: "reqSku",
+    value: "004740-000005-000001",
+    dataset: { skuSelectedId: "prod-att", skuSelectedCode: "004740-000005-000001" },
+    focused: false,
+    focus() {
+      this.focused = true;
+    },
+    closest(sel: string) {
+      return sel === "[data-pta]" ? wrap : null;
+    }
+  };
+  const card: Record<string, unknown> = {
+    className: "sku-selected-card",
+    hidden: false,
+    innerHTML: "✓ SKU seleccionado Radio"
+  };
+  card.classList = classListFor(card as { className: string });
+  const list: Record<string, unknown> = {
+    id: "reqSkuSuggestions",
+    className: "product-typeahead-list",
+    hidden: true,
+    innerHTML: ""
+  };
+  list.classList = classListFor(list as { className: string });
+  wrap.className = "product-typeahead";
+  wrap.getAttribute = (name: string) => (name === "data-pta" ? "req" : null);
+  wrap.querySelector = (sel: string) => {
+    if (sel === "input") return sku;
+    if (sel === ".sku-selected-card") return card;
+    if (sel === ".sku-context-summary") return null;
+    return null;
+  };
+  wrap.querySelectorAll = (sel: string) => {
+    if (String(sel).includes("sku-selected-card") || String(sel).includes("sku-context-summary")) return [card];
+    return [];
+  };
+  wrap.closest = (sel: string) => (sel === "[data-pta]" ? wrap : null);
+  list.parentElement = wrap;
+  list.closest = wrap.closest;
+  const customer = { id: "reqCustomer", value: "ATT" };
+  const cliente = { id: "reqCliente", value: "AT&T COMUNICACIONES DIGITALES" };
+  const product = { id: "reqProduct", value: "Radio" };
+  const document = {
+    getElementById(id: string) {
+      if (id === "reqSku") return sku;
+      if (id === "reqSkuSuggestions") return list;
+      if (id === "reqCustomer") return customer;
+      if (id === "reqCliente") return cliente;
+      if (id === "reqProduct") return product;
+      if (id === "inventorySkuSelectedHost") return null;
+      return null;
+    }
+  };
+  return { sku, list, wrap, card, customer, product, document };
+}
+
+function loadReqSkuHarness(document: unknown) {
+  const src = [
+    "let requisitionSkuSelectedContext = null;",
+    "let requisitionSkuSelectedListEl = null;",
+    "const renderCalls = [];",
+    "function renderSkuContext(listEl, context){ renderCalls.push(context); }",
+    sliceFunction(js, "opsPrefixFromTypeahead"),
+    sliceFunction(js, "hideSkuSelectedCard"),
+    sliceFunction(js, "hideProductTypeaheadList"),
+    sliceFunction(js, "clearSkuSelectionFields"),
+    sliceFunction(js, "beginSkuChange"),
+    sliceFunction(js, "invalidateSkuSelection"),
+    sliceFunction(js, "rememberRequisitionSkuSelectedContext"),
+    sliceFunction(js, "clearRequisitionSkuSelectedContext"),
+    sliceFunction(js, "refreshRequisitionSkuSelectedCard")
+  ].join("\n");
+  return new Function(
+    "document",
+    `${src}; return {
+      rememberRequisitionSkuSelectedContext,
+      clearRequisitionSkuSelectedContext,
+      refreshRequisitionSkuSelectedCard,
+      beginSkuChange,
+      invalidateSkuSelection,
+      get context(){ return requisitionSkuSelectedContext; },
+      get listEl(){ return requisitionSkuSelectedListEl; },
+      get renderCalls(){ return renderCalls; }
+    };`
+  )(document) as {
+    rememberRequisitionSkuSelectedContext: (listEl: unknown, context: unknown) => void;
+    clearRequisitionSkuSelectedContext: () => void;
+    refreshRequisitionSkuSelectedCard: () => void;
+    beginSkuChange: (listEl: unknown, input: unknown) => void;
+    invalidateSkuSelection: (listEl: unknown, input: unknown) => boolean;
+    context: { product?: { sku?: string } } | null;
+    listEl: unknown;
+    renderCalls: Array<{ product?: { sku?: string } }>;
+  };
+}
+
 function reqTableFns() {
   return new Function(
     `const PRIMARY_CLIENT_AVIAT_NAME = "AVIAT";
@@ -175,6 +302,88 @@ test("cambiar proyecto de la requisición re-renderiza la tarjeta y no borra el 
   assert.doesNotMatch(sliceFunction(js, "fillSkuSelect"), /skuSelectedId/);
   const fill = sliceFunction(js, "fillSkuSelect");
   assert.ok(fill.indexOf('sel.tagName !== "SELECT"') < fill.indexOf("sel.innerHTML"));
+
+  const dom = makeReqSkuDom();
+  const fns = loadReqSkuHarness(dom.document);
+  fns.rememberRequisitionSkuSelectedContext(dom.list, ATT_SKU_CONTEXT);
+  assert.equal(fns.context?.product?.sku, "004740-000005-000001");
+  assert.equal(dom.sku.value, "004740-000005-000001");
+  assert.equal(dom.sku.dataset.skuSelectedId, "prod-att");
+  dom.customer.value = "OPERBES";
+  fns.refreshRequisitionSkuSelectedCard();
+  assert.equal(dom.sku.value, "004740-000005-000001");
+  assert.equal(dom.sku.dataset.skuSelectedId, "prod-att");
+  assert.equal(dom.sku.dataset.skuSelectedCode, "004740-000005-000001");
+  assert.equal(fns.renderCalls.length, 1);
+  assert.equal(fns.renderCalls[0]?.product?.sku, "004740-000005-000001");
+  assert.equal(fns.context?.product?.sku, "004740-000005-000001");
+});
+
+test("Cambiar SKU en requisición limpia input, IDs, tarjeta y contexto guardado", () => {
+  assert.match(sliceFunction(js, "clearSkuSelectionFields"), /prefix === "req"/);
+  assert.match(sliceFunction(js, "clearSkuSelectionFields"), /clearRequisitionSkuSelectedContext/);
+  assert.match(sliceFunction(js, "hideSkuSelectedCard"), /clearRequisitionSkuSelectedContext/);
+  assert.match(sliceFunction(js, "beginSkuChange"), /clearSkuSelectionFields/);
+  const dom = makeReqSkuDom();
+  const fns = loadReqSkuHarness(dom.document);
+  fns.rememberRequisitionSkuSelectedContext(dom.list, ATT_SKU_CONTEXT);
+  fns.beginSkuChange(dom.list, dom.sku);
+  assert.equal(dom.sku.value, "");
+  assert.equal(dom.sku.dataset.skuSelectedId, undefined);
+  assert.equal(dom.sku.dataset.skuSelectedCode, undefined);
+  assert.equal(dom.product.value, "");
+  assert.equal(dom.card.hidden, true);
+  assert.equal(String(dom.card.innerHTML), "");
+  assert.equal(fns.context, null);
+  assert.equal(fns.listEl, null);
+  assert.equal(dom.sku.focused, true);
+  assert.equal(dom.customer.value, "ATT");
+});
+
+test("después de limpiar el SKU, cambiar el proyecto no re-renderiza la tarjeta anterior", () => {
+  const dom = makeReqSkuDom();
+  const fns = loadReqSkuHarness(dom.document);
+  fns.rememberRequisitionSkuSelectedContext(dom.list, ATT_SKU_CONTEXT);
+  fns.beginSkuChange(dom.list, dom.sku);
+  assert.equal(fns.context, null);
+  const before = fns.renderCalls.length;
+  dom.customer.value = "OPERBES";
+  fns.refreshRequisitionSkuSelectedCard();
+  assert.equal(fns.renderCalls.length, before);
+  assert.equal(fns.context, null);
+  assert.doesNotMatch(String(dom.card.innerHTML), /004740-000005-000001/);
+  const edited = makeReqSkuDom();
+  const editedFns = loadReqSkuHarness(edited.document);
+  editedFns.rememberRequisitionSkuSelectedContext(edited.list, ATT_SKU_CONTEXT);
+  edited.sku.value = "004740-000005-000001X";
+  assert.equal(editedFns.invalidateSkuSelection(edited.list, edited.sku), true);
+  assert.equal(editedFns.context, null);
+  edited.customer.value = "OPERBES";
+  editedFns.refreshRequisitionSkuSelectedCard();
+  assert.equal(editedFns.renderCalls.length, 0);
+});
+
+test("seleccionar otro SKU guarda el contexto nuevo y el anterior no reaparece", () => {
+  const otherSku = {
+    ...ATT_SKU_CONTEXT,
+    product: { sku: "OTHER-SKU-000001", name: "Otro radio" }
+  };
+  const dom = makeReqSkuDom();
+  const fns = loadReqSkuHarness(dom.document);
+  fns.rememberRequisitionSkuSelectedContext(dom.list, ATT_SKU_CONTEXT);
+  fns.beginSkuChange(dom.list, dom.sku);
+  assert.equal(fns.context, null);
+  dom.sku.value = "OTHER-SKU-000001";
+  dom.sku.dataset.skuSelectedId = "prod-other";
+  dom.sku.dataset.skuSelectedCode = "OTHER-SKU-000001";
+  fns.rememberRequisitionSkuSelectedContext(dom.list, otherSku);
+  assert.equal(fns.context?.product?.sku, "OTHER-SKU-000001");
+  fns.refreshRequisitionSkuSelectedCard();
+  assert.equal(fns.renderCalls.length, 1);
+  assert.equal(fns.renderCalls[0]?.product?.sku, "OTHER-SKU-000001");
+  assert.notEqual(fns.renderCalls[0]?.product?.sku, "004740-000005-000001");
+  assert.doesNotMatch(sliceFunction(js, "refreshInventorySkuSelectedCard"), /requisitionSkuSelected/);
+  assert.doesNotMatch(sliceFunction(js, "clearInventorySkuSelectedContext"), /requisitionSkuSelected/);
 });
 
 test("proyecto de requisición sin saldo muestra 0 y no toma saldo global ni de otro proyecto", () => {
