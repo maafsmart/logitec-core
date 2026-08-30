@@ -10,9 +10,20 @@ if (redirectApexLoginToWww()) {
   /* Stay on www before reading or sending credentials. */
 }
 
+// Mantener alineado con ACTIVE_NAV_STORAGE_KEY en dashboard.js (se limpia en cada login nuevo).
+const ACTIVE_NAV_STORAGE_KEY = "logitec_active_nav";
+
 const form = document.getElementById("loginForm");
 const errorMessage = document.getElementById("errorMessage");
 const submitBtn = document.getElementById("submitBtn");
+
+function clearStoredNavRouteAfterLogin() {
+  try {
+    sessionStorage.removeItem(ACTIVE_NAV_STORAGE_KEY);
+  } catch (_error) {
+    /* ignore private mode */
+  }
+}
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -42,6 +53,7 @@ form.addEventListener("submit", async (event) => {
       return;
     }
 
+    clearStoredNavRouteAfterLogin();
     localStorage.setItem("token", token);
     window.location.href = "/dashboard.html";
   } catch (_error) {

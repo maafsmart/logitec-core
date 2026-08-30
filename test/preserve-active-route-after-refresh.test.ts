@@ -77,6 +77,7 @@ function makeRuntime(opts: {
     };
     const defaultLandingModule = { ADMIN: "control", SUPERVISOR: "control", OPERATOR: "tasks", CLIENT: "inventory" };
     let currentRole = ${JSON.stringify(role)};
+    let awaitingAdminClient = false;
     let currentModuleName = ${JSON.stringify(opts.currentModuleName ?? null)};
     let userSelectedNavDuringBoot = ${opts.userSelected ? "true" : "false"};
     let pendingUserNav = ${pendingJson};

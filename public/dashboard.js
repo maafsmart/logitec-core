@@ -1102,6 +1102,7 @@ function applyDefaultLandingRoute() {
 
 function applySessionRoute() {
   if (!currentRole) return;
+  if (currentRole === "ADMIN" && awaitingAdminClient) return;
   if (userSelectedNavDuringBoot) {
     if (pendingUserNav) {
       navigateTo(pendingUserNav.section, pendingUserNav.module);
@@ -1308,6 +1309,11 @@ function navigateTo(sectionId, moduleName) {
   const allowed = roleModules[currentRole] || [];
   let section = sectionId || null;
   let mod = moduleName || null;
+
+  if (mod === "bulk-inbound") {
+    section = "inventario";
+    mod = "inventory";
+  }
 
   if (mod && !section) {
     section = resolveSectionForModule(mod, null);
@@ -12222,7 +12228,8 @@ async function validateSession() {
     wireHashModuleNavigation();
     updateActiveClientChrome();
     if (awaitingAdminClient) {
-      applySessionRoute();
+      hideAllModules();
+      moduleButtons.forEach((btn) => btn.classList.remove("active"));
       await showAdminClientPicker();
       await loadUsersModule(currentRole);
       return;

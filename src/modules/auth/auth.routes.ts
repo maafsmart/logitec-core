@@ -93,7 +93,7 @@ authRouter.post("/login", async (req, res) => {
     userId: user.id,
     role: user.role as "ADMIN" | "OPERATOR" | "SUPERVISOR" | "CLIENT",
     email: user.email,
-    operationalClientId: operationalClient?.id ?? null
+    operationalClientId: isClientScopedRole(user.role) ? operationalClient?.id ?? null : null
   });
 
   res.json({
