@@ -9,23 +9,26 @@ alwaysApply: true
 
 ## Roles
 
-- **ChatGPT** — director técnico / revisor (vía GitHub + commits marcados).
-- **Rodrigo** — dueño; decisiones importantes y operaciones manuales o visuales.
-- **Cursor** — implementación local; **debe informar a Rodrigo con constancia**, no solo al final.
+- **ChatGPT** — director técnico / revisor.
+- **Rodrigo** — SUPERVISOR y dueño. Lee las interacciones y toma decisiones importantes, destructivas o manuales/visuales. **No** es mensajero ni puente humano obligatorio: no debe copiar mensajes entre agentes.
+- **Cursor** — implementación. Informa a Rodrigo por fases en el chat local y, cuando corresponda, publica hitos en GitHub para que ChatGPT y Rodrigo los vean.
 
 ## Puente técnico Cursor ↔ Director
 
-No hay canal directo entre agentes. El flujo es:
+No existe un socket ni un chat local directo entre Cursor y ChatGPT. Eso **no** niega el canal de coordinación: **GitHub / el PR es el puente técnico visible**.
+
+Flujo permitido en ambos sentidos cuando la integración de Cursor en el PR está activa:
 
 ```
-Cursor → commit/push con READY_FOR_DIRECTOR_REVIEW → GitHub → ChatGPT (director)
+Cursor → GitHub/PR → ChatGPT
+ChatGPT → GitHub/PR → Cursor
 ```
 
-Rodrigo es el enlace humano entre revisión del director y nuevas instrucciones.
+Rodrigo supervisa ese canal; no interviene como copista.
 
-## Reporte a Rodrigo (obligatorio, cada fase)
+## Reporte por fases (obligatorio)
 
-Informar a Rodrigo **en el chat** con mensajes breves y frecuentes. No esperar solo al cierre.
+Informar a Rodrigo **en el chat local** con mensajes breves y frecuentes. Cuando haya un hito relevante, publicarlo también en el PR de GitHub para que ChatGPT y Rodrigo lo vean. No esperar solo al cierre.
 
 | Fase | Qué reportar |
 |------|----------------|
@@ -90,7 +93,7 @@ Cuerpo del commit (breve reporte):
 ## Después del push final con READY_FOR_DIRECTOR_REVIEW
 
 - No seguir modificando la rama.
-- Esperar nueva instrucción.
+- Esperar nueva instrucción por el canal autorizado (GitHub/PR cuando la integración esté activa, o el prompt de la ronda).
 - No hacer merge ni deploy por iniciativa propia.
 
 ## Candado de entregas
