@@ -12735,20 +12735,25 @@ function selectedHistoryIncidentIds() {
   return Array.from(document.querySelectorAll(".js-history-incident:checked")).map((el) => el.value);
 }
 
+function selectedHistoryCategories() {
+  if (document.getElementById("historyCleanAll")?.checked) return ["all"];
+  return Array.from(document.querySelectorAll(".js-history-category:checked"))
+    .map((el) => el.getAttribute("data-history-category"))
+    .filter((value) => value && value !== "all");
+}
+
 function syncHistoryExecuteEnabled() {
   const btn = document.getElementById("operationalHistoryExecuteBtn");
   if (!btn) return;
   const phrase = String(document.getElementById("operationalHistoryPhrase")?.value || "").trim();
-  const comments = Boolean(document.getElementById("historyCleanComments")?.checked);
-  const incidents = Boolean(document.getElementById("historyCleanIncidents")?.checked);
-  const hasIds = selectedHistoryIncidentIds().length > 0;
-  btn.disabled = phrase !== "LIMPIAR HISTORIAL OPERATIVO DE AVIAT" || (!comments && !(incidents && hasIds));
+  btn.disabled = phrase !== "LIMPIAR HISTORIAL OPERATIVO DE AVIAT" || selectedHistoryCategories().length === 0;
 }
 
 async function loadOperationalHistoryPreview() {
   const decision = document.getElementById("operationalHistoryDecision");
   const counts = document.getElementById("operationalHistoryCounts");
   const list = document.getElementById("operationalHistoryIncidents");
+  const integrity = document.getElementById("operationalHistoryIntegrity");
   const err = document.getElementById("operationalHistoryError");
   const ok = document.getElementById("operationalHistorySuccess");
   if (err) err.textContent = "";
@@ -12762,29 +12767,42 @@ async function loadOperationalHistoryPreview() {
   }
   operationalHistoryPreview = data;
   if (decision) {
-    decision.textContent = `${data.decision}: ${data.decisionReason} Ejecución automática: ${data.executesAutomatically ? "sí" : "no"}.`;
+    decision.textContent = `${data.policy || data.decision}: ${data.decisionReason} Automática: no. Cero historial posible: ${data.canReachZeroOperationalHistory ? "sí" : "no"}.`;
   }
-  const leftover = data.leftoverOutsideInventoryReset || {};
-  const covered = data.coveredByInventoryReset || {};
+  const cat = data.counts || {};
   if (counts) {
     counts.innerHTML = [
-      `Incidentes fuera del reset: ${leftover.incidents?.total ?? 0}`,
-      `Comentarios: ${leftover.comments?.total ?? 0}`,
-      `Cubierto por reset inventario · movs ${covered.movements ?? 0} · scans ${covered.scanEvents ?? 0} · tareas ${covered.tasks ?? 0}`
+      `Movs ${cat.movements?.total ?? 0}`,
+      `Scans ${cat.scanEvents?.total ?? 0}`,
+      `Activity ${cat.activityLogs?.total ?? 0}`,
+      `Tareas ${cat.tasks?.total ?? 0}`,
+      `Req ${cat.requisitions?.total ?? 0}`,
+      `Imports ${cat.importBatches?.total ?? 0}`,
+      `Incidentes ${cat.incidents?.total ?? 0}`,
+      `Comentarios ${cat.comments?.total ?? 0}`,
+      `Reservas a liberar ${cat.reservationsToRelease ?? 0}`
     ]
       .map((text) => `<span class="chip">${escCell(text)}</span>`)
       .join("");
   }
-  const records = leftover.incidents?.records || [];
+  if (integrity) {
+    const blocked = (data.integrity?.cannotPurgeWithoutTouchingMasters || [])
+      .map((row) => `${row.category}: ${row.reason}`)
+      .join(" ");
+    integrity.textContent = blocked
+      ? `Integridad: ${blocked}`
+      : data.integrity?.reservationsNote || "Ninguna categoría requiere borrar maestros.";
+  }
+  const records = cat.incidents?.records || data.leftoverOutsideInventoryReset?.incidents?.records || [];
   if (list) {
     list.innerHTML = records.length
-      ? `<table class="projects-stock-table"><thead><tr><th></th><th>Tipo</th><th>Estado</th><th>Almacén</th><th>Notas</th></tr></thead><tbody>${records
+      ? `<p class="filter-hint">Incidencias AVIAT (marca un subconjunto o usa la categoría completa):</p><table class="projects-stock-table"><thead><tr><th></th><th>Tipo</th><th>Estado</th><th>Almacén</th><th>Notas</th></tr></thead><tbody>${records
           .map(
             (row) =>
               `<tr><td><input type="checkbox" class="js-history-incident" value="${escCell(row.id)}" /></td><td>${escCell(row.type)}</td><td>${escCell(row.status)}</td><td>${escCell(row.warehouse || "—")}</td><td>${escCell(row.notesPreview || "—")}</td></tr>`
           )
           .join("")}</tbody></table>`
-      : "<p class='filter-hint'>No hay incidencias AVIAT fuera del reset.</p>";
+      : "<p class='filter-hint'>No hay incidencias AVIAT en el preview.</p>";
     list.querySelectorAll(".js-history-incident").forEach((box) => box.addEventListener("change", syncHistoryExecuteEnabled));
   }
   syncHistoryExecuteEnabled();
@@ -12793,19 +12811,15 @@ async function loadOperationalHistoryPreview() {
 async function executeOperationalHistoryCleanup() {
   const err = document.getElementById("operationalHistoryError");
   const ok = document.getElementById("operationalHistorySuccess");
-  const comments = Boolean(document.getElementById("historyCleanComments")?.checked);
-  const incidents = Boolean(document.getElementById("historyCleanIncidents")?.checked);
+  const categories = selectedHistoryCategories();
   const ids = selectedHistoryIncidentIds();
-  const categories = [];
-  if (comments) categories.push("comments");
-  if (incidents) categories.push("incidents");
   const response = await authenticatedFetch("/api/admin/operational-history/cleanup", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       confirmation: document.getElementById("operationalHistoryPhrase")?.value,
       categories,
-      incidentIds: ids
+      incidentIds: document.getElementById("historyCleanIncidents")?.checked && ids.length ? ids : []
     })
   });
   if (!response) return;
@@ -12817,7 +12831,7 @@ async function executeOperationalHistoryCleanup() {
   if (err) err.textContent = "";
   if (ok) {
     ok.classList.remove("hidden");
-    ok.textContent = `Limpieza aplicada: ${data.deleted?.incidents || 0} incidencias, ${data.deleted?.comments || 0} comentarios. Maestros intactos.`;
+    ok.textContent = `Limpieza aplicada. Cero historial AVIAT: ${data.reachedZeroOperationalHistory ? "sí" : "no"}. Maestros intactos.`;
   }
   await loadOperationalHistoryPreview();
 }
@@ -14560,8 +14574,9 @@ document.getElementById("resetPasswordCloseX")?.addEventListener("click", () => 
 document.getElementById("operationalHistoryPreviewBtn")?.addEventListener("click", () => void loadOperationalHistoryPreview());
 document.getElementById("operationalHistoryExecuteBtn")?.addEventListener("click", () => void executeOperationalHistoryCleanup());
 document.getElementById("operationalHistoryPhrase")?.addEventListener("input", syncHistoryExecuteEnabled);
-document.getElementById("historyCleanComments")?.addEventListener("change", syncHistoryExecuteEnabled);
-document.getElementById("historyCleanIncidents")?.addEventListener("change", syncHistoryExecuteEnabled);
+document.querySelectorAll(".js-history-category").forEach((el) => {
+  el.addEventListener("change", syncHistoryExecuteEnabled);
+});
 newRole?.addEventListener("change", () => {
   document.getElementById("newClientField")?.classList.toggle("hidden", !isBoundOperationalRole(newRole.value));
 });

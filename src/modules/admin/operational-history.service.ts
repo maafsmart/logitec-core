@@ -7,7 +7,22 @@ import {
 } from "../inventory/physical-reset.service.js";
 
 export const OPERATIONAL_HISTORY_CONFIRMATION = "LIMPIAR HISTORIAL OPERATIVO DE AVIAT";
-export const OPERATIONAL_HISTORY_DECISION = "REQUIERE_DECISION_INCIDENTS";
+export const OPERATIONAL_HISTORY_POLICY = "CLEAN_START_AVIAT";
+/** @deprecated Use OPERATIONAL_HISTORY_POLICY. Kept so older tests/imports keep compiling. */
+export const OPERATIONAL_HISTORY_DECISION = OPERATIONAL_HISTORY_POLICY;
+
+export const HISTORY_CATEGORIES = [
+  "movements",
+  "scanEvents",
+  "activityLogs",
+  "tasks",
+  "requisitions",
+  "importBatches",
+  "incidents",
+  "comments"
+] as const;
+
+export type HistoryCategory = (typeof HISTORY_CATEGORIES)[number];
 
 export type HistoryDb = {
   $transaction<T>(
@@ -15,8 +30,6 @@ export type HistoryDb = {
     options?: { maxWait?: number; timeout?: number }
   ): Promise<T>;
 };
-
-export type HistoryCategory = "comments" | "incidents";
 
 export type IncidentPreviewRow = {
   id: string;
@@ -27,13 +40,47 @@ export type IncidentPreviewRow = {
   notesPreview: string;
 };
 
+export type HistoryCategoryCount = {
+  total: number;
+  selectable: true;
+};
+
 export type OperationalHistoryPreview = {
   separateFromInventoryReset: true;
   executesAutomatically: false;
   clientId: string;
   isAviat: boolean;
-  decision: typeof OPERATIONAL_HISTORY_DECISION;
+  policy: typeof OPERATIONAL_HISTORY_POLICY;
+  decision: typeof OPERATIONAL_HISTORY_POLICY;
   decisionReason: string;
+  canReachZeroOperationalHistory: boolean;
+  inventoryResetDoesNotDelete: string[];
+  historyCleanupDeletes: HistoryCategory[];
+  mastersPreserved: string[];
+  counts: {
+    movements: HistoryCategoryCount;
+    scanEvents: HistoryCategoryCount;
+    activityLogs: HistoryCategoryCount;
+    tasks: HistoryCategoryCount;
+    requisitions: HistoryCategoryCount;
+    importBatches: HistoryCategoryCount;
+    incidents: HistoryCategoryCount & {
+      byType: Record<string, number>;
+      byStatus: Record<string, number>;
+      records: IncidentPreviewRow[];
+    };
+    comments: HistoryCategoryCount;
+    reservationsToRelease: number;
+  };
+  leftoverOutsideInventoryReset: {
+    incidents: {
+      total: number;
+      byType: Record<string, number>;
+      byStatus: Record<string, number>;
+      records: IncidentPreviewRow[];
+    };
+    comments: { total: number };
+  };
   coveredByInventoryReset: {
     inventories: number;
     movements: number;
@@ -43,16 +90,11 @@ export type OperationalHistoryPreview = {
     requisitions: number;
     importBatches: number;
   };
-  leftoverOutsideInventoryReset: {
-    incidents: {
-      total: number;
-      byType: Record<string, number>;
-      byStatus: Record<string, number>;
-      records: IncidentPreviewRow[];
-    };
-    comments: {
-      total: number;
-    };
+  integrity: {
+    cannotPurgeWithoutTouchingMasters: Array<{ category: string; reason: string }>;
+    reservationsToRelease: number;
+    reservationsNote: string;
+    globalActivityLogsRetained: number;
   };
   mastersRetained: {
     users: number;
@@ -68,13 +110,23 @@ export type OperationalHistoryCleanupResult = {
   ok: true;
   executed: true;
   clientId: string;
-  deleted: {
-    incidents: number;
-    comments: number;
-  };
+  deleted: Record<HistoryCategory, number> & { reservationsReleased: number };
+  leftover: Record<HistoryCategory, number>;
+  reachedZeroOperationalHistory: boolean;
   untouchedOtherClient: true;
   mastersUntouched: true;
 };
+
+const MASTERS_PRESERVED = [
+  "cliente AVIAT",
+  "usuarios/cuentas",
+  "roles",
+  "proyectos",
+  "catálogo/productos",
+  "almacenes",
+  "ubicaciones",
+  "existencias/inventario físico"
+];
 
 function notesPreview(notes: string | null | undefined): string {
   const text = String(notes || "").replace(/\s+/g, " ").trim();
@@ -83,6 +135,10 @@ function notesPreview(notes: string | null | undefined): string {
 
 function increment(map: Record<string, number>, key: string): void {
   map[key] = (map[key] || 0) + 1;
+}
+
+function emptyIncidents(): OperationalHistoryPreview["counts"]["incidents"] {
+  return { total: 0, selectable: true, byType: {}, byStatus: {}, records: [] };
 }
 
 export function assertOperationalHistoryConfirmation(value: unknown): void {
@@ -101,11 +157,14 @@ export function assertHistoryCategorySelection(input: {
   incidentTypes?: unknown;
 }): { categories: HistoryCategory[]; incidentIds: string[]; incidentTypes: string[] } {
   const raw = Array.isArray(input.categories) ? input.categories.map((item) => String(item)) : [];
-  const categories = raw.filter((item): item is HistoryCategory => item === "comments" || item === "incidents");
+  const expanded = raw.includes("all") ? [...HISTORY_CATEGORIES] : raw;
+  const categories = [...new Set(expanded.filter((item): item is HistoryCategory =>
+    (HISTORY_CATEGORIES as readonly string[]).includes(item)
+  ))];
   if (!categories.length) {
     throw new HttpError(
       400,
-      "Selecciona al menos una categoría (comments o incidents). El preview no ejecuta nada.",
+      "Selecciona al menos una categoría de historial operativo. El preview no ejecuta nada.",
       "HISTORY_CATEGORY_REQUIRED"
     );
   }
@@ -115,13 +174,6 @@ export function assertHistoryCategorySelection(input: {
   const incidentTypes = Array.isArray(input.incidentTypes)
     ? [...new Set(input.incidentTypes.map((item) => String(item).trim().toUpperCase()).filter(Boolean))]
     : [];
-  if (categories.includes("incidents") && !incidentIds.length && !incidentTypes.length) {
-    throw new HttpError(
-      400,
-      "Incident no distingue prueba vs real. Elige registros o tipos concretos; no hay borrado automático de todas las incidencias.",
-      OPERATIONAL_HISTORY_DECISION
-    );
-  }
   return { categories, incidentIds, incidentTypes };
 }
 
@@ -151,6 +203,174 @@ async function countMasters(tx: Prisma.TransactionClient) {
   return { users, products, warehouses, locations, projects, clients };
 }
 
+async function countReservationsToRelease(tx: Prisma.TransactionClient, clientId: string): Promise<number> {
+  return tx.inventoryReservation.count({
+    where: {
+      OR: [{ inventory: { clientId } }, { requisitionLine: { requisition: { project: { clientId } } } }]
+    }
+  });
+}
+
+async function collectIncidentPreview(tx: Prisma.TransactionClient, clientId: string) {
+  const incidents = await tx.incident.findMany({
+    where: { clientId },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, type: true, status: true, createdAt: true, warehouse: true, notes: true }
+  });
+  const byType: Record<string, number> = {};
+  const byStatus: Record<string, number> = {};
+  const records = incidents.map((row) => {
+    increment(byType, row.type);
+    increment(byStatus, row.status);
+    return {
+      id: row.id,
+      type: row.type,
+      status: row.status,
+      createdAt: row.createdAt,
+      warehouse: row.warehouse,
+      notesPreview: notesPreview(row.notes)
+    };
+  });
+  return { total: incidents.length, selectable: true as const, byType, byStatus, records };
+}
+
+function toDecimal(value: unknown): Prisma.Decimal {
+  return value instanceof Prisma.Decimal ? value : new Prisma.Decimal(String(value ?? 0));
+}
+
+function activeReserved(qty: unknown, consumed: unknown, released: unknown): Prisma.Decimal {
+  const left = toDecimal(qty).minus(toDecimal(consumed)).minus(toDecimal(released));
+  return left.greaterThan(0) ? left : new Prisma.Decimal(0);
+}
+
+async function releaseAviatReservations(
+  tx: Prisma.TransactionClient,
+  clientId: string
+): Promise<number> {
+  const reservations = await tx.inventoryReservation.findMany({
+    where: {
+      OR: [{ inventory: { clientId } }, { requisitionLine: { requisition: { project: { clientId } } } }]
+    },
+    select: {
+      id: true,
+      inventoryId: true,
+      inventoryLayerId: true,
+      qty: true,
+      consumedQty: true,
+      releasedQty: true
+    }
+  });
+  for (const row of reservations) {
+    const qty = activeReserved(row.qty, row.consumedQty, row.releasedQty);
+    if (qty.greaterThan(0)) {
+      if (row.inventoryLayerId) {
+        await tx.inventoryLayer.update({
+          where: { id: row.inventoryLayerId },
+          data: { reservedQty: { decrement: qty } }
+        });
+      }
+      await tx.inventory.update({
+        where: { id: row.inventoryId },
+        data: { reservedQty: { decrement: qty } }
+      });
+    }
+  }
+  if (reservations.length) {
+    await tx.inventoryReservation.deleteMany({ where: { id: { in: reservations.map((row) => row.id) } } });
+  }
+  return reservations.length;
+}
+
+async function purgeSelectedHistory(
+  tx: Prisma.TransactionClient,
+  aviatId: string,
+  categories: HistoryCategory[],
+  incidentIds: string[],
+  incidentTypes: string[]
+): Promise<OperationalHistoryCleanupResult["deleted"]> {
+  const deleted: OperationalHistoryCleanupResult["deleted"] = {
+    movements: 0,
+    scanEvents: 0,
+    activityLogs: 0,
+    tasks: 0,
+    requisitions: 0,
+    importBatches: 0,
+    incidents: 0,
+    comments: 0,
+    reservationsReleased: 0
+  };
+  const clientWhere = { clientId: aviatId };
+  const projectWhere = { project: { clientId: aviatId } };
+  const needsRequisitionOrTask = categories.includes("requisitions") || categories.includes("tasks");
+
+  if (categories.includes("movements")) {
+    await tx.inventoryMovement.updateMany({
+      where: clientWhere,
+      data: { inventorySerialId: null, inventoryLayerId: null, requisitionLineId: null, taskId: null }
+    });
+    deleted.movements = (await tx.inventoryMovement.deleteMany({ where: clientWhere })).count;
+  }
+
+  if (categories.includes("scanEvents")) {
+    deleted.scanEvents = (await tx.scanEvent.deleteMany({ where: clientWhere })).count;
+  }
+
+  if (categories.includes("activityLogs")) {
+    deleted.activityLogs = (await tx.activityLog.deleteMany({ where: clientWhere })).count;
+  }
+
+  if (needsRequisitionOrTask) {
+    deleted.reservationsReleased = await releaseAviatReservations(tx, aviatId);
+  }
+
+  if (categories.includes("tasks")) {
+    const taskIds = (await tx.task.findMany({ where: clientWhere, select: { id: true } })).map((row) => row.id);
+    if (taskIds.length) {
+      await tx.task.updateMany({ where: { id: { in: taskIds } }, data: { requisitionId: null } });
+      deleted.tasks = (await tx.task.deleteMany({ where: { id: { in: taskIds } } })).count;
+    }
+  }
+
+  if (categories.includes("requisitions")) {
+    deleted.requisitions = (await tx.requisition.deleteMany({ where: projectWhere })).count;
+  }
+
+  if (categories.includes("importBatches")) {
+    deleted.importBatches = (await tx.importBatch.deleteMany({ where: { clientId: aviatId } })).count;
+  }
+
+  if (categories.includes("incidents")) {
+    const where: Prisma.IncidentWhereInput = {
+      clientId: aviatId,
+      ...(incidentIds.length ? { id: { in: incidentIds } } : {}),
+      ...(incidentTypes.length ? { type: { in: incidentTypes } } : {})
+    };
+    deleted.incidents = (await tx.incident.deleteMany({ where })).count;
+  }
+
+  if (categories.includes("comments")) {
+    deleted.comments = (await tx.comment.deleteMany({ where: clientWhere })).count;
+  }
+
+  return deleted;
+}
+
+async function leftoverCounts(tx: Prisma.TransactionClient, clientId: string) {
+  const projectWhere = { project: { clientId } };
+  const [movements, scanEvents, activityLogs, tasks, requisitions, importBatches, incidents, comments] =
+    await Promise.all([
+      tx.inventoryMovement.count({ where: { clientId } }),
+      tx.scanEvent.count({ where: { clientId } }),
+      tx.activityLog.count({ where: { clientId } }),
+      tx.task.count({ where: { clientId } }),
+      tx.requisition.count({ where: projectWhere }),
+      tx.importBatch.count({ where: { clientId } }),
+      tx.incident.count({ where: { clientId } }),
+      tx.comment.count({ where: { clientId } })
+    ]);
+  return { movements, scanEvents, activityLogs, tasks, requisitions, importBatches, incidents, comments };
+}
+
 export async function previewOperationalHistoryCleanup(
   actor: { clientId: string },
   db: HistoryDb = prisma
@@ -158,68 +378,98 @@ export async function previewOperationalHistoryCleanup(
   return db.$transaction(async (tx) => {
     const aviatId = await resolveUniqueAviatClientId(tx);
     const isAviat = actor.clientId === aviatId;
-    const emptyIncidents = { total: 0, byType: {}, byStatus: {}, records: [] as IncidentPreviewRow[] };
+    const mastersRetained = await countMasters(tx);
+    const emptyCounts = {
+      movements: { total: 0, selectable: true as const },
+      scanEvents: { total: 0, selectable: true as const },
+      activityLogs: { total: 0, selectable: true as const },
+      tasks: { total: 0, selectable: true as const },
+      requisitions: { total: 0, selectable: true as const },
+      importBatches: { total: 0, selectable: true as const },
+      incidents: emptyIncidents(),
+      comments: { total: 0, selectable: true as const },
+      reservationsToRelease: 0
+    };
+    const emptyCovered = {
+      inventories: 0,
+      movements: 0,
+      scanEvents: 0,
+      activityLogs: 0,
+      tasks: 0,
+      requisitions: 0,
+      importBatches: 0
+    };
+    const integrityBase = {
+      cannotPurgeWithoutTouchingMasters: [] as Array<{ category: string; reason: string }>,
+      reservationsToRelease: 0,
+      reservationsNote:
+        "Si hay reservas AVIAT, se liberan reservedQty (no se borra existencia ni maestros) para poder borrar requisiciones/tareas.",
+      globalActivityLogsRetained: 0
+    };
+
     if (!isAviat) {
       return {
         separateFromInventoryReset: true,
         executesAutomatically: false,
         clientId: actor.clientId,
         isAviat,
-        decision: OPERATIONAL_HISTORY_DECISION,
-        decisionReason:
-          "El preview solo enumera historial del cliente AVIAT activo. Cambia el contexto operativo a AVIAT.",
-        coveredByInventoryReset: {
-          inventories: 0,
-          movements: 0,
-          scanEvents: 0,
-          activityLogs: 0,
-          tasks: 0,
-          requisitions: 0,
-          importBatches: 0
-        },
-        leftoverOutsideInventoryReset: { incidents: emptyIncidents, comments: { total: 0 } },
-        mastersRetained: await countMasters(tx)
+        policy: OPERATIONAL_HISTORY_POLICY,
+        decision: OPERATIONAL_HISTORY_POLICY,
+        decisionReason: "El preview solo enumera historial del cliente AVIAT activo. Cambia el contexto operativo a AVIAT.",
+        canReachZeroOperationalHistory: false,
+        inventoryResetDoesNotDelete: ["incidents", "comments"],
+        historyCleanupDeletes: [...HISTORY_CATEGORIES],
+        mastersPreserved: MASTERS_PRESERVED,
+        counts: emptyCounts,
+        leftoverOutsideInventoryReset: { incidents: emptyIncidents(), comments: { total: 0 } },
+        coveredByInventoryReset: emptyCovered,
+        integrity: integrityBase,
+        mastersRetained
       };
     }
 
-    const [incidents, comments, coveredByInventoryReset, mastersRetained] = await Promise.all([
-      tx.incident.findMany({
-        where: { clientId: aviatId },
-        orderBy: { createdAt: "desc" },
-        select: { id: true, type: true, status: true, createdAt: true, warehouse: true, notes: true }
-      }),
-      tx.comment.count({ where: { clientId: aviatId } }),
+    const [covered, incidents, comments, reservationsToRelease, globalActivityLogsRetained] = await Promise.all([
       countCoveredByInventoryReset(tx, aviatId),
-      countMasters(tx)
+      collectIncidentPreview(tx, aviatId),
+      tx.comment.count({ where: { clientId: aviatId } }),
+      countReservationsToRelease(tx, aviatId),
+      tx.activityLog.count({ where: { clientId: null } })
     ]);
-
-    const byType: Record<string, number> = {};
-    const byStatus: Record<string, number> = {};
-    const records = incidents.map((row) => {
-      increment(byType, row.type);
-      increment(byStatus, row.status);
-      return {
-        id: row.id,
-        type: row.type,
-        status: row.status,
-        createdAt: row.createdAt,
-        warehouse: row.warehouse,
-        notesPreview: notesPreview(row.notes)
-      };
-    });
 
     return {
       separateFromInventoryReset: true,
       executesAutomatically: false,
       clientId: actor.clientId,
       isAviat,
-      decision: OPERATIONAL_HISTORY_DECISION,
+      policy: OPERATIONAL_HISTORY_POLICY,
+      decision: OPERATIONAL_HISTORY_POLICY,
       decisionReason:
-        "Incident no tiene marca prueba vs real. El reset de inventario no los borra. Selecciona categoría/registro; no hay limpieza automática.",
-      coveredByInventoryReset,
+        "CLEAN_START: el historial operativo de ensayo de AVIAT (movimientos, scans, activity, tareas, requisiciones, imports, incidencias y comentarios) puede llevarse a cero. Las 3 incidencias heredadas del 04/08 y 14/08 son candidatas. No se ejecuta sola. Maestros e inventario físico se conservan.",
+      canReachZeroOperationalHistory: true,
+      inventoryResetDoesNotDelete: ["incidents", "comments"],
+      historyCleanupDeletes: [...HISTORY_CATEGORIES],
+      mastersPreserved: MASTERS_PRESERVED,
+      counts: {
+        movements: { total: covered.movements, selectable: true },
+        scanEvents: { total: covered.scanEvents, selectable: true },
+        activityLogs: { total: covered.activityLogs, selectable: true },
+        tasks: { total: covered.tasks, selectable: true },
+        requisitions: { total: covered.requisitions, selectable: true },
+        importBatches: { total: covered.importBatches, selectable: true },
+        incidents,
+        comments: { total: comments, selectable: true },
+        reservationsToRelease
+      },
       leftoverOutsideInventoryReset: {
-        incidents: { total: incidents.length, byType, byStatus, records },
+        incidents,
         comments: { total: comments }
+      },
+      coveredByInventoryReset: covered,
+      integrity: {
+        cannotPurgeWithoutTouchingMasters: [],
+        reservationsToRelease,
+        reservationsNote: integrityBase.reservationsNote,
+        globalActivityLogsRetained
       },
       mastersRetained
     };
@@ -237,30 +487,22 @@ export async function executeOperationalHistoryCleanup(
   return db.$transaction(async (tx) => {
     const aviatId = await resolveUniqueAviatClientId(tx);
     assertAviatOperationalClient(actor.clientId, aviatId);
-
-    let incidentsDeleted = 0;
-    let commentsDeleted = 0;
-
-    if (selection.categories.includes("incidents")) {
-      const where: Prisma.IncidentWhereInput = {
-        clientId: aviatId,
-        ...(selection.incidentIds.length ? { id: { in: selection.incidentIds } } : {}),
-        ...(selection.incidentTypes.length ? { type: { in: selection.incidentTypes } } : {})
-      };
-      const result = await tx.incident.deleteMany({ where });
-      incidentsDeleted = result.count;
-    }
-
-    if (selection.categories.includes("comments")) {
-      const result = await tx.comment.deleteMany({ where: { clientId: aviatId } });
-      commentsDeleted = result.count;
-    }
-
+    const deleted = await purgeSelectedHistory(
+      tx,
+      aviatId,
+      selection.categories,
+      selection.incidentIds,
+      selection.incidentTypes
+    );
+    const leftover = await leftoverCounts(tx, aviatId);
+    const reachedZeroOperationalHistory = HISTORY_CATEGORIES.every((key) => leftover[key] === 0);
     return {
       ok: true,
       executed: true,
       clientId: aviatId,
-      deleted: { incidents: incidentsDeleted, comments: commentsDeleted },
+      deleted,
+      leftover,
+      reachedZeroOperationalHistory,
       untouchedOtherClient: true,
       mastersUntouched: true
     };

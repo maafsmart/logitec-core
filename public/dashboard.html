@@ -5975,23 +5975,29 @@
               <p id="aviatResetResult" class="ops-message ok hidden"></p>
             </section>
             <section class="card-panel danger-zone-panel hidden js-admin-only" id="operationalHistorySection" aria-label="Historial operativo de AVIAT">
-              <span class="prod-danger-kicker">Separado del reset de inventario · Solo ADMIN</span>
+              <span class="prod-danger-kicker">Separado del reset de inventario · Solo ADMIN · CLEAN_START</span>
               <h4 class="secondary-panel-title" style="margin:8px 0 6px">Limpiar historial operativo de AVIAT</h4>
-              <p class="module-lead">Prepara la limpieza de Incident y comentarios que el reset de inventario <strong>no borra</strong>. No se ejecuta sola. Incident no distingue prueba vs real: hay que elegir categoría o registro.</p>
+              <p class="module-lead">Acción distinta al borrado de inventario. Lleva a cero la trazabilidad de ensayo de AVIAT (movimientos, scans, activity, tareas, requisiciones, imports, incidencias y comentarios). Conserva cliente, usuarios, roles, proyectos, catálogo, almacenes, ubicaciones y existencias. No se ejecuta sola.</p>
+              <p class="assignee-hint">Las 3 incidencias heredadas (04/08 y 14/08) son candidatas. Foto de usuario: solo <code>avatarUrl</code> externa; no hay carga de archivos.</p>
               <div class="user-card-actions">
                 <button type="button" id="operationalHistoryPreviewBtn" class="btn-secondary btn-compact">Consultar preview</button>
               </div>
               <p id="operationalHistoryDecision" class="filter-hint"></p>
               <div id="operationalHistoryCounts" class="import-summary-chips"></div>
+              <p id="operationalHistoryIntegrity" class="assignee-hint"></p>
+              <label class="lab-reset-check" for="historyCleanAll">
+                <input id="historyCleanAll" type="checkbox" class="js-history-category" data-history-category="all" />
+                Seleccionar todo el historial operativo AVIAT (objetivo: cero)
+              </label>
+              <label class="lab-reset-check" for="historyCleanMovements"><input id="historyCleanMovements" type="checkbox" class="js-history-category" data-history-category="movements" /> Movimientos</label>
+              <label class="lab-reset-check" for="historyCleanScans"><input id="historyCleanScans" type="checkbox" class="js-history-category" data-history-category="scanEvents" /> Escaneos / eventos</label>
+              <label class="lab-reset-check" for="historyCleanActivity"><input id="historyCleanActivity" type="checkbox" class="js-history-category" data-history-category="activityLogs" /> Activity logs operativos</label>
+              <label class="lab-reset-check" for="historyCleanTasks"><input id="historyCleanTasks" type="checkbox" class="js-history-category" data-history-category="tasks" /> Tareas</label>
+              <label class="lab-reset-check" for="historyCleanRequisitions"><input id="historyCleanRequisitions" type="checkbox" class="js-history-category" data-history-category="requisitions" /> Requisiciones de ensayo</label>
+              <label class="lab-reset-check" for="historyCleanImports"><input id="historyCleanImports" type="checkbox" class="js-history-category" data-history-category="importBatches" /> Import batches de ensayo</label>
+              <label class="lab-reset-check" for="historyCleanComments"><input id="historyCleanComments" type="checkbox" class="js-history-category" data-history-category="comments" /> Comentarios</label>
+              <label class="lab-reset-check" for="historyCleanIncidents"><input id="historyCleanIncidents" type="checkbox" class="js-history-category" data-history-category="incidents" /> Incidencias AVIAT (todas las del preview, o las marcadas abajo)</label>
               <div id="operationalHistoryIncidents"></div>
-              <label class="lab-reset-check" for="historyCleanComments">
-                <input id="historyCleanComments" type="checkbox" />
-                Incluir comentarios del cliente AVIAT
-              </label>
-              <label class="lab-reset-check" for="historyCleanIncidents">
-                <input id="historyCleanIncidents" type="checkbox" />
-                Incluir incidencias seleccionadas (no todas automáticamente)
-              </label>
               <label class="lab-reset-check" for="operationalHistoryPhrase">
                 Escribe exactamente: LIMPIAR HISTORIAL OPERATIVO DE AVIAT
               </label>

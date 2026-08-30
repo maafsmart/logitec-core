@@ -9,8 +9,10 @@ import { prisma } from "../src/db/prisma.js";
 import { signAccessToken } from "../src/middlewares/auth.middleware.js";
 import { canExposeEconomicValuation } from "../src/modules/inventory/inventory-economic-access.js";
 import {
+  HISTORY_CATEGORIES,
   OPERATIONAL_HISTORY_CONFIRMATION,
   OPERATIONAL_HISTORY_DECISION,
+  OPERATIONAL_HISTORY_POLICY,
   assertHistoryCategorySelection,
   executeOperationalHistoryCleanup,
   previewOperationalHistoryCleanup
@@ -96,16 +98,88 @@ function countByClient<T extends { clientId?: string | null }>(rows: T[], client
   return rows.filter((row) => !clientId || row.clientId === clientId).length;
 }
 
+function matchesClient(where: unknown, clientId: string | null | undefined): boolean {
+  if (!where || typeof where !== "object") return true;
+  const record = where as Record<string, unknown>;
+  if ("clientId" in record) {
+    if (record.clientId === null) return clientId == null;
+    if (typeof record.clientId === "string") return record.clientId === clientId;
+  }
+  if (record.inventory && typeof record.inventory === "object") {
+    return matchesClient(record.inventory, clientId);
+  }
+  if (record.project && typeof record.project === "object") {
+    return matchesClient(record.project, clientId);
+  }
+  if (record.requisition && typeof record.requisition === "object") {
+    return matchesClient(record.requisition, clientId);
+  }
+  if (record.requisitionLine && typeof record.requisitionLine === "object") {
+    return matchesClient(record.requisitionLine, clientId);
+  }
+  if (Array.isArray(record.OR)) {
+    return record.OR.some((part) => matchesClient(part, clientId));
+  }
+  return true;
+}
+
+function deleteByClient<T extends { clientId?: string | null }>(rows: T[], where?: { clientId?: string }) {
+  const before = rows.length;
+  const next = rows.filter((row) => (where?.clientId ? row.clientId !== where.clientId : false));
+  rows.length = 0;
+  rows.push(...next);
+  return { count: before - rows.length };
+}
+
 function createHistoryDb() {
   const state = {
     clients: [AVIAT, OTHER],
     incidents: [
-      { id: "inc-a1", clientId: AVIAT.id, type: "DAMAGED", status: "OPEN", createdAt: new Date(), warehouse: "WH", notes: "ensayo AVIAT" },
+      { id: "inc-a1", clientId: AVIAT.id, type: "WRONG_LOCATION", status: "OPEN", createdAt: new Date("2026-08-14T19:46:00Z"), warehouse: "TULTITLAN24", notes: "numeros adicionales" },
+      { id: "inc-a2", clientId: AVIAT.id, type: "WRONG_LOCATION", status: "RESOLVED", createdAt: new Date("2026-08-05T05:11:00Z"), warehouse: "TULTITLAN24", notes: "PRUEBA DE INCIDENCIA DEMO" },
+      { id: "inc-a3", clientId: AVIAT.id, type: "STOCK_MISMATCH", status: "RESOLVED", createdAt: new Date("2026-08-04T07:46:00Z"), warehouse: "TULTITLAN24", notes: "prueba manual" },
       { id: "inc-c2", clientId: OTHER.id, type: "DAMAGED", status: "OPEN", createdAt: new Date(), warehouse: "WH2", notes: "otro cliente" }
     ],
     comments: [
       { id: "c-a", clientId: AVIAT.id },
       { id: "c-2", clientId: OTHER.id }
+    ],
+    movements: [
+      { id: "m-a", clientId: AVIAT.id, taskId: "t-a", requisitionLineId: "rl-a" },
+      { id: "m-2", clientId: OTHER.id, taskId: "t-2", requisitionLineId: null }
+    ],
+    scans: [
+      { id: "s-a", clientId: AVIAT.id },
+      { id: "s-2", clientId: OTHER.id }
+    ],
+    activity: [
+      { id: "al-a", clientId: AVIAT.id },
+      { id: "al-global", clientId: null },
+      { id: "al-2", clientId: OTHER.id }
+    ],
+    tasks: [
+      { id: "t-a", clientId: AVIAT.id, requisitionId: "rq-a" },
+      { id: "t-2", clientId: OTHER.id, requisitionId: "rq-2" }
+    ],
+    requisitions: [
+      { id: "rq-a", clientId: AVIAT.id },
+      { id: "rq-2", clientId: OTHER.id }
+    ],
+    importBatches: [
+      { id: "ib-a", clientId: AVIAT.id },
+      { id: "ib-2", clientId: OTHER.id }
+    ],
+    reservations: [
+      { id: "res-a", clientId: AVIAT.id, inventoryId: "inv-a", inventoryLayerId: "ly-a", qty: 2, consumedQty: 0, releasedQty: 0 },
+      { id: "res-2", clientId: OTHER.id, inventoryId: "inv-2", inventoryLayerId: "ly-2", qty: 5, consumedQty: 0, releasedQty: 0 }
+    ],
+    inventories: [
+      { id: "inv-a", clientId: AVIAT.id, qty: 10, reservedQty: 2 },
+      { id: "inv-2", clientId: OTHER.id, qty: 8, reservedQty: 5 }
+    ],
+    layers: [
+      { id: "ly-a", reservedQty: 2 },
+      { id: "ly-2", reservedQty: 5 }
     ],
     users: 4,
     products: 2,
@@ -113,10 +187,14 @@ function createHistoryDb() {
     locations: 3,
     projects: 2
   };
+
+  const byClient = <T extends { clientId?: string | null }>(rows: T[], where?: unknown) =>
+    rows.filter((row) => matchesClient(where, row.clientId ?? null));
+
   const tx = {
     incident: {
-      findMany: async ({ where }: { where?: { clientId?: string } }) =>
-        state.incidents.filter((row) => !where?.clientId || row.clientId === where.clientId),
+      findMany: async ({ where }: { where?: { clientId?: string } }) => byClient(state.incidents, where),
+      count: async ({ where }: { where?: { clientId?: string } }) => byClient(state.incidents, where).length,
       deleteMany: async ({ where }: { where?: { clientId?: string; id?: { in: string[] }; type?: { in: string[] } } }) => {
         const before = state.incidents.length;
         state.incidents = state.incidents.filter((row) => {
@@ -129,20 +207,90 @@ function createHistoryDb() {
       }
     },
     comment: {
-      count: async ({ where }: { where?: { clientId?: string } }) => countByClient(state.comments, where?.clientId),
-      deleteMany: async ({ where }: { where?: { clientId?: string } }) => {
-        const before = state.comments.length;
-        state.comments = state.comments.filter((row) => row.clientId !== where?.clientId);
-        return { count: before - state.comments.length };
+      count: async ({ where }: { where?: { clientId?: string } }) => byClient(state.comments, where).length,
+      deleteMany: async ({ where }: { where?: { clientId?: string } }) => deleteByClient(state.comments, where)
+    },
+    inventory: {
+      count: async ({ where }: { where?: { clientId?: string } }) => byClient(state.inventories, where).length,
+      update: async ({ where, data }: { where: { id: string }; data: { reservedQty?: { decrement: { toString(): string } | number } } }) => {
+        const row = state.inventories.find((item) => item.id === where.id);
+        if (row && data.reservedQty?.decrement != null) {
+          row.reservedQty -= Number(data.reservedQty.decrement);
+        }
+        return row;
       }
     },
-    inventory: { count: async () => 0 },
-    inventoryMovement: { count: async () => 0 },
-    scanEvent: { count: async () => 0 },
-    activityLog: { count: async () => 0 },
-    task: { count: async () => 0 },
-    requisition: { count: async () => 0 },
-    importBatch: { count: async () => 0 },
+    inventoryLayer: {
+      update: async ({ where, data }: { where: { id: string }; data: { reservedQty?: { decrement: { toString(): string } | number } } }) => {
+        const row = state.layers.find((item) => item.id === where.id);
+        if (row && data.reservedQty?.decrement != null) {
+          row.reservedQty -= Number(data.reservedQty.decrement);
+        }
+        return row;
+      }
+    },
+    inventoryMovement: {
+      count: async ({ where }: { where?: { clientId?: string } }) => byClient(state.movements, where).length,
+      updateMany: async ({ where, data }: { where?: { clientId?: string }; data: Record<string, unknown> }) => {
+        const rows = byClient(state.movements, where);
+        for (const row of rows) Object.assign(row, data);
+        return { count: rows.length };
+      },
+      deleteMany: async ({ where }: { where?: { clientId?: string } }) => deleteByClient(state.movements, where)
+    },
+    scanEvent: {
+      count: async ({ where }: { where?: { clientId?: string } }) => byClient(state.scans, where).length,
+      deleteMany: async ({ where }: { where?: { clientId?: string } }) => deleteByClient(state.scans, where)
+    },
+    activityLog: {
+      count: async ({ where }: { where?: { clientId?: string | null } }) => byClient(state.activity, where).length,
+      deleteMany: async ({ where }: { where?: { clientId?: string } }) => deleteByClient(state.activity, where)
+    },
+    task: {
+      count: async ({ where }: { where?: { clientId?: string } }) => byClient(state.tasks, where).length,
+      findMany: async ({ where }: { where?: { clientId?: string } }) => byClient(state.tasks, where),
+      updateMany: async ({ where, data }: { where?: { id?: { in: string[] } }; data: Record<string, unknown> }) => {
+        const rows = state.tasks.filter((row) => !where?.id?.in || where.id.in.includes(row.id));
+        for (const row of rows) Object.assign(row, data);
+        return { count: rows.length };
+      },
+      deleteMany: async ({ where }: { where?: { id?: { in: string[] }; clientId?: string } }) => {
+        const before = state.tasks.length;
+        state.tasks = state.tasks.filter((row) => (where?.id?.in ? !where.id.in.includes(row.id) : row.clientId !== where?.clientId));
+        return { count: before - state.tasks.length };
+      }
+    },
+    requisition: {
+      count: async ({ where }: { where?: unknown }) => {
+        const clientId =
+          where && typeof where === "object" && "project" in where
+            ? (where as { project?: { clientId?: string } }).project?.clientId
+            : (where as { clientId?: string } | undefined)?.clientId;
+        return state.requisitions.filter((row) => !clientId || row.clientId === clientId).length;
+      },
+      deleteMany: async ({ where }: { where?: unknown }) => {
+        const clientId =
+          where && typeof where === "object" && "project" in where
+            ? (where as { project?: { clientId?: string } }).project?.clientId
+            : (where as { clientId?: string } | undefined)?.clientId;
+        const before = state.requisitions.length;
+        state.requisitions = state.requisitions.filter((row) => row.clientId !== clientId);
+        return { count: before - state.requisitions.length };
+      }
+    },
+    importBatch: {
+      count: async ({ where }: { where?: { clientId?: string } }) => byClient(state.importBatches, where).length,
+      deleteMany: async ({ where }: { where?: { clientId?: string } }) => deleteByClient(state.importBatches, where)
+    },
+    inventoryReservation: {
+      count: async ({ where }: { where?: unknown }) => byClient(state.reservations, where).length,
+      findMany: async ({ where }: { where?: unknown }) => byClient(state.reservations, where),
+      deleteMany: async ({ where }: { where?: { id?: { in: string[] } } }) => {
+        const before = state.reservations.length;
+        state.reservations = state.reservations.filter((row) => !where?.id?.in || !where.id.in.includes(row.id));
+        return { count: before - state.reservations.length };
+      }
+    },
     user: { count: async () => state.users },
     product: { count: async () => state.products },
     warehouse: { count: async () => state.warehouses },
@@ -197,47 +345,61 @@ test("UI ficha, reset de contraseña y historial no se autoejecutan", () => {
   assert.match(sliceFunction(js, "syncHistoryExecuteEnabled"), /LIMPIAR HISTORIAL OPERATIVO DE AVIAT/);
   assert.match(sliceFunction(js, "loadOperationalHistoryPreview"), /authenticatedFetch\("\/api\/admin\/operational-history\/preview"\)/);
   assert.doesNotMatch(sliceFunction(js, "validateSession"), /loadOperationalHistoryPreview/);
-  assert.doesNotMatch(sliceFunction(js, "loadOperationalWorkspace"), /operational-history\/cleanup/);
-  assert.doesNotMatch(html, /passwordHash/);
+  assert.match(html, /id="historyCleanAll"/);
+  assert.match(html, /avatarUrl/);
+  assert.match(sliceFunction(js, "selectedHistoryCategories"), /historyCleanAll/);
 });
 
-test("selección de historial exige categoría; incidents no se borran en bloque", () => {
+test("selección de historial admite all y no exige IDs de incidencias", () => {
   assert.throws(() => assertHistoryCategorySelection({}), /categoría/);
-  assert.throws(
-    () => assertHistoryCategorySelection({ categories: ["incidents"] }),
-    (error: { code?: string }) => error.code === OPERATIONAL_HISTORY_DECISION
-  );
-  const ok = assertHistoryCategorySelection({ categories: ["incidents"], incidentIds: ["inc-a1"] });
-  assert.deepEqual(ok.incidentIds, ["inc-a1"]);
+  const incidents = assertHistoryCategorySelection({ categories: ["incidents"] });
+  assert.deepEqual(incidents.categories, ["incidents"]);
+  const all = assertHistoryCategorySelection({ categories: ["all"] });
+  assert.deepEqual(all.categories, [...HISTORY_CATEGORIES]);
 });
 
 test("preview de historial aísla AVIAT y no ejecuta", async () => {
   const { state, db } = createHistoryDb();
   const preview = await previewOperationalHistoryCleanup({ clientId: AVIAT.id }, db as never);
   assert.equal(preview.executesAutomatically, false);
+  assert.equal(preview.policy, OPERATIONAL_HISTORY_POLICY);
   assert.equal(preview.decision, OPERATIONAL_HISTORY_DECISION);
-  assert.equal(preview.leftoverOutsideInventoryReset.incidents.total, 1);
-  assert.equal(preview.leftoverOutsideInventoryReset.comments.total, 1);
+  assert.equal(preview.canReachZeroOperationalHistory, true);
+  assert.equal(preview.counts.incidents.total, 3);
+  assert.equal(preview.counts.comments.total, 1);
+  assert.equal(preview.counts.movements.total, 1);
+  assert.equal(preview.integrity.cannotPurgeWithoutTouchingMasters.length, 0);
+  assert.ok(preview.counts.incidents.records.some((row) => /numeros adicionales/i.test(row.notesPreview)));
+  assert.ok(preview.counts.incidents.records.some((row) => /PRUEBA DE INCIDENCIA DEMO/i.test(row.notesPreview)));
   assert.equal(preview.mastersRetained.users, 4);
-  assert.equal(state.incidents.length, 2);
+  assert.equal(state.incidents.length, 4);
   const other = await previewOperationalHistoryCleanup({ clientId: OTHER.id }, db as never);
   assert.equal(other.isAviat, false);
-  assert.equal(other.leftoverOutsideInventoryReset.incidents.total, 0);
+  assert.equal(other.counts.incidents.total, 0);
 });
 
-test("execute historial borra solo selección AVIAT y no maestros ni otro cliente", async () => {
+test("execute all llega a cero historial AVIAT y no toca maestros ni otro cliente", async () => {
   const { state, db } = createHistoryDb();
   const result = await executeOperationalHistoryCleanup(
     { userId: "u-admin", clientId: AVIAT.id },
-    { confirmation: OPERATIONAL_HISTORY_CONFIRMATION, categories: ["incidents", "comments"], incidentIds: ["inc-a1"] },
+    { confirmation: OPERATIONAL_HISTORY_CONFIRMATION, categories: ["all"] },
     db as never
   );
-  assert.equal(result.deleted.incidents, 1);
+  assert.equal(result.reachedZeroOperationalHistory, true);
+  assert.equal(result.deleted.incidents, 3);
   assert.equal(result.deleted.comments, 1);
-  assert.equal(state.incidents.some((row) => row.id === "inc-c2"), true);
+  assert.equal(result.deleted.movements, 1);
+  assert.equal(result.deleted.reservationsReleased, 1);
+  assert.equal(state.incidents.some((row) => row.clientId === OTHER.id), true);
   assert.equal(state.comments.some((row) => row.clientId === OTHER.id), true);
+  assert.equal(state.movements.some((row) => row.clientId === OTHER.id), true);
+  assert.equal(state.inventories.find((row) => row.id === "inv-a")?.qty, 10);
+  assert.equal(state.inventories.find((row) => row.id === "inv-a")?.reservedQty, 0);
+  assert.equal(state.inventories.find((row) => row.id === "inv-2")?.reservedQty, 5);
   assert.equal(state.users, 4);
   assert.equal(state.products, 2);
+  assert.equal(state.warehouses, 1);
+  assert.equal(state.projects, 2);
   await assert.rejects(
     () =>
       executeOperationalHistoryCleanup(
