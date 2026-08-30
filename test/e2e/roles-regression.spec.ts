@@ -1,15 +1,23 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import {
+  QA_E2E_USERS,
+  assertRequiredE2eSecrets,
+  formatE2eNetworkRow,
+  sanitizeE2eEvidence
+} from "../../src/scripts/e2e-safety.js";
 
 const EVIDENCE_DIR = path.resolve("test/e2e/evidence");
 mkdirSync(EVIDENCE_DIR, { recursive: true });
 
+const secrets = assertRequiredE2eSecrets(process.env);
 const users = {
-  ADMIN: { email: process.env.E2E_ADMIN_EMAIL || "admin@logitec.local", password: process.env.E2E_ADMIN_PASSWORD || "Admin1234" },
-  SUPERVISOR: { email: "qa.supervisor@logitec.local", password: process.env.QA_E2E_PASSWORD || "QaUser1234" },
-  OPERATOR: { email: "qa.operator@logitec.local", password: process.env.QA_E2E_PASSWORD || "QaUser1234" },
-  CLIENT: { email: "qa.client@logitec.local", password: process.env.QA_E2E_PASSWORD || "QaUser1234" }
+  ADMIN: { email: QA_E2E_USERS.ADMIN.email, password: secrets.adminPassword },
+  SUPERVISOR: { email: QA_E2E_USERS.SUPERVISOR.email, password: secrets.qaPassword },
+  OPERATOR: { email: QA_E2E_USERS.OPERATOR.email, password: secrets.qaPassword },
+  CLIENT: { email: QA_E2E_USERS.CLIENT.email, password: secrets.qaPassword }
 } as const;
 
 type Probe = {
@@ -22,19 +30,22 @@ type Probe = {
 function attachProbes(page: Page): Probe {
   const probe: Probe = { consoleErrors: [], pageErrors: [], network: [], failedRequests: [] };
   page.on("console", (msg) => {
-    const line = `[${msg.type()}] ${msg.text()}`;
+    const line = String(sanitizeE2eEvidence(`[${msg.type()}] ${msg.text()}`));
+    appendFileSync(path.join(EVIDENCE_DIR, "console.log"), `${line}\n`);
     if (msg.type() === "error") probe.consoleErrors.push(line);
   });
   page.on("pageerror", (err) => {
-    probe.pageErrors.push(String(err));
+    const line = String(sanitizeE2eEvidence(String(err)));
+    appendFileSync(path.join(EVIDENCE_DIR, "console.log"), `[pageerror] ${line}\n`);
+    probe.pageErrors.push(line);
   });
   page.on("response", (response) => {
     const method = response.request().method();
-    const url = response.url();
     const status = response.status();
-    const row = `${method} ${url} ${status}`;
-    if (url.includes("/api/") || url.includes(".html") || status >= 400) {
+    const row = formatE2eNetworkRow(method, response.url(), status);
+    if (response.url().includes("/api/") || response.url().includes(".html") || status >= 400) {
       probe.network.push(row);
+      appendFileSync(path.join(EVIDENCE_DIR, "network.log"), `${row}\n`);
     }
     if (status >= 400) probe.failedRequests.push(row);
   });
@@ -47,7 +58,7 @@ async function saveEvidence(page: Page, name: string, probe: Probe, extra: Recor
   writeFileSync(
     path.join(EVIDENCE_DIR, `${name}.json`),
     JSON.stringify(
-      {
+      sanitizeE2eEvidence({
         name,
         url: page.url(),
         title: await page.title(),
@@ -56,11 +67,15 @@ async function saveEvidence(page: Page, name: string, probe: Probe, extra: Recor
         failedRequests: probe.failedRequests,
         network: probe.network.slice(-80),
         extra
-      },
+      }),
       null,
       2
     )
   );
+}
+
+function unexpected5xx(probe: Probe) {
+  return probe.failedRequests.filter((row) => /\s5\d\d$/.test(row));
 }
 
 async function login(page: Page, role: keyof typeof users) {
@@ -99,6 +114,26 @@ function sectionTab(page: Page, section: string) {
   return page.locator(`.nav-section-tab[data-nav-section="${section}"]`);
 }
 
+async function expectAccountReadOnlyExceptPassword(page: Page) {
+  await sectionTab(page, "sistema").click();
+  await expect(page.locator("#moduleAccount")).toBeVisible();
+  await expect(page.locator("#accountFullName")).toHaveAttribute("readonly", "");
+  await expect(page.locator("#accountProfileBtn")).toHaveCount(0);
+  await expect(page.locator("#changePasswordForm")).toBeVisible();
+}
+
+async function expectValuationVisible(page: Page, canEdit: boolean) {
+  await sectionTab(page, "inventario").click();
+  await page.locator('[data-module="inventory"]').click();
+  await expect(page.locator("#moduleInventory .js-economic-card").first()).toBeVisible();
+  if (canEdit) {
+    await expect(page.locator("#openInventoryImportBtn")).toBeVisible();
+  } else {
+    await expect(page.locator(".js-economic-edit:visible")).toHaveCount(0);
+    await expect(page.locator("#openInventoryImportBtn")).toBeHidden();
+  }
+}
+
 test.describe("regresión UI por roles", () => {
   test("login recuerda correo y no guarda contraseña", async ({ page }) => {
     const probe = attachProbes(page);
@@ -113,6 +148,7 @@ test.describe("regresión UI por roles", () => {
     const storedKeys = await page.evaluate(() => Object.keys(localStorage));
     expect(remembered).toBe(users.ADMIN.email.toLowerCase());
     expect(storedKeys.some((key) => /password/i.test(key))).toBe(false);
+    expect(unexpected5xx(probe)).toEqual([]);
     await saveEvidence(page, "login-remember-email", probe, { remembered, storedKeys });
   });
 
@@ -127,9 +163,7 @@ test.describe("regresión UI por roles", () => {
     await sectionTab(page, "operacion").click();
     await expect(page.getByRole("button", { name: "Entrada masiva" })).toHaveCount(0);
     await saveEvidence(page, "admin-operacion-no-bulk", probe);
-    await sectionTab(page, "inventario").click();
-    await page.locator('[data-module="inventory"]').click();
-    await expect(page.locator("#openInventoryImportBtn")).toBeVisible();
+    await expectValuationVisible(page, true);
     await page.locator('[data-module="catalog"]').click();
     await expect(page.locator("#openCatalogImportBtn")).toBeVisible();
     await saveEvidence(page, "admin-catalog-import", probe, { catalogImportVisible: true });
@@ -141,6 +175,7 @@ test.describe("regresión UI por roles", () => {
     await saveEvidence(page, "admin-cc-add-project-modal", probe);
     await page.locator('#masterDataModal [data-close-modal="masterDataModal"]').first().click();
     await expect(page.locator("#masterDataModal")).toBeHidden({ timeout: 10_000 });
+    expect(unexpected5xx(probe)).toEqual([]);
   });
 
   test("ADMIN Sistema: cuenta solo lectura, POST /api/users 400 USER_CLIENT_REQUIRED, preview CLEAN_START", async ({
@@ -153,11 +188,7 @@ test.describe("regresión UI por roles", () => {
     await page.locator("#submitBtn").click();
     await page.waitForURL(/dashboard\.html/, { timeout: 20_000 });
     await enterAdminClientIfNeeded(page, probe);
-    await sectionTab(page, "sistema").click();
-    await expect(page.locator("#moduleAccount")).toBeVisible();
-    await expect(page.locator("#accountFullName")).toHaveAttribute("readonly", "");
-    await expect(page.locator("#accountProfileBtn")).toHaveCount(0);
-    await expect(page.locator("#changePasswordForm")).toBeVisible();
+    await expectAccountReadOnlyExceptPassword(page);
     const order = await page.evaluate(() => {
       const ids = ["moduleAccount", "moduleUsers", "moduleConfig"];
       return ids
@@ -172,41 +203,51 @@ test.describe("regresión UI por roles", () => {
     expect(order[0]).toBe("moduleAccount");
     await saveEvidence(page, "admin-sistema-order", probe, { order });
 
+    const throwawayPassword = `Qa${randomBytes(8).toString("hex")}`;
     await expect(page.locator("#createUserForm")).toBeVisible();
     await page.locator("#newFullName").fill("QA Operator Sin Cliente");
     await page.locator("#newEmail").fill("qa.operator.noclient@logitec.local");
-    await page.locator("#newPassword").fill("secret12");
+    await page.locator("#newPassword").fill(throwawayPassword);
     await page.locator("#newRole").selectOption("OPERATOR");
     await page.locator("#newClientId").selectOption("");
     await page.locator("#createUserBtn").click();
     await expect(page.locator("#createUserError")).toContainText(/cliente asignado/i);
     await saveEvidence(page, "admin-users-client-required-ui", probe);
 
-    const api400 = await page.evaluate(async () => {
+    const api400 = await page.evaluate(async (password) => {
       const token = localStorage.getItem("token");
       const res = await fetch("/api/users", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           email: "qa.operator.http400@logitec.local",
-          password: "secret12",
+          password,
           fullName: "QA Operator HTTP 400",
           role: "OPERATOR",
           clientId: ""
         })
       });
-      return { status: res.status, body: await res.json().catch(() => null) };
-    });
+      const body = (await res.json().catch(() => null)) as { code?: string } | null;
+      return { status: res.status, code: body?.code || null };
+    }, throwawayPassword);
     expect(api400.status).toBe(400);
-    expect((api400.body as { code?: string }).code).toBe("USER_CLIENT_REQUIRED");
+    expect(api400.code).toBe("USER_CLIENT_REQUIRED");
     await saveEvidence(page, "admin-users-post-400", probe, { api400 });
 
-    await page.locator("#focusModeBtn").click();
-    await expect(page.locator("body")).toHaveClass(/focus-mode/);
-    await expect(page.locator("#focusModeBtn")).toHaveText(/Salir de concentración/);
-    await expect(page.locator(".sidebar")).toBeHidden();
-    await saveEvidence(page, "admin-focus-mode", probe);
-    await page.locator("#focusModeBtn").click();
+    for (const size of [
+      { width: 1366, height: 768 },
+      { width: 1600, height: 900 },
+      { width: 1920, height: 1080 }
+    ]) {
+      await page.setViewportSize(size);
+      await page.locator("#focusModeBtn").click();
+      await expect(page.locator("body")).toHaveClass(/focus-mode/);
+      await expect(page.locator("#focusModeBtn")).toHaveText(/Salir de concentración/);
+      await expect(page.locator(".sidebar")).toBeHidden();
+      await saveEvidence(page, `admin-focus-mode-${size.width}x${size.height}`, probe, { viewport: size });
+      await page.locator("#focusModeBtn").click();
+      await expect(page.locator("body")).not.toHaveClass(/focus-mode/);
+    }
 
     const preview = page.locator("#operationalHistoryPreviewBtn");
     await preview.scrollIntoViewIfNeeded();
@@ -226,43 +267,46 @@ test.describe("regresión UI por roles", () => {
       isAviat: body?.isAviat,
       counts: body?.counts
     });
+    expect(unexpected5xx(probe)).toEqual([]);
   });
 
-  test("SUPERVISOR no ve importación, usuarios ni alta de proyecto en selector", async ({ page }) => {
+  test("SUPERVISOR no ve importación, usuarios ni Entrada masiva", async ({ page }) => {
     const probe = await login(page, "SUPERVISOR");
     await expect(page.locator("#clientContextGate")).toBeHidden();
     await expect(page.getByRole("button", { name: "Entrada masiva" })).toHaveCount(0);
-    await sectionTab(page, "inventario").click();
-    await page.locator('[data-module="inventory"]').click();
+    await expectValuationVisible(page, false);
     await expect(page.locator("#openInventoryImportBtn")).toBeHidden();
     await page.locator('[data-module="catalog"]').click();
     await expect(page.locator("#openCatalogImportBtn")).toBeHidden();
-    await sectionTab(page, "sistema").click();
-    await expect(page.locator("#moduleAccount")).toBeVisible();
+    await expectAccountReadOnlyExceptPassword(page);
     await expect(page.locator("#createUserForm")).toBeHidden();
     await expect(page.locator("#moduleUsers")).toBeHidden();
+    expect(unexpected5xx(probe)).toEqual([]);
     await saveEvidence(page, "supervisor-sistema", probe);
   });
 
-  test("OPERATOR ve valuación no editable y no importa inventario", async ({ page }) => {
+  test("OPERATOR ve valuación no editable y no importa ni administra usuarios", async ({ page }) => {
     const probe = await login(page, "OPERATOR");
-    await sectionTab(page, "inventario").click();
-    await page.locator('[data-module="inventory"]').click();
+    await expect(page.getByRole("button", { name: "Entrada masiva" })).toHaveCount(0);
+    await expectValuationVisible(page, false);
     await expect(page.locator("#openInventoryImportBtn")).toBeHidden();
-    await expect(page.locator(".js-economic-edit:visible")).toHaveCount(0);
-    await expect(page.locator("#moduleInventory .js-economic-card").first()).toBeVisible();
+    await expectAccountReadOnlyExceptPassword(page);
+    await expect(page.locator("#moduleUsers")).toBeHidden();
+    await expect(page.locator("#moduleConfig")).toBeHidden();
+    expect(unexpected5xx(probe)).toEqual([]);
     await saveEvidence(page, "operator-inventory", probe);
   });
 
-  test("CLIENT no opera Sistema de usuarios ni importadores", async ({ page }) => {
+  test("CLIENT entra con cuenta QA y no ve administración global", async ({ page }) => {
     const probe = await login(page, "CLIENT");
+    await expect(page.locator("#sessionRoleInline")).toHaveText(/CLIENT/);
     await expect(page.getByRole("button", { name: "Entrada masiva" })).toHaveCount(0);
-    await sectionTab(page, "inventario").click();
+    await expectValuationVisible(page, false);
     await expect(page.locator("#openInventoryImportBtn")).toBeHidden();
-    await sectionTab(page, "sistema").click();
-    await expect(page.locator("#moduleAccount")).toBeVisible();
+    await expectAccountReadOnlyExceptPassword(page);
     await expect(page.locator("#moduleUsers")).toBeHidden();
     await expect(page.locator("#moduleConfig")).toBeHidden();
+    expect(unexpected5xx(probe)).toEqual([]);
     await saveEvidence(page, "client-sistema", probe);
   });
 
@@ -283,6 +327,7 @@ test.describe("regresión UI por roles", () => {
     await expect(createUser).toBeVisible();
     await createUser.click();
     await expect(page.locator("#createUserForm")).toBeVisible();
+    expect(unexpected5xx(probe)).toEqual([]);
     await saveEvidence(page, "admin-avisos", probe);
   });
 });
