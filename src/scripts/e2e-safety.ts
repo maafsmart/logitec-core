@@ -92,6 +92,19 @@ export function assertE2eNotProduction(env: NodeJS.ProcessEnv = process.env): vo
   assertSafeOperationalResetEnv(env);
 }
 
+/** Same-process DEV proof before the E2E child imports/starts the app. */
+export function assertE2eWebServerReady(env: NodeJS.ProcessEnv = process.env): void {
+  assertE2eNotProduction(env);
+}
+
+export async function startE2eWebServer(args: {
+  env?: NodeJS.ProcessEnv;
+  loadServer: () => Promise<unknown>;
+}): Promise<void> {
+  assertE2eWebServerReady(args.env ?? process.env);
+  await args.loadServer();
+}
+
 export function assertE2eHarnessReady(env: NodeJS.ProcessEnv = process.env): E2eSecrets {
   const secrets = assertRequiredE2eSecrets(env);
   assertE2eNotProduction(env);

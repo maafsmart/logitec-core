@@ -8,8 +8,10 @@ import {
   REAL_ADMIN_EMAIL,
   assertE2eHarnessReady,
   assertE2eNotProduction,
+  assertE2eWebServerReady,
   assertQaE2eEmail,
   assertRequiredE2eSecrets,
+  startE2eWebServer,
   E2E_WEB_SERVER_OS_ALLOWLIST,
   buildE2eWebServerEnv,
   findLeakedSecretMarkers,
@@ -25,6 +27,7 @@ const specSource = readFileSync(new URL("./e2e/roles-regression.spec.ts", import
 const safetySource = readFileSync(new URL("../src/scripts/e2e-safety.ts", import.meta.url), "utf8");
 const playwrightConfigSource = readFileSync(new URL("../playwright.config.ts", import.meta.url), "utf8");
 const teardownSource = readFileSync(new URL("../scripts/e2e-global-teardown.ts", import.meta.url), "utf8");
+const webServerSource = readFileSync(new URL("../scripts/e2e-web-server.ts", import.meta.url), "utf8");
 
 const DEV_ENV = {
   NODE_ENV: "development",
@@ -267,4 +270,64 @@ test("DEV válido pasa el candado", () => {
   const secrets = assertE2eHarnessReady(DEV_ENV);
   assert.equal(secrets.adminPassword, DEV_ENV.E2E_ADMIN_PASSWORD);
   assert.equal(secrets.qaPassword, DEV_ENV.QA_E2E_PASSWORD);
+});
+
+test("wrapper E2E: dotenv → guard → import; no maquilla NODE_ENV/DATABASE_ENVIRONMENT", () => {
+  assert.match(webServerSource, /dotenv\.config\(\)/);
+  assert.match(
+    webServerSource,
+    /dotenv\.config\(\)[\s\S]*startE2eWebServer\([\s\S]*import\("\.\.\/src\/server\.ts"\)/
+  );
+  assert.doesNotMatch(webServerSource, /process\.env\.NODE_ENV\s*=/);
+  assert.doesNotMatch(webServerSource, /process\.env\.DATABASE_ENVIRONMENT\s*=/);
+});
+
+test("wrapper E2E aborta ANTES de importar el servidor en destinos inseguros", async () => {
+  const cases: Array<{ name: string; env: NodeJS.ProcessEnv; code: string }> = [
+    {
+      name: "A DATABASE_URL = host de producción",
+      env: { ...DEV_ENV, DATABASE_URL: "postgresql://u:p@ep-prod.example.neon.tech/neondb" },
+      code: "E2E_GUARD_PROD_DATABASE"
+    },
+    {
+      name: "B falta PRODUCTION_DATABASE_HOST",
+      env: { ...DEV_ENV, PRODUCTION_DATABASE_HOST: "" },
+      code: "E2E_GUARD_PROD_HOST_REQUIRED"
+    },
+    {
+      name: "C DATABASE_ENVIRONMENT no es development",
+      env: { ...DEV_ENV, DATABASE_ENVIRONMENT: "qa" },
+      code: "E2E_GUARD_DATABASE_ENVIRONMENT"
+    },
+    {
+      name: "D NODE_ENV es production",
+      env: { ...DEV_ENV, NODE_ENV: "production" },
+      code: "E2E_GUARD_NODE_ENV"
+    }
+  ];
+  for (const row of cases) {
+    let imported = false;
+    await assert.rejects(
+      () =>
+        startE2eWebServer({
+          env: row.env,
+          loadServer: async () => {
+            imported = true;
+            throw new Error("server must not start");
+          }
+        }),
+      (err: unknown) => err instanceof E2eSafetyError && err.code === row.code,
+      row.name
+    );
+    assert.equal(imported, false, `${row.name}: el servidor no debe importarse`);
+  }
+  let started = false;
+  await startE2eWebServer({
+    env: DEV_ENV,
+    loadServer: async () => {
+      started = true;
+    }
+  });
+  assert.equal(started, true);
+  assert.doesNotThrow(() => assertE2eWebServerReady(DEV_ENV));
 });
