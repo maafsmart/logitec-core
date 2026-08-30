@@ -15,7 +15,8 @@ export const QA_E2E_USERS = {
 
 export const QA_E2E_EMAIL_RE = /^qa\.[a-z0-9._+-]+@logitec\.local$/i;
 
-const SENSITIVE_KEY_RE = /password|passwd|token|authorization|cookie|set-cookie|secret|credential|bearer/i;
+const SENSITIVE_KEY_RE =
+  /password|passwd|token|authorization|cookie|set-cookie|secret|credential|bearer|session|database_url/i;
 const SENSITIVE_QUERY_RE = /^(password|token|access_token|refresh_token|authorization|cookie|secret)$/i;
 
 export class E2eSafetyError extends Error {
@@ -187,4 +188,31 @@ export function sanitizeE2eEvidence(value: unknown, keyHint = ""): unknown {
 
 export function formatE2eNetworkRow(method: string, url: string, status: number): string {
   return `${method} ${sanitizeE2eUrl(url)} ${status}`;
+}
+
+export function looksLikeProcessEnvDump(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value as Record<string, unknown>);
+  if (keys.some((key) => SENSITIVE_KEY_RE.test(key) || /^database_url$/i.test(key))) return true;
+  return keys.length >= 20 && keys.includes("PATH");
+}
+
+export function stripDumpedProcessEnv(value: unknown): unknown {
+  if (value == null) return value;
+  if (Array.isArray(value)) return value.map(stripDumpedProcessEnv);
+  if (typeof value !== "object") return value;
+  const obj = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(obj)) {
+    if (key === "env" && looksLikeProcessEnvDump(nested)) {
+      out[key] = { redacted: true };
+    } else {
+      out[key] = stripDumpedProcessEnv(nested);
+    }
+  }
+  return out;
+}
+
+export function sanitizePlaywrightResultsDump(value: unknown): unknown {
+  return sanitizeE2eEvidence(stripDumpedProcessEnv(value));
 }

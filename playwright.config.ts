@@ -3,6 +3,19 @@ import { defineConfig, devices } from "@playwright/test";
 const port = Number(process.env.E2E_PORT || 3100);
 const baseURL = process.env.E2E_BASE_URL || `http://127.0.0.1:${port}`;
 
+function envForE2eWebServer(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value == null) continue;
+    if (/password|passwd|credential/i.test(key)) continue;
+    env[key] = value;
+  }
+  env.NODE_ENV = "development";
+  env.DATABASE_ENVIRONMENT = "development";
+  env.PORT = String(port);
+  return env;
+}
+
 export default defineConfig({
   testDir: "./test/e2e",
   fullyParallel: false,
@@ -30,12 +43,7 @@ export default defineConfig({
         url: `${baseURL}/health`,
         reuseExistingServer: false,
         timeout: 60_000,
-        env: {
-          ...process.env,
-          NODE_ENV: "development",
-          DATABASE_ENVIRONMENT: "development",
-          PORT: String(port)
-        }
+        env: envForE2eWebServer()
       },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }]
 });

@@ -12,12 +12,15 @@ import {
   formatE2eNetworkRow,
   sanitizeE2eEvidence,
   sanitizeE2eUrl,
+  sanitizePlaywrightResultsDump,
   selectExistingActiveQaClient
 } from "../src/scripts/e2e-safety.ts";
 
 const ensureSource = readFileSync(new URL("../scripts/ensure-qa-e2e-users.ts", import.meta.url), "utf8");
 const specSource = readFileSync(new URL("./e2e/roles-regression.spec.ts", import.meta.url), "utf8");
 const safetySource = readFileSync(new URL("../src/scripts/e2e-safety.ts", import.meta.url), "utf8");
+const playwrightConfigSource = readFileSync(new URL("../playwright.config.ts", import.meta.url), "utf8");
+const teardownSource = readFileSync(new URL("../scripts/e2e-global-teardown.ts", import.meta.url), "utf8");
 
 const DEV_ENV = {
   NODE_ENV: "development",
@@ -156,12 +159,40 @@ test("evidencia E2E solo guarda método, URL sanitizada, status y resultados fun
 });
 
 test("el arnés no contiene contraseñas fallback hardcodeadas", () => {
-  for (const source of [ensureSource, specSource, safetySource]) {
+  for (const source of [ensureSource, specSource, safetySource, playwrightConfigSource]) {
     assert.doesNotMatch(source, /E2E_ADMIN_PASSWORD\s*\|\|\s*["'][^"']+["']/);
     assert.doesNotMatch(source, /QA_E2E_PASSWORD\s*\|\|\s*["'][^"']+["']/);
     assert.doesNotMatch(source, /Admin1234/);
     assert.doesNotMatch(source, /QaUser1234/);
   }
+});
+
+test("playwright-results.json no conserva env con secretos", () => {
+  assert.doesNotMatch(playwrightConfigSource, /\.\.\.\s*process\.env/);
+  assert.match(playwrightConfigSource, /password\|passwd\|credential/);
+  assert.match(teardownSource, /sanitizePlaywrightResultsDump/);
+  const dumped = {
+    config: {
+      webServer: {
+        env: {
+          PATH: "C:\\Windows",
+          E2E_ADMIN_PASSWORD: "should-not-remain",
+          QA_E2E_PASSWORD: "should-not-remain",
+          DATABASE_URL: "postgresql://u:p@127.0.0.1:5432/logitec_dev"
+        }
+      }
+    },
+    suites: [{ specs: [{ title: "ok", tests: [{ results: [{ status: "passed" }] }] }] }]
+  };
+  const clean = sanitizePlaywrightResultsDump(dumped) as {
+    config: { webServer: { env: { redacted?: boolean } } };
+    suites: unknown;
+  };
+  assert.deepEqual(clean.config.webServer.env, { redacted: true });
+  assert.ok(clean.suites);
+  const serialized = JSON.stringify(clean);
+  assert.doesNotMatch(serialized, /should-not-remain/);
+  assert.doesNotMatch(serialized, /postgresql:\/\//);
 });
 
 test("DEV válido pasa el candado", () => {

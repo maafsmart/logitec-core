@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { sanitizePlaywrightResultsDump } from "../src/scripts/e2e-safety.js";
 
 type SpecRow = { title?: string; tests?: Array<{ results?: Array<{ status?: string }> }> };
 type SuiteRow = { suites?: SuiteRow[]; specs?: SpecRow[] };
@@ -22,7 +23,9 @@ export default async function globalTeardown() {
   if (existsSync(resultsPath)) {
     try {
       const raw = JSON.parse(readFileSync(resultsPath, "utf8")) as { suites?: SuiteRow[] };
-      collectSpecs(raw.suites, tests);
+      const sanitized = sanitizePlaywrightResultsDump(raw) as { suites?: SuiteRow[] };
+      writeFileSync(resultsPath, `${JSON.stringify(sanitized, null, 2)}\n`);
+      collectSpecs(sanitized.suites, tests);
     } catch {
       /* evidencia incompleta */
     }
