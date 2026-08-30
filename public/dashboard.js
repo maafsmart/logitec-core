@@ -7698,8 +7698,9 @@ function resolveProductBySkuOrCode(raw) {
 }
 
 const PRODUCT_TYPEAHEAD_MIN_CHARS = 2;
-const PRODUCT_TYPEAHEAD_MAX = 24;
-/** @type {WeakMap<HTMLElement, { items: any[], active: number, timer: any }>} */
+const PRODUCT_TYPEAHEAD_MAX = 12;
+const PRODUCT_TYPEAHEAD_DEBOUNCE_MS = 250;
+/** @type {WeakMap<HTMLElement, { items: any[], active: number, timer: any, requestSeq: number }>} */
 const productTypeaheadState = new WeakMap();
 
 function stripInventorySearchNoise(value) {
@@ -7735,9 +7736,16 @@ function matchesSkuFlexible(sku, query) {
 async function searchSkuSuggestions(query, opts = {}) {
   const q = String(query || "").trim();
   if (q.length < PRODUCT_TYPEAHEAD_MIN_CHARS) return [];
-  const response = await authenticatedFetch(
-    `/api/catalog/products/search?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(opts.max || PRODUCT_TYPEAHEAD_MAX)}`
-  );
+  const params = new URLSearchParams({
+    q,
+    limit: String(opts.max || PRODUCT_TYPEAHEAD_MAX)
+  });
+  const location = String(opts.location || "").trim();
+  const warehouse = String(opts.warehouse || "").trim();
+  if (location) params.set("location", location);
+  if (warehouse) params.set("warehouse", warehouse);
+  if (opts.requireStock) params.set("requireStock", "true");
+  const response = await authenticatedFetch(`/api/catalog/products/search?${params.toString()}`);
   if (!response?.ok) return [];
   const customerCode = String(opts.customerCode || "").trim().toUpperCase();
   const rows = await response.json().catch(() => []);
@@ -7750,25 +7758,31 @@ async function searchSkuSuggestions(query, opts = {}) {
       );
     })
     .map((product) => {
+      const availableQty = product.availableQty != null ? String(product.availableQty) : "";
+      const hasStock = Boolean(product.hasStock);
+      const projectCode = product.projectCode || product.productProjects?.[0]?.code || "";
+      const projectName = product.projectName || product.productProjects?.[0]?.name || "";
       return {
-      kind: "catalog",
-      key: `catalog:${product.id}`,
-      productId: product.id,
-      sku: product.sku,
-      barcode: product.barcode || "",
-      productName: product.name || "",
-      projectCode: "",
-      projectName: "",
-      catalogOwnerCode: "",
-      catalogOwnerName: "",
-      clientName: product.client?.tradeName || product.client?.name || owningClientDisplayName(),
-      warehouse: "",
-      location: "",
-      status: "",
-      qty: null,
-      inventoryId: "",
-      product
-    };
+        kind: hasStock ? "stock" : "catalog",
+        key: `${hasStock ? "stock" : "catalog"}:${product.id}`,
+        productId: product.id,
+        sku: product.sku,
+        barcode: product.barcode || "",
+        productName: product.name || "",
+        projectCode,
+        projectName,
+        catalogOwnerCode: "",
+        catalogOwnerName: "",
+        clientName: product.client?.tradeName || product.client?.name || owningClientDisplayName(),
+        warehouse: product.warehouse || "",
+        location: product.locationCode || "",
+        status: "",
+        qty: hasStock ? availableQty : null,
+        unreservedQty: hasStock ? availableQty : null,
+        inventoryId: "",
+        hasStock,
+        product
+      };
     });
 }
 
@@ -8539,6 +8553,10 @@ function wireRelocateBalanceTypeahead() {
       return;
     }
     const searchValue = input.value.trim();
+    if (searchValue.length > 0 && searchValue.length < PRODUCT_TYPEAHEAD_MIN_CHARS) {
+      close();
+      return;
+    }
     state.items = await searchRelocateBalanceSuggestions(searchValue);
     if (input.value.trim() !== searchValue) return;
     state.active = state.items.length ? 0 : -1;
@@ -8548,7 +8566,7 @@ function wireRelocateBalanceTypeahead() {
   input.addEventListener("input", () => {
     invalidateRelocateBalanceSelection(input);
     if (state.timer) clearTimeout(state.timer);
-    state.timer = setTimeout(refresh, 120);
+    state.timer = setTimeout(refresh, PRODUCT_TYPEAHEAD_DEBOUNCE_MS);
   });
   input.addEventListener("focus", () => {
     if (input.disabled) return;
@@ -8556,7 +8574,7 @@ function wireRelocateBalanceTypeahead() {
       close();
       return;
     }
-    refresh();
+    if (input.value.trim().length >= PRODUCT_TYPEAHEAD_MIN_CHARS || !input.value.trim()) refresh();
   });
   input.addEventListener("blur", () => {
     setTimeout(close, 160);
@@ -9039,6 +9057,17 @@ function hideProductTypeaheadList(listEl) {
   listEl.innerHTML = "";
 }
 
+function productTypeaheadAvailabilityBadge(item) {
+  const qty = item.unreservedQty ?? item.qty;
+  if (qty != null && qty !== "" && Number(qty) > 0) {
+    return `<span class="pta-avail is-stock">Disponible: ${escCell(formatQty(qty))}</span>`;
+  }
+  if (item.kind === "catalog" || !item.hasStock) {
+    return `<span class="pta-avail is-catalog">Catálogo · sin existencia</span>`;
+  }
+  return `<span class="pta-avail is-attention">Revisar disponibilidad</span>`;
+}
+
 function showProductTypeaheadList(listEl, items, activeIdx, onPick) {
   if (!listEl) return;
   if (!items.length) {
@@ -9049,26 +9078,20 @@ function showProductTypeaheadList(listEl, items, activeIdx, onPick) {
   }
   listEl.innerHTML = items
     .map((item, idx) => {
-      const qtyPart =
-        item.qty != null && item.qty !== ""
-          ? ` · qty ${formatQty(item.qty)}`
-          : item.kind === "catalog"
-            ? " · catálogo"
-            : "";
-      const statusPart = item.status ? ` · ${formatInventoryStatus(item.status)}` : "";
-      const locPart = item.location || "—";
-      const whPart = item.warehouse || "—";
+      const barcodePart =
+        item.barcode && item.barcode !== item.sku ? `<span class="pta-barcode"> · ${escCell(item.barcode)}</span>` : "";
       const projectPart = item.projectName
         ? `${item.projectName}${item.projectCode ? ` (${item.projectCode})` : ""}`
         : item.projectCode || "—";
+      const locPart = item.location || "—";
+      const whPart = item.warehouse ? `${item.warehouse} · ` : "";
       return `<button type="button" class="product-typeahead-item" role="option" data-pta-idx="${idx}" aria-selected="${
         idx === activeIdx ? "true" : "false"
       }">
-        <div class="pta-sku">${escCell(item.sku)}${item.barcode && item.barcode !== item.sku ? ` · ${escCell(item.barcode)}` : ""}</div>
+        <div class="pta-sku">${escCell(item.sku)}${barcodePart}</div>
         <div class="pta-name">${escCell(item.productName || "—")}</div>
-        <div class="pta-meta">${escCell(projectPart)} · ${escCell(whPart)} · ${escCell(locPart)}${escCell(
-        statusPart
-      )}${escCell(qtyPart)}</div>
+        <div class="pta-meta">Proyecto: ${escCell(projectPart)} · Ubicación: ${escCell(whPart + locPart)}</div>
+        ${productTypeaheadAvailabilityBadge(item)}
       </button>`;
     })
     .join("");
@@ -9090,8 +9113,10 @@ function showProductTypeaheadList(listEl, items, activeIdx, onPick) {
  *  listEl: HTMLElement,
  *  mode?: "catalog"|"stock"|"both",
  *  getCustomerCode?: () => string,
+ *  getSearchOpts?: () => { location?: string, warehouse?: string, requireStock?: boolean },
  *  onSelect: (item: any) => void,
- *  minChars?: number
+ *  minChars?: number,
+ *  allowImmediateEnter?: boolean
  * }} cfg
  */
 function wireProductTypeahead(cfg) {
@@ -9101,7 +9126,7 @@ function wireProductTypeahead(cfg) {
   input.dataset.ptaWired = "1";
   input.setAttribute("autocomplete", "off");
   const minChars = cfg.minChars ?? PRODUCT_TYPEAHEAD_MIN_CHARS;
-  const state = { items: /** @type {any[]} */ ([]), active: -1, timer: null };
+  const state = { items: /** @type {any[]} */ ([]), active: -1, timer: null, requestSeq: 0 };
   productTypeaheadState.set(input, state);
 
   const close = () => {
@@ -9145,11 +9170,17 @@ function wireProductTypeahead(cfg) {
       return;
     }
     const customerCode = typeof cfg.getCustomerCode === "function" ? cfg.getCustomerCode() : "";
+    const searchOpts = typeof cfg.getSearchOpts === "function" ? cfg.getSearchOpts() : {};
     const searchValue = q;
+    const requestSeq = ++state.requestSeq;
     state.items = await searchSkuSuggestions(q, {
       customerCode: customerCode || "",
-      max: PRODUCT_TYPEAHEAD_MAX
+      max: PRODUCT_TYPEAHEAD_MAX,
+      location: searchOpts.location || "",
+      warehouse: searchOpts.warehouse || "",
+      requireStock: Boolean(searchOpts.requireStock)
     });
+    if (requestSeq !== state.requestSeq) return;
     if (input.value.trim() !== searchValue) return;
     if (input.dataset.skuSelectedId && input.value.trim() === (input.dataset.skuSelectedCode || "")) {
       close();
@@ -9162,7 +9193,7 @@ function wireProductTypeahead(cfg) {
   input.addEventListener("input", () => {
     invalidateSkuSelection(listEl, input);
     if (state.timer) clearTimeout(state.timer);
-    state.timer = setTimeout(refresh, 120);
+    state.timer = setTimeout(refresh, PRODUCT_TYPEAHEAD_DEBOUNCE_MS);
   });
   input.addEventListener("focus", () => {
     if (input.dataset.skuSelectedId && input.value.trim() === (input.dataset.skuSelectedCode || "")) {
@@ -9314,6 +9345,56 @@ function applyPickSuggestion(item) {
 }
 
 function wireAllProductTypeaheads() {
+  const ccSku = document.getElementById("ccFilterSku");
+  const ccList = document.getElementById("ccFilterSkuSuggestions");
+  if (ccSku instanceof HTMLInputElement && ccList) {
+    wireProductTypeahead({
+      input: ccSku,
+      listEl: ccList,
+      mode: "both",
+      onSelect: (item) => {
+        ccSku.value = item.sku || "";
+        const prod = document.getElementById("ccFilterProducto");
+        if (prod && item.productName) prod.value = item.productName;
+        applyControlCenterFilters();
+      }
+    });
+  }
+
+  const catSku = document.getElementById("catFilterSku");
+  const catList = document.getElementById("catFilterSkuSuggestions");
+  if (catSku instanceof HTMLInputElement && catList) {
+    wireProductTypeahead({
+      input: catSku,
+      listEl: catList,
+      mode: "catalog",
+      onSelect: (item) => {
+        catSku.value = item.sku || "";
+        const prod = document.getElementById("catFilterProducto");
+        if (prod && item.productName) prod.value = item.productName;
+        applyCatalogFilters();
+      }
+    });
+  }
+
+  const traceSku = document.getElementById("traceSku");
+  const traceList = document.getElementById("traceSkuSuggestions");
+  if (traceSku instanceof HTMLInputElement && traceList) {
+    wireProductTypeahead({
+      input: traceSku,
+      listEl: traceList,
+      mode: "both",
+      getSearchOpts: () => {
+        const location = document.getElementById("traceWh")?.value?.trim() || "";
+        return { location, requireStock: Boolean(location) };
+      },
+      onSelect: (item) => {
+        traceSku.value = item.sku || "";
+        if (typeof loadMovements === "function") void loadMovements();
+      }
+    });
+  }
+
   const invSku = document.getElementById("invFilterSku");
   const invList = document.getElementById("invFilterSkuSuggestions");
   if (invSku instanceof HTMLInputElement && invList) {
@@ -9351,16 +9432,8 @@ function wireAllProductTypeaheads() {
   }
 
   const incidentSku = document.getElementById("incidentProductSku");
-  if (incidentSku instanceof HTMLInputElement) {
-    let incidentList = document.getElementById("incidentSkuSuggestions");
-    if (!incidentList) {
-      incidentList = document.createElement("div");
-      incidentList.id = "incidentSkuSuggestions";
-      incidentList.className = "product-typeahead-list hidden";
-      incidentList.setAttribute("role", "listbox");
-      incidentList.hidden = true;
-      incidentSku.insertAdjacentElement("afterend", incidentList);
-    }
+  const incidentList = document.getElementById("incidentSkuSuggestions");
+  if (incidentSku instanceof HTMLInputElement && incidentList) {
     let incidentProductId = document.getElementById("incidentProductId");
     if (!incidentProductId) {
       incidentProductId = document.createElement("input");

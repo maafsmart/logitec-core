@@ -62,7 +62,7 @@ test("ningún selector operativo se llena desde productsCache.customer", () => {
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.doesNotMatch(sliceFunction(js, "searchSkuSuggestions"), /projectCode: product\.customer\?\.code/);
-  assert.match(sliceFunction(js, "searchSkuSuggestions"), /projectCode: ""/);
+  assert.match(sliceFunction(js, "searchSkuSuggestions"), /product\.projectCode/);
 });
 
 test("autocompletar SKU no escribe LOGITEC como proyecto", () => {

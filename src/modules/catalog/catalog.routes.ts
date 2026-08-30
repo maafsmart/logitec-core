@@ -129,9 +129,25 @@ catalogRouter.use(requireAuth);
 catalogRouter.use(requireOperationalClient);
 
 catalogRouter.get("/products/search", async (req, res) => {
-  const query = z.string().trim().min(1).max(160).parse(req.query.q);
-  const limit = z.coerce.number().int().min(1).max(50).optional().parse(req.query.limit) ?? 30;
-  res.json(await searchSkuProducts(query, req.auth!, limit));
+  const parsed = z
+    .object({
+      q: z.string().trim().min(1).max(160),
+      limit: z.coerce.number().int().min(1).max(50).optional(),
+      location: z.string().trim().max(120).optional(),
+      warehouse: z.string().trim().max(80).optional(),
+      requireStock: z
+        .enum(["true", "false"])
+        .optional()
+        .transform((value) => value === "true")
+    })
+    .parse(req.query);
+  res.json(
+    await searchSkuProducts(parsed.q, req.auth!, parsed.limit ?? 30, {
+      location: parsed.location,
+      warehouse: parsed.warehouse,
+      requireStock: parsed.requireStock
+    })
+  );
 });
 
 catalogRouter.get("/products/:id/context", async (req, res) => {

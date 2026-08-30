@@ -71,10 +71,23 @@ function matchScore(product: {
   return 100;
 }
 
-export async function searchSkuProducts(query: string, auth: AuthContext, take = 30) {
+type SkuSearchOpts = {
+  location?: string;
+  warehouse?: string;
+  requireStock?: boolean;
+};
+
+export async function searchSkuProducts(
+  query: string,
+  auth: AuthContext,
+  take = 30,
+  opts: SkuSearchOpts = {}
+) {
   operationalClientId(auth);
   const q = query.trim();
   if (!q) return [];
+  const locationFilter = opts.location?.trim() || "";
+  const warehouseFilter = opts.warehouse?.trim() || "";
   const where: Prisma.ProductWhereInput = {
     AND: [
       clientProductWhere(auth),
@@ -108,13 +121,82 @@ export async function searchSkuProducts(query: string, auth: AuthContext, take =
     take: Math.max(take * 3, 90)
   });
   const normalizedQuery = normalized(q);
-  return rows
+  const sliced = rows
     .sort((a, b) => {
       const score = matchScore(b, normalizedQuery) - matchScore(a, normalizedQuery);
       return score || a.sku.localeCompare(b.sku, "es");
     })
-    .slice(0, take)
-    .map((product) => ({
+    .slice(0, take);
+  const productIds = sliced.map((product) => product.id);
+  const inventoryWhere: Prisma.InventoryWhereInput[] = [
+    scopedInventoryWhere(auth),
+    { productId: { in: productIds } }
+  ];
+  if (locationFilter) {
+    inventoryWhere.push({
+      location: { code: { contains: locationFilter, mode: "insensitive" } }
+    });
+  }
+  if (warehouseFilter) {
+    inventoryWhere.push({
+      location: { warehouse: { equals: warehouseFilter, mode: "insensitive" } }
+    });
+  }
+  const inventories = productIds.length
+    ? await prisma.inventory.findMany({
+        where: { AND: inventoryWhere },
+        select: {
+          productId: true,
+          qty: true,
+          reservedQty: true,
+          assignmentType: true,
+          location: { select: { code: true, warehouse: true } },
+          project: { select: { code: true, name: true } }
+        }
+      })
+    : [];
+  const stockByProduct = new Map<
+    string,
+    {
+      available: Prisma.Decimal;
+      locationCode: string;
+      warehouse: string;
+      projectCode: string;
+      projectName: string;
+    }
+  >();
+  for (const row of inventories) {
+    const available = row.qty.minus(row.reservedQty);
+    if (available.lte(0)) continue;
+    const projectCode =
+      row.assignmentType === "FREE_TO_SALE" ? "FREE TO SALE" : row.project?.code || "";
+    const projectName =
+      row.assignmentType === "FREE_TO_SALE" ? "Free to Sale" : row.project?.name || "";
+    const current = stockByProduct.get(row.productId);
+    if (!current || available.gt(current.available)) {
+      stockByProduct.set(row.productId, {
+        available,
+        locationCode: row.location.code,
+        warehouse: row.location.warehouse,
+        projectCode,
+        projectName
+      });
+    }
+  }
+  const mapped = sliced.map((product) => {
+    const links = product.productProjects
+      .filter((link) => {
+        const owner = auth.operationalClientId || auth.clientId;
+        return !owner || link.project.clientId === owner;
+      })
+      .map((link) => ({
+        projectId: link.projectId,
+        code: link.project.code,
+        name: link.project.name
+      }));
+    const stock = stockByProduct.get(product.id);
+    const fallbackProject = links[0];
+    return {
       id: product.id,
       sku: product.sku,
       barcode: product.barcode,
@@ -122,17 +204,19 @@ export async function searchSkuProducts(query: string, auth: AuthContext, take =
       description: product.description,
       unit: product.unit,
       customer: null,
-      productProjects: product.productProjects
-        .filter((link) => {
-          const owner = auth.operationalClientId || auth.clientId;
-          return !owner || link.project.clientId === owner;
-        })
-        .map((link) => ({
-          projectId: link.projectId,
-          code: link.project.code,
-          name: link.project.name
-        }))
-    }));
+      productProjects: links,
+      availableQty: stock ? stock.available.toString() : "0",
+      locationCode: stock?.locationCode || "",
+      warehouse: stock?.warehouse || "",
+      projectCode: stock?.projectCode || fallbackProject?.code || "",
+      projectName: stock?.projectName || fallbackProject?.name || "",
+      hasStock: Boolean(stock)
+    };
+  });
+  if (opts.requireStock && (locationFilter || warehouseFilter)) {
+    return mapped.filter((product) => product.hasStock);
+  }
+  return mapped;
 }
 
 export async function getSkuContext(productId: string, auth: AuthContext) {

@@ -369,6 +369,26 @@
         margin-top: 3px;
         line-height: 1.35;
       }
+      .product-typeahead-item .pta-avail {
+        display: inline-block;
+        margin-top: 4px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 600;
+      }
+      .product-typeahead-item .pta-avail.is-stock {
+        background: rgba(22, 163, 74, 0.12);
+        color: #15803d;
+      }
+      .product-typeahead-item .pta-avail.is-catalog {
+        background: rgba(100, 116, 139, 0.12);
+        color: #475569;
+      }
+      .product-typeahead-item .pta-avail.is-attention {
+        background: rgba(234, 88, 12, 0.12);
+        color: #c2410c;
+      }
       .product-typeahead-empty {
         padding: 10px 12px;
         font-size: 0.82rem;
@@ -4126,7 +4146,10 @@
                   </div>
                   <div class="field compact">
                     <label for="ccFilterSku">SKU</label>
-                    <input id="ccFilterSku" type="text" placeholder="SKU" autocomplete="off" />
+                    <div class="product-typeahead" data-pta="control-center">
+                      <input id="ccFilterSku" type="text" placeholder="SKU, barras, nombre…" autocomplete="off" />
+                      <div id="ccFilterSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                    </div>
                   </div>
                   <div class="field compact">
                     <label for="ccFilterProducto">Producto</label>
@@ -4230,7 +4253,10 @@
               </div>
               <div class="field compact">
                 <label for="traceSku">SKU</label>
-                <input id="traceSku" type="text" />
+                <div class="product-typeahead" data-pta="trace">
+                  <input id="traceSku" type="text" placeholder="SKU, barras, nombre…" autocomplete="off" />
+                  <div id="traceSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                </div>
               </div>
               <div class="field compact">
                 <label for="traceCustomer">Requisición</label>
@@ -4472,7 +4498,10 @@
                 </div>
                 <div class="field">
                   <label for="incidentProductSku">SKU / Código</label>
-                  <input id="incidentProductSku" type="text" placeholder="SKU o código de barras" />
+                  <div class="product-typeahead" data-pta="incident">
+                    <input id="incidentProductSku" type="text" placeholder="SKU, barras o nombre del producto" autocomplete="off" />
+                    <div id="incidentSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                  </div>
                 </div>
                 <div class="field full">
                   <label for="incidentNotes">Notas</label>
@@ -5096,7 +5125,10 @@
                   </div>
                   <div class="field compact">
                     <label for="catFilterSku">SKU</label>
-                    <input id="catFilterSku" type="text" placeholder="SKU" autocomplete="off" />
+                    <div class="product-typeahead" data-pta="catalog">
+                      <input id="catFilterSku" type="text" placeholder="SKU, barras, nombre…" autocomplete="off" />
+                      <div id="catFilterSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                    </div>
                   </div>
                   <div class="field compact">
                     <label for="catFilterProducto">Producto</label>
