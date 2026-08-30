@@ -131,11 +131,13 @@ test("CLIENT/SUPERVISOR/OPERATOR no ganan módulos ADMIN", () => {
 test("contraseña: ojo solo en captura nueva, nunca hash", () => {
   assert.match(html, /data-password-target="newPassword"/);
   assert.match(html, /data-password-target="newAccountPassword"/);
+  assert.match(html, /data-password-target="resetTempPassword"/);
   assert.doesNotMatch(html, /data-password-target="currentPassword"/);
   assert.doesNotMatch(js, /passwordHash/);
   assert.doesNotMatch(html, /passwordHash/);
   const toggle = sliceFunction(js, "wireNewPasswordVisibilityToggles");
-  assert.match(toggle, /id !== "newPassword" && id !== "newAccountPassword"/);
+  assert.match(toggle, /resetTempPassword/);
+  assert.doesNotMatch(toggle, /currentPassword/);
 });
 
 test("modo concentración es voluntario y no bloquea Escape", () => {

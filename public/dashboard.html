@@ -1152,6 +1152,41 @@
         background: rgba(255, 155, 167, 0.15);
         color: var(--error);
       }
+      .badge-active {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        background: rgba(123, 228, 149, 0.15);
+        color: #bff3cc;
+      }
+      .user-card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px 12px;
+        margin: 0 0 8px;
+        background: var(--panel-solid);
+      }
+      .user-card-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .must-change-banner {
+        margin: 0 16px 8px;
+        padding: 8px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 196, 80, 0.45);
+        background: rgba(255, 196, 80, 0.12);
+      }
+      body.must-change-password .sidebar,
+      body.must-change-password .nav-section-tabs,
+      body.must-change-password #changeClientBtn,
+      body.must-change-password #focusModeBtn {
+        display: none !important;
+      }
       .filter-strip {
         display: flex;
         flex-wrap: wrap;
@@ -3971,6 +4006,9 @@
           <button type="button" id="logoutBtn" class="btn-secondary btn-compact">Cerrar sesión</button>
           <p id="navAnnounce" class="nav-announce" aria-live="polite"></p>
         </div>
+        <p id="mustChangePasswordBanner" class="must-change-banner hidden" role="status">
+          Debes establecer una contraseña nueva antes de operar. La temporal se muestra una sola vez y no se puede recuperar.
+        </p>
       </header>
       <div class="app-body">
         <aside class="sidebar" aria-label="Navegación principal">
@@ -4259,6 +4297,77 @@
             </div>
             <p id="usersMessage" class="filter-hint" style="margin:0 0 8px">Cargando usuarios...</p>
             <div class="card-panel compact-module users-form-panel">
+            <form id="editUserForm" class="hidden">
+              <h4 class="secondary-panel-title">Ficha de usuario</h4>
+              <p class="assignee-hint">ADMIN edita ficha, rol y cliente. La contraseña no se lee; usa Restablecer contraseña. Foto: URL http(s), no archivo ni base64.</p>
+              <input type="hidden" id="editUserId" />
+              <div class="form-grid">
+                <div class="field">
+                  <label for="editFullName">Nombre completo</label>
+                  <input id="editFullName" type="text" required />
+                </div>
+                <div class="field">
+                  <label for="editEmail">Email</label>
+                  <input id="editEmail" type="email" required />
+                </div>
+                <div class="field">
+                  <label for="editRole">Rol</label>
+                  <select id="editRole">
+                    <option value="OPERATOR">OPERATOR</option>
+                    <option value="SUPERVISOR">SUPERVISOR</option>
+                    <option value="CLIENT">CLIENT</option>
+                    <option value="ADMIN">ADMIN</option>
+                  </select>
+                </div>
+                <div class="field" id="editClientField">
+                  <label for="editClientId">Cliente asignado</label>
+                  <select id="editClientId">
+                    <option value="">— Sin cliente (solo ADMIN) —</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="editJobTitle">Puesto / cargo</label>
+                  <input id="editJobTitle" type="text" />
+                </div>
+                <div class="field">
+                  <label for="editPhone">Teléfono</label>
+                  <input id="editPhone" type="text" />
+                </div>
+                <div class="field">
+                  <label for="editAlternatePhone">Teléfono alterno</label>
+                  <input id="editAlternatePhone" type="text" />
+                </div>
+                <div class="field">
+                  <label for="editAvatarUrl">Foto (URL)</label>
+                  <input id="editAvatarUrl" type="url" placeholder="https://…" />
+                </div>
+                <div class="field full">
+                  <label for="editAddress">Dirección</label>
+                  <input id="editAddress" type="text" />
+                </div>
+                <div class="field">
+                  <label for="editCity">Ciudad</label>
+                  <input id="editCity" type="text" />
+                </div>
+                <div class="field">
+                  <label for="editState">Estado</label>
+                  <input id="editState" type="text" />
+                </div>
+                <div class="field">
+                  <label for="editPostalCode">CP</label>
+                  <input id="editPostalCode" type="text" />
+                </div>
+                <div class="field full">
+                  <label for="editNotes">Notas internas</label>
+                  <textarea id="editNotes" rows="2"></textarea>
+                </div>
+              </div>
+              <p id="editUserError" class="inline-error"></p>
+              <div class="user-card-actions">
+                <button id="editUserSaveBtn" type="submit" class="btn-primary btn-compact">Guardar ficha</button>
+                <button id="editUserCancelBtn" type="button" class="btn-secondary btn-compact">Cerrar</button>
+              </div>
+            </form>
             <form id="createUserForm" class="hidden">
               <h4 class="secondary-panel-title">Alta de usuario</h4>
               <div class="form-grid">
@@ -4605,7 +4714,57 @@
           <div id="moduleAccount" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Mi cuenta / Seguridad</h3>
-              <p class="module-lead">Cambia tu contraseña aquí. LOGITEC nunca muestra ni recupera una contraseña ya guardada. Un administrador no puede leer la tuya.</p>
+              <p class="module-lead">Edita tu ficha de contacto y cambia tu contraseña. LOGITEC nunca muestra ni recupera una contraseña ya guardada. Desde aquí no puedes cambiar rol, cliente ni permisos.</p>
+            </div>
+            <div class="card-panel compact-module">
+              <h4 class="secondary-panel-title">Mi ficha</h4>
+              <p id="accountProfileMeta" class="filter-hint">Rol y cliente asignado se muestran solo de lectura.</p>
+              <form id="accountProfileForm" class="form-compact">
+                <div class="form-grid">
+                  <div class="field">
+                    <label for="accountFullName">Nombre completo</label>
+                    <input id="accountFullName" type="text" required />
+                  </div>
+                  <div class="field">
+                    <label for="accountJobTitle">Puesto / cargo</label>
+                    <input id="accountJobTitle" type="text" />
+                  </div>
+                  <div class="field">
+                    <label for="accountPhone">Teléfono</label>
+                    <input id="accountPhone" type="text" />
+                  </div>
+                  <div class="field">
+                    <label for="accountAlternatePhone">Teléfono alterno</label>
+                    <input id="accountAlternatePhone" type="text" />
+                  </div>
+                  <div class="field full">
+                    <label for="accountAddress">Dirección</label>
+                    <input id="accountAddress" type="text" />
+                  </div>
+                  <div class="field">
+                    <label for="accountCity">Ciudad</label>
+                    <input id="accountCity" type="text" />
+                  </div>
+                  <div class="field">
+                    <label for="accountState">Estado</label>
+                    <input id="accountState" type="text" />
+                  </div>
+                  <div class="field">
+                    <label for="accountPostalCode">CP</label>
+                    <input id="accountPostalCode" type="text" />
+                  </div>
+                  <div class="field full">
+                    <label for="accountAvatarUrl">Foto (URL http/https)</label>
+                    <input id="accountAvatarUrl" type="url" placeholder="https://… — no se suben archivos en esta ronda" />
+                  </div>
+                  <div class="field full">
+                    <label for="accountNotes">Notas de contacto</label>
+                    <textarea id="accountNotes" rows="2"></textarea>
+                  </div>
+                </div>
+                <p id="accountProfileError" class="inline-error"></p>
+                <button id="accountProfileBtn" type="submit" class="btn-primary btn-compact">Guardar mi ficha</button>
+              </form>
             </div>
             <div class="card-panel compact-module">
             <form id="changePasswordForm" class="form-compact">
@@ -5809,11 +5968,37 @@
                 <button type="button" id="physicalInventoryResetImportBtn" class="btn-danger btn-compact" disabled>Borrar inventario de AVIAT</button>
               </div>
               <p class="module-lead">Reinicio operativo previo a la carga inicial. Elimina existencias, cubos, cantidades, reservados, capas, series, IMEI, reservas, requisiciones y tareas de ensayo, picking, scans, movimientos operativos de prueba, actividad operativa relacionada y sesiones temporales de importación del cliente AVIAT activo.</p>
-              <p class="module-lead">Las incidencias y el historial operativo de Incident <strong>no forman parte de este reset de inventario</strong>. Limpiarlos es una decisión separada y no se ejecuta desde aquí.</p>
+              <p class="module-lead">Las incidencias y el historial operativo de Incident <strong>no forman parte de este reset de inventario</strong>. Usa la acción separada de abajo para consultar/limpiar historial; no se mezclan.</p>
               <p class="module-lead">Se conservan el cliente AVIAT, usuarios, roles, contraseñas, sesiones, proyectos oficiales, almacén oficial, ubicaciones aprobadas, configuración, permisos y catálogos maestros necesarios para volver a importar. El catálogo global de SKU no se borra.</p>
               <div id="aviatResetCounts" class="import-summary-chips"></div>
               <p id="aviatResetFlagHint" class="assignee-hint">Esta función se activa solamente para el ensayo y la carga inicial (<code>ALLOW_TENANT_INVENTORY_RESET</code>) y debe volver a desactivarse después de la carga aprobada por Hugo.</p>
               <p id="aviatResetResult" class="ops-message ok hidden"></p>
+            </section>
+            <section class="card-panel danger-zone-panel hidden js-admin-only" id="operationalHistorySection" aria-label="Historial operativo de AVIAT">
+              <span class="prod-danger-kicker">Separado del reset de inventario · Solo ADMIN</span>
+              <h4 class="secondary-panel-title" style="margin:8px 0 6px">Limpiar historial operativo de AVIAT</h4>
+              <p class="module-lead">Prepara la limpieza de Incident y comentarios que el reset de inventario <strong>no borra</strong>. No se ejecuta sola. Incident no distingue prueba vs real: hay que elegir categoría o registro.</p>
+              <div class="user-card-actions">
+                <button type="button" id="operationalHistoryPreviewBtn" class="btn-secondary btn-compact">Consultar preview</button>
+              </div>
+              <p id="operationalHistoryDecision" class="filter-hint"></p>
+              <div id="operationalHistoryCounts" class="import-summary-chips"></div>
+              <div id="operationalHistoryIncidents"></div>
+              <label class="lab-reset-check" for="historyCleanComments">
+                <input id="historyCleanComments" type="checkbox" />
+                Incluir comentarios del cliente AVIAT
+              </label>
+              <label class="lab-reset-check" for="historyCleanIncidents">
+                <input id="historyCleanIncidents" type="checkbox" />
+                Incluir incidencias seleccionadas (no todas automáticamente)
+              </label>
+              <label class="lab-reset-check" for="operationalHistoryPhrase">
+                Escribe exactamente: LIMPIAR HISTORIAL OPERATIVO DE AVIAT
+              </label>
+              <input id="operationalHistoryPhrase" type="text" autocomplete="off" spellcheck="false" placeholder="LIMPIAR HISTORIAL OPERATIVO DE AVIAT" />
+              <p id="operationalHistoryError" class="ops-message error"></p>
+              <p id="operationalHistorySuccess" class="ops-message ok hidden"></p>
+              <button type="button" id="operationalHistoryExecuteBtn" class="btn-danger btn-compact" disabled>Ejecutar limpieza seleccionada</button>
             </section>
           </div>
 
@@ -5971,6 +6156,31 @@
         <div class="import-actions" style="margin-top:12px">
           <button type="button" id="physicalInventoryResetCancelBtn" class="btn-secondary">Cancelar</button>
           <button type="button" id="physicalInventoryResetConfirmBtn" class="btn-danger" disabled>Confirmar borrado</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="resetPasswordModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-labelledby="resetPasswordTitle" aria-modal="true">
+        <div class="modal-header">
+          <h3 id="resetPasswordTitle">Restablecer contraseña</h3>
+          <button type="button" class="modal-close" id="resetPasswordCloseX" aria-label="Cerrar">×</button>
+        </div>
+        <p>Asigna o genera una contraseña temporal. La anterior deja de servir de inmediato. La cuenta no se desactiva. La temporal se muestra solo ahora.</p>
+        <p id="resetPasswordUserLabel" class="filter-hint"></p>
+        <input type="hidden" id="resetPasswordUserId" />
+        <div class="field">
+          <label for="resetTempPassword">Contraseña temporal (opcional; si vacío se genera)</label>
+          <div class="password-input-row">
+            <input id="resetTempPassword" type="password" minlength="6" autocomplete="new-password" />
+            <button type="button" class="btn-secondary btn-compact js-toggle-new-password" data-password-target="resetTempPassword" aria-pressed="false">Mostrar</button>
+          </div>
+        </div>
+        <p id="resetPasswordOnce" class="ops-message ok hidden"></p>
+        <p id="resetPasswordError" class="ops-message error"></p>
+        <div class="import-actions" style="margin-top:12px">
+          <button type="button" id="resetPasswordCancelBtn" class="btn-secondary">Cerrar</button>
+          <button type="button" id="resetPasswordConfirmBtn" class="btn-primary">Asignar temporal</button>
         </div>
       </div>
     </div>

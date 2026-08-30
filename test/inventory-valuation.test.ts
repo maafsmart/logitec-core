@@ -198,15 +198,15 @@ test("filtro por proyecto solo valúa las capas de ese proyecto", () => {
   assert.notEqual(alfa.qtyTotal, all.qtyTotal);
 });
 
-test("valuación visible para todos los roles operativos autenticados", () => {
+test("valuación visible para consulta ADMIN/SUPERVISOR/CLIENT; OPERATOR no ve precios", () => {
   assert.equal(canExposeEconomicValuation("ADMIN"), true);
-  assert.equal(canExposeEconomicValuation("OPERATOR"), true);
+  assert.equal(canExposeEconomicValuation("OPERATOR"), false);
   assert.equal(canExposeEconomicValuation("SUPERVISOR"), true);
   assert.equal(canExposeEconomicValuation("CLIENT"), true);
   assert.equal(canExposeEconomicValuation(null), false);
   const valuation = calculateInventoryValuation([layer({ qty: 1, unitPriceMxn: "3" })]);
   assert.equal(publicValuationForRole(valuation, canExposeEconomicValuation("ADMIN"))?.totalValueMxn, "3.00");
-  assert.equal(publicValuationForRole(valuation, canExposeEconomicValuation("OPERATOR"))?.totalValueMxn, "3.00");
+  assert.equal(publicValuationForRole(valuation, canExposeEconomicValuation("OPERATOR")), undefined);
 });
 
 test("la valuación no altera las cantidades de entrada (508/23207 no se reescriben)", () => {
@@ -226,7 +226,7 @@ test("la valuación no altera las cantidades de entrada (508/23207 no se reescri
 
 test("dashboard exporta columnas económicas y no trata Free to Sale como proyecto", () => {
   assert.match(js, /canSeeEconomicValuation/);
-  assert.match(js, /\["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"\]\.includes\(currentRole\)/);
+  assert.match(js, /\["ADMIN", "SUPERVISOR", "CLIENT"\]\.includes\(currentRole\)/);
   assert.match(js, /function canEditEconomicValuation\(\)/);
   assert.match(js, /valor_unitario_promedio_mxn/);
   assert.match(js, /valor_total_mxn/);
@@ -281,7 +281,7 @@ test("Piezas es la suma de qty y Saldos es el conteo de cubos con qty>0", () => 
 
 test("CLIENT carga existencias, movimientos y valuación sin habilitar edición", () => {
   assert.ok((js.match(/\["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"\]\.includes\(currentRole\)/g) || []).length >= 2);
-  assert.match(js, /\["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"\]\.includes\(currentRole\)/);
+  assert.match(js, /\["ADMIN", "SUPERVISOR", "CLIENT"\]\.includes\(currentRole\)/);
   assert.match(js, /function canEditEconomicValuation\(\)\s*\{\s*return currentRole === "ADMIN"/);
   assert.match(html, /js-economic-edit/);
 });

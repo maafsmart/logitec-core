@@ -21,6 +21,16 @@ model User {
   role                 String
   clientId             String?
   isActive             Boolean              @default(true)
+  phone                String?
+  alternatePhone       String?
+  address              String?
+  city                 String?
+  state                String?
+  postalCode           String?
+  jobTitle             String?
+  notes                String?
+  avatarUrl            String?
+  mustChangePassword   Boolean              @default(false)
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   client               Client?              @relation(fields: [clientId], references: [id], onDelete: SetNull)

@@ -556,6 +556,9 @@ let physicalInventoryResetBusy = false;
 let currentRole = null;
 let currentUserId = null;
 let currentUserClient = null;
+let mustChangePassword = false;
+let usersCache = [];
+let operationalHistoryPreview = null;
 let adminSelectedClientId = "";
 let movementsNextCursor = null;
 let movementsRows = [];
@@ -1418,6 +1421,10 @@ function navigateTo(sectionId, moduleName) {
   const allowed = roleModules[currentRole] || [];
   let section = sectionId || null;
   let mod = moduleName || null;
+  if (mustChangePassword) {
+    section = "sistema";
+    mod = "account";
+  }
 
   let fromBulkInbound = false;
   if (mod === "bulk-inbound") {
@@ -2109,7 +2116,7 @@ function inventoryAssignmentLabel(row) {
 }
 
 function canSeeEconomicValuation() {
-  return ["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"].includes(currentRole);
+  return ["ADMIN", "SUPERVISOR", "CLIENT"].includes(currentRole);
 }
 
 function canEditEconomicValuation() {
@@ -6142,7 +6149,7 @@ function wireNewPasswordVisibilityToggles() {
     btn.addEventListener("click", () => {
       const id = btn.getAttribute("data-password-target");
       const input = id ? document.getElementById(id) : null;
-      if (!input || (id !== "newPassword" && id !== "newAccountPassword")) return;
+      if (!input || (id !== "newPassword" && id !== "newAccountPassword" && id !== "resetTempPassword")) return;
       const show = input.type === "password";
       input.type = show ? "text" : "password";
       btn.setAttribute("aria-pressed", show ? "true" : "false");
@@ -7337,11 +7344,59 @@ async function loadCurrentUser() {
   return response.json();
 }
 
+function fillUserClientSelect(selectId, selectedId) {
+  const clientSel = document.getElementById(selectId);
+  if (!clientSel) return;
+  const emptyLabel = selectId === "editClientId" ? "— Sin cliente (solo ADMIN) —" : "— Seleccionar cliente —";
+  clientSel.innerHTML =
+    `<option value="">${emptyLabel}</option>` +
+    realClientsCache
+      .filter((c) => c.active !== false)
+      .map((c) => `<option value="${escCell(c.id)}">${escCell(c.code)} · ${escCell(c.tradeName || c.name)}</option>`)
+      .join("");
+  if (selectedId) clientSel.value = selectedId;
+}
+
+function applyMustChangePasswordGate(required) {
+  mustChangePassword = Boolean(required);
+  document.body.classList.toggle("must-change-password", mustChangePassword);
+  const banner = document.getElementById("mustChangePasswordBanner");
+  if (banner) banner.classList.toggle("hidden", !mustChangePassword);
+  if (mustChangePassword) {
+    navigateTo("sistema", "account");
+  }
+}
+
+function fillAccountProfileForm(user) {
+  const meta = document.getElementById("accountProfileMeta");
+  if (meta) {
+    const status = user?.isActive === false ? "Inactivo" : "Activo";
+    const clientName = user?.client?.tradeName || user?.client?.name || user?.clientId || "—";
+    meta.textContent = `Estado: ${status} · Rol: ${user?.role || "—"} · Cliente: ${clientName}. No se pueden cambiar rol, cliente ni permisos desde aquí.`;
+  }
+  const setVal = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value || "";
+  };
+  setVal("accountFullName", user?.fullName);
+  setVal("accountJobTitle", user?.jobTitle);
+  setVal("accountPhone", user?.phone);
+  setVal("accountAlternatePhone", user?.alternatePhone);
+  setVal("accountAddress", user?.address);
+  setVal("accountCity", user?.city);
+  setVal("accountState", user?.state);
+  setVal("accountPostalCode", user?.postalCode);
+  setVal("accountAvatarUrl", user?.avatarUrl);
+  setVal("accountNotes", user?.notes);
+}
+
 async function loadUsersModule(role) {
+  const editForm = document.getElementById("editUserForm");
   if (role !== "ADMIN") {
     usersMessage.textContent = "Este modulo requiere permisos de ADMIN.";
     usersList.innerHTML = "";
     createUserForm.classList.add("hidden");
+    if (editForm) editForm.classList.add("hidden");
     return;
   }
 
@@ -7356,29 +7411,34 @@ async function loadUsersModule(role) {
   }
 
   const users = await response.json();
-  usersMessage.textContent = "Gestión inicial de usuarios (todos los administradores ven el listado completo).";
-  usersList.innerHTML = (Array.isArray(users) ? users : [])
+  usersCache = Array.isArray(users) ? users : [];
+  usersMessage.textContent = "Ficha, rol, cliente y estado. Restablecer contraseña no desactiva la cuenta ni lee el hash.";
+  usersList.innerHTML = usersCache
     .map((user) => {
       const inactive = user.isActive === false;
-      const inactiveTag = inactive ? '<span class="badge-inactive">inactivo</span>' : "";
+      const statusTag = inactive
+        ? '<span class="badge-inactive">Inactivo</span>'
+        : '<span class="badge-active">Activo</span>';
+      const clientLabel = user.client ? user.client.tradeName || user.client.name : "Sin cliente";
       const delBtn =
         currentUserId && user.id !== currentUserId && user.isActive !== false
           ? `<button type="button" class="user-delete" data-delete-user="${user.id}">Desactivar</button>`
           : "";
-      return `<div class="user-row"><strong>${user.fullName}</strong> - ${user.email} (${user.role}${user.client ? ` · ${user.client.tradeName || user.client.name}` : ""})${inactiveTag}${delBtn}</div>`;
+      return `<div class="user-card">
+        <strong>${escCell(user.fullName)}</strong> ${statusTag}
+        <p class="filter-hint" style="margin:4px 0 0">${escCell(user.email)} · ${escCell(user.role)} · ${escCell(clientLabel)}${user.jobTitle ? ` · ${escCell(user.jobTitle)}` : ""}${user.phone ? ` · ${escCell(user.phone)}` : ""}</p>
+        <div class="user-card-actions">
+          <button type="button" class="btn-secondary btn-compact" data-edit-user="${escCell(user.id)}">Editar ficha</button>
+          <button type="button" class="btn-secondary btn-compact" data-reset-password-user="${escCell(user.id)}">Restablecer contraseña</button>
+          ${delBtn}
+        </div>
+      </div>`;
     })
     .join("");
-  renderUsersSummary(`Usuarios en sistema: ${Array.isArray(users) ? users.length : 0}`);
+  renderUsersSummary(`Usuarios en sistema: ${usersCache.length}`);
   await loadRealClientsQuiet();
-  const clientSel = document.getElementById("newClientId");
-  if (clientSel) {
-    clientSel.innerHTML =
-      `<option value="">— Seleccionar cliente —</option>` +
-      realClientsCache
-        .filter((c) => c.active !== false)
-        .map((c) => `<option value="${escCell(c.id)}">${escCell(c.code)} · ${escCell(c.tradeName || c.name)}</option>`)
-        .join("");
-  }
+  fillUserClientSelect("newClientId");
+  fillUserClientSelect("editClientId");
 }
 
 async function loadScanEvents() {
@@ -11839,11 +11899,13 @@ function applyRoleNavigation(role) {
     labResetSection.classList.add("hidden");
     labResetAvailable = false;
   }
+  const historySection = document.getElementById("operationalHistorySection");
+  if (historySection) setRoleUiVisible(historySection, isAdmin);
 
   const isClient = role === "CLIENT";
 
   document.querySelectorAll(".js-admin-only").forEach((el) => {
-    setRoleUiVisible(el, isAdmin);
+    setRoleUiVisible(el, isAdmin && !mustChangePassword);
   });
   document.querySelectorAll(".js-write-operational").forEach((el) => {
     setRoleUiVisible(el, canOperate);
@@ -12121,6 +12183,10 @@ async function changePassword(event) {
 
     changePasswordForm.reset();
     changePasswordError.textContent = "Contrasena actualizada correctamente.";
+    applyMustChangePasswordGate(false);
+    if (currentRole === "ADMIN" && !operationalClient) {
+      await showAdminClientPicker();
+    }
   } catch (_error) {
     changePasswordError.textContent = "Error de red actualizando contrasena.";
   } finally {
@@ -12507,7 +12573,7 @@ async function scanCode(event) {
 
 async function deleteUserById(userId) {
   if (!userId || userId === currentUserId) return;
-  if (!window.confirm("¿Desactivar este usuario? No podrá iniciar sesión.")) return;
+  if (!window.confirm("¿Desactivar este usuario? No podrá iniciar sesión. La trazabilidad histórica se conserva.")) return;
   const response = await authenticatedFetch(`/api/users/${encodeURIComponent(userId)}`, {
     method: "DELETE"
   });
@@ -12518,6 +12584,242 @@ async function deleteUserById(userId) {
     return;
   }
   await loadUsersModule("ADMIN");
+}
+
+function openEditUserForm(userId) {
+  const user = usersCache.find((row) => row.id === userId);
+  const form = document.getElementById("editUserForm");
+  if (!user || !form) return;
+  document.getElementById("editUserId").value = user.id;
+  document.getElementById("editFullName").value = user.fullName || "";
+  document.getElementById("editEmail").value = user.email || "";
+  document.getElementById("editRole").value = user.role || "OPERATOR";
+  fillUserClientSelect("editClientId", user.clientId || "");
+  document.getElementById("editJobTitle").value = user.jobTitle || "";
+  document.getElementById("editPhone").value = user.phone || "";
+  document.getElementById("editAlternatePhone").value = user.alternatePhone || "";
+  document.getElementById("editAvatarUrl").value = user.avatarUrl || "";
+  document.getElementById("editAddress").value = user.address || "";
+  document.getElementById("editCity").value = user.city || "";
+  document.getElementById("editState").value = user.state || "";
+  document.getElementById("editPostalCode").value = user.postalCode || "";
+  document.getElementById("editNotes").value = user.notes || "";
+  const err = document.getElementById("editUserError");
+  if (err) err.textContent = "";
+  form.classList.remove("hidden");
+  form.scrollIntoView({ block: "nearest" });
+}
+
+async function saveEditUser(event) {
+  event.preventDefault();
+  const id = document.getElementById("editUserId")?.value;
+  const err = document.getElementById("editUserError");
+  if (!id) return;
+  const role = document.getElementById("editRole")?.value;
+  const payload = {
+    fullName: document.getElementById("editFullName")?.value?.trim(),
+    email: document.getElementById("editEmail")?.value?.trim(),
+    role,
+    clientId: isBoundOperationalRole(role) ? document.getElementById("editClientId")?.value || null : document.getElementById("editClientId")?.value || null,
+    jobTitle: document.getElementById("editJobTitle")?.value || null,
+    phone: document.getElementById("editPhone")?.value || null,
+    alternatePhone: document.getElementById("editAlternatePhone")?.value || null,
+    avatarUrl: document.getElementById("editAvatarUrl")?.value || null,
+    address: document.getElementById("editAddress")?.value || null,
+    city: document.getElementById("editCity")?.value || null,
+    state: document.getElementById("editState")?.value || null,
+    postalCode: document.getElementById("editPostalCode")?.value || null,
+    notes: document.getElementById("editNotes")?.value || null
+  };
+  const response = await authenticatedFetch(`/api/users/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response) return;
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    if (err) err.textContent = data.message || "No se pudo guardar la ficha.";
+    return;
+  }
+  if (err) err.textContent = "";
+  document.getElementById("editUserForm")?.classList.add("hidden");
+  await loadUsersModule("ADMIN");
+}
+
+function openResetPasswordModal(userId) {
+  const user = usersCache.find((row) => row.id === userId);
+  if (!user) return;
+  const idEl = document.getElementById("resetPasswordUserId");
+  const label = document.getElementById("resetPasswordUserLabel");
+  const once = document.getElementById("resetPasswordOnce");
+  const err = document.getElementById("resetPasswordError");
+  const input = document.getElementById("resetTempPassword");
+  if (idEl) idEl.value = user.id;
+  if (label) label.textContent = `${user.fullName} · ${user.email} · ${user.role}`;
+  if (once) {
+    once.textContent = "";
+    once.classList.add("hidden");
+  }
+  if (err) err.textContent = "";
+  if (input) {
+    input.value = "";
+    input.type = "password";
+  }
+  openModal("resetPasswordModal");
+}
+
+async function confirmResetPassword() {
+  const id = document.getElementById("resetPasswordUserId")?.value;
+  const typed = document.getElementById("resetTempPassword")?.value?.trim();
+  const err = document.getElementById("resetPasswordError");
+  const once = document.getElementById("resetPasswordOnce");
+  if (!id) return;
+  const body = typed ? { newPassword: typed } : {};
+  const response = await authenticatedFetch(`/api/users/${encodeURIComponent(id)}/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response) return;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (err) err.textContent = data.message || "No se pudo restablecer la contraseña.";
+    return;
+  }
+  if (err) err.textContent = "";
+  if (once) {
+    once.classList.remove("hidden");
+    once.textContent = `Contraseña temporal (solo ahora): ${data.temporaryPassword}. Entrégala al usuario. No se volverá a mostrar.`;
+  }
+}
+
+async function saveAccountProfile(event) {
+  event.preventDefault();
+  const err = document.getElementById("accountProfileError");
+  const btn = document.getElementById("accountProfileBtn");
+  if (btn) btn.disabled = true;
+  const payload = {
+    fullName: document.getElementById("accountFullName")?.value?.trim(),
+    jobTitle: document.getElementById("accountJobTitle")?.value || null,
+    phone: document.getElementById("accountPhone")?.value || null,
+    alternatePhone: document.getElementById("accountAlternatePhone")?.value || null,
+    address: document.getElementById("accountAddress")?.value || null,
+    city: document.getElementById("accountCity")?.value || null,
+    state: document.getElementById("accountState")?.value || null,
+    postalCode: document.getElementById("accountPostalCode")?.value || null,
+    avatarUrl: document.getElementById("accountAvatarUrl")?.value || null,
+    notes: document.getElementById("accountNotes")?.value || null
+  };
+  try {
+    const response = await authenticatedFetch("/api/auth/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (err) err.textContent = data.message || "No se pudo guardar tu ficha.";
+      return;
+    }
+    if (err) err.textContent = "Ficha actualizada.";
+    fillAccountProfileForm(data);
+    if (sessionDisplayName) sessionDisplayName.textContent = `Hola, ${data.fullName || data.email || "Usuario"}`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function selectedHistoryIncidentIds() {
+  return Array.from(document.querySelectorAll(".js-history-incident:checked")).map((el) => el.value);
+}
+
+function syncHistoryExecuteEnabled() {
+  const btn = document.getElementById("operationalHistoryExecuteBtn");
+  if (!btn) return;
+  const phrase = String(document.getElementById("operationalHistoryPhrase")?.value || "").trim();
+  const comments = Boolean(document.getElementById("historyCleanComments")?.checked);
+  const incidents = Boolean(document.getElementById("historyCleanIncidents")?.checked);
+  const hasIds = selectedHistoryIncidentIds().length > 0;
+  btn.disabled = phrase !== "LIMPIAR HISTORIAL OPERATIVO DE AVIAT" || (!comments && !(incidents && hasIds));
+}
+
+async function loadOperationalHistoryPreview() {
+  const decision = document.getElementById("operationalHistoryDecision");
+  const counts = document.getElementById("operationalHistoryCounts");
+  const list = document.getElementById("operationalHistoryIncidents");
+  const err = document.getElementById("operationalHistoryError");
+  const ok = document.getElementById("operationalHistorySuccess");
+  if (err) err.textContent = "";
+  if (ok) ok.classList.add("hidden");
+  const response = await authenticatedFetch("/api/admin/operational-history/preview");
+  if (!response) return;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (decision) decision.textContent = data.message || "No se pudo cargar el preview.";
+    return;
+  }
+  operationalHistoryPreview = data;
+  if (decision) {
+    decision.textContent = `${data.decision}: ${data.decisionReason} Ejecución automática: ${data.executesAutomatically ? "sí" : "no"}.`;
+  }
+  const leftover = data.leftoverOutsideInventoryReset || {};
+  const covered = data.coveredByInventoryReset || {};
+  if (counts) {
+    counts.innerHTML = [
+      `Incidentes fuera del reset: ${leftover.incidents?.total ?? 0}`,
+      `Comentarios: ${leftover.comments?.total ?? 0}`,
+      `Cubierto por reset inventario · movs ${covered.movements ?? 0} · scans ${covered.scanEvents ?? 0} · tareas ${covered.tasks ?? 0}`
+    ]
+      .map((text) => `<span class="chip">${escCell(text)}</span>`)
+      .join("");
+  }
+  const records = leftover.incidents?.records || [];
+  if (list) {
+    list.innerHTML = records.length
+      ? `<table class="projects-stock-table"><thead><tr><th></th><th>Tipo</th><th>Estado</th><th>Almacén</th><th>Notas</th></tr></thead><tbody>${records
+          .map(
+            (row) =>
+              `<tr><td><input type="checkbox" class="js-history-incident" value="${escCell(row.id)}" /></td><td>${escCell(row.type)}</td><td>${escCell(row.status)}</td><td>${escCell(row.warehouse || "—")}</td><td>${escCell(row.notesPreview || "—")}</td></tr>`
+          )
+          .join("")}</tbody></table>`
+      : "<p class='filter-hint'>No hay incidencias AVIAT fuera del reset.</p>";
+    list.querySelectorAll(".js-history-incident").forEach((box) => box.addEventListener("change", syncHistoryExecuteEnabled));
+  }
+  syncHistoryExecuteEnabled();
+}
+
+async function executeOperationalHistoryCleanup() {
+  const err = document.getElementById("operationalHistoryError");
+  const ok = document.getElementById("operationalHistorySuccess");
+  const comments = Boolean(document.getElementById("historyCleanComments")?.checked);
+  const incidents = Boolean(document.getElementById("historyCleanIncidents")?.checked);
+  const ids = selectedHistoryIncidentIds();
+  const categories = [];
+  if (comments) categories.push("comments");
+  if (incidents) categories.push("incidents");
+  const response = await authenticatedFetch("/api/admin/operational-history/cleanup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      confirmation: document.getElementById("operationalHistoryPhrase")?.value,
+      categories,
+      incidentIds: ids
+    })
+  });
+  if (!response) return;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (err) err.textContent = data.message || "No se ejecutó la limpieza.";
+    return;
+  }
+  if (err) err.textContent = "";
+  if (ok) {
+    ok.classList.remove("hidden");
+    ok.textContent = `Limpieza aplicada: ${data.deleted?.incidents || 0} incidencias, ${data.deleted?.comments || 0} comentarios. Maestros intactos.`;
+  }
+  await loadOperationalHistoryPreview();
 }
 
 async function validateSession() {
@@ -12532,8 +12834,11 @@ async function validateSession() {
         ? { id: user.clientId }
         : null;
     operationalClient = user.operationalClient || (isBoundOperationalRole(currentRole) ? currentUserClient : null);
-    awaitingAdminClient = currentRole === "ADMIN" && !operationalClient;
+    mustChangePassword = Boolean(user.mustChangePassword);
+    fillAccountProfileForm(user);
+    awaitingAdminClient = currentRole === "ADMIN" && !operationalClient && !mustChangePassword;
     applyRoleNavigation(currentRole);
+    applyMustChangePasswordGate(mustChangePassword);
     applyEconomicVisibility();
     void initLabResetAvailability();
 
@@ -12601,10 +12906,18 @@ document.getElementById("taskCreateUserBtn")?.addEventListener("click", () => na
 usersList.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
-  const id = target.getAttribute("data-delete-user");
-  if (id) {
-    void deleteUserById(id);
+  const delId = target.getAttribute("data-delete-user");
+  if (delId) {
+    void deleteUserById(delId);
+    return;
   }
+  const editId = target.getAttribute("data-edit-user");
+  if (editId) {
+    openEditUserForm(editId);
+    return;
+  }
+  const resetId = target.getAttribute("data-reset-password-user");
+  if (resetId) openResetPasswordModal(resetId);
 });
 
 clientsList?.addEventListener("click", (event) => {
@@ -14236,6 +14549,19 @@ if (importCancelModal && importCancelModal.dataset.modalWired !== "1") {
 syncImportWizardUi();
 
 createUserForm.addEventListener("submit", createUser);
+document.getElementById("editUserForm")?.addEventListener("submit", (event) => void saveEditUser(event));
+document.getElementById("editUserCancelBtn")?.addEventListener("click", () => {
+  document.getElementById("editUserForm")?.classList.add("hidden");
+});
+document.getElementById("accountProfileForm")?.addEventListener("submit", (event) => void saveAccountProfile(event));
+document.getElementById("resetPasswordConfirmBtn")?.addEventListener("click", () => void confirmResetPassword());
+document.getElementById("resetPasswordCancelBtn")?.addEventListener("click", () => closeModal("resetPasswordModal"));
+document.getElementById("resetPasswordCloseX")?.addEventListener("click", () => closeModal("resetPasswordModal"));
+document.getElementById("operationalHistoryPreviewBtn")?.addEventListener("click", () => void loadOperationalHistoryPreview());
+document.getElementById("operationalHistoryExecuteBtn")?.addEventListener("click", () => void executeOperationalHistoryCleanup());
+document.getElementById("operationalHistoryPhrase")?.addEventListener("input", syncHistoryExecuteEnabled);
+document.getElementById("historyCleanComments")?.addEventListener("change", syncHistoryExecuteEnabled);
+document.getElementById("historyCleanIncidents")?.addEventListener("change", syncHistoryExecuteEnabled);
 newRole?.addEventListener("change", () => {
   document.getElementById("newClientField")?.classList.toggle("hidden", !isBoundOperationalRole(newRole.value));
 });

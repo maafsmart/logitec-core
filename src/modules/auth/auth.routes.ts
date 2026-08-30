@@ -6,6 +6,12 @@ import { requireAuth, requireRole, signAccessToken } from "../../middlewares/aut
 import { HttpError } from "../../shared/http-error.js";
 import { isClientScopedRole } from "../clients/client-scope.js";
 import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
+import {
+  profileDataFromParsed,
+  publicUserJson,
+  selfProfileSchema,
+  USER_PUBLIC_SELECT
+} from "../users/user-profile.js";
 
 const authRouter = Router();
 
@@ -37,12 +43,23 @@ function serializeUser(
     fullName: string;
     role: string;
     clientId: string | null;
+    isActive?: boolean;
+    mustChangePassword?: boolean;
+    phone?: string | null;
+    alternatePhone?: string | null;
+    address?: string | null;
+    city?: string | null;
+    state?: string | null;
+    postalCode?: string | null;
+    jobTitle?: string | null;
+    notes?: string | null;
+    avatarUrl?: string | null;
     client: {
       id: string;
-      code: string;
+      code?: string;
       name: string;
       tradeName: string | null;
-      legalName: string | null;
+      legalName?: string | null;
       active: boolean;
     } | null;
   },
@@ -55,16 +72,27 @@ function serializeUser(
     active: boolean;
   } | null
 ) {
-  return {
+  return publicUserJson({
     id: user.id,
     email: user.email,
     fullName: user.fullName,
     role: user.role,
     clientId: user.clientId,
+    isActive: user.isActive !== false,
+    mustChangePassword: Boolean(user.mustChangePassword),
+    phone: user.phone ?? null,
+    alternatePhone: user.alternatePhone ?? null,
+    address: user.address ?? null,
+    city: user.city ?? null,
+    state: user.state ?? null,
+    postalCode: user.postalCode ?? null,
+    jobTitle: user.jobTitle ?? null,
+    notes: user.notes ?? null,
+    avatarUrl: user.avatarUrl ?? null,
     client: user.client,
     operationalClientId: operationalClient?.id ?? null,
     operationalClient
-  };
+  });
 }
 
 authRouter.post("/login", async (req, res) => {
@@ -106,13 +134,7 @@ authRouter.get("/me", requireAuth, async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.auth!.userId },
     select: {
-      id: true,
-      email: true,
-      fullName: true,
-      role: true,
-      clientId: true,
-      isActive: true,
-      createdAt: true,
+      ...USER_PUBLIC_SELECT,
       client: { select: clientPublicSelect }
     }
   });
@@ -132,11 +154,48 @@ authRouter.get("/me", requireAuth, async (req, res) => {
   }
 
   res.json({
-    ...user,
-    operationalClientId: operationalClient?.id ?? null,
-    operationalClient,
+    ...serializeUser(user, operationalClient),
     operationalClientInvalid: Boolean(req.auth!.operationalClientInvalid)
   });
+});
+
+authRouter.patch("/me", requireAuth, async (req, res) => {
+  const parsed = selfProfileSchema.parse(req.body ?? {});
+  if (
+    "role" in (req.body || {}) ||
+    "clientId" in (req.body || {}) ||
+    "isActive" in (req.body || {}) ||
+    "email" in (req.body || {}) ||
+    "password" in (req.body || {}) ||
+    "passwordHash" in (req.body || {}) ||
+    "mustChangePassword" in (req.body || {})
+  ) {
+    throw new HttpError(403, "No puedes cambiar rol, cliente, permisos ni credenciales desde Mi cuenta.", "SELF_ESCALATION_FORBIDDEN");
+  }
+
+  const user = await prisma.user.update({
+    where: { id: req.auth!.userId },
+    data: {
+      ...profileDataFromParsed(parsed),
+      ...(parsed.fullName ? { fullName: parsed.fullName.trim() } : {})
+    },
+    select: {
+      ...USER_PUBLIC_SELECT,
+      client: { select: clientPublicSelect }
+    }
+  });
+
+  let operationalClient = null;
+  if (req.auth!.operationalClientId) {
+    operationalClient = await prisma.client.findUnique({
+      where: { id: req.auth!.operationalClientId },
+      select: clientPublicSelect
+    });
+  } else if (isClientScopedRole(user.role)) {
+    operationalClient = user.client;
+  }
+
+  res.json(serializeUser(user, operationalClient));
 });
 
 authRouter.post("/select-client", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
@@ -203,10 +262,10 @@ authRouter.post("/change-password", requireAuth, async (req, res) => {
   const newPasswordHash = await bcrypt.hash(newPassword, 10);
   await prisma.user.update({
     where: { id: user.id },
-    data: { passwordHash: newPasswordHash }
+    data: { passwordHash: newPasswordHash, mustChangePassword: false }
   });
 
-  res.json({ message: "Contrasena actualizada correctamente" });
+  res.json({ message: "Contrasena actualizada correctamente", mustChangePassword: false });
 });
 
 export const allowedRoles = ["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"];
