@@ -694,3 +694,42 @@ test("UI CLIENT: exports de lectura visibles, operaciones de escritura ocultas",
   assert.match(html, /id="reportsExportMovements"/);
   assert.match(html, /id="reportsExportStockXlsx"/);
 });
+
+test("UI: módulos prohibidos se ocultan del menú (no disabled)", () => {
+  assert.match(applyRoleFn, /btn\.disabled = false/);
+  assert.doesNotMatch(applyRoleFn, /btn\.disabled = !enabled/);
+  assert.match(applyRoleFn, /isNavModuleButtonVisible/);
+  assert.match(applyRoleFn, /setRoleUiVisible/);
+  assert.match(js, /CLIENT: \[\s*"inventory"/);
+  assert.doesNotMatch(js, /CLIENT:[\s\S]{0,220}"picking"/);
+  assert.doesNotMatch(js, /CLIENT:[\s\S]{0,220}"inbound"/);
+  assert.doesNotMatch(js, /CLIENT:[\s\S]{0,220}"relocate"/);
+  assert.doesNotMatch(js, /CLIENT:[\s\S]{0,220}"outbound"/);
+  assert.doesNotMatch(js, /CLIENT:[\s\S]{0,220}"tasks"/);
+  assert.doesNotMatch(js, /CLIENT:[\s\S]{0,220}"config"/);
+});
+
+test("UI SUPERVISOR: admin/import/users/clients ausentes del menú", () => {
+  assert.doesNotMatch(js, /SUPERVISOR:[\s\S]{0,320}"clients"/);
+  assert.doesNotMatch(js, /SUPERVISOR:[\s\S]{0,320}"config"/);
+  assert.doesNotMatch(js, /SUPERVISOR:[\s\S]{0,320}"users"/);
+  assert.match(applyRoleFn, /inventoryOpsNavPanel[\s\S]{0,120}toggle\("hidden", !isAdmin\)/);
+  assert.match(applyRoleFn, /setRoleUiVisible\(clientContextGate, isAdmin\)/);
+});
+
+test("UI OPERATOR: config/users/clients ausentes; operación visible", () => {
+  assert.doesNotMatch(js, /OPERATOR:[\s\S]{0,320}"config"/);
+  assert.doesNotMatch(js, /OPERATOR:[\s\S]{0,320}"users"/);
+  assert.doesNotMatch(js, /OPERATOR:[\s\S]{0,320}"clients"/);
+  assert.match(js, /OPERATOR:[\s\S]{0,320}"picking"/);
+  assert.match(applyRoleFn, /js-write-operational/);
+});
+
+test("UI CLIENT: formularios de escritura ocultos del DOM visual", () => {
+  assert.match(html, /id="reqCreatePanel"[\s\S]{0,80}js-write-operational/);
+  assert.match(html, /incidents-form-panel[\s\S]{0,80}js-write-operational/);
+  assert.match(applyRoleFn, /setRoleUiVisible\(document\.getElementById\("reqCreatePanel"\), canOperate\)/);
+  assert.match(applyRoleFn, /setRoleUiVisible\(document\.querySelector\("\.incidents-form-panel"\), canOperate\)/);
+  assert.match(applyRoleFn, /setRoleUiVisible\(document\.getElementById\("moduleConfig"\), isAdmin\)/);
+  assert.match(applyRoleFn, /setRoleUiVisible\(document\.getElementById\("moduleUsers"\), isAdmin\)/);
+});

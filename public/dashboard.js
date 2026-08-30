@@ -996,16 +996,16 @@ const roleModules = {
   ],
   SUPERVISOR: [
     "control", "tasks", "picking", "inbound", "bulk-inbound", "relocate", "requisitions", "outbound",
-    "incidents", "inventory", "catalog", "projects", "warehouses", "locations", "clients",
-    "traceability", "reports", "config", "account"
+    "incidents", "inventory", "catalog", "projects", "warehouses", "locations",
+    "traceability", "reports", "account"
   ],
   OPERATOR: [
     "control", "tasks", "picking", "inbound", "bulk-inbound", "relocate", "requisitions", "outbound",
-    "incidents", "inventory", "catalog", "projects", "warehouses", "locations", "traceability", "config", "account"
+    "incidents", "inventory", "catalog", "projects", "warehouses", "locations", "traceability", "account"
   ],
   CLIENT: [
-    "inventory", "catalog", "projects", "clients", "warehouses", "locations",
-    "requisitions", "tasks", "traceability", "reports", "account", "config"
+    "inventory", "catalog", "projects", "warehouses", "locations",
+    "requisitions", "traceability", "reports", "account"
   ]
 };
 
@@ -11469,6 +11469,17 @@ async function deleteCustomerById(customerId) {
   await loadCatalogData();
 }
 
+function isNavModuleButtonVisible(btn) {
+  return btn && btn.style.display !== "none";
+}
+
+function setRoleUiVisible(el, visible) {
+  if (!el) return;
+  el.classList.toggle("hidden", !visible);
+  el.style.display = visible ? "" : "none";
+  el.setAttribute("aria-hidden", visible ? "false" : "true");
+}
+
 function applyRoleNavigation(role) {
   const allowed = roleModules[role] || [];
   const transferPanel = document.getElementById("assignmentTransferPanel");
@@ -11478,15 +11489,15 @@ function applyRoleNavigation(role) {
   }
   moduleButtons.forEach((btn) => {
     const enabled = allowed.includes(btn.dataset.module);
-    btn.disabled = !enabled;
+    btn.disabled = false;
     btn.style.display = enabled ? "flex" : "none";
+    btn.setAttribute("aria-hidden", enabled ? "false" : "true");
+    if (!enabled) btn.classList.remove("active");
   });
 
   let firstVisibleSection = null;
   document.querySelectorAll(".nav-section-panel").forEach((panel) => {
-    const anyVisible = Array.from(panel.querySelectorAll(".module-btn")).some(
-      (btn) => btn.style.display !== "none" && !btn.disabled
-    );
+    const anyVisible = Array.from(panel.querySelectorAll(".module-btn")).some(isNavModuleButtonVisible);
     panel.dataset.roleHidden = anyVisible ? "0" : "1";
     const sectionId = panel.getAttribute("data-nav-section-panel");
     if (anyVisible && !firstVisibleSection) firstVisibleSection = sectionId;
@@ -11501,9 +11512,7 @@ function applyRoleNavigation(role) {
   // Backward-compat for any remaining .nav-group wrappers
   document.querySelectorAll(".nav-group").forEach((group) => {
     if (group.classList.contains("nav-section-panel")) return;
-    const anyVisible = Array.from(group.querySelectorAll(".module-btn")).some(
-      (btn) => btn.style.display !== "none" && !btn.disabled
-    );
+    const anyVisible = Array.from(group.querySelectorAll(".module-btn")).some(isNavModuleButtonVisible);
     group.style.display = anyVisible ? "" : "none";
   });
 
@@ -11511,9 +11520,7 @@ function applyRoleNavigation(role) {
   const activeVisible =
     activePanel &&
     activePanel.dataset.roleHidden !== "1" &&
-    Array.from(activePanel.querySelectorAll(".module-btn")).some(
-      (btn) => btn.style.display !== "none" && !btn.disabled
-    );
+    Array.from(activePanel.querySelectorAll(".module-btn")).some(isNavModuleButtonVisible);
   // Solo sincroniza tabs/tarjetas; el landing de módulo lo hace validateSession → navigateTo.
   if (activeVisible) {
     setNavSection(activePanel.getAttribute("data-nav-section-panel"));
@@ -11616,6 +11623,28 @@ function applyRoleNavigation(role) {
   if (labResetSection && role !== "ADMIN") {
     labResetSection.classList.add("hidden");
     labResetAvailable = false;
+  }
+
+  const isClient = role === "CLIENT";
+
+  document.querySelectorAll(".js-admin-only").forEach((el) => {
+    setRoleUiVisible(el, isAdmin);
+  });
+  document.querySelectorAll(".js-write-operational").forEach((el) => {
+    setRoleUiVisible(el, canOperate);
+  });
+
+  setRoleUiVisible(document.querySelector(".incidents-form-panel"), canOperate);
+  setRoleUiVisible(document.getElementById("reqCreatePanel"), canOperate);
+  setRoleUiVisible(document.getElementById("moduleConfig"), isAdmin);
+  setRoleUiVisible(document.getElementById("moduleUsers"), isAdmin);
+  setRoleUiVisible(document.getElementById("moduleClients"), isAdmin);
+  setRoleUiVisible(clientContextGate, isAdmin);
+
+  if (isClient && currentModuleName && !allowed.includes(currentModuleName)) {
+    hideAllModules();
+    currentModuleName = null;
+    navigateTo("inventario", "inventory");
   }
 }
 

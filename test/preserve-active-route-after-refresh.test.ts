@@ -73,7 +73,7 @@ function makeRuntime(opts: {
     };
     const roleModules = {
       ADMIN: ["control", "tasks", "picking", "inbound", "bulk-inbound", "relocate", "requisitions", "outbound", "incidents", "inventory", "catalog", "projects", "warehouses", "locations", "clients", "traceability", "reports", "users", "config", "account"],
-      CLIENT: ["inventory", "catalog", "projects", "clients", "warehouses", "locations", "requisitions", "tasks", "traceability", "reports", "account", "config"]
+      CLIENT: ["inventory", "catalog", "projects", "warehouses", "locations", "requisitions", "traceability", "reports", "account"]
     };
     const defaultLandingModule = { ADMIN: "control", SUPERVISOR: "control", OPERATOR: "tasks", CLIENT: "inventory" };
     let currentRole = ${JSON.stringify(role)};
