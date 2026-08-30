@@ -301,8 +301,8 @@ test("Crear producto manual no crea inventario ficticio", () => {
   assert.doesNotMatch(block, /qty:\s*1/);
 });
 
-test("frontend Clientes, catálogos y cache-buster v=85", () => {
-  assert.match(html, /dashboard\.js\?v=85/);
+test("frontend Clientes, catálogos y cache-buster v=86", () => {
+  assert.match(html, /dashboard\.js\?v=86/);
   assert.doesNotMatch(html, /dashboard\.js\?v=81/);
   assert.match(html, /id="btnClients"/);
   assert.match(html, /data-inv-master-tab="clients"/);
