@@ -110,7 +110,7 @@ test("no cambia visibilidad de roles ni el Excel económico", () => {
     movementsCsvRoute,
     /requireRole\(\["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"\]\)/
   );
-  assert.match(js, /canExportInventory = role === "ADMIN" \|\| role === "OPERATOR" \|\| role === "SUPERVISOR"/);
+  assert.match(js, /canExportInventory[\s\S]{0,120}role === "CLIENT"/);
   assert.match(js, /exportMovementsBtn\.style\.display = canExportInventory/);
   assert.match(js, /downloadExport\("\/api\/exports\/inventory\.xlsx",\s*"inventory\.xlsx"\)/);
   assert.match(js, /canSeeEconomicValuation/);

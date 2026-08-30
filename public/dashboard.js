@@ -11475,13 +11475,16 @@ function applyRoleNavigation(role) {
   document.querySelectorAll(".js-assignment-opt[data-assignment='FREE_TO_SALE']").forEach((btn) => {
     btn.style.display = "";
   });
-  if (catalogImportSection) catalogImportSection.classList.remove("hidden");
+  const isAdmin = role === "ADMIN";
+  if (catalogImportSection) catalogImportSection.classList.toggle("hidden", !isAdmin);
+  const catalogImportModal = document.getElementById("catalogImportModal");
+  if (catalogImportModal) catalogImportModal.classList.toggle("hidden", !isAdmin);
   const inventoryOpsNavPanel = document.getElementById("inventoryOpsNavPanel");
-  if (inventoryOpsNavPanel) inventoryOpsNavPanel.classList.toggle("hidden", role !== "ADMIN");
+  if (inventoryOpsNavPanel) inventoryOpsNavPanel.classList.toggle("hidden", !isAdmin);
   const openCatBtn = document.getElementById("openCatalogImportBtn");
   const openInvBtn = document.getElementById("openInventoryImportBtn");
-  if (openCatBtn) openCatBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
-  if (openInvBtn) openInvBtn.style.display = role === "ADMIN" ? "inline-block" : "none";
+  if (openCatBtn) openCatBtn.style.display = isAdmin ? "inline-block" : "none";
+  if (openInvBtn) openInvBtn.style.display = isAdmin ? "inline-block" : "none";
   physicalInventoryResetBtns.forEach((btn) => {
     btn.classList.toggle("hidden", role !== "ADMIN");
     btn.style.display = role === "ADMIN" ? "inline-block" : "none";
@@ -11500,8 +11503,9 @@ function applyRoleNavigation(role) {
     syncInboundSubmitEnabled();
   }
   if (outBtn) outBtn.style.display = canOperate ? "inline-block" : "none";
-  const canExportInventory = role === "ADMIN" || role === "OPERATOR" || role === "SUPERVISOR";
-  const canExportTrace = canExportInventory;
+  const canExportInventory =
+    role === "ADMIN" || role === "OPERATOR" || role === "SUPERVISOR" || role === "CLIENT";
+  const canExportTrace = role === "ADMIN" || role === "OPERATOR" || role === "SUPERVISOR";
   const canExportProducts = role === "ADMIN" || role === "CLIENT";
   if (exportStockBtn) exportStockBtn.style.display = canExportInventory ? "inline-block" : "none";
   if (exportMovementsBtn) exportMovementsBtn.style.display = canExportInventory ? "inline-block" : "none";

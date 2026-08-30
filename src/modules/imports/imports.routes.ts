@@ -68,7 +68,7 @@ async function updateOwnedBatch(id: string, req: Request, data: Prisma.ImportBat
 importsRouter.use(requireAuth);
 importsRouter.use(requireOperationalClient);
 
-importsRouter.get("/", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
+importsRouter.get("/", requireRole(["ADMIN"]), async (req, res) => {
   const rows = await prisma.importBatch.findMany({
     where: clientImportBatchWhere(req.auth!),
     orderBy: { createdAt: "desc" },
@@ -158,7 +158,7 @@ importsRouter.get("/:id/state", requireRole(["ADMIN"]), async (req, res) => {
   res.json(buildImportResumePayload(batch, { includeReview: true }));
 });
 
-importsRouter.get("/:id", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
+importsRouter.get("/:id", requireRole(["ADMIN"]), async (req, res) => {
   const batch = await loadBatch(z.string().min(1).parse(req.params.id), req);
   const meta = asMeta(batch.metadata);
   res.json({
@@ -324,7 +324,7 @@ importsRouter.post("/:id/validate", requireRole(["ADMIN"]), async (req, res) => 
   });
 });
 
-importsRouter.get("/:id/preview", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
+importsRouter.get("/:id/preview", requireRole(["ADMIN"]), async (req, res) => {
   const batch = await loadBatch(z.string().min(1).parse(req.params.id), req);
   res.json({
     id: batch.id,
@@ -340,10 +340,11 @@ importsRouter.get("/:id/preview", requireRole(["ADMIN", "SUPERVISOR"]), async (r
   });
 });
 
-importsRouter.get("/:id/errors", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
+importsRouter.get("/:id/errors", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
+  const batch = await loadBatch(id, req);
   const rows = await prisma.importRow.findMany({
-    where: { importBatchId: id },
+    where: { importBatchId: batch.id },
     orderBy: { sourceRow: "asc" }
   });
   res.json(
@@ -484,7 +485,7 @@ importsRouter.post("/:id/review/ignore", requireRole(["ADMIN"]), async (req, res
   res.json({ ignored: rows.length });
 });
 
-importsRouter.get("/:id/normalized.csv", requireRole(["ADMIN", "SUPERVISOR"]), async (req, res) => {
+importsRouter.get("/:id/normalized.csv", requireRole(["ADMIN"]), async (req, res) => {
   const batch = await loadBatch(z.string().min(1).parse(req.params.id), req);
   const headers = [
     "sourceRow",

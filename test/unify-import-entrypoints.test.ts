@@ -92,8 +92,10 @@ test("OPERATOR, SUPERVISOR y CLIENT no reciben acceso administrativo a la import
   assert.match(assistantFn, /canAdministerInventoryImport\(\)/);
   assert.match(
     applyRoleFn,
-    /openInvBtn\.style\.display = role === "ADMIN" \? "inline-block" : "none"/
+    /openInvBtn\.style\.display = isAdmin \? "inline-block" : "none"/
   );
+  assert.match(applyRoleFn, /catalogImportSection\.classList\.toggle\("hidden", !isAdmin\)/);
+  assert.match(applyRoleFn, /inventoryOpsNavPanel[\s\S]{0,120}toggle\("hidden", !isAdmin\)/);
   assert.doesNotMatch(applyRoleFn, /bulkInboundOpenImportBtn/);
   assert.match(applyRoleFn, /role !== "ADMIN"/);
   assert.doesNotMatch(roleFn, /SUPERVISOR/);
