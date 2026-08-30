@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
+const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || "Admin1234";
 const QA_PASSWORD = process.env.QA_E2E_PASSWORD || "QaUser1234";
 
 async function upsertUser(input: {
@@ -9,8 +10,9 @@ async function upsertUser(input: {
   fullName: string;
   role: "ADMIN" | "SUPERVISOR" | "OPERATOR" | "CLIENT";
   clientId: string | null;
+  password: string;
 }) {
-  const passwordHash = await bcrypt.hash(QA_PASSWORD, 10);
+  const passwordHash = await bcrypt.hash(input.password, 10);
   await prisma.user.upsert({
     where: { email: input.email },
     update: {
@@ -64,25 +66,29 @@ async function main() {
     email: "admin@logitec.local",
     fullName: "Administrador Logitec",
     role: "ADMIN",
-    clientId: null
+    clientId: null,
+    password: ADMIN_PASSWORD
   });
   await upsertUser({
     email: "qa.supervisor@logitec.local",
     fullName: "QA Supervisor",
     role: "SUPERVISOR",
-    clientId: aviat.id
+    clientId: aviat.id,
+    password: QA_PASSWORD
   });
   await upsertUser({
     email: "qa.operator@logitec.local",
     fullName: "QA Operator",
     role: "OPERATOR",
-    clientId: aviat.id
+    clientId: aviat.id,
+    password: QA_PASSWORD
   });
   await upsertUser({
     email: "qa.client@logitec.local",
     fullName: "QA Client",
     role: "CLIENT",
-    clientId: aviat.id
+    clientId: aviat.id,
+    password: QA_PASSWORD
   });
 }
 

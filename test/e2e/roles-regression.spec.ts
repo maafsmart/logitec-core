@@ -70,7 +70,8 @@ async function login(page: Page, role: keyof typeof users) {
   await page.locator("#password").fill(users[role].password);
   await page.locator("#submitBtn").click();
   await page.waitForURL(/dashboard\.html/, { timeout: 20_000 });
-  await expect(page.locator(".app-shell, #clientContextGate, main.content").first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(".app-shell")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("#sessionDisplayName")).not.toHaveText(/Cargando sesión/i, { timeout: 20_000 });
   return probe;
 }
 
@@ -95,7 +96,7 @@ async function enterAdminClientIfNeeded(page: Page, probe: Probe) {
 }
 
 function sectionTab(page: Page, section: string) {
-  return page.locator(`[data-nav-section="${section}"]`);
+  return page.locator(`.nav-section-tab[data-nav-section="${section}"]`);
 }
 
 test.describe("regresión UI por roles", () => {
@@ -217,9 +218,8 @@ test.describe("regresión UI por roles", () => {
     const body = await res.json();
     expect(body).toHaveProperty("counts");
     expect(res.request().method()).toBe("GET");
-    await expect(page.locator("#operationalHistoryScopeHint, #operationalHistoryCounts")).toContainText(
-      /Movs|AVIAT|cifras|preview/i
-    );
+    await expect(page.locator("#operationalHistoryScopeHint")).toContainText(/AVIAT|cifras/i);
+    await expect(page.locator("#operationalHistoryCounts")).toContainText(/Movs/i);
     await saveEvidence(page, "admin-clean-start-preview", probe, {
       previewStatus: res.status(),
       previewMethod: res.request().method(),
