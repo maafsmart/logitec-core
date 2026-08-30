@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
 import {
   E2eSafetyError,
@@ -9,6 +10,9 @@ import {
   assertE2eNotProduction,
   assertQaE2eEmail,
   assertRequiredE2eSecrets,
+  E2E_WEB_SERVER_OS_ALLOWLIST,
+  buildE2eWebServerEnv,
+  findLeakedSecretMarkers,
   formatE2eNetworkRow,
   sanitizeE2eEvidence,
   sanitizeE2eUrl,
@@ -169,7 +173,9 @@ test("el arnés no contiene contraseñas fallback hardcodeadas", () => {
 
 test("playwright-results.json no conserva env con secretos", () => {
   assert.doesNotMatch(playwrightConfigSource, /\.\.\.\s*process\.env/);
-  assert.match(playwrightConfigSource, /password\|passwd\|credential/);
+  assert.doesNotMatch(playwrightConfigSource, /Object\.entries\(\s*process\.env/);
+  assert.match(playwrightConfigSource, /buildE2eWebServerEnv/);
+  assert.match(playwrightConfigSource, /e2e-web-server\.ts/);
   assert.match(teardownSource, /sanitizePlaywrightResultsDump/);
   const dumped = {
     config: {
@@ -193,6 +199,68 @@ test("playwright-results.json no conserva env con secretos", () => {
   const serialized = JSON.stringify(clean);
   assert.doesNotMatch(serialized, /should-not-remain/);
   assert.doesNotMatch(serialized, /postgresql:\/\//);
+});
+
+test("webServer.env es allowlist: secretos de process.env no entran al objeto serializable", () => {
+  const poisoned: NodeJS.ProcessEnv = {
+    PATH: "C:\\Windows\\system32",
+    PATHEXT: ".COM;.EXE",
+    SYSTEMROOT: "C:\\Windows",
+    NODE_ENV: "production",
+    DATABASE_ENVIRONMENT: "production",
+    JWT_SECRET: "SHOULD_NOT_LEAK",
+    API_TOKEN: "SHOULD_NOT_LEAK",
+    AUTHORIZATION: "SHOULD_NOT_LEAK",
+    COOKIE: "SHOULD_NOT_LEAK",
+    DATABASE_URL: "postgresql://SHOULD_NOT_LEAK",
+    SESSION_SECRET: "SHOULD_NOT_LEAK",
+    RANDOM_PRIVATE_VALUE: "SHOULD_NOT_LEAK",
+    E2E_ADMIN_PASSWORD: "SHOULD_NOT_LEAK",
+    QA_E2E_PASSWORD: "SHOULD_NOT_LEAK"
+  };
+  const env = buildE2eWebServerEnv(poisoned, 3100);
+  assert.equal(env.NODE_ENV, "development");
+  assert.equal(env.DATABASE_ENVIRONMENT, "development");
+  assert.equal(env.PORT, "3100");
+  assert.equal(env.PATH, "C:\\Windows\\system32");
+  assert.equal(env.JWT_SECRET, undefined);
+  assert.equal(env.API_TOKEN, undefined);
+  assert.equal(env.AUTHORIZATION, undefined);
+  assert.equal(env.COOKIE, undefined);
+  assert.equal(env.DATABASE_URL, undefined);
+  assert.equal(env.SESSION_SECRET, undefined);
+  assert.equal(env.RANDOM_PRIVATE_VALUE, undefined);
+  assert.equal(env.E2E_ADMIN_PASSWORD, undefined);
+  const serialized = JSON.stringify({ webServer: { env } });
+  assert.equal(serialized.includes("SHOULD_NOT_LEAK"), false);
+  assert.deepEqual(findLeakedSecretMarkers(serialized), []);
+  const allowed = new Set<string>(["NODE_ENV", "DATABASE_ENVIRONMENT", "PORT", ...E2E_WEB_SERVER_OS_ALLOWLIST]);
+  for (const key of Object.keys(env)) {
+    assert.ok(allowed.has(key), `clave fuera de allowlist: ${key}`);
+  }
+  assert.ok(!("JWT_SECRET" in env));
+  assert.ok(!("DATABASE_URL" in env));
+});
+
+test("evidencia E2E regenerada no contiene marcadores de secreto", () => {
+  const dir = path.resolve("test/e2e/evidence");
+  if (!existsSync(dir)) return;
+  const targets = ["playwright-results.json", "audit-report.md", "console.log", "network.log"];
+  for (const file of targets) {
+    const full = path.join(dir, file);
+    if (!existsSync(full)) continue;
+    const text = readFileSync(full, "utf8");
+    const hits = findLeakedSecretMarkers(text);
+    assert.deepEqual(hits, [], `${file} contiene marcadores: ${hits.join(", ")}`);
+  }
+  const extraJson = existsSync(dir)
+    ? readdirSync(dir).filter((name) => name.endsWith(".json") && name !== "playwright-results.json")
+    : [];
+  for (const name of extraJson) {
+    const text = readFileSync(path.join(dir, name), "utf8");
+    const hits = findLeakedSecretMarkers(text);
+    assert.deepEqual(hits, [], `${name} contiene marcadores: ${hits.join(", ")}`);
+  }
 });
 
 test("DEV válido pasa el candado", () => {

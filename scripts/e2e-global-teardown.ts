@@ -4,6 +4,7 @@ import { sanitizePlaywrightResultsDump } from "../src/scripts/e2e-safety.js";
 
 type SpecRow = { title?: string; tests?: Array<{ results?: Array<{ status?: string }> }> };
 type SuiteRow = { suites?: SuiteRow[]; specs?: SpecRow[] };
+type ResultsFile = { suites?: SuiteRow[]; stats?: { expected?: number; unexpected?: number } };
 
 function collectSpecs(suites: SuiteRow[] | undefined, out: Array<{ title: string; status: string }>) {
   for (const suite of suites || []) {
@@ -15,21 +16,28 @@ function collectSpecs(suites: SuiteRow[] | undefined, out: Array<{ title: string
   }
 }
 
-export default async function globalTeardown() {
-  const dir = path.resolve("test/e2e/evidence");
-  mkdirSync(dir, { recursive: true });
-  const resultsPath = path.join(dir, "playwright-results.json");
-  const tests: Array<{ title: string; status: string }> = [];
-  if (existsSync(resultsPath)) {
-    try {
-      const raw = JSON.parse(readFileSync(resultsPath, "utf8")) as { suites?: SuiteRow[] };
-      const sanitized = sanitizePlaywrightResultsDump(raw) as { suites?: SuiteRow[] };
-      writeFileSync(resultsPath, `${JSON.stringify(sanitized, null, 2)}\n`);
-      collectSpecs(sanitized.suites, tests);
-    } catch {
-      /* evidencia incompleta */
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readResultsWhenReady(resultsPath: string): Promise<ResultsFile | null> {
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    if (existsSync(resultsPath)) {
+      try {
+        const raw = JSON.parse(readFileSync(resultsPath, "utf8")) as ResultsFile;
+        const tests: Array<{ title: string; status: string }> = [];
+        collectSpecs(raw.suites, tests);
+        if (tests.length > 0 || Number(raw.stats?.expected || 0) > 0) return raw;
+      } catch {
+        /* reporter still writing */
+      }
     }
+    await sleep(200);
   }
+  return null;
+}
+
+function writeAuditReport(dir: string, tests: Array<{ title: string; status: string }>) {
   const passed = tests.filter((t) => t.status === "passed" || t.status === "expected").length;
   const failed = tests.filter((t) => t.status === "failed" || t.status === "unexpected").length;
   const report = [
@@ -51,5 +59,19 @@ export default async function globalTeardown() {
     "Videos, screenshots, console.log y network.log están en este directorio / results.",
     "No se guardan passwords, tokens, cookies ni Authorization."
   ].join("\n");
-  writeFileSync(path.join(dir, "audit-report.md"), report);
+  writeFileSync(path.join(dir, "audit-report.md"), `${report}\n`);
+}
+
+export default async function globalTeardown() {
+  const dir = path.resolve("test/e2e/evidence");
+  mkdirSync(dir, { recursive: true });
+  const resultsPath = path.join(dir, "playwright-results.json");
+  const tests: Array<{ title: string; status: string }> = [];
+  const raw = await readResultsWhenReady(resultsPath);
+  if (raw) {
+    const sanitized = sanitizePlaywrightResultsDump(raw) as ResultsFile;
+    writeFileSync(resultsPath, `${JSON.stringify(sanitized, null, 2)}\n`);
+    collectSpecs(sanitized.suites, tests);
+  }
+  writeAuditReport(dir, tests);
 }

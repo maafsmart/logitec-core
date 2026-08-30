@@ -194,7 +194,7 @@ export function looksLikeProcessEnvDump(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const keys = Object.keys(value as Record<string, unknown>);
   if (keys.some((key) => SENSITIVE_KEY_RE.test(key) || /^database_url$/i.test(key))) return true;
-  return keys.length >= 20 && keys.includes("PATH");
+  return false;
 }
 
 export function stripDumpedProcessEnv(value: unknown): unknown {
@@ -215,4 +215,63 @@ export function stripDumpedProcessEnv(value: unknown): unknown {
 
 export function sanitizePlaywrightResultsDump(value: unknown): unknown {
   return sanitizeE2eEvidence(stripDumpedProcessEnv(value));
+}
+
+/** OS plumbing required to spawn `npx`/`tsx` on Windows/Unix. Never secrets. */
+export const E2E_WEB_SERVER_OS_ALLOWLIST = [
+  "PATH",
+  "Path",
+  "PATHEXT",
+  "SYSTEMROOT",
+  "SystemRoot",
+  "WINDIR",
+  "COMSPEC",
+  "ComSpec",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "HOME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "SystemDrive",
+  "PROGRAMDATA",
+  "ProgramData",
+  "APPDATA",
+  "LOCALAPPDATA"
+] as const;
+
+const E2E_WEB_SERVER_OS_ALLOWSET = new Set<string>(E2E_WEB_SERVER_OS_ALLOWLIST);
+
+export function buildE2eWebServerEnv(source: NodeJS.ProcessEnv, port: number): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of E2E_WEB_SERVER_OS_ALLOWLIST) {
+    const value = source[key];
+    if (typeof value === "string" && value.length > 0 && E2E_WEB_SERVER_OS_ALLOWSET.has(key)) {
+      env[key] = value;
+    }
+  }
+  env.NODE_ENV = "development";
+  env.DATABASE_ENVIRONMENT = "development";
+  env.PORT = String(port);
+  return env;
+}
+
+const EVIDENCE_LEAK_PATTERNS: Array<{ id: string; re: RegExp }> = [
+  { id: "SHOULD_NOT_LEAK", re: /SHOULD_NOT_LEAK/ },
+  { id: "E2E_ADMIN_PASSWORD", re: /E2E_ADMIN_PASSWORD\s*[:=]/ },
+  { id: "QA_E2E_PASSWORD", re: /QA_E2E_PASSWORD\s*[:=]/ },
+  { id: "JWT_SECRET", re: /JWT_SECRET\s*[:=]/ },
+  { id: "SESSION_SECRET", re: /SESSION_SECRET\s*[:=]/ },
+  { id: "API_TOKEN", re: /API_TOKEN\s*[:=]/ },
+  { id: "AUTHORIZATION_HEADER", re: /AUTHORIZATION\s*[:=]\s*"?(?!\[REDACTED\])/i },
+  { id: "COOKIE_HEADER", re: /\bCOOKIE\s*[:=]\s*"?(?!\[REDACTED\])/i },
+  { id: "DATABASE_URL", re: /DATABASE_URL\s*[:=]/ },
+  { id: "DATABASE_URI", re: /postgresql:\/\//i },
+  { id: "RANDOM_PRIVATE_VALUE", re: /RANDOM_PRIVATE_VALUE/ },
+  { id: "BEARER_TOKEN", re: /Bearer\s+(?!\[REDACTED\])[A-Za-z0-9._-]{12,}/i }
+];
+
+export function findLeakedSecretMarkers(text: string): string[] {
+  return EVIDENCE_LEAK_PATTERNS.filter((row) => row.re.test(text)).map((row) => row.id);
 }

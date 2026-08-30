@@ -1,20 +1,11 @@
+import dotenv from "dotenv";
 import { defineConfig, devices } from "@playwright/test";
+import { buildE2eWebServerEnv } from "./src/scripts/e2e-safety.js";
+
+dotenv.config();
 
 const port = Number(process.env.E2E_PORT || 3100);
 const baseURL = process.env.E2E_BASE_URL || `http://127.0.0.1:${port}`;
-
-function envForE2eWebServer(): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value == null) continue;
-    if (/password|passwd|credential/i.test(key)) continue;
-    env[key] = value;
-  }
-  env.NODE_ENV = "development";
-  env.DATABASE_ENVIRONMENT = "development";
-  env.PORT = String(port);
-  return env;
-}
 
 export default defineConfig({
   testDir: "./test/e2e",
@@ -39,11 +30,11 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command: `npx tsx src/server.ts`,
+        command: "npx tsx scripts/e2e-web-server.ts",
         url: `${baseURL}/health`,
         reuseExistingServer: false,
         timeout: 60_000,
-        env: envForE2eWebServer()
+        env: buildE2eWebServerEnv(process.env, port)
       },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }]
 });
