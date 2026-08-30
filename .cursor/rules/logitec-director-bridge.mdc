@@ -9,8 +9,35 @@ alwaysApply: true
 
 ## Roles
 
-- **ChatGPT** — director técnico / revisor.
+- **ChatGPT** — director técnico / revisor (vía GitHub + commits marcados).
 - **Rodrigo** — dueño; decisiones importantes y operaciones manuales o visuales.
+- **Cursor** — implementación local; **debe informar a Rodrigo con constancia**, no solo al final.
+
+## Puente técnico Cursor ↔ Director
+
+No hay canal directo entre agentes. El flujo es:
+
+```
+Cursor → commit/push con READY_FOR_DIRECTOR_REVIEW → GitHub → ChatGPT (director)
+```
+
+Rodrigo es el enlace humano entre revisión del director y nuevas instrucciones.
+
+## Reporte a Rodrigo (obligatorio, cada fase)
+
+Informar a Rodrigo **en el chat** con mensajes breves y frecuentes. No esperar solo al cierre.
+
+| Fase | Qué reportar |
+|------|----------------|
+| **Inicio** | Rama, HEAD, restricciones activas (NO merge, NO deploy, etc.) |
+| **Antes de cambiar** | Archivos/módulos a tocar y motivo |
+| **Durante** | Gates en curso (tsc, build, tests) y resultado |
+| **Hallazgo** | Defecto → corregido ahora / **REQUIERE DECISIÓN** |
+| **Antes de commit** | Archivos staged, si lleva `READY_FOR_DIRECTOR_REVIEW` o no |
+| **Después de push** | SHA, VEREDICTO PASS/FAIL, producción tocada sí/no, pendientes |
+| **Stop** | “Detenido, esperando instrucción” cuando la regla lo exija |
+
+Al **cierre de ronda** incluir siempre: VEREDICTO, SHA, base, archivos, pruebas, hallazgos, decisiones pendientes, confirmación producción.
 
 ## Antes de cambiar código
 
