@@ -714,6 +714,77 @@ test("HTTP reset ADMIN asigna temporal, no desactiva y no expone hash", async ()
   assert.equal(oldStillWorks, false);
 });
 
+test("HTTP reset newPassword válido se guarda, mustChangePassword true y no expone hash", async () => {
+  lastUserUpdate = {};
+  users.operator.mustChangePassword = false;
+  const admin = tokenFor(users.admin, AVIAT.id);
+  const res = await request("/api/users/u-op/reset-password", {
+    method: "POST",
+    token: admin,
+    body: { newPassword: "  claveOK12  " }
+  });
+  assert.equal(res.status, 200);
+  const json = res.json as Record<string, unknown>;
+  assert.equal(json.temporaryPassword, "claveOK12");
+  assert.equal(json.mustChangePassword, true);
+  assert.equal(lastUserUpdate.data?.mustChangePassword, true);
+  assert.ok(!("passwordHash" in json));
+  assert.equal(JSON.stringify(json).includes("passwordHash"), false);
+  assert.ok(await bcrypt.compare("claveOK12", users.operator.passwordHash));
+});
+
+test("HTTP reset rechaza newPassword '     a' y no lo convierte en temporal", async () => {
+  const hashBefore = users.operator.passwordHash;
+  const mustBefore = users.operator.mustChangePassword;
+  lastUserUpdate = {};
+  const admin = tokenFor(users.admin, AVIAT.id);
+  const res = await request("/api/users/u-op/reset-password", {
+    method: "POST",
+    token: admin,
+    body: { newPassword: "     a" }
+  });
+  assert.equal(res.status, 400);
+  const json = (res.json || {}) as Record<string, unknown>;
+  assert.ok(!("passwordHash" in json));
+  assert.ok(!("temporaryPassword" in json));
+  assert.equal(users.operator.passwordHash, hashBefore);
+  assert.equal(users.operator.mustChangePassword, mustBefore);
+  assert.equal(lastUserUpdate.data, undefined);
+});
+
+test("HTTP reset rechaza newPassword solo espacios y no autogenera", async () => {
+  const hashBefore = users.operator.passwordHash;
+  lastUserUpdate = {};
+  const admin = tokenFor(users.admin, AVIAT.id);
+  const res = await request("/api/users/u-op/reset-password", {
+    method: "POST",
+    token: admin,
+    body: { newPassword: "      " }
+  });
+  assert.equal(res.status, 400);
+  const json = (res.json || {}) as Record<string, unknown>;
+  assert.ok(!("passwordHash" in json));
+  assert.ok(!("temporaryPassword" in json));
+  assert.equal(users.operator.passwordHash, hashBefore);
+  assert.equal(lastUserUpdate.data, undefined);
+});
+
+test("HTTP reset sin newPassword genera temporal segura y no expone hash", async () => {
+  lastUserUpdate = {};
+  const admin = tokenFor(users.admin, AVIAT.id);
+  const res = await request("/api/users/u-op/reset-password", { method: "POST", token: admin, body: {} });
+  assert.equal(res.status, 200);
+  const json = res.json as Record<string, unknown>;
+  const temp = String(json.temporaryPassword);
+  assert.ok(temp.length >= 12);
+  assert.doesNotMatch(temp, /^\s+$/);
+  assert.doesNotMatch(temp, /\$2[aby]\$/);
+  assert.equal(json.mustChangePassword, true);
+  assert.ok(!("passwordHash" in json));
+  assert.equal(JSON.stringify(json).includes("passwordHash"), false);
+  assert.ok(await bcrypt.compare(temp, users.operator.passwordHash));
+});
+
 test("HTTP Mi cuenta edita ficha propia y no escala rol", async () => {
   users.operator.mustChangePassword = false;
   const token = tokenFor(users.operator);
@@ -729,6 +800,51 @@ test("HTTP Mi cuenta edita ficha propia y no escala rol", async () => {
     body: { role: "ADMIN", clientId: OTHER.id }
   });
   assert.equal(forbidden.status, 403);
+});
+
+test("HTTP Mi cuenta rechaza fullName solo espacios y no permite escalación", async () => {
+  users.operator.mustChangePassword = false;
+  users.operator.fullName = "Operador Editado";
+  users.operator.role = "OPERATOR";
+  users.operator.clientId = AVIAT.id;
+  users.operator.isActive = true;
+  const token = tokenFor(users.operator);
+  lastUserUpdate = {};
+  const spaces = await request("/api/auth/me", {
+    method: "PATCH",
+    token,
+    body: { fullName: "     " }
+  });
+  assert.equal(spaces.status, 400);
+  assert.equal(users.operator.fullName, "Operador Editado");
+  assert.equal(users.operator.role, "OPERATOR");
+  assert.equal(users.operator.clientId, AVIAT.id);
+  assert.equal(users.operator.isActive, true);
+  assert.equal(lastUserUpdate.data, undefined);
+
+  const ok = await request("/api/auth/me", {
+    method: "PATCH",
+    token,
+    body: { fullName: "Operador Valido" }
+  });
+  assert.equal(ok.status, 200);
+  const json = ok.json as Record<string, unknown>;
+  assert.equal(json.fullName, "Operador Valido");
+  assert.equal(json.role, "OPERATOR");
+  assert.equal(json.clientId, AVIAT.id);
+  assert.equal(json.isActive, true);
+  assert.ok(!("passwordHash" in json));
+
+  const escalate = await request("/api/auth/me", {
+    method: "PATCH",
+    token,
+    body: { fullName: "Operador Valido", role: "ADMIN", clientId: OTHER.id, isActive: false }
+  });
+  assert.equal(escalate.status, 403);
+  assert.equal((escalate.json as { code?: string }).code, "SELF_ESCALATION_FORBIDDEN");
+  assert.equal(users.operator.role, "OPERATOR");
+  assert.equal(users.operator.clientId, AVIAT.id);
+  assert.equal(users.operator.isActive, true);
 });
 
 test("temporal generado no es hash y change-password limpia mustChangePassword", () => {

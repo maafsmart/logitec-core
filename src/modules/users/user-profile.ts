@@ -60,7 +60,10 @@ export const userProfileSchema = z.object({
 });
 
 export const selfProfileSchema = userProfileSchema.extend({
-  fullName: z.string().min(1).max(160).optional()
+  fullName: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() : value),
+    z.string().min(1).max(160).optional()
+  )
 });
 
 export function profileDataFromParsed(

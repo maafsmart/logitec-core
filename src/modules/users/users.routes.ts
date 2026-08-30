@@ -31,7 +31,10 @@ const updateUserSchema = z.object({
 }).merge(userProfileSchema);
 
 const resetPasswordSchema = z.object({
-  newPassword: z.string().min(6).max(128).optional()
+  newPassword: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() : value),
+    z.string().min(6).max(128).optional()
+  )
 });
 
 async function resolveClientId(role: string, clientId: string | null | undefined): Promise<string | null> {
@@ -125,7 +128,8 @@ usersRouter.post("/:id/reset-password", requireAuth, requireRole(["ADMIN"]), asy
     throw new HttpError(404, "Usuario no encontrado.");
   }
 
-  const temporaryPassword = body.newPassword?.trim() || generateTemporaryPassword();
+  const requestedPassword = typeof body.newPassword === "string" ? body.newPassword : undefined;
+  const temporaryPassword = requestedPassword ?? generateTemporaryPassword();
   const passwordHash = await bcrypt.hash(temporaryPassword, 10);
   await prisma.user.update({
     where: { id },

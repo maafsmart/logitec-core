@@ -177,7 +177,7 @@ authRouter.patch("/me", requireAuth, async (req, res) => {
     where: { id: req.auth!.userId },
     data: {
       ...profileDataFromParsed(parsed),
-      ...(parsed.fullName ? { fullName: parsed.fullName.trim() } : {})
+      ...(typeof parsed.fullName === "string" && parsed.fullName ? { fullName: parsed.fullName } : {})
     },
     select: {
       ...USER_PUBLIC_SELECT,
