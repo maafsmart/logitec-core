@@ -808,9 +808,10 @@ function renderProjectsStockList() {
     return;
   }
   const econ = canSeeEconomicValuation();
+  const canEditMaster = currentRole === "ADMIN";
   const head = econ
-    ? `<tr><th>Proyecto</th><th>Código</th><th>Cubos</th><th>Qty</th><th>Valor inventario MXN</th><th>Piezas sin valor</th><th>Cobertura económica</th></tr>`
-    : `<tr><th>Proyecto</th><th>Código</th><th>Cubos</th><th>Qty</th></tr>`;
+    ? `<tr><th>Proyecto</th><th>Código</th><th>Cubos</th><th>Qty</th><th>Valor inventario MXN</th><th>Piezas sin valor</th><th>Cobertura económica</th><th>Acciones</th></tr>`
+    : `<tr><th>Proyecto</th><th>Código</th><th>Cubos</th><th>Qty</th><th>Acciones</th></tr>`;
   const body = inventoryProjectsCache
     .map((p) => {
       const extra = econ
@@ -818,11 +819,14 @@ function renderProjectsStockList() {
             formatQty(p.qtyUnvalued ?? p.valuation?.qtyUnvalued ?? 0)
           )}</td><td class="numeric-cell">${escCell(p.coveragePct ?? p.valuation?.coveragePct ?? "0.00")}%</td>`
         : "";
-      return `<tr><td><button type="button" class="btn-secondary btn-compact js-open-project-stock" data-project-id="${escCell(
-        p.id
-      )}">${escCell(p.name)}</button></td><td>${escCell(p.code)}</td><td>${p.cubes}</td><td>${formatQty(
+      const masterBtn = canEditMaster
+        ? `<button type="button" class="btn-secondary btn-compact js-open-project-master" data-project-id="${escCell(p.id)}">Datos maestro</button>`
+        : "";
+      return `<tr><td>${escCell(p.name)}</td><td>${escCell(p.code)}</td><td>${p.cubes}</td><td>${formatQty(
         p.qty
-      )}</td>${extra}</tr>`;
+      )}</td>${extra}<td><button type="button" class="btn-primary btn-compact js-open-project-stock" data-project-id="${escCell(
+        p.id
+      )}">Ver existencias</button> ${masterBtn}</td></tr>`;
     })
     .join("");
   const ftsRows = (Array.isArray(stockRowsCache) ? stockRowsCache : []).filter(isFreeToSaleRow);
@@ -840,9 +844,17 @@ function renderProjectsStockList() {
   box.querySelectorAll(".js-open-project-stock").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = btn.getAttribute("data-project-id") || "";
+      announceNav("Abre Inventario → Existencias filtrado por este proyecto.");
       void setInventoryScope({ projectId: id, assignmentType: "PROJECT" }).then(() => {
         navigateTo("inventario", "inventory");
       });
+    });
+  });
+  box.querySelectorAll(".js-open-project-master").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (currentRole !== "ADMIN") return;
+      const id = btn.getAttribute("data-project-id") || "";
+      void openProjectDetail(id);
     });
   });
 }
@@ -1283,6 +1295,30 @@ function hideAllModules() {
   closeMovementsPanel();
 }
 
+function announceNav(text) {
+  const el = document.getElementById("navAnnounce");
+  if (el) el.textContent = text || "";
+}
+
+function isSistemaWorkspaceModule(mod) {
+  return mod === "users" || mod === "config" || mod === "account";
+}
+
+function showSistemaWorkspace() {
+  const account = document.getElementById("moduleAccount");
+  if (account) {
+    account.classList.remove("hidden");
+    account.style.display = "";
+  }
+  if (currentRole !== "ADMIN") return;
+  ["moduleUsers", "moduleConfig"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove("hidden");
+    el.style.display = "";
+  });
+}
+
 function resetContentScroll() {
   const content =
     document.querySelector("main.content") ||
@@ -1383,7 +1419,9 @@ function navigateTo(sectionId, moduleName) {
   let section = sectionId || null;
   let mod = moduleName || null;
 
+  let fromBulkInbound = false;
   if (mod === "bulk-inbound") {
+    fromBulkInbound = true;
     section = "inventario";
     mod = "inventory";
   }
@@ -1425,16 +1463,23 @@ function navigateTo(sectionId, moduleName) {
   });
 
   hideAllModules();
+  document.body.classList.toggle("sistema-workspace", section === "sistema" && isSistemaWorkspaceModule(mod));
   setNavSection(section);
   currentNavSection = section;
   currentModuleName = mod;
   persistNavRoute(section, mod);
+  if (fromBulkInbound) {
+    announceNav("Entrada masiva abre Inventario → Existencias. Un solo asistente de importación; no hay un segundo importador.");
+  }
   document.querySelectorAll(".js-inv-master-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.getAttribute("data-inv-master-tab") === mod);
   });
 
   const activeEl = MODULE_REGISTRY[mod];
   if (activeEl) activeEl.classList.remove("hidden");
+  if (section === "sistema" && isSistemaWorkspaceModule(mod)) {
+    showSistemaWorkspace();
+  }
 
   const showUsers = mod === "users";
   const showControl = mod === "control";
@@ -5828,16 +5873,18 @@ async function loadWarehousesModule() {
   const addBtn = document.getElementById("warehousesAddBtn");
   if (addBtn) addBtn.style.display = currentRole === "ADMIN" ? "" : "none";
   host.innerHTML = rows.length
-    ? `<table class="excel-table"><thead><tr><th>Código</th><th>Nombre</th><th>Ubicaciones</th><th>Cant. física</th><th>Reservada</th><th>Estado</th></tr></thead><tbody>${rows
-        .map(
-          (r) =>
-            `<tr data-open-warehouse="${escCell(r.id)}"><td>${escCell(r.code)}</td><td>${escCell(r.name)}</td><td>${escCell(r.stats?.locationCount ?? "—")}</td><td>${escCell(r.stats?.qty ?? "—")}</td><td>${escCell(r.stats?.reservedQty ?? "—")}</td><td>${r.active === false ? "Inactivo" : "Activo"}</td></tr>`
-        )
+    ? `<table class="excel-table"><thead><tr><th>Código</th><th>Nombre</th><th>Ubicaciones</th><th>Cant. física</th><th>Reservada</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${rows
+        .map((r) => {
+          const actionLabel = currentRole === "ADMIN" ? "Ver / editar datos" : "Ver datos";
+          return `<tr><td>${escCell(r.code)}</td><td>${escCell(r.name)}</td><td>${escCell(r.stats?.locationCount ?? "—")}</td><td>${escCell(r.stats?.qty ?? "—")}</td><td>${escCell(r.stats?.reservedQty ?? "—")}</td><td>${r.active === false ? "Inactivo" : "Activo"}</td><td><button type="button" class="btn-secondary btn-compact js-open-warehouse" data-open-warehouse="${escCell(r.id)}">${actionLabel}</button></td></tr>`;
+        })
         .join("")}</tbody></table>`
     : `<p class="assignee-hint">No hay almacenes en el catálogo.</p>`;
-  host.querySelectorAll("[data-open-warehouse]").forEach((row) => {
-    row.style.cursor = "pointer";
-    row.addEventListener("click", () => void openWarehouseDetail(row.getAttribute("data-open-warehouse")));
+  host.querySelectorAll("[data-open-warehouse]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void openWarehouseDetail(btn.getAttribute("data-open-warehouse"));
+    });
   });
 }
 
@@ -5936,16 +5983,18 @@ async function loadLocationsModule() {
   const addBtn = document.getElementById("locationsAddBtn");
   if (addBtn) addBtn.style.display = currentRole === "ADMIN" ? "" : "none";
   host.innerHTML = rows.length
-    ? `<table class="excel-table"><thead><tr><th>Almacén</th><th>Código</th><th>Descripción</th><th>Zona</th><th>Estado</th></tr></thead><tbody>${rows
-        .map(
-          (r) =>
-            `<tr data-open-location="${escCell(r.id)}"><td>${escCell(r.warehouse)}</td><td>${escCell(r.code)}</td><td>${escCell(r.description || "—")}</td><td>${escCell([r.zone, r.rack, r.level, r.position].filter((x) => x && x !== "-").join(" / ") || "—")}</td><td>${r.active === false ? "Inactivo" : "Activo"}</td></tr>`
-        )
+    ? `<table class="excel-table"><thead><tr><th>Almacén</th><th>Código</th><th>Descripción</th><th>Zona</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${rows
+        .map((r) => {
+          const actionLabel = currentRole === "ADMIN" ? "Ver / editar datos" : "Ver datos";
+          return `<tr><td>${escCell(r.warehouse)}</td><td>${escCell(r.code)}</td><td>${escCell(r.description || "—")}</td><td>${escCell([r.zone, r.rack, r.level, r.position].filter((x) => x && x !== "-").join(" / ") || "—")}</td><td>${r.active === false ? "Inactivo" : "Activo"}</td><td><button type="button" class="btn-secondary btn-compact js-open-location" data-open-location="${escCell(r.id)}">${actionLabel}</button></td></tr>`;
+        })
         .join("")}</tbody></table>`
     : `<p class="assignee-hint">No hay ubicaciones con los filtros actuales.</p>`;
-  host.querySelectorAll("[data-open-location]").forEach((row) => {
-    row.style.cursor = "pointer";
-    row.addEventListener("click", () => void openLocationDetail(row.getAttribute("data-open-location")));
+  host.querySelectorAll("[data-open-location]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void openLocationDetail(btn.getAttribute("data-open-location"));
+    });
   });
 }
 
@@ -6077,10 +6126,93 @@ function wireQuickActions() {
     btn.addEventListener("click", () => {
       const mod = btn.getAttribute("data-goto-module");
       if (!mod) return;
+      const announce = btn.getAttribute("data-nav-announce");
+      if (announce) announceNav(announce);
       const sectionHint = btn.getAttribute("data-nav-section") || null;
       if (sectionHint) navigateTo(sectionHint, mod);
       else activateModule(mod);
     });
+  });
+}
+
+function wireNewPasswordVisibilityToggles() {
+  document.querySelectorAll(".js-toggle-new-password").forEach((btn) => {
+    if (btn.dataset.wired === "1") return;
+    btn.dataset.wired = "1";
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-password-target");
+      const input = id ? document.getElementById(id) : null;
+      if (!input || (id !== "newPassword" && id !== "newAccountPassword")) return;
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      btn.setAttribute("aria-pressed", show ? "true" : "false");
+      btn.textContent = show ? "Ocultar" : "Mostrar";
+    });
+  });
+}
+
+function canUseFullscreenApi() {
+  const root = document.documentElement;
+  return Boolean(root && (root.requestFullscreen || root.webkitRequestFullscreen));
+}
+
+function isDocumentFullscreen() {
+  return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+function requestFocusFullscreen() {
+  const root = document.documentElement;
+  if (root.requestFullscreen) return root.requestFullscreen();
+  if (root.webkitRequestFullscreen) return root.webkitRequestFullscreen();
+  return Promise.reject(new Error("fullscreen-unavailable"));
+}
+
+function exitFocusFullscreen() {
+  if (document.exitFullscreen) return document.exitFullscreen();
+  if (document.webkitExitFullscreen) return document.webkitExitFullscreen();
+  return Promise.resolve();
+}
+
+function syncFocusModeButton() {
+  const btn = document.getElementById("focusModeBtn");
+  if (!btn) return;
+  const on = document.body.classList.contains("focus-mode") || isDocumentFullscreen();
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.textContent = on ? "Salir de concentración" : "Modo concentración";
+}
+
+function applyFocusMode(on) {
+  document.body.classList.toggle("focus-mode", Boolean(on));
+  syncFocusModeButton();
+}
+
+function wireFocusMode() {
+  const btn = document.getElementById("focusModeBtn");
+  if (!btn || btn.dataset.wired === "1") return;
+  btn.dataset.wired = "1";
+  btn.addEventListener("click", () => {
+    const active = document.body.classList.contains("focus-mode") || isDocumentFullscreen();
+    if (active) {
+      applyFocusMode(false);
+      void exitFocusFullscreen().catch(() => {});
+      return;
+    }
+    applyFocusMode(true);
+    if (!canUseFullscreenApi()) {
+      announceNav("Modo concentración activo (compacto). Este navegador no permite pantalla completa web.");
+      return;
+    }
+    void requestFocusFullscreen().catch(() => {
+      announceNav("Modo concentración activo. Pantalla completa no disponible; se compactó el chrome interno.");
+    });
+  });
+  document.addEventListener("fullscreenchange", () => {
+    if (!isDocumentFullscreen()) applyFocusMode(false);
+    else applyFocusMode(true);
+  });
+  document.addEventListener("webkitfullscreenchange", () => {
+    if (!isDocumentFullscreen()) applyFocusMode(false);
+    else applyFocusMode(true);
   });
 }
 
@@ -14444,6 +14576,8 @@ wireCatalogFilterInputs();
 wireOperationalForms();
 wireControlCenterFilters();
 wireQuickActions();
+wireNewPasswordVisibilityToggles();
+wireFocusMode();
 wireModals();
 wireAviatProjectUi();
 initGridDensity();
