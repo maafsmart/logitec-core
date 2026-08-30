@@ -57,6 +57,9 @@ export type OperationalHistoryPreview = {
   inventoryResetDoesNotDelete: string[];
   historyCleanupDeletes: HistoryCategory[];
   mastersPreserved: string[];
+  doesNotTouchGitHub: true;
+  doesNotRewriteGitHistory: true;
+  repositoryHistoryPreserved: string[];
   counts: {
     movements: HistoryCategoryCount;
     scanEvents: HistoryCategoryCount;
@@ -115,6 +118,8 @@ export type OperationalHistoryCleanupResult = {
   reachedZeroOperationalHistory: boolean;
   untouchedOtherClient: true;
   mastersUntouched: true;
+  doesNotTouchGitHub: true;
+  repositoryUntouched: true;
 };
 
 const MASTERS_PRESERVED = [
@@ -127,6 +132,21 @@ const MASTERS_PRESERVED = [
   "ubicaciones",
   "existencias/inventario físico"
 ];
+
+/** CLEAN_START never touches GitHub / Git technical history. */
+export const REPOSITORY_HISTORY_PRESERVED = [
+  "commits históricos",
+  "historial Git (sin reescritura ni force push)",
+  "ramas con valor de auditoría",
+  "PRs, comentarios y evidencia técnica",
+  "versiones anteriores del código"
+];
+
+const REPOSITORY_GUARD = {
+  doesNotTouchGitHub: true as const,
+  doesNotRewriteGitHistory: true as const,
+  repositoryHistoryPreserved: [...REPOSITORY_HISTORY_PRESERVED]
+};
 
 function notesPreview(notes: string | null | undefined): string {
   const text = String(notes || "").replace(/\s+/g, " ").trim();
@@ -415,11 +435,13 @@ export async function previewOperationalHistoryCleanup(
         isAviat,
         policy: OPERATIONAL_HISTORY_POLICY,
         decision: OPERATIONAL_HISTORY_POLICY,
-        decisionReason: "El preview solo enumera historial del cliente AVIAT activo. Cambia el contexto operativo a AVIAT.",
+        decisionReason:
+          "El preview solo enumera historial del cliente AVIAT activo. Cambia el contexto operativo a AVIAT. CLEAN_START no toca GitHub ni el historial técnico del repositorio.",
         canReachZeroOperationalHistory: false,
         inventoryResetDoesNotDelete: ["incidents", "comments"],
         historyCleanupDeletes: [...HISTORY_CATEGORIES],
         mastersPreserved: MASTERS_PRESERVED,
+        ...REPOSITORY_GUARD,
         counts: emptyCounts,
         leftoverOutsideInventoryReset: { incidents: emptyIncidents(), comments: { total: 0 } },
         coveredByInventoryReset: emptyCovered,
@@ -444,11 +466,12 @@ export async function previewOperationalHistoryCleanup(
       policy: OPERATIONAL_HISTORY_POLICY,
       decision: OPERATIONAL_HISTORY_POLICY,
       decisionReason:
-        "CLEAN_START: el historial operativo de ensayo de AVIAT (movimientos, scans, activity, tareas, requisiciones, imports, incidencias y comentarios) puede llevarse a cero. Las 3 incidencias heredadas del 04/08 y 14/08 son candidatas. No se ejecuta sola. Maestros e inventario físico se conservan.",
+        "CLEAN_START: solo datos operativos de AVIAT en base de datos (movimientos, scans, activity, tareas, requisiciones, imports, incidencias y comentarios) pueden llevarse a cero. No borra historia de GitHub, commits, ramas, PRs ni evidencia técnica. No se ejecuta sola. Maestros e inventario físico se conservan.",
       canReachZeroOperationalHistory: true,
       inventoryResetDoesNotDelete: ["incidents", "comments"],
       historyCleanupDeletes: [...HISTORY_CATEGORIES],
       mastersPreserved: MASTERS_PRESERVED,
+      ...REPOSITORY_GUARD,
       counts: {
         movements: { total: covered.movements, selectable: true },
         scanEvents: { total: covered.scanEvents, selectable: true },
@@ -504,7 +527,9 @@ export async function executeOperationalHistoryCleanup(
       leftover,
       reachedZeroOperationalHistory,
       untouchedOtherClient: true,
-      mastersUntouched: true
+      mastersUntouched: true,
+      doesNotTouchGitHub: true,
+      repositoryUntouched: true
     };
   });
 }

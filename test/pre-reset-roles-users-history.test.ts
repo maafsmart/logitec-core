@@ -330,6 +330,8 @@ test("matriz de roles: precios, import, users y maestros", () => {
   assert.match(adminRoutes, /operational-history\/preview"/);
   assert.match(adminRoutes, /requireRole\(\["ADMIN"\]\)/);
   assert.match(html, /no forman parte de este reset de inventario|no borra/);
+  assert.match(html, /No borra historia de GitHub/);
+  assert.match(html, /no reescribe historial Git/);
   assert.doesNotMatch(physicalReset, /incident\.deleteMany/);
 });
 
@@ -347,6 +349,9 @@ test("UI ficha, reset de contraseña y historial no se autoejecutan", () => {
   assert.doesNotMatch(sliceFunction(js, "validateSession"), /loadOperationalHistoryPreview/);
   assert.match(html, /id="historyCleanAll"/);
   assert.match(html, /avatarUrl/);
+  assert.match(html, /No borra historia de GitHub/);
+  assert.match(sliceFunction(js, "loadOperationalHistoryPreview"), /doesNotTouchGitHub/);
+  assert.match(sliceFunction(js, "executeOperationalHistoryCleanup"), /GitHub\/repositorio intacto/);
   assert.match(sliceFunction(js, "selectedHistoryCategories"), /historyCleanAll/);
 });
 
@@ -365,6 +370,11 @@ test("preview de historial aísla AVIAT y no ejecuta", async () => {
   assert.equal(preview.policy, OPERATIONAL_HISTORY_POLICY);
   assert.equal(preview.decision, OPERATIONAL_HISTORY_DECISION);
   assert.equal(preview.canReachZeroOperationalHistory, true);
+  assert.equal(preview.doesNotTouchGitHub, true);
+  assert.equal(preview.doesNotRewriteGitHistory, true);
+  assert.ok(preview.repositoryHistoryPreserved.some((item) => /commits/i.test(item)));
+  assert.match(preview.decisionReason, /GitHub/);
+  assert.doesNotMatch(preview.decisionReason, /borrar commits históricos|force push de GitHub/);
   assert.equal(preview.counts.incidents.total, 3);
   assert.equal(preview.counts.comments.total, 1);
   assert.equal(preview.counts.movements.total, 1);
@@ -376,6 +386,7 @@ test("preview de historial aísla AVIAT y no ejecuta", async () => {
   const other = await previewOperationalHistoryCleanup({ clientId: OTHER.id }, db as never);
   assert.equal(other.isAviat, false);
   assert.equal(other.counts.incidents.total, 0);
+  assert.equal(other.doesNotTouchGitHub, true);
 });
 
 test("execute all llega a cero historial AVIAT y no toca maestros ni otro cliente", async () => {
@@ -386,6 +397,8 @@ test("execute all llega a cero historial AVIAT y no toca maestros ni otro client
     db as never
   );
   assert.equal(result.reachedZeroOperationalHistory, true);
+  assert.equal(result.doesNotTouchGitHub, true);
+  assert.equal(result.repositoryUntouched, true);
   assert.equal(result.deleted.incidents, 3);
   assert.equal(result.deleted.comments, 1);
   assert.equal(result.deleted.movements, 1);

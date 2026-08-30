@@ -12767,7 +12767,10 @@ async function loadOperationalHistoryPreview() {
   }
   operationalHistoryPreview = data;
   if (decision) {
-    decision.textContent = `${data.policy || data.decision}: ${data.decisionReason} Automática: no. Cero historial posible: ${data.canReachZeroOperationalHistory ? "sí" : "no"}.`;
+    const githubNote = data.doesNotTouchGitHub
+      ? " GitHub/repositorio: intacto (no borra commits, ramas, PRs ni evidencia técnica)."
+      : "";
+    decision.textContent = `${data.policy || data.decision}: ${data.decisionReason} Automática: no. Cero historial posible: ${data.canReachZeroOperationalHistory ? "sí" : "no"}.${githubNote}`;
   }
   const cat = data.counts || {};
   if (counts) {
@@ -12831,7 +12834,7 @@ async function executeOperationalHistoryCleanup() {
   if (err) err.textContent = "";
   if (ok) {
     ok.classList.remove("hidden");
-    ok.textContent = `Limpieza aplicada. Cero historial AVIAT: ${data.reachedZeroOperationalHistory ? "sí" : "no"}. Maestros intactos.`;
+        ok.textContent = `Limpieza aplicada. Cero historial AVIAT: ${data.reachedZeroOperationalHistory ? "sí" : "no"}. Maestros intactos. GitHub/repositorio intacto.`;
   }
   await loadOperationalHistoryPreview();
 }
