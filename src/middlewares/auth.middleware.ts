@@ -7,6 +7,17 @@ import { prisma } from "../db/prisma.js";
 export type UserRole = "ADMIN" | "OPERATOR" | "SUPERVISOR" | "CLIENT";
 const userRoles: readonly UserRole[] = ["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"];
 
+export const PASSWORD_CHANGE_REQUIRED = "PASSWORD_CHANGE_REQUIRED";
+
+function isAllowedDuringPasswordChange(req: Request): boolean {
+  const path = `${req.baseUrl || ""}${req.path || ""}`.replace(/\/+$/, "") || "/";
+  const method = req.method.toUpperCase();
+  return (
+    (method === "GET" && path === "/api/auth/me") ||
+    (method === "POST" && path === "/api/auth/change-password")
+  );
+}
+
 function isBoundClientRole(role: string): boolean {
   return role === "SUPERVISOR" || role === "OPERATOR" || role === "CLIENT";
 }
@@ -71,6 +82,7 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
         role: true,
         isActive: true,
         clientId: true,
+        mustChangePassword: true,
         client: { select: { active: true } }
       }
     });
@@ -111,6 +123,13 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
       operationalClientId,
       operationalClientInvalid
     };
+    if (user.mustChangePassword && !isAllowedDuringPasswordChange(req)) {
+      throw new HttpError(
+        403,
+        "Debes cambiar tu contraseña temporal antes de continuar.",
+        PASSWORD_CHANGE_REQUIRED
+      );
+    }
     next();
   } catch (error) {
     if (error instanceof HttpError) throw error;

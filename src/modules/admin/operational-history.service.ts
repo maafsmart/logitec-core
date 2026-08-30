@@ -8,6 +8,8 @@ import {
 
 export const OPERATIONAL_HISTORY_CONFIRMATION = "LIMPIAR HISTORIAL OPERATIVO DE AVIAT";
 export const OPERATIONAL_HISTORY_POLICY = "CLEAN_START_AVIAT";
+/** Distinct from Prisma migrate (72707369) and physical reset (90429101). */
+export const OPERATIONAL_HISTORY_ADVISORY_LOCK_CLASS = 90429102;
 /** @deprecated Use OPERATIONAL_HISTORY_POLICY. Kept so older tests/imports keep compiling. */
 export const OPERATIONAL_HISTORY_DECISION = OPERATIONAL_HISTORY_POLICY;
 
@@ -258,6 +260,16 @@ async function collectIncidentPreview(tx: Prisma.TransactionClient, clientId: st
 
 function toDecimal(value: unknown): Prisma.Decimal {
   return value instanceof Prisma.Decimal ? value : new Prisma.Decimal(String(value ?? 0));
+}
+
+export async function tryAcquireOperationalHistoryLock(
+  tx: { $queryRaw: Prisma.TransactionClient["$queryRaw"] },
+  clientId: string
+): Promise<boolean> {
+  const rows = await tx.$queryRaw<Array<{ locked: boolean }>>`
+    SELECT pg_try_advisory_xact_lock(CAST(${OPERATIONAL_HISTORY_ADVISORY_LOCK_CLASS} AS INTEGER), hashtext(${clientId})) AS locked
+  `;
+  return Boolean(rows[0]?.locked);
 }
 
 function activeReserved(qty: unknown, consumed: unknown, released: unknown): Prisma.Decimal {
@@ -543,6 +555,14 @@ export async function executeOperationalHistoryCleanup(
   return db.$transaction(async (tx) => {
     const aviatId = await resolveUniqueAviatClientId(tx);
     assertAviatOperationalClient(actor.clientId, aviatId);
+    const locked = await tryAcquireOperationalHistoryLock(tx, aviatId);
+    if (!locked) {
+      throw new HttpError(
+        409,
+        "Ya hay una limpieza de historial operativo en curso.",
+        "OPERATIONAL_HISTORY_IN_FLIGHT"
+      );
+    }
     const deleted = await purgeSelectedHistory(
       tx,
       aviatId,

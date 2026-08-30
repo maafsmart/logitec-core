@@ -7,9 +7,12 @@ import { readFileSync } from "node:fs";
 import { app } from "../src/app.js";
 import { prisma } from "../src/db/prisma.js";
 import { signAccessToken } from "../src/middlewares/auth.middleware.js";
+import { HttpError } from "../src/shared/http-error.js";
 import { canExposeEconomicValuation } from "../src/modules/inventory/inventory-economic-access.js";
+import { PHYSICAL_RESET_ADVISORY_LOCK_CLASS } from "../src/modules/inventory/physical-reset.service.js";
 import {
   HISTORY_CATEGORIES,
+  OPERATIONAL_HISTORY_ADVISORY_LOCK_CLASS,
   OPERATIONAL_HISTORY_CONFIRMATION,
   OPERATIONAL_HISTORY_DECISION,
   OPERATIONAL_HISTORY_POLICY,
@@ -179,7 +182,7 @@ function filterReservations(
   return clientScoped.filter((row) => ids.includes(row.requisitionId));
 }
 
-function createHistoryDb() {
+function createHistoryDb(options?: { onLock?: () => Promise<boolean> | boolean }) {
   const state = {
     clients: [AVIAT, OTHER],
     incidents: [
@@ -370,6 +373,13 @@ function createHistoryDb() {
     client: {
       findMany: async () => state.clients,
       count: async () => state.clients.length
+    },
+    $queryRaw: async () => {
+      if (options?.onLock) {
+        const locked = await options.onLock();
+        return [{ locked }];
+      }
+      return [{ locked: true }];
     }
   };
   return {
@@ -572,6 +582,59 @@ test("selección parcial comments no altera reservas, tareas ni requisiciones", 
   assert.equal(state.movements.some((row) => row.id === "m-a"), true);
 });
 
+test("CLEAN_START usa advisory lock distinto al reset físico y a Prisma migrate", () => {
+  assert.equal(OPERATIONAL_HISTORY_ADVISORY_LOCK_CLASS, 90429102);
+  assert.notEqual(OPERATIONAL_HISTORY_ADVISORY_LOCK_CLASS, PHYSICAL_RESET_ADVISORY_LOCK_CLASS);
+  assert.notEqual(OPERATIONAL_HISTORY_ADVISORY_LOCK_CLASS, 72707369);
+  assert.match(historyService, /pg_try_advisory_xact_lock/);
+  assert.match(historyService, /OPERATIONAL_HISTORY_IN_FLIGHT/);
+  assert.match(historyService, /tryAcquireOperationalHistoryLock/);
+});
+
+test("CLEAN_START concurrent no doble-decrementa reservedQty ni toca otro cliente", async () => {
+  let firstEntered = false;
+  let secondSawBusy = false;
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const { state, db } = createHistoryDb({
+    onLock: async () => {
+      if (!firstEntered) {
+        firstEntered = true;
+        await firstGate;
+        return true;
+      }
+      secondSawBusy = true;
+      return false;
+    }
+  });
+  const actor = { userId: "u-admin", clientId: AVIAT.id };
+  const input = { confirmation: OPERATIONAL_HISTORY_CONFIRMATION, categories: ["requisitions"] };
+  const first = executeOperationalHistoryCleanup(actor, input, db as never);
+  while (!firstEntered) await new Promise((resolve) => setImmediate(resolve));
+  const second = executeOperationalHistoryCleanup(actor, input, db as never);
+  void second.catch(() => undefined);
+  while (!secondSawBusy) await new Promise((resolve) => setImmediate(resolve));
+  releaseFirst();
+  const settled = await Promise.allSettled([first, second]);
+  const winner = settled.find((row) => row.status === "fulfilled");
+  const loser = settled.find((row) => row.status === "rejected");
+  assert.equal(winner?.status, "fulfilled");
+  assert.equal(loser?.status, "rejected");
+  assert.equal((loser as PromiseRejectedResult).reason instanceof HttpError, true);
+  assert.equal(((loser as PromiseRejectedResult).reason as HttpError).statusCode, 409);
+  assert.equal(((loser as PromiseRejectedResult).reason as HttpError).code, "OPERATIONAL_HISTORY_IN_FLIGHT");
+  assert.equal((winner as PromiseFulfilledResult<{ deleted: { reservationsReleased: number } }>).value.deleted.reservationsReleased, 1);
+  assert.equal(state.inventories.find((row) => row.id === "inv-a")?.qty, 10);
+  assert.equal(state.inventories.find((row) => row.id === "inv-a")?.reservedQty, 0);
+  assert.equal(state.layers.find((row) => row.id === "ly-a")?.reservedQty, 0);
+  assert.equal(state.inventories.find((row) => row.id === "inv-2")?.qty, 8);
+  assert.equal(state.inventories.find((row) => row.id === "inv-2")?.reservedQty, 5);
+  assert.equal(state.layers.find((row) => row.id === "ly-2")?.reservedQty, 5);
+  assert.equal(state.reservations.some((row) => row.id === "res-2"), true);
+});
+
 before(async () => {
   stub("user", "findUnique", async ({ where }: { where: { id?: string; email?: string } }) =>
     Object.values(users).find((row) => row.id === where.id || row.email === where.email) || null
@@ -652,6 +715,7 @@ test("HTTP reset ADMIN asigna temporal, no desactiva y no expone hash", async ()
 });
 
 test("HTTP Mi cuenta edita ficha propia y no escala rol", async () => {
+  users.operator.mustChangePassword = false;
   const token = tokenFor(users.operator);
   const ok = await request("/api/auth/me", {
     method: "PATCH",
