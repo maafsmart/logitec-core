@@ -254,7 +254,7 @@ test("resumen 1717 / 849 FREE_TO_SALE / 868 proyecto / 0 unresolved", () => {
 });
 
 test("la interfaz muestra FREE TO SALE y no lo trata como error pendiente ni lo mete a proyectos", () => {
-  assert.match(js, /FREE TO SALE: \$\{formatImportCount\(importUi\.freeToSaleAssigned\)\}/);
+  assert.match(js, /importStatBadge\("FREE TO SALE", importUi\.freeToSaleAssigned/);
   assert.match(js, /no pertenece a un proyecto/);
   assert.match(js, /no se añaden a la lista de proyectos/);
   assert.match(js, /fillInventoryProjectSelects[\s\S]*inventoryProjectsCache\.map/);

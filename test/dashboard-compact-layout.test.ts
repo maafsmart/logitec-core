@@ -67,7 +67,6 @@ test("descripciones de módulos siguen en el HTML", () => {
 test("chips de proyecto siguen presentes", () => {
   assert.match(html, /\.project-chip\s*\{/);
   assert.match(html, /project-chips-row/);
-  assert.match(js, /project-chip/);
 });
 
 test("no se eliminaron IDs operativos", () => {

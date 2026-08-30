@@ -104,31 +104,27 @@ const ATT_SKU_CONTEXT = {
   }
 };
 
+function mockAssignmentBtn(assignment: string) {
+  const attrs: Record<string, string> = { "data-assignment": assignment };
+  const btn = {
+    className: "js-assignment-opt",
+    disabled: false,
+    style: {} as { display?: string },
+    getAttribute(name: string) {
+      return attrs[name] ?? null;
+    },
+    setAttribute(name: string, value: string) {
+      attrs[name] = value;
+    }
+  };
+  btn.classList = classListFor(btn);
+  return btn;
+}
+
 function makeScopeDom() {
-  const todas = {
-    className: "js-assignment-opt",
-    disabled: false,
-    getAttribute(name: string) {
-      return name === "data-assignment" ? "" : null;
-    }
-  };
-  const projectBtn = {
-    className: "js-assignment-opt",
-    disabled: false,
-    getAttribute(name: string) {
-      return name === "data-assignment" ? "PROJECT" : null;
-    }
-  };
-  const ftsBtn = {
-    className: "js-assignment-opt",
-    disabled: false,
-    getAttribute(name: string) {
-      return name === "data-assignment" ? "FREE_TO_SALE" : null;
-    }
-  };
-  todas.classList = classListFor(todas);
-  projectBtn.classList = classListFor(projectBtn);
-  ftsBtn.classList = classListFor(ftsBtn);
+  const todas = mockAssignmentBtn("");
+  const projectBtn = mockAssignmentBtn("PROJECT");
+  const ftsBtn = mockAssignmentBtn("FREE_TO_SALE");
   const select = {
     className: "js-inventory-project-select",
     value: "p-att",

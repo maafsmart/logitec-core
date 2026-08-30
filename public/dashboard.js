@@ -660,7 +660,10 @@ function fillInventoryProjectSelects() {
   });
   document.querySelectorAll(".js-assignment-opt").forEach((btn) => {
     const value = btn.getAttribute("data-assignment") || "";
-    btn.classList.toggle("active", value === (scope.projectId ? "PROJECT" : scope.assignmentType));
+    const activeValue = scope.projectId ? "PROJECT" : scope.assignmentType;
+    const isActive = value === activeValue;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-pressed", isActive ? "true" : "false");
     btn.disabled = Boolean(scope.projectId) && value === "FREE_TO_SALE";
     if (btn.style) btn.style.display = "";
   });
@@ -1416,6 +1419,7 @@ function navigateTo(sectionId, moduleName) {
   if (showInventory) {
     updateAviatHeaderUi();
     applyInventoryFilters();
+    if (currentRole === "ADMIN") void probeResumableImport();
   }
   if (showCatalog) {
     updateAviatHeaderUi();
@@ -1489,8 +1493,12 @@ function openInventoryImportAssistant() {
   navigateTo("inventario", "inventory");
   const panel = document.getElementById("importWizardPanel");
   if (!panel) return false;
-  panel.style.display = "";
-  panel.classList.remove("hidden");
+  hideImportCompletionNotice();
+  if (isTerminalImportUiBatch(importUi.batchStatus) || importUi.confirmed) {
+    dismissImportWizardSession({ clearStoredBatch: true });
+  }
+  openImportWizardPanel();
+  void probeResumableImport();
   window.setTimeout(() => {
     panel.scrollIntoView({ behavior: "smooth", block: "start" });
     const focusEl = document.getElementById("importContext") || panel;
@@ -12441,6 +12449,8 @@ const importUi = {
   batchStatus: "",
   confirmable: false,
   confirmableReason: "",
+  reviewSynced: false,
+  reviewStale: false,
   lastSyncAt: null,
   syncOk: false,
   error: ""
@@ -12483,6 +12493,99 @@ function rememberImportBatchId(id) {
   } catch (_error) {
     /* pista opcional */
   }
+}
+
+function isTerminalImportUiBatch(status) {
+  return status === "COMPLETED" || status === "CANCELLED";
+}
+
+function isImportWizardPanelOpen() {
+  const panel = document.getElementById("importWizardPanel");
+  return Boolean(panel && !panel.classList.contains("hidden") && panel.style.display !== "none");
+}
+
+function openImportWizardPanel() {
+  const panel = document.getElementById("importWizardPanel");
+  if (!panel) return;
+  panel.classList.remove("hidden");
+  panel.style.display = "";
+  updateImportWizardChrome();
+}
+
+function closeImportWizardPanel() {
+  const panel = document.getElementById("importWizardPanel");
+  if (!panel) return;
+  panel.classList.add("hidden");
+  panel.style.display = "none";
+  updateImportWizardChrome();
+}
+
+function hideImportCompletionNotice() {
+  document.getElementById("importSuccessBanner")?.classList.add("hidden");
+}
+
+function showImportCompletionNotice(message) {
+  const banner = document.getElementById("importSuccessBanner");
+  if (banner) {
+    banner.textContent = message;
+    banner.classList.remove("hidden");
+  }
+}
+
+function dismissImportWizardSession({ clearStoredBatch = true } = {}) {
+  currentImportId = null;
+  importResumeActive = null;
+  if (clearStoredBatch) rememberImportBatchId(null);
+  resetImportWizardLocalState();
+  hideImportResumeBanner();
+  syncImportWizardUi();
+}
+
+function closeImportWizardUiOnly() {
+  if (importUi.busy) return;
+  const openId = currentImportId;
+  if (openId && !isTerminalImportUiBatch(importUi.batchStatus)) {
+    importResumeDismissedId = openId;
+  }
+  closeImportWizardPanel();
+  syncImportWizardUi();
+}
+
+async function returnInventoryToTotalScopeAfterImport() {
+  const scope = getInventoryScope();
+  if (scope.projectId || scope.assignmentType) {
+    await setInventoryScope({ projectId: "", assignmentType: "" }, { reload: true });
+  } else {
+    updateInventoryScopeUi();
+    await refreshInventoryAfterImport();
+  }
+}
+
+async function finishImportWizardAfterCompleted(summaryMessage) {
+  showImportCompletionNotice(summaryMessage);
+  dismissImportWizardSession({ clearStoredBatch: true });
+  closeImportWizardPanel();
+  await returnInventoryToTotalScopeAfterImport();
+  applyInventoryFilters();
+  void probeResumableImport();
+}
+
+function updateImportWizardChrome() {
+  const panelOpen = isImportWizardPanelOpen();
+  const hasOpenSession = Boolean(
+    currentImportId && !isTerminalImportUiBatch(importUi.batchStatus) && !importUi.confirmed
+  );
+  ["importCloseWizardBtn", "importCloseWizardInnerBtn"].forEach((id) => {
+    const closeBtn = document.getElementById(id);
+    if (!closeBtn) return;
+    closeBtn.classList.toggle("hidden", !panelOpen || !hasOpenSession);
+    closeBtn.disabled = importUi.busy;
+  });
+}
+
+function importStatBadge(label, count, kind = "") {
+  const cls = kind ? ` import-stat-badge--${kind}` : "";
+  return `<span class="import-stat-badge${cls}">${escCell(label)}: ${formatImportCount(count)}</span>`;
 }
 
 function isCancellableImportUiStatus(status) {
@@ -12556,6 +12659,8 @@ function resetImportWizardLocalState() {
   importUi.batchStatus = "";
   importUi.confirmable = false;
   importUi.confirmableReason = "";
+  importUi.reviewSynced = false;
+  importUi.reviewStale = false;
   importUi.error = "";
   const select = document.getElementById("importSheetSelect");
   if (select) select.innerHTML = '<option value="">Carga un archivo primero</option>';
@@ -12594,6 +12699,8 @@ function resetImportDownstream(fromStep) {
   if (fromStep <= 5) {
     const review = document.getElementById("importReviewQueueBox");
     if (review) review.innerHTML = "";
+    importUi.reviewSynced = false;
+    importUi.reviewStale = true;
   }
   importUi.confirmed = false;
 }
@@ -12695,7 +12802,11 @@ function syncImportWizardUi() {
     });
   } else if (fileReady) {
     setImportStep("file", "done", "Completado", `✓ Archivo cargado: ${importUi.fileName}`);
-    setImportButton("importUploadBtn", { disabled: busy, label: "Subir archivo" });
+    setImportButton("importUploadBtn", {
+      disabled: true,
+      label: "✓ Archivo cargado",
+      reason: "El archivo ya está cargado en este lote."
+    });
   } else {
     setImportStep("file", "current", "Pendiente", "Selecciona el archivo a cargar.");
     setImportButton("importUploadBtn", { disabled: busy, label: "Subir archivo" });
@@ -12740,7 +12851,11 @@ function syncImportWizardUi() {
     setImportButton("importMapBtn", { disabled: busy, label: "Aplicar mapeo" });
   } else {
     setImportStep("mapping", "done", "Completado", "✓ Mapeo aplicado");
-    setImportButton("importMapBtn", { disabled: busy, label: "Aplicar mapeo" });
+    setImportButton("importMapBtn", {
+      disabled: true,
+      label: "✓ Mapeo aplicado",
+      reason: "Modifica el mapeo para volver a aplicar."
+    });
   }
 
   if (!mappingReady) {
@@ -12764,7 +12879,11 @@ function syncImportWizardUi() {
       "Completado",
       `✓ Validado · Total ${formatImportCount(importUi.totalRows)} · Listas ${formatImportCount(importUi.validRows)} · Advertencias ${formatImportCount(importUi.warningRows)} · Bloqueadas ${formatImportCount(importUi.blocked)}`
     );
-    setImportButton("importValidateBtn", { disabled: busy, label: "Validar" });
+    setImportButton("importValidateBtn", {
+      disabled: true,
+      label: "✓ Validado",
+      reason: "Cambia el mapeo o los datos para volver a validar."
+    });
   } else {
     setImportStep("validate", "current", "Pendiente", "Ejecuta la validación del archivo.");
     setImportButton("importValidateBtn", { disabled: busy, label: "Validar" });
@@ -12789,6 +12908,13 @@ function syncImportWizardUi() {
       }`
     );
     setImportButton("importReviewBtn", { disabled: busy, label: "Actualizar revisión" });
+  } else if (importUi.reviewSynced && !importUi.reviewStale) {
+    setImportStep("review", "done", "Completado", "✓ Revisión sincronizada");
+    setImportButton("importReviewBtn", {
+      disabled: true,
+      label: "✓ Revisión sincronizada",
+      reason: "Sin cambios pendientes de revisión."
+    });
   } else {
     setImportStep("review", "done", "Completado", "✓ Sin bloqueos pendientes");
     setImportButton("importReviewBtn", { disabled: busy, label: "Actualizar revisión" });
@@ -12854,6 +12980,7 @@ function syncImportWizardUi() {
     bannerCancel.classList.toggle("hidden", !showBannerCancel);
     bannerCancel.disabled = busy || !showBannerCancel;
   }
+  updateImportWizardChrome();
 }
 
 async function withImportLock(label, fn) {
@@ -13086,17 +13213,20 @@ function renderImportValidateSummary() {
     summary.innerHTML = "";
     return;
   }
+  const warningNote =
+    importUi.blocked === 0 && importUi.warningRows > 0
+      ? `<p class="assignee-hint">Advertencias (${formatImportCount(importUi.warningRows)}): requieren revisión pero no bloquean la confirmación mientras no haya registros bloqueados.</p>`
+      : "";
   summary.innerHTML =
-    `<span class="project-chip">Total: ${formatImportCount(importUi.totalRows)}</span>` +
-    `<span class="project-chip">CUSTOMER vacío: ${formatImportCount(importUi.customerBlank)}</span>` +
-    `<span class="project-chip">FREE TO SALE: ${formatImportCount(importUi.freeToSaleAssigned)}</span>` +
-    `<span class="project-chip">Con proyecto: ${formatImportCount(importUi.projectAssigned)}</span>` +
-    `<span class="project-chip">Listas: ${formatImportCount(importUi.validRows)}</span>` +
-    `<span class="project-chip">Advertencias: ${formatImportCount(importUi.warningRows)}</span>` +
-    `<span class="project-chip">Bloqueadas: ${formatImportCount(importUi.blocked)}</span>` +
-    (importUi.unresolved
-      ? `<span class="project-chip">Sin asignar: ${formatImportCount(importUi.unresolved)}</span>`
-      : "") +
+    importStatBadge("Total", importUi.totalRows) +
+    importStatBadge("CUSTOMER vacío", importUi.customerBlank, "info") +
+    importStatBadge("FREE TO SALE", importUi.freeToSaleAssigned, "info") +
+    importStatBadge("Con proyecto", importUi.projectAssigned, "info") +
+    importStatBadge("Listas", importUi.validRows, "ok") +
+    importStatBadge("Advertencias", importUi.warningRows, importUi.blocked > 0 ? "warning" : "info") +
+    importStatBadge("Bloqueadas", importUi.blocked, importUi.blocked > 0 ? "blocked" : "ok") +
+    (importUi.unresolved ? importStatBadge("Sin asignar", importUi.unresolved, "warning") : "") +
+    warningNote +
     (importUi.freeToSaleAssigned
       ? `<p class="assignee-hint" style="margin:8px 0 0">FREE TO SALE es inventario libre; no pertenece a un proyecto y no se mezcla con la lista de proyectos.</p>`
       : "");
@@ -13117,6 +13247,7 @@ function renderImportPreviewRows(previewRows) {
 
 function applyImportServerState(state) {
   if (!state?.id) return;
+  if (isTerminalImportUiBatch(state.status)) return;
   importHydrating = true;
   try {
     currentImportId = state.id;
@@ -13196,6 +13327,7 @@ async function probeResumableImport() {
 async function continueResumableImport() {
   const id = importResumeActive?.id;
   if (!id) return;
+  openImportWizardPanel();
   void withImportLock("Reconstruyendo importación…", async () => {
     await hydrateImportFromServer(id);
     importResumeDismissedId = null;
@@ -13232,24 +13364,21 @@ async function submitImportCancel() {
     if (data.status !== "CANCELLED" || data.inventoryChanged !== false) {
       throw new Error("La cancelación no se confirmó correctamente.");
     }
-    currentImportId = null;
-    importResumeActive = null;
-    importResumeDismissedId = null;
-    rememberImportBatchId(null);
-    resetImportWizardLocalState();
-    hideImportResumeBanner();
-    syncImportWizardUi();
     await refreshImportHistory();
     const activeRes = await authenticatedFetch("/api/imports/active");
     const activeData = activeRes?.ok ? await activeRes.json().catch(() => ({})) : {};
     if (activeData.available && activeData.import?.id === id) {
       throw new Error("El lote cancelado sigue apareciendo como activo.");
     }
-    setImportStatus("Importación temporal cancelada. El inventario no cambió.");
+    showImportCompletionNotice("Importación temporal cancelada. El inventario no cambió.");
+    dismissImportWizardSession({ clearStoredBatch: true });
+    closeImportWizardPanel();
   });
 }
 
 async function applyImportReviewCorrection(payload, successLabel) {
+  importUi.reviewStale = true;
+  importUi.reviewSynced = false;
   const previous = {
     blocked: importUi.blocked,
     unresolved: importUi.unresolved,
@@ -13317,19 +13446,26 @@ function renderImportReviewFromState(data) {
         </div>
       </div>`
     : "";
+  const blockedCount = Number(counts.BLOCKED || importUi.blocked || 0);
+  const warningCount = Number(counts.WARNING || importUi.warningRows || 0);
+  const warningNote =
+    blockedCount === 0 && warningCount > 0
+      ? `<p class="assignee-hint">Advertencias (${formatImportCount(warningCount)}): revisar si aplica. No bloquean la confirmación mientras no haya registros bloqueados.</p>`
+      : "";
   box.innerHTML = `
     <h4 class="secondary-panel-title">Bandeja de revisión</h4>
     ${(data.globalNotices || []).map((n) => `<p class="operational-table-meta">${escCell(n.message)}</p>`).join("")}
     <div class="page-toolbar">
-      <span class="project-chip">Listos: ${formatImportCount(counts.READY)}</span>
-      <span class="project-chip">Advertencias: ${formatImportCount(counts.WARNING)}</span>
-      <span class="project-chip">Bloqueados: ${formatImportCount(counts.BLOCKED)}</span>
-      <span class="project-chip">Ignorados: ${formatImportCount(counts.IGNORED)}</span>
-      <span class="project-chip">FREE TO SALE: ${formatImportCount(data.assignmentSummary?.freeToSaleAssigned || importUi.freeToSaleAssigned)}</span>
+      ${importStatBadge("Listos", counts.READY || 0, "ok")}
+      ${importStatBadge("Advertencias", warningCount, blockedCount > 0 ? "warning" : "info")}
+      ${importStatBadge("Bloqueados", blockedCount, blockedCount > 0 ? "blocked" : "ok")}
+      ${importStatBadge("Ignorados", counts.IGNORED || 0)}
+      ${importStatBadge("FREE TO SALE", data.assignmentSummary?.freeToSaleAssigned || importUi.freeToSaleAssigned, "info")}
       ${Number(data.unresolvedCount || importUi.unresolved || 0)
-        ? `<span class="project-chip">Sin asignar: ${formatImportCount(data.unresolvedCount || importUi.unresolved)}</span>`
+        ? importStatBadge("Sin asignar", data.unresolvedCount || importUi.unresolved, "warning")
         : ""}
     </div>
+    ${warningNote}
     ${Number(data.assignmentSummary?.freeToSaleAssigned || importUi.freeToSaleAssigned || 0)
       ? `<p class="operational-table-meta">Las filas FREE TO SALE son inventario libre. No pertenecen a un proyecto y no se añaden a la lista de proyectos.</p>`
       : ""}
@@ -13396,10 +13532,20 @@ function renderImportReviewFromState(data) {
     if (importUi.busy) return;
     openImportMissingLocModal();
   });
+  importUi.reviewSynced = true;
+  importUi.reviewStale = false;
 }
 
 async function loadImportReview() {
   if (!currentImportId) return;
+  const response = await authenticatedFetch(`/api/imports/${currentImportId}/review`);
+  if (response?.ok) {
+    const data = await response.json();
+    applyImportCountsFromServer(data);
+    renderImportReviewFromState(data);
+    syncImportWizardUi();
+    return;
+  }
   await hydrateImportFromServer(currentImportId);
 }
 
@@ -13668,14 +13814,12 @@ document.getElementById("importConfirmBtn")?.addEventListener("click", () => {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || "Confirmación rechazada.");
-      importUi.confirmed = true;
-      importUi.batchStatus = data.batch?.status || "COMPLETED";
-      setImportSyncState("ok", "✓ Estado sincronizado con servidor");
-      setImportStatus(`✓ Importación ${data.batch?.status || "COMPLETED"}. Fallidas: ${data.results?.filter((r) => !r.ok).length || 0}.`);
-      hideImportResumeBanner();
-      importResumeActive = null;
+      const failed = data.results?.filter((r) => !r.ok).length || 0;
+      const processed = Number(data.batch?.totalRows || importUi.totalRows || 0);
       await refreshImportHistory();
-      await refreshInventoryAfterImport();
+      await finishImportWizardAfterCompleted(
+        `Importación completada correctamente. ${formatImportCount(processed)} registros procesados. Fallidas: ${formatImportCount(failed)}.`
+      );
     });
   })();
 });
@@ -13696,6 +13840,8 @@ document.getElementById("importCancelConfirmBtn")?.addEventListener("click", () 
   void submitImportCancel();
 });
 document.getElementById("importCancelCloseX")?.addEventListener("click", () => closeImportCancelModal());
+document.getElementById("importCloseWizardBtn")?.addEventListener("click", () => closeImportWizardUiOnly());
+document.getElementById("importCloseWizardInnerBtn")?.addEventListener("click", () => closeImportWizardUiOnly());
 const importCancelModal = document.getElementById("importCancelModal");
 if (importCancelModal && importCancelModal.dataset.modalWired !== "1") {
   importCancelModal.dataset.modalWired = "1";
