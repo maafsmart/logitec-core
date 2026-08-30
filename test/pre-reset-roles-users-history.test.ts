@@ -683,6 +683,58 @@ after(async () => {
   restore();
 });
 
+test("HTTP POST /api/users 400: OPERATOR sin cliente, whitespace y email con espacios recortado", async () => {
+  const admin = tokenFor(users.admin, AVIAT.id);
+  lastUserCreate = {};
+  const missingClient = await request("/api/users", {
+    method: "POST",
+    token: admin,
+    body: {
+      email: "qa.operator@test.local",
+      password: "secret12",
+      fullName: "QA Operator",
+      role: "OPERATOR",
+      clientId: ""
+    }
+  });
+  assert.equal(missingClient.status, 400);
+  assert.equal((missingClient.json as { code?: string }).code, "USER_CLIENT_REQUIRED");
+  assert.equal(lastUserCreate.email, undefined);
+
+  lastUserCreate = {};
+  const spacesPassword = await request("/api/users", {
+    method: "POST",
+    token: admin,
+    body: {
+      email: "  qa.spaces@test.local  ",
+      password: "      ",
+      fullName: "   ",
+      role: "ADMIN"
+    }
+  });
+  assert.equal(spacesPassword.status, 400);
+  assert.equal((spacesPassword.json as { message?: string }).message, "Payload invalido");
+  assert.equal(lastUserCreate.email, undefined);
+
+  lastUserCreate = {};
+  const trimmedOk = await request("/api/users", {
+    method: "POST",
+    token: admin,
+    body: {
+      email: "  qa.trim@test.local  ",
+      password: "  secret12  ",
+      fullName: "  Usuario Trim  ",
+      role: "OPERATOR",
+      clientId: AVIAT.id
+    }
+  });
+  assert.equal(trimmedOk.status, 200);
+  assert.equal((trimmedOk.json as { email?: string }).email, "qa.trim@test.local");
+  assert.equal(lastUserCreate.fullName, "Usuario Trim");
+  assert.equal(lastUserCreate.email, "qa.trim@test.local");
+  assert.equal(lastUserCreate.clientId, AVIAT.id);
+});
+
 test("HTTP users/reset/history: solo ADMIN; otros 403", async () => {
   const admin = tokenFor(users.admin, AVIAT.id);
   const list = await request("/api/users", { token: admin });
@@ -800,7 +852,7 @@ test("HTTP reset sin newPassword genera temporal segura y no expone hash", async
   assert.ok(await bcrypt.compare(temp, users.operator.passwordHash));
 });
 
-test("HTTP Mi cuenta edita ficha propia y no escala rol", async () => {
+test("HTTP Mi cuenta es solo lectura salvo contraseña y no escala rol", async () => {
   users.operator.mustChangePassword = false;
   const token = tokenFor(users.operator);
   const ok = await request("/api/auth/me", {
@@ -808,7 +860,8 @@ test("HTTP Mi cuenta edita ficha propia y no escala rol", async () => {
     token,
     body: { fullName: "Operador Editado", phone: "5550001111" }
   });
-  assert.equal(ok.status, 200);
+  assert.equal(ok.status, 403);
+  assert.equal((ok.json as { code?: string }).code, "SELF_PROFILE_READONLY");
   const forbidden = await request("/api/auth/me", {
     method: "PATCH",
     token,
@@ -817,7 +870,7 @@ test("HTTP Mi cuenta edita ficha propia y no escala rol", async () => {
   assert.equal(forbidden.status, 403);
 });
 
-test("HTTP Mi cuenta rechaza fullName solo espacios y no permite escalación", async () => {
+test("HTTP Mi cuenta rechaza edición de ficha y no permite escalación", async () => {
   users.operator.mustChangePassword = false;
   users.operator.fullName = "Operador Editado";
   users.operator.role = "OPERATOR";
@@ -830,11 +883,9 @@ test("HTTP Mi cuenta rechaza fullName solo espacios y no permite escalación", a
     token,
     body: { fullName: "     " }
   });
-  assert.equal(spaces.status, 400);
+  assert.equal(spaces.status, 403);
+  assert.equal((spaces.json as { code?: string }).code, "SELF_PROFILE_READONLY");
   assert.equal(users.operator.fullName, "Operador Editado");
-  assert.equal(users.operator.role, "OPERATOR");
-  assert.equal(users.operator.clientId, AVIAT.id);
-  assert.equal(users.operator.isActive, true);
   assert.equal(lastUserUpdate.data, undefined);
 
   const ok = await request("/api/auth/me", {
@@ -842,13 +893,9 @@ test("HTTP Mi cuenta rechaza fullName solo espacios y no permite escalación", a
     token,
     body: { fullName: "Operador Valido" }
   });
-  assert.equal(ok.status, 200);
-  const json = ok.json as Record<string, unknown>;
-  assert.equal(json.fullName, "Operador Valido");
-  assert.equal(json.role, "OPERATOR");
-  assert.equal(json.clientId, AVIAT.id);
-  assert.equal(json.isActive, true);
-  assert.ok(!("passwordHash" in json));
+  assert.equal(ok.status, 403);
+  assert.equal((ok.json as { code?: string }).code, "SELF_PROFILE_READONLY");
+  assert.equal(users.operator.fullName, "Operador Editado");
 
   const escalate = await request("/api/auth/me", {
     method: "PATCH",
@@ -888,10 +935,11 @@ test("fotografía UI: URL editable, silueta, preview y sin upload", () => {
   assert.doesNotMatch(sliceFunction(js, "applyUserPhotoPreview"), /innerHTML/);
   assert.match(sliceFunction(js, "openEditUserForm"), /editAvatarUrl/);
   assert.match(sliceFunction(js, "saveEditUser"), /avatarUrl/);
-  assert.match(sliceFunction(js, "saveAccountProfile"), /avatarUrl/);
+  assert.doesNotMatch(sliceFunction(js, "saveAccountProfile"), /avatarUrl/);
   assert.match(sliceFunction(js, "fillAccountProfileForm"), /accountAvatarUrl/);
   assert.match(sliceFunction(js, "saveEditUser"), /fullName/);
-  assert.match(sliceFunction(js, "saveAccountProfile"), /\/api\/auth\/me/);
+  assert.match(sliceFunction(js, "saveAccountProfile"), /solo lectura/);
+  assert.doesNotMatch(sliceFunction(js, "saveAccountProfile"), /\/api\/auth\/me/);
   assert.match(userProfileSrc, /avatarUrl: true/);
   assert.match(prismaSchema, /avatarUrl\s+String\?/);
   assert.match(appSrc, /"img-src": \["'self'", "data:", "https:"\]/);
@@ -994,6 +1042,9 @@ test("HTTP avatarUrl ADMIN/create/me; inválidas y XSS rechazadas; sin hash ni e
 
   lastUserUpdate = {};
   users.operator.mustChangePassword = false;
+  users.operator.fullName = "Op";
+  users.operator.role = "OPERATOR";
+  users.operator.clientId = AVIAT.id;
   const patched = await request("/api/users/u-op", {
     method: "PATCH",
     token: admin,
@@ -1023,14 +1074,10 @@ test("HTTP avatarUrl ADMIN/create/me; inválidas y XSS rechazadas; sin hash ni e
     token: me,
     body: { avatarUrl: "https://cdn.example.com/me.png", fullName: "Operador Con Foto" }
   });
-  assert.equal(account.status, 200);
-  const accountJson = account.json as Record<string, unknown>;
-  assert.equal(accountJson.avatarUrl, "https://cdn.example.com/me.png");
-  assert.equal(accountJson.fullName, "Operador Con Foto");
-  assert.equal(accountJson.role, "OPERATOR");
-  assert.equal(accountJson.clientId, AVIAT.id);
-  assert.ok(!("passwordHash" in accountJson));
-  assert.equal(lastUserUpdate.data?.avatarUrl, "https://cdn.example.com/me.png");
+  assert.equal(account.status, 403);
+  assert.equal((account.json as { code?: string }).code, "SELF_PROFILE_READONLY");
+  assert.equal(users.operator.fullName, "Op");
+  assert.equal(lastUserUpdate.data, undefined);
 
   const escalate = await request("/api/auth/me", {
     method: "PATCH",

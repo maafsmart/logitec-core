@@ -157,11 +157,6 @@ function renderLiveClientMasterCard(row, slotIndex) {
     <div class="client-context-actions">
       <button type="button" class="btn-primary btn-compact" data-enter-client="${escCell(row.id)}"${enterDisabled}>Entrar</button>
       <button type="button" class="btn-secondary btn-compact" data-manage-client="${escCell(row.id)}">Administrar</button>
-      ${
-        canAdminCreateProject()
-          ? `<button type="button" class="btn-secondary btn-compact" data-add-project-client="${escCell(row.id)}">Agregar proyecto</button>`
-          : ""
-      }
     </div>
   </article>`;
 }
@@ -261,7 +256,6 @@ function renderPlaceholderClientMasterCard(slotIndex) {
     <div class="client-context-actions client-context-actions-placeholder">
       <button type="button" class="btn-primary btn-compact" data-configure-client-slot="${slotIndex}">Configurar</button>
       <button type="button" class="btn-secondary btn-compact" disabled aria-disabled="true" tabindex="-1">Entrar</button>
-      <button type="button" class="btn-secondary btn-compact" disabled aria-disabled="true" tabindex="-1">Agregar proyecto</button>
     </div>
   </article>`;
 }
@@ -454,7 +448,6 @@ const moduleInbound = document.getElementById("moduleInbound");
 const moduleOutbound = document.getElementById("moduleOutbound");
 const moduleRequisitions = document.getElementById("moduleRequisitions");
 const moduleRelocate = document.getElementById("moduleRelocate");
-const moduleBulkInbound = document.getElementById("moduleBulkInbound");
 const moduleProjects = document.getElementById("moduleProjects");
 const moduleWarehouses = document.getElementById("moduleWarehouses");
 const moduleLocations = document.getElementById("moduleLocations");
@@ -1078,17 +1071,17 @@ function buildOpsReference(lote, referenceRaw, kind) {
 
 const roleModules = {
   ADMIN: [
-    "control", "tasks", "picking", "inbound", "bulk-inbound", "relocate", "requisitions", "outbound",
+    "control", "tasks", "picking", "inbound", "relocate", "requisitions", "outbound",
     "incidents", "inventory", "catalog", "projects", "warehouses", "locations", "clients",
     "traceability", "reports", "users", "config", "account"
   ],
   SUPERVISOR: [
-    "control", "tasks", "picking", "inbound", "bulk-inbound", "relocate", "requisitions", "outbound",
+    "control", "tasks", "picking", "inbound", "relocate", "requisitions", "outbound",
     "incidents", "inventory", "catalog", "projects", "warehouses", "locations",
     "traceability", "reports", "account"
   ],
   OPERATOR: [
-    "control", "tasks", "picking", "inbound", "bulk-inbound", "relocate", "requisitions", "outbound",
+    "control", "tasks", "picking", "inbound", "relocate", "requisitions", "outbound",
     "incidents", "inventory", "catalog", "projects", "warehouses", "locations", "traceability", "account"
   ],
   CLIENT: [
@@ -1100,10 +1093,10 @@ const roleModules = {
 /** Secciones de menú. clients se mantiene en registry pero fuera del menú principal. */
 const NAV_SECTION_MODULES = {
   inicio: ["control", "tasks", "picking", "incidents"],
-  operacion: ["inbound", "bulk-inbound", "requisitions", "picking", "relocate", "outbound"],
+  operacion: ["inbound", "requisitions", "picking", "relocate", "outbound"],
   inventario: ["inventory", "clients", "catalog", "projects", "warehouses", "locations"],
   control: ["incidents", "traceability", "reports"],
-  sistema: ["users", "config", "account"]
+  sistema: ["account", "users", "config"]
 };
 
 /** Módulo landing al clic en cada pestaña principal (v41). */
@@ -1112,7 +1105,7 @@ const NAV_SECTION_DEFAULTS = {
   operacion: "inbound",
   inventario: "inventory",
   control: "incidents",
-  sistema: "users"
+  sistema: "account"
 };
 
 let currentNavSection = "inicio";
@@ -1262,7 +1255,6 @@ const MODULE_REGISTRY = {
   catalog: moduleCatalog,
   inventory: moduleInventory,
   inbound: moduleInbound,
-  "bulk-inbound": moduleBulkInbound,
   relocate: moduleRelocate,
   projects: moduleProjects,
   warehouses: moduleWarehouses,
@@ -1352,8 +1344,8 @@ function getDefaultModuleForSection(sectionId) {
   const sectionMods = NAV_SECTION_MODULES[sectionId] || [];
 
   if (sectionId === "sistema") {
-    if (currentRole === "ADMIN" && allowed.includes("users")) return "users";
     if (allowed.includes("account")) return "account";
+    if (currentRole === "ADMIN" && allowed.includes("users")) return "users";
     if (allowed.includes("config")) return "config";
   }
 
@@ -1503,7 +1495,6 @@ function navigateTo(sectionId, moduleName) {
   const showOutbound = mod === "outbound";
   const showRequisitions = mod === "requisitions";
   const showRelocate = mod === "relocate";
-  const showBulkInbound = mod === "bulk-inbound";
   const showProjects = mod === "projects";
   const showWarehouses = mod === "warehouses";
   const showLocations = mod === "locations";
@@ -1525,7 +1516,6 @@ function navigateTo(sectionId, moduleName) {
     showOutbound ||
     showRequisitions ||
     showRelocate ||
-    showBulkInbound ||
     showProjects ||
     showWarehouses ||
     showLocations ||
@@ -3678,6 +3668,8 @@ function applyTaskViewModeUi() {
   const kpiDoneLabel = document.querySelector('#taskKpiCompleted')?.parentElement?.querySelector(".kpi-label");
 
   if (title) title.textContent = notices ? "Avisos internos" : "Mis tareas operativas";
+  const noticesHint = document.getElementById("taskNoticesHint");
+  if (noticesHint) noticesHint.classList.toggle("hidden", !notices);
   if (lead) {
     lead.textContent = notices
       ? "Comunicación operativa entre administrador, supervisor y operadores."
@@ -6205,6 +6197,7 @@ function wireFocusMode() {
       return;
     }
     applyFocusMode(true);
+    announceNav("Modo concentración: navegación oculta para más espacio. Pulsa «Salir de concentración» o Esc.");
     if (!canUseFullscreenApi()) {
       announceNav("Modo concentración activo (compacto). Este navegador no permite pantalla completa web.");
       return;
@@ -7413,7 +7406,7 @@ function fillAccountProfileForm(user) {
   if (meta) {
     const status = user?.isActive === false ? "Inactivo" : "Activo";
     const clientName = user?.client?.tradeName || user?.client?.name || user?.clientId || "—";
-    meta.textContent = `Estado: ${status} · Rol: ${user?.role || "—"} · Cliente: ${clientName}. No se pueden cambiar rol, cliente ni permisos desde aquí.`;
+    meta.textContent = `Estado: ${status} · Rol: ${user?.role || "—"} · Cliente: ${clientName}. Ficha de solo lectura; un ADMIN edita datos oficiales.`;
   }
   const setVal = (id, value) => {
     const el = document.getElementById(id);
@@ -9876,11 +9869,7 @@ function populateSmartOperationalFields() {
     projects.forEach((p, i) => {
       html += `<option value="${escCell(p.code)}">${escCell(labels[i])}</option>`;
     });
-    if (currentRole === "ADMIN" || currentRole === "SUPERVISOR") {
-      html += `<option value="${SMART_OTHER}">Agregar proyecto (manual)</option>`;
-    } else {
-      html += `<option value="${SMART_OTHER}">Otro proyecto</option>`;
-    }
+    html += `<option value="${SMART_OTHER}">Otro proyecto</option>`;
     taskProjectSelect.innerHTML = html;
     if (prev) taskProjectSelect.value = prev;
     wireSmartSelectPair("taskProjectSelect", "taskProject");
@@ -9928,7 +9917,7 @@ function fillCustomerSelect(selectId, clienteInputId) {
     '<option value="">— Seleccionar proyecto —</option>' +
     customers.map((c) => `<option value="${escCell(c.code)}">${escCell(c.name)} (${escCell(c.code)})</option>`).join("");
   if (currentRole === "ADMIN" || currentRole === "SUPERVISOR") {
-    html += `<option value="${SMART_OTHER}">Agregar proyecto…</option>`;
+    html += `<option value="${SMART_OTHER}">Otro proyecto</option>`;
   }
   sel.innerHTML = html;
   if (prev && prev !== SMART_OTHER) sel.value = prev;
@@ -9943,9 +9932,6 @@ function fillCustomerSelect(selectId, clienteInputId) {
     sel.dataset.projectOtherWired = "1";
     sel.addEventListener("change", () => {
       if (sel.value === SMART_OTHER) {
-        if (currentRole === "ADMIN") {
-          void loadRealClientsQuiet().then(() => openProjectForm(null, null));
-        }
         sel.value = "";
       }
     });
@@ -12149,7 +12135,7 @@ async function createUser(event) {
   const payload = {
     fullName: newFullName.value.trim(),
     email: newEmail.value.trim(),
-    password: newPassword.value,
+    password: newPassword.value.trim(),
     role: newRole.value,
     clientId: isBoundOperationalRole(newRole.value) ? document.getElementById("newClientId")?.value || null : null
   };
@@ -12172,7 +12158,15 @@ async function createUser(event) {
     if (!response) return;
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
-      createUserError.textContent = data.message || "No se pudo crear el usuario.";
+      const issues = Array.isArray(data.issues)
+        ? data.issues.map((item) => item.message).filter(Boolean).join(" ")
+        : "";
+      createUserError.textContent =
+        data.code === "USER_CLIENT_REQUIRED"
+          ? data.message
+          : issues
+            ? `${data.message || "Payload invalido"} ${issues}`
+            : data.message || "No se pudo crear el usuario.";
       return;
     }
 
@@ -12740,38 +12734,7 @@ async function confirmResetPassword() {
 async function saveAccountProfile(event) {
   event.preventDefault();
   const err = document.getElementById("accountProfileError");
-  const btn = document.getElementById("accountProfileBtn");
-  if (btn) btn.disabled = true;
-  const payload = {
-    fullName: document.getElementById("accountFullName")?.value?.trim(),
-    jobTitle: document.getElementById("accountJobTitle")?.value || null,
-    phone: document.getElementById("accountPhone")?.value || null,
-    alternatePhone: document.getElementById("accountAlternatePhone")?.value || null,
-    address: document.getElementById("accountAddress")?.value || null,
-    city: document.getElementById("accountCity")?.value || null,
-    state: document.getElementById("accountState")?.value || null,
-    postalCode: document.getElementById("accountPostalCode")?.value || null,
-    avatarUrl: document.getElementById("accountAvatarUrl")?.value?.trim() || null,
-    notes: document.getElementById("accountNotes")?.value || null
-  };
-  try {
-    const response = await authenticatedFetch("/api/auth/me", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    if (!response) return;
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (err) err.textContent = data.message || "No se pudo guardar tu ficha.";
-      return;
-    }
-    if (err) err.textContent = "Ficha actualizada.";
-    fillAccountProfileForm(data);
-    if (sessionDisplayName) sessionDisplayName.textContent = `Hola, ${data.fullName || data.email || "Usuario"}`;
-  } finally {
-    if (btn) btn.disabled = false;
-  }
+  if (err) err.textContent = "Mi cuenta es de solo lectura. Un ADMIN edita la ficha oficial; aquí solo cambias la contraseña.";
 }
 
 function selectedHistoryIncidentIds() {
@@ -12809,6 +12772,12 @@ async function loadOperationalHistoryPreview() {
     return;
   }
   operationalHistoryPreview = data;
+  const scopeHint = document.getElementById("operationalHistoryScopeHint");
+  if (scopeHint) {
+    scopeHint.textContent = data.isAviat
+      ? "Contexto AVIAT activo. Las cifras de abajo son conteos reales del preview (incluye ceros)."
+      : "Este preview no enumera cifras porque el contexto operativo no es AVIAT. Cambia a AVIAT para ver totales.";
+  }
   if (decision) {
     const githubNote = data.doesNotTouchGitHub
       ? " GitHub/repositorio: intacto (no borra commits, ramas, PRs ni evidencia técnica)."

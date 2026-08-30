@@ -7,21 +7,21 @@ import { HttpError } from "../../shared/http-error.js";
 import { isClientScopedRole } from "../clients/client-scope.js";
 import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
 import {
-  profileDataFromParsed,
   publicUserJson,
-  selfProfileSchema,
+  trimmedEmail,
+  trimmedPassword,
   USER_PUBLIC_SELECT
 } from "../users/user-profile.js";
 
 const authRouter = Router();
 
 const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6)
+  email: trimmedEmail,
+  password: trimmedPassword
 });
 const changePasswordSchema = z.object({
-  currentPassword: z.string().min(6),
-  newPassword: z.string().min(6)
+  currentPassword: trimmedPassword,
+  newPassword: trimmedPassword
 });
 const selectClientSchema = z.object({
   clientId: z.string().min(1)
@@ -96,8 +96,7 @@ function serializeUser(
 }
 
 authRouter.post("/login", async (req, res) => {
-  const { email: rawEmail, password } = loginSchema.parse(req.body);
-  const email = rawEmail.trim().toLowerCase();
+  const { email, password } = loginSchema.parse(req.body);
 
   const user = await prisma.user.findUnique({
     where: { email },
@@ -160,7 +159,6 @@ authRouter.get("/me", requireAuth, async (req, res) => {
 });
 
 authRouter.patch("/me", requireAuth, async (req, res) => {
-  const parsed = selfProfileSchema.parse(req.body ?? {});
   if (
     "role" in (req.body || {}) ||
     "clientId" in (req.body || {}) ||
@@ -172,30 +170,11 @@ authRouter.patch("/me", requireAuth, async (req, res) => {
   ) {
     throw new HttpError(403, "No puedes cambiar rol, cliente, permisos ni credenciales desde Mi cuenta.", "SELF_ESCALATION_FORBIDDEN");
   }
-
-  const user = await prisma.user.update({
-    where: { id: req.auth!.userId },
-    data: {
-      ...profileDataFromParsed(parsed),
-      ...(typeof parsed.fullName === "string" && parsed.fullName ? { fullName: parsed.fullName } : {})
-    },
-    select: {
-      ...USER_PUBLIC_SELECT,
-      client: { select: clientPublicSelect }
-    }
-  });
-
-  let operationalClient = null;
-  if (req.auth!.operationalClientId) {
-    operationalClient = await prisma.client.findUnique({
-      where: { id: req.auth!.operationalClientId },
-      select: clientPublicSelect
-    });
-  } else if (isClientScopedRole(user.role)) {
-    operationalClient = user.client;
-  }
-
-  res.json(serializeUser(user, operationalClient));
+  throw new HttpError(
+    403,
+    "Mi cuenta es de solo lectura. Un ADMIN edita la ficha oficial; aquí solo puedes cambiar tu contraseña.",
+    "SELF_PROFILE_READONLY"
+  );
 });
 
 authRouter.post("/select-client", requireAuth, requireRole(["ADMIN"]), async (req, res) => {

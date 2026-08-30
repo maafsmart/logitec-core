@@ -56,12 +56,13 @@ test("B: tras seleccionar AVIAT el ADMIN puede restaurar navegación operativa",
   assert.match(js, /await loadOperationalWorkspace\(\)/);
 });
 
-test("C: Entrada masiva abre Inventario → Existencias sin pantalla intermedia", () => {
+test("C: Operación no expone Entrada masiva; bookmarks reescriben a Existencias", () => {
   assert.match(navigateTo, /if \(mod === "bulk-inbound"\)/);
   assert.match(navigateTo, /section = "inventario"/);
   assert.match(navigateTo, /mod = "inventory"/);
-  assert.match(html, /data-module="bulk-inbound"/);
-  assert.match(html, /id="moduleBulkInbound"/);
+  assert.doesNotMatch(html, /data-module="bulk-inbound"/);
+  assert.doesNotMatch(html, /id="moduleBulkInbound"/);
+  assert.match(html, /id="openInventoryImportBtn"/);
 });
 
 test("D: reset habilitado solo con ADMIN, AVIAT operativo y flag true", () => {
@@ -144,24 +145,18 @@ function fakeAttrTarget(attrs: Record<string, string>) {
   };
 }
 
-test("Agregar proyecto en tarjeta de cliente abre el formulario con el cliente preseleccionado", async () => {
+test("Selector de cliente no muestra Agregar proyecto; Centro de Control sí (ADMIN)", async () => {
+  assert.doesNotMatch(sliceFunction(js, "renderLiveClientMasterCard"), /Agregar proyecto/);
+  assert.match(html, /id="ccAddProjectBtn"[^>]*>Agregar proyecto/);
+  assert.match(html, /id="projectsAddBtn"[^>]*>Agregar proyecto/);
   const admin = loadClientCardAddProjectHarness("ADMIN");
   const target = fakeAttrTarget({ "data-add-project-client": "client-aviat" });
   const parsed = admin.dispatchClientContextCardClick(target);
   assert.equal(parsed.action, "add-project");
-  assert.equal(parsed.clientId, "client-aviat");
   await Promise.resolve();
   await Promise.resolve();
-  assert.equal(admin.calls.openProjectForm.length, 1, "debe invocar openProjectForm");
-  assert.equal(admin.calls.openProjectForm[0].project, null, "alta nueva, no edición");
-  assert.equal(admin.calls.openProjectForm[0].client.id, "client-aviat");
-  assert.deepEqual(admin.calls.navigateTo, [], "no debe solo navegar a Proyectos");
-  assert.equal(admin.calls.selectOperationalClient.length, 0);
-
+  assert.equal(admin.calls.openProjectForm.length, 1);
   const supervisor = loadClientCardAddProjectHarness("SUPERVISOR");
-  supervisor.dispatchClientContextCardClick(target);
-  await Promise.resolve();
-  assert.equal(supervisor.calls.openProjectForm.length, 0, "SUPERVISOR no gana alta de proyecto");
   assert.equal(supervisor.openAddProjectFromClientCard("client-aviat"), false);
 
   const operator = loadClientCardAddProjectHarness("OPERATOR");

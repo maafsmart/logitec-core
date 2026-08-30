@@ -53,10 +53,13 @@ function loadNavHarness() {
   };
 }
 
-test("Clientes → Agregar proyecto sigue abriendo el formulario ADMIN", () => {
+test("Selector de cliente no ofrece Agregar proyecto; alta queda en Proyectos y Centro de Control", () => {
+  assert.match(sliceFunction(js, "renderLiveClientMasterCard"), /data-enter-client/);
+  assert.doesNotMatch(sliceFunction(js, "renderLiveClientMasterCard"), /Agregar proyecto/);
+  assert.doesNotMatch(sliceFunction(js, "renderPlaceholderClientMasterCard"), /Agregar proyecto/);
+  assert.match(html, /id="ccAddProjectBtn"/);
+  assert.match(html, /id="projectsAddBtn"/);
   assert.match(sliceFunction(js, "openAddProjectFromClientCard"), /openProjectForm\(null, client\)/);
-  assert.doesNotMatch(sliceFunction(js, "openAddProjectFromClientCard"), /navigateTo\(/);
-  assert.match(sliceFunction(js, "dispatchClientContextCardClick"), /openAddProjectFromClientCard/);
 });
 
 test("Inicio anuncia destinos y no duplica importador", () => {
@@ -68,12 +71,14 @@ test("Inicio anuncia destinos y no duplica importador", () => {
   assert.doesNotMatch(html, /id="bulkInboundOpenImportBtn"/);
 });
 
-test("Entrada masiva anuncia Inventario → Existencias y reescribe a inventory", () => {
+test("Operación no duplica Entrada masiva; bookmarks antiguos reescriben a Existencias", () => {
   const nav = sliceFunction(js, "navigateTo");
-  assert.match(html, /Abre Inventario → Existencias \(único asistente de importación\)/);
+  assert.doesNotMatch(html, /id="btnBulkInbound"/);
+  assert.doesNotMatch(html, /id="moduleBulkInbound"/);
+  assert.doesNotMatch(html, /data-module="bulk-inbound"/);
+  assert.match(html, /id="openInventoryImportBtn"/);
+  assert.equal((html.match(/id="openInventoryImportBtn"/g) || []).length, 1);
   assert.match(nav, /mod === "bulk-inbound"/);
-  assert.match(nav, /fromBulkInbound/);
-  assert.match(nav, /announceNav\(/);
   assert.match(nav, /mod = "inventory"/);
   assert.match(nav, /section = "inventario"/);
 });
@@ -95,12 +100,21 @@ test("Almacenes y Ubicaciones exponen acción visible", () => {
   assert.match(html, /Usa <strong>Ver \/ editar datos<\/strong>/);
 });
 
-test("Sistema es un workspace único sin nav redundante", () => {
+test("Sistema ordena cuenta, usuarios ADMIN y peligro al final", () => {
   const sistema = html.slice(html.indexOf('data-nav-section-panel="sistema"'), html.indexOf('data-nav-section-panel="sistema"') + 900);
   assert.match(sistema, /Workspace único de administración/);
   assert.match(sistema, /id="btnAccount"/);
+  assert.match(sistema, /Mi cuenta \/ Sistema/);
   assert.doesNotMatch(sistema, /id="btnUsers"/);
   assert.doesNotMatch(sistema, /id="btnConfig"/);
+  assert.match(html, /body\.sistema-workspace #moduleAccount \{ order: 1; \}/);
+  assert.match(html, /body\.sistema-workspace #moduleUsers \{ order: 2; \}/);
+  assert.match(html, /body\.sistema-workspace #moduleConfig \{ order: 3; \}/);
+  assert.match(sliceFunction(js, "getDefaultModuleForSection"), /allowed\.includes\("account"\)\) return "account"/);
+  const labAt = html.indexOf('id="labResetSection"');
+  const dangerAt = html.indexOf('id="aviatDangerZone"');
+  const historyAt = html.indexOf('id="operationalHistorySection"');
+  assert.ok(labAt > 0 && dangerAt > labAt && historyAt > dangerAt);
   assert.match(sliceFunction(js, "showSistemaWorkspace"), /moduleUsers/);
   assert.match(sliceFunction(js, "showSistemaWorkspace"), /currentRole !== "ADMIN"/);
   const harness = loadNavHarness();
@@ -140,7 +154,15 @@ test("contraseña: ojo solo en captura nueva, nunca hash", () => {
   assert.doesNotMatch(toggle, /currentPassword/);
 });
 
-test("modo concentración es voluntario y no bloquea Escape", () => {
+test("Mi cuenta es ficha de solo lectura y el modo concentración oculta chrome", () => {
+  const account = html.slice(html.indexOf('id="moduleAccount"'), html.indexOf('id="changePasswordForm"'));
+  assert.match(account, /readonly/);
+  assert.doesNotMatch(account, /id="accountProfileBtn"/);
+  assert.match(account, /Solo lectura/);
+  assert.match(sliceFunction(js, "saveAccountProfile"), /solo lectura/i);
+  assert.doesNotMatch(sliceFunction(js, "saveAccountProfile"), /method: "PATCH"/);
+  assert.match(html, /body\.focus-mode \.sidebar \{\s*display: none/);
+  assert.match(js, /Salir de concentración/);
   assert.match(html, /id="focusModeBtn"/);
   const wire = sliceFunction(js, "wireFocusMode");
   assert.match(wire, /requestFocusFullscreen/);
@@ -148,6 +170,14 @@ test("modo concentración es voluntario y no bloquea Escape", () => {
   assert.doesNotMatch(wire, /preventDefault\(\)/);
   assert.doesNotMatch(js, /window\.resizeTo|chrome\.windows|moveTo\(/);
   assert.match(sliceFunction(js, "canUseFullscreenApi"), /requestFullscreen/);
+  const loginHtml = readFileSync(new URL("../public/login.html", import.meta.url), "utf8");
+  const loginJs = readFileSync(new URL("../public/login.js", import.meta.url), "utf8");
+  assert.match(loginHtml, /id="rememberEmail"/);
+  assert.match(loginJs, /logitec_remembered_email/);
+  assert.doesNotMatch(loginJs, /localStorage\.setItem\([^)]*password/i);
+  assert.match(html, /id="openCatalogImportBtn"/);
+  assert.match(js, /\/api\/catalog\/import\/products/);
+  assert.doesNotMatch(sliceFunction(js, "fetchCatalogImport"), /\/api\/inventory\/import/);
 });
 
 test("Incident queda fuera del reset de inventario; import/tenant intactos", () => {

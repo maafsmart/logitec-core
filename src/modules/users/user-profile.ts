@@ -23,6 +23,46 @@ export const USER_PUBLIC_SELECT = {
   client: { select: { id: true, name: true, tradeName: true, code: true, active: true } }
 } as const;
 
+export const trimmedEmail = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+  z.string().email()
+);
+
+export const optionalTrimmedEmail = z.preprocess(
+  (value) => (value === undefined ? undefined : typeof value === "string" ? value.trim().toLowerCase() : value),
+  z.string().email().optional()
+);
+
+export const trimmedPassword = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim() : value),
+  z.string().min(6).max(128)
+);
+
+export const optionalTrimmedPassword = z.preprocess(
+  (value) => (value === undefined ? undefined : typeof value === "string" ? value.trim() : value),
+  z.string().min(6).max(128).optional()
+);
+
+export const trimmedFullName = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim() : value),
+  z.string().min(1).max(160)
+);
+
+export const optionalTrimmedFullName = z.preprocess(
+  (value) => (value === undefined ? undefined : typeof value === "string" ? value.trim() : value),
+  z.string().min(1).max(160).optional()
+);
+
+export const optionalClientId = z.preprocess((value) => {
+  if (value === undefined) return undefined;
+  if (value == null) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length ? trimmed : null;
+  }
+  return value;
+}, z.string().min(1).nullable().optional());
+
 const optionalText = (max: number) =>
   z
     .string()

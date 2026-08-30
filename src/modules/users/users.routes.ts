@@ -6,8 +6,15 @@ import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
 import {
   generateTemporaryPassword,
+  optionalClientId,
+  optionalTrimmedEmail,
+  optionalTrimmedFullName,
+  optionalTrimmedPassword,
   profileDataFromParsed,
   publicUserJson,
+  trimmedEmail,
+  trimmedFullName,
+  trimmedPassword,
   USER_PUBLIC_SELECT,
   userProfileSchema
 } from "./user-profile.js";
@@ -15,26 +22,23 @@ import {
 const usersRouter = Router();
 
 const createUserSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
-  fullName: z.string().min(1),
+  email: trimmedEmail,
+  password: trimmedPassword,
+  fullName: trimmedFullName,
   role: z.enum(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]),
-  clientId: z.string().min(1).nullable().optional()
+  clientId: optionalClientId
 }).merge(userProfileSchema);
 
 const updateUserSchema = z.object({
-  email: z.string().email().optional(),
-  fullName: z.string().min(1).optional(),
+  email: optionalTrimmedEmail,
+  fullName: optionalTrimmedFullName,
   role: z.enum(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]).optional(),
-  clientId: z.string().min(1).nullable().optional(),
+  clientId: optionalClientId,
   isActive: z.coerce.boolean().optional()
 }).merge(userProfileSchema);
 
 const resetPasswordSchema = z.object({
-  newPassword: z.preprocess(
-    (value) => (typeof value === "string" ? value.trim() : value),
-    z.string().min(6).max(128).optional()
-  )
+  newPassword: optionalTrimmedPassword
 });
 
 async function resolveClientId(role: string, clientId: string | null | undefined): Promise<string | null> {
@@ -61,7 +65,7 @@ async function resolveClientId(role: string, clientId: string | null | undefined
 // Crear usuario (solo ADMIN)
 usersRouter.post("/", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
   const parsed = createUserSchema.parse(req.body);
-  const email = parsed.email.trim().toLowerCase();
+  const email = parsed.email;
   const { password, fullName, role } = parsed;
   const clientId = await resolveClientId(role, parsed.clientId);
 
@@ -168,8 +172,8 @@ usersRouter.patch("/:id", requireAuth, requireRole(["ADMIN"]), async (req, res) 
   const user = await prisma.user.update({
     where: { id },
     data: {
-      email: data.email?.trim().toLowerCase(),
-      fullName: data.fullName?.trim(),
+      email: data.email,
+      fullName: data.fullName,
       role,
       clientId,
       isActive: data.isActive,

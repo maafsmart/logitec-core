@@ -61,7 +61,7 @@ function sliceFunction(source: string, name: string): string {
 
 function relocateHtml() {
   const start = html.indexOf('id="moduleRelocate"');
-  const end = html.indexOf('id="moduleBulkInbound"');
+  const end = html.indexOf('id="moduleProjects"');
   assert.ok(start >= 0 && end > start);
   return html.slice(start, end);
 }

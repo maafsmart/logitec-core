@@ -95,17 +95,44 @@
         flex-direction: column;
         gap: 18px;
       }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .app-brand p,
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .nav-section-hint,
       body.focus-mode .app-brand p,
       body.focus-mode .nav-section-hint,
-      body.focus-mode .cc-tagline {
-        display: none;
+      body.focus-mode .cc-tagline,
+      body.focus-mode .module-btn-desc,
+      body.focus-mode .app-datetime,
+      body.focus-mode .environment-badge,
+      body.focus-mode .aviat-context-bar span:not(:first-child) {
+        display: none !important;
       }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .app-topbar,
       body.focus-mode .app-topbar {
-        padding: 8px 16px;
+        padding: 6px 12px;
+        max-height: none;
+        height: auto;
+        overflow: hidden;
       }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .sidebar,
       body.focus-mode .sidebar {
-        max-width: 240px;
+        display: none !important;
       }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .content,
+      body.focus-mode .content {
+        max-width: none;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      body.focus-mode #focusModeBtn {
+        position: sticky;
+        right: 0;
+        z-index: 120;
+        font-weight: 800;
+        box-shadow: 0 0 0 2px #fff, 0 8px 18px rgba(15, 76, 129, 0.18);
+      }
+      body.sistema-workspace #moduleAccount { order: 1; }
+      body.sistema-workspace #moduleUsers { order: 2; }
+      body.sistema-workspace #moduleConfig { order: 3; }
       .environment-badge {
         display: inline-flex;
         align-items: center;
@@ -4092,10 +4119,6 @@
                   <span class="module-btn-label">Entradas / Recepción</span>
                   <span class="module-btn-desc">Alta de existencias por proyecto, lote y ubicación</span>
                 </button>
-                <button class="module-btn" data-module="bulk-inbound" id="btnBulkInbound" type="button">
-                  <span class="module-btn-label">Entrada masiva</span>
-                  <span class="module-btn-desc">Abre Inventario → Existencias (único asistente de importación)</span>
-                </button>
                 <button class="module-btn" data-module="requisitions" id="btnRequisitions" type="button">
                   <span class="module-btn-label">Órdenes de surtido / Requisiciones</span>
                   <span class="module-btn-desc">Solicita productos para surtido de salida</span>
@@ -4158,8 +4181,8 @@
               <div class="nav-section-panel" data-nav-section-panel="sistema" data-nav-group="sistema">
                 <p class="nav-section-hint">Workspace único de administración. Una sola pantalla: usuarios, cuenta y configuración según tu rol.</p>
                 <button class="module-btn nav-primary" data-module="account" id="btnAccount" type="button">
-                  <span class="module-btn-label">Administración</span>
-                  <span class="module-btn-desc">Usuarios, contraseña y configuración en un solo lugar</span>
+                  <span class="module-btn-label">Mi cuenta / Sistema</span>
+                  <span class="module-btn-desc">Cuenta, usuarios ADMIN y configuración; zona de peligro al final</span>
                 </button>
               </div>
             </div>
@@ -4449,8 +4472,8 @@
                     <option value="ADMIN">ADMIN</option>
                   </select>
                 </div>
-                <div class="field hidden" id="newClientField">
-                  <label for="newClientId">Cliente (obligatorio para CLIENT)</label>
+                <div class="field" id="newClientField">
+                  <label for="newClientId">Cliente (obligatorio para SUPERVISOR, OPERATOR y CLIENT)</label>
                   <select id="newClientId">
                     <option value="">— Seleccionar cliente —</option>
                   </select>
@@ -4565,6 +4588,7 @@
               <button type="button" class="tasks-tab hidden" data-task-tab="notices" id="taskTabNotices" data-notices-only="1">Avisos recibidos</button>
               <button type="button" class="tasks-tab hidden" data-task-tab="notices-sent" id="taskTabNoticesSent" data-notices-only="1">Enviados por mí</button>
             </div>
+            <p id="taskNoticesHint" class="filter-hint hidden">Recibidos = avisos asignados a ti (o sin asignar creados por ti). Lo que enviaste a otra persona está en Enviados por mí.</p>
             <div id="taskCreateWrap" class="hidden card-panel ops-form-panel">
               <h4 class="secondary-panel-title" id="taskCreateTitle">Crear tarea</h4>
               <p id="taskInternalNoticeHint" class="module-hint hidden">Comunica un aviso a un usuario. No afecta inventario, picking ni reubicaciones.</p>
@@ -4767,7 +4791,7 @@
           <div id="moduleAccount" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Mi cuenta / Seguridad</h3>
-              <p class="module-lead">Edita tu ficha de contacto y cambia tu contraseña. LOGITEC nunca muestra ni recupera una contraseña ya guardada. Desde aquí no puedes cambiar rol, cliente ni permisos.</p>
+              <p class="module-lead">Ficha oficial de solo lectura. Aquí solo puedes ver tus datos y cambiar tu contraseña. Un ADMIN edita nombre, foto, contacto y permisos desde Usuarios.</p>
             </div>
             <div class="card-panel compact-module">
               <h4 class="secondary-panel-title">Mi ficha</h4>
@@ -4781,53 +4805,52 @@
                   </svg>
                   <img class="user-photo-image" alt="" referrerpolicy="no-referrer" decoding="async" />
                 </div>
-                <p class="filter-hint">Usa una URL HTTPS. Si la imagen no carga, se muestra la silueta.</p>
+                <p class="filter-hint">La fotografía oficial la asigna un ADMIN. Si no carga, se muestra la silueta.</p>
               </div>
-              <form id="accountProfileForm" class="form-compact">
+              <form id="accountProfileForm" class="form-compact" onsubmit="return false;">
                 <div class="form-grid">
                   <div class="field">
                     <label for="accountFullName">Nombre completo</label>
-                    <input id="accountFullName" type="text" required />
+                    <input id="accountFullName" type="text" readonly />
                   </div>
                   <div class="field">
                     <label for="accountJobTitle">Puesto / cargo</label>
-                    <input id="accountJobTitle" type="text" />
+                    <input id="accountJobTitle" type="text" readonly />
                   </div>
                   <div class="field">
                     <label for="accountPhone">Teléfono</label>
-                    <input id="accountPhone" type="text" />
+                    <input id="accountPhone" type="text" readonly />
                   </div>
                   <div class="field">
                     <label for="accountAlternatePhone">Teléfono alterno</label>
-                    <input id="accountAlternatePhone" type="text" />
+                    <input id="accountAlternatePhone" type="text" readonly />
                   </div>
                   <div class="field full">
                     <label for="accountAddress">Dirección</label>
-                    <input id="accountAddress" type="text" />
+                    <input id="accountAddress" type="text" readonly />
                   </div>
                   <div class="field">
                     <label for="accountCity">Ciudad</label>
-                    <input id="accountCity" type="text" />
+                    <input id="accountCity" type="text" readonly />
                   </div>
                   <div class="field">
                     <label for="accountState">Estado</label>
-                    <input id="accountState" type="text" />
+                    <input id="accountState" type="text" readonly />
                   </div>
                   <div class="field">
                     <label for="accountPostalCode">CP</label>
-                    <input id="accountPostalCode" type="text" />
+                    <input id="accountPostalCode" type="text" readonly />
                   </div>
                   <div class="field full">
                     <label for="accountAvatarUrl">URL de fotografía</label>
-                    <input id="accountAvatarUrl" type="url" inputmode="url" placeholder="https://… (recomendado HTTPS)" autocomplete="off" />
+                    <input id="accountAvatarUrl" type="url" inputmode="url" readonly autocomplete="off" />
                   </div>
                   <div class="field full">
                     <label for="accountNotes">Notas de contacto</label>
-                    <textarea id="accountNotes" rows="2"></textarea>
+                    <textarea id="accountNotes" rows="2" readonly></textarea>
                   </div>
                 </div>
-                <p id="accountProfileError" class="inline-error"></p>
-                <button id="accountProfileBtn" type="submit" class="btn-primary btn-compact">Guardar mi ficha</button>
+                <p id="accountProfileError" class="inline-error">Solo lectura. Pide a un ADMIN si hay que corregir la ficha.</p>
               </form>
             </div>
             <div class="card-panel compact-module">
@@ -5934,22 +5957,6 @@
               <button type="button" id="relocateSubmitBtn" class="btn-primary btn-compact" disabled>Reubicar inventario</button>
             </div>
           </div>
-          <div id="moduleBulkInbound" class="module-pane hidden">
-            <div class="module-screen-header module-header-band">
-              <h3>Entrada masiva</h3>
-              <p class="module-lead">Carga en volumen vía asistente en Existencias.</p>
-            </div>
-            <div class="card-panel compact-module">
-              <p class="module-hint" style="margin:0 0 8px">
-                La carga masiva desde archivo se realiza en <strong>Inventario → Existencias</strong>.
-                Aumenta existencias; para salida use <strong>Requisiciones</strong>; para una línea use <strong>Entradas / Recepción</strong>.
-              </p>
-              <div class="export-btn-row">
-                <button type="button" class="btn-primary btn-compact" data-goto-module="inventory">Ir a existencias</button>
-                <button type="button" class="btn-secondary btn-compact" data-goto-module="inbound">Entrada unitaria</button>
-              </div>
-            </div>
-          </div>
           <div id="moduleProjects" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Proyectos</h3>
@@ -6012,7 +6019,7 @@
           <div id="moduleConfig" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Configuración operativa</h3>
-              <p class="module-lead">Parte del workspace Sistema. Usuarios y cambio de contraseña están en esta misma pantalla. No hay accesos que solo reabran estos módulos.</p>
+              <p class="module-lead">Workspace Sistema: primero tu cuenta, luego usuarios (ADMIN), después configuración. Laboratorio DEV/QA y zona de peligro quedan al final.</p>
             </div>
             <div class="card-panel hidden" aria-hidden="true">
               <button type="button" class="btn-secondary btn-compact hidden" data-goto-module="users" data-nav-section="sistema" id="configUsersBtn" tabindex="-1">Usuarios</button>
@@ -6049,7 +6056,8 @@
                 <button type="button" id="operationalHistoryPreviewBtn" class="btn-secondary btn-compact">Consultar preview</button>
               </div>
               <p id="operationalHistoryDecision" class="filter-hint"></p>
-              <div id="operationalHistoryCounts" class="import-summary-chips"></div>
+              <p id="operationalHistoryScopeHint" class="assignee-hint"></p>
+              <div id="operationalHistoryCounts" class="import-summary-chips" aria-live="polite"></div>
               <p id="operationalHistoryIntegrity" class="assignee-hint"></p>
               <label class="lab-reset-check" for="historyCleanAll">
                 <input id="historyCleanAll" type="checkbox" class="js-history-category" data-history-category="all" />
@@ -6326,6 +6334,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=85"></script>
+    <script src="/dashboard.js?v=86"></script>
   </body>
 </html>

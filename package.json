@@ -13,6 +13,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
+    "qa:e2e-users": "tsx scripts/ensure-qa-e2e-users.ts",
+    "test:e2e": "npm run qa:e2e-users && playwright test",
     "dev:operational-reset": "tsx src/scripts/operational-reset/index.ts"
   },
   "dependencies": {
@@ -37,6 +39,7 @@
     "@types/morgan": "^1.9.9",
     "@types/multer": "^2.2.0",
     "@types/node": "^20.14.2",
+    "@playwright/test": "^1.55.0",
     "prisma": "^5.14.0",
     "tsx": "^4.15.7",
     "typescript": "^5.4.5"
