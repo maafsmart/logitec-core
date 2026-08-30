@@ -223,11 +223,13 @@ async function countMasters(tx: Prisma.TransactionClient) {
   return { users, products, warehouses, locations, projects, clients };
 }
 
+const AVIAT_REQUISITION_RESERVATION_WHERE = (clientId: string): Prisma.InventoryReservationWhereInput => ({
+  requisitionLine: { requisition: { project: { clientId } } }
+});
+
 async function countReservationsToRelease(tx: Prisma.TransactionClient, clientId: string): Promise<number> {
   return tx.inventoryReservation.count({
-    where: {
-      OR: [{ inventory: { clientId } }, { requisitionLine: { requisition: { project: { clientId } } } }]
-    }
+    where: AVIAT_REQUISITION_RESERVATION_WHERE(clientId)
   });
 }
 
@@ -263,23 +265,24 @@ function activeReserved(qty: unknown, consumed: unknown, released: unknown): Pri
   return left.greaterThan(0) ? left : new Prisma.Decimal(0);
 }
 
-async function releaseAviatReservations(
+type ReservationReleaseRow = {
+  id: string;
+  inventoryId: string;
+  inventoryLayerId: string | null;
+  qty: unknown;
+  consumedQty: unknown;
+  releasedQty: unknown;
+};
+
+/** Tasks have no InventoryReservation FK; deleting tasks never requires releasing stock. */
+export function taskCleanupTouchesReservations(): false {
+  return false;
+}
+
+async function releaseSelectedReservations(
   tx: Prisma.TransactionClient,
-  clientId: string
+  reservations: ReservationReleaseRow[]
 ): Promise<number> {
-  const reservations = await tx.inventoryReservation.findMany({
-    where: {
-      OR: [{ inventory: { clientId } }, { requisitionLine: { requisition: { project: { clientId } } } }]
-    },
-    select: {
-      id: true,
-      inventoryId: true,
-      inventoryLayerId: true,
-      qty: true,
-      consumedQty: true,
-      releasedQty: true
-    }
-  });
   for (const row of reservations) {
     const qty = activeReserved(row.qty, row.consumedQty, row.releasedQty);
     if (qty.greaterThan(0)) {
@@ -299,6 +302,31 @@ async function releaseAviatReservations(
     await tx.inventoryReservation.deleteMany({ where: { id: { in: reservations.map((row) => row.id) } } });
   }
   return reservations.length;
+}
+
+async function releaseReservationsForAviatRequisitions(
+  tx: Prisma.TransactionClient,
+  clientId: string,
+  requisitionIds: string[]
+): Promise<number> {
+  if (!requisitionIds.length) return 0;
+  const reservations = await tx.inventoryReservation.findMany({
+    where: {
+      requisitionLine: {
+        requisitionId: { in: requisitionIds },
+        requisition: { project: { clientId } }
+      }
+    },
+    select: {
+      id: true,
+      inventoryId: true,
+      inventoryLayerId: true,
+      qty: true,
+      consumedQty: true,
+      releasedQty: true
+    }
+  });
+  return releaseSelectedReservations(tx, reservations);
 }
 
 async function purgeSelectedHistory(
@@ -321,7 +349,6 @@ async function purgeSelectedHistory(
   };
   const clientWhere = { clientId: aviatId };
   const projectWhere = { project: { clientId: aviatId } };
-  const needsRequisitionOrTask = categories.includes("requisitions") || categories.includes("tasks");
 
   if (categories.includes("movements")) {
     await tx.inventoryMovement.updateMany({
@@ -339,10 +366,6 @@ async function purgeSelectedHistory(
     deleted.activityLogs = (await tx.activityLog.deleteMany({ where: clientWhere })).count;
   }
 
-  if (needsRequisitionOrTask) {
-    deleted.reservationsReleased = await releaseAviatReservations(tx, aviatId);
-  }
-
   if (categories.includes("tasks")) {
     const taskIds = (await tx.task.findMany({ where: clientWhere, select: { id: true } })).map((row) => row.id);
     if (taskIds.length) {
@@ -352,7 +375,17 @@ async function purgeSelectedHistory(
   }
 
   if (categories.includes("requisitions")) {
-    deleted.requisitions = (await tx.requisition.deleteMany({ where: projectWhere })).count;
+    const requisitionIds = (
+      await tx.requisition.findMany({ where: projectWhere, select: { id: true } })
+    ).map((row) => row.id);
+    deleted.reservationsReleased = await releaseReservationsForAviatRequisitions(tx, aviatId, requisitionIds);
+    if (requisitionIds.length) {
+      deleted.requisitions = (
+        await tx.requisition.deleteMany({
+          where: { AND: [{ id: { in: requisitionIds } }, projectWhere] }
+        })
+      ).count;
+    }
   }
 
   if (categories.includes("importBatches")) {
@@ -423,7 +456,7 @@ export async function previewOperationalHistoryCleanup(
       cannotPurgeWithoutTouchingMasters: [] as Array<{ category: string; reason: string }>,
       reservationsToRelease: 0,
       reservationsNote:
-        "Si hay reservas AVIAT, se liberan reservedQty (no se borra existencia ni maestros) para poder borrar requisiciones/tareas.",
+        "Las reservas AVIAT se liberan solo al limpiar la categoría requisiciones, y únicamente las ligadas a esas requisiciones. Limpiar tareas no toca reservas ni reservedQty. No se borra existencia ni maestros.",
       globalActivityLogsRetained: 0
     };
 

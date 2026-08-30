@@ -5980,7 +5980,7 @@
               <h4 class="secondary-panel-title" style="margin:8px 0 6px">Limpiar historial operativo de AVIAT</h4>
               <p class="module-lead">Acción distinta al borrado de inventario. Lleva a cero la trazabilidad de ensayo de AVIAT (movimientos, scans, activity, tareas, requisiciones, imports, incidencias y comentarios). Conserva cliente, usuarios, roles, proyectos, catálogo, almacenes, ubicaciones y existencias. No se ejecuta sola.</p>
               <p class="module-lead"><strong>No borra historia de GitHub.</strong> CLEAN_START es solo datos operativos visibles de AVIAT en la base de datos. No elimina commits, no reescribe historial Git, no hace force push, no borra ramas, PRs, comentarios ni evidencia técnica del desarrollo.</p>
-              <p class="assignee-hint">Las 3 incidencias heredadas (04/08 y 14/08) son candidatas. Foto de usuario: solo <code>avatarUrl</code> externa; no hay carga de archivos.</p>
+              <p class="assignee-hint">Las 3 incidencias heredadas (04/08 y 14/08) son candidatas. Foto de usuario: solo <code>avatarUrl</code> externa; no hay carga de archivos. Limpiar <strong>tareas</strong> no libera reservas. Las reservas se liberan solo al limpiar <strong>requisiciones</strong>, y únicamente las de esas requisiciones AVIAT.</p>
               <div class="user-card-actions">
                 <button type="button" id="operationalHistoryPreviewBtn" class="btn-secondary btn-compact">Consultar preview</button>
               </div>
