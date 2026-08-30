@@ -38,6 +38,22 @@ test("COMPLETED cierra el wizard, limpia sesión y vuelve a scope Todas", () => 
   assert.match(sliceFunction(js, "finishImportWizardAfterCompleted"), /dismissImportWizardSession/);
   assert.match(sliceFunction(js, "finishImportWizardAfterCompleted"), /returnInventoryToTotalScopeAfterImport/);
   assert.match(sliceFunction(js, "returnInventoryToTotalScopeAfterImport"), /assignmentType: ""/);
+  assert.doesNotMatch(sliceFunction(js, "finishImportWizardAfterCompleted"), /window\.location\.reload/);
+});
+
+test("COMPLETED refresca inventario desde servidor sin F5", () => {
+  const finishFn = sliceFunction(js, "finishImportWizardAfterCompleted");
+  const scopeFn = sliceFunction(js, "returnInventoryToTotalScopeAfterImport");
+  const refreshFn = sliceFunction(js, "refreshInventoryAfterImport");
+  assert.match(finishFn, /showImportCompletionNotice/);
+  assert.match(finishFn, /await returnInventoryToTotalScopeAfterImport/);
+  assert.match(finishFn, /void probeResumableImport/);
+  assert.match(scopeFn, /await refreshInventoryAfterImport\(\)/);
+  assert.doesNotMatch(scopeFn, /setInventoryScope\([\s\S]{0,200}reload: true/);
+  assert.match(refreshFn, /loadCatalogData/);
+  assert.match(refreshFn, /loadInventoryProjects/);
+  assert.match(refreshFn, /loadStockStrip/);
+  assert.match(refreshFn, /loadInventoryMovements/);
 });
 
 test("CANCELLED cierra el wizard sin borrar historial del servidor", () => {
@@ -136,6 +152,8 @@ test("QA-09/12: PRODUCT_PROJECT_LINK_REQUIRED es informativo sin Corregir todos"
   assert.match(sliceFunction(js, "renderImportReviewFromState"), /Informativos/);
   assert.match(sliceFunction(js, "renderImportReviewFromState"), /actionableGroups/);
   assert.doesNotMatch(sliceFunction(js, "renderImportReviewFromState"), /Corregir todos[\s\S]{0,120}PRODUCT_PROJECT_LINK/);
+  assert.doesNotMatch(js, /IMPORT_INFORMATIONAL_ISSUE_CODES[\s\S]{0,120}PRICE_REVIEW_REQUIRED/);
+  assert.match(sliceFunction(js, "importReviewGroupActionCell"), /Corregir todos/);
 });
 
 test("QA-16: Existencias no incluye panel duplicado de Operación", () => {
@@ -156,6 +174,8 @@ test("reset UX distingue eliminado vs estado actual y bloquea inventario en cero
   assert.match(sliceFunction(js, "formatPhysicalResetPurgedSummary"), /Se eliminaron:/);
   assert.match(sliceFunction(js, "formatPhysicalResetCurrentSummary"), /Estado actual:/);
   assert.match(sliceFunction(js, "renderAviatResetCounts"), /mode === "purge" \? "Se eliminarán" : "Estado actual"/);
+  assert.match(sliceFunction(js, "runPhysicalInventoryReset"), /closePhysicalInventoryResetModal/);
+  assert.match(sliceFunction(js, "runPhysicalInventoryReset"), /syncAviatDangerZone/);
 });
 
 test("KPI Productos muestra etiqueta según scope", () => {

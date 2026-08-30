@@ -12559,11 +12559,13 @@ function closeImportWizardUiOnly() {
 async function returnInventoryToTotalScopeAfterImport() {
   const scope = getInventoryScope();
   if (scope.projectId || scope.assignmentType) {
-    await setInventoryScope({ projectId: "", assignmentType: "" }, { reload: true });
+    inventoryScope = { projectId: "", assignmentType: "" };
+    updateInventoryScopeUi();
+    refreshInventorySkuSelectedCard();
   } else {
     updateInventoryScopeUi();
-    await refreshInventoryAfterImport();
   }
+  await refreshInventoryAfterImport();
 }
 
 async function finishImportWizardAfterCompleted(summaryMessage) {
@@ -14289,6 +14291,9 @@ async function runPhysicalInventoryReset() {
     }
     await refreshInventoryAfterPhysicalPurge();
     await syncAviatDangerZone();
+    if (physicalInventoryResetPhrase) physicalInventoryResetPhrase.value = "";
+    if (physicalInventoryResetFinalAck) physicalInventoryResetFinalAck.checked = false;
+    closePhysicalInventoryResetModal();
   } catch (error) {
     setPhysicalInventoryResetError(error?.message || "No se pudo borrar el inventario.");
   } finally {
