@@ -135,6 +135,117 @@ test("QA-13: XLSX multi-hoja no auto-selecciona sheets[0]", () => {
   assert.match(uploadBlock, /else if \(sheets\.length === 1\)[\s\S]{0,160}applyImportSheetSelection\(sheets\[0\]\.name/);
   assert.match(uploadBlock, /isMultiSheetImportUpload/);
   assert.match(uploadBlock, /applyImportSheetSelection/);
+  const changeStart = js.indexOf('document.getElementById("importSheetSelect")?.addEventListener("change"');
+  assert.ok(changeStart >= 0, "missing import sheet change handler");
+  const changeBlock = js.slice(changeStart, changeStart + 700);
+  assert.doesNotMatch(changeBlock, /const sheets = \[\]/);
+  assert.match(changeBlock, /applyImportSheetSelection\(sheetName\)/);
+});
+
+function loadImportSheetSelectionHarness() {
+  return new Function(`
+    ${sliceFunction(js, "hasUsefulImportSheetList")}
+    ${sliceFunction(js, "resolveImportSheetMetadata")}
+    ${sliceFunction(js, "importMappingHeadersFromSheet")}
+    return { hasUsefulImportSheetList, resolveImportSheetMetadata, importMappingHeadersFromSheet };
+  `)() as {
+    hasUsefulImportSheetList: (sheets: unknown) => boolean;
+    resolveImportSheetMetadata: (
+      sheets: unknown,
+      batchSheets: unknown,
+      sheetName: string
+    ) => { name: string; headers?: string[]; totalDataRows?: number } | null;
+    importMappingHeadersFromSheet: (
+      sheet: { headers?: string[] } | null,
+      suggested: Record<string, string> | null
+    ) => string[];
+  };
+}
+
+function loadApplyImportSheetSelection() {
+  return new Function(`
+    return async function run(sheetName, sheets, selectSheetBatch, mappingBody) {
+      const currentImportId = "imp-3-hojas";
+      const importUi = {
+        sheetName: "",
+        sheetRows: 0,
+        batchStatus: "",
+        mappingApplied: true,
+        mappingDirty: false,
+        appliedMappingJson: "{}"
+      };
+      const captured = { headers: null, mapping: null, fetchUrls: [] };
+      async function authenticatedFetch(url, opts) {
+        captured.fetchUrls.push(String(url));
+        if (String(url).includes("/select-sheet")) {
+          return { ok: true, json: async () => selectSheetBatch };
+        }
+        if (String(url).includes("/mapping")) {
+          return { ok: true, json: async () => mappingBody };
+        }
+        return { ok: false, json: async () => ({}) };
+      }
+      function resetImportDownstream() {}
+      function formatImportCount(n) { return String(n ?? 0); }
+      function setImportStatus() {}
+      function renderImportMapping(headers, mapping) {
+        captured.headers = headers;
+        captured.mapping = mapping;
+      }
+      ${sliceFunction(js, "hasUsefulImportSheetList")}
+      ${sliceFunction(js, "resolveImportSheetMetadata")}
+      ${sliceFunction(js, "importMappingHeadersFromSheet")}
+      ${sliceFunction(js, "applyImportSheetSelection")}
+      await applyImportSheetSelection(sheetName, sheets);
+      return { captured, importUi };
+    };
+  `)() as (
+    sheetName: string,
+    sheets: unknown,
+    selectSheetBatch: unknown,
+    mappingBody: unknown
+  ) => Promise<{
+    captured: { headers: string[] | null; mapping: Record<string, string> | null; fetchUrls: string[] };
+    importUi: { sheetName: string; sheetRows: number };
+  }>;
+}
+
+test("QA-13: seleccionar hoja multi-sheet toma headers de /select-sheet sin lista local", async () => {
+  const officialSheets = [
+    { name: "Portada", headers: ["Titulo"], totalDataRows: 1 },
+    { name: "Inventario", headers: ["SKU", "Cantidad", "Ubicacion"], totalDataRows: 42 },
+    { name: "Notas", headers: ["Comentario"], totalDataRows: 3 }
+  ];
+  const selectSheetBatch = {
+    status: "UPLOADED",
+    totalRows: 42,
+    sheetName: "Inventario",
+    metadata: { selectedSheet: "Inventario", sheets: officialSheets }
+  };
+  const mappingBody = { suggested: { SKU: "sku", Cantidad: "qty" }, mapping: {} };
+  const run = loadApplyImportSheetSelection();
+
+  const fromEmptyLocal = await run("Inventario", [], selectSheetBatch, mappingBody);
+  assert.deepEqual(
+    fromEmptyLocal.captured.headers,
+    ["SKU", "Cantidad", "Ubicacion"],
+    "[] no debe tapar metadata.sheets de /select-sheet"
+  );
+  assert.equal(fromEmptyLocal.captured.headers?.length! > 0, true);
+  assert.deepEqual(fromEmptyLocal.captured.mapping, { SKU: "sku", Cantidad: "qty" });
+  assert.ok(fromEmptyLocal.captured.fetchUrls.some((url) => url.includes("/select-sheet")));
+  assert.equal(fromEmptyLocal.importUi.sheetName, "Inventario");
+  assert.equal(fromEmptyLocal.importUi.sheetRows, 42);
+
+  const fromOmittedLocal = await run("Inventario", undefined, selectSheetBatch, mappingBody);
+  assert.deepEqual(fromOmittedLocal.captured.headers, ["SKU", "Cantidad", "Ubicacion"]);
+
+  const { resolveImportSheetMetadata, importMappingHeadersFromSheet } = loadImportSheetSelectionHarness();
+  const resolved = resolveImportSheetMetadata([], officialSheets, "Inventario");
+  assert.equal(resolved?.name, "Inventario");
+  const headers = importMappingHeadersFromSheet(resolved, { SKU: "sku" });
+  assert.deepEqual(headers, ["SKU", "Cantidad", "Ubicacion"]);
+  assert.notDeepEqual(headers, Object.keys({ SKU: "sku" }), "headers deben venir de metadata, no solo de keys del mapeo");
 });
 
 test("QA-14: RECONCILE queda como vista previa secundaria no confirmable", () => {

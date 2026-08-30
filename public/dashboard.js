@@ -12677,6 +12677,25 @@ function importReviewGroupActionCell(group, index) {
   return `<button class="btn-secondary btn-compact" data-review-group="${index}">Corregir todos</button>`;
 }
 
+function hasUsefulImportSheetList(sheets) {
+  return Array.isArray(sheets) && sheets.length > 0;
+}
+
+function resolveImportSheetMetadata(sheets, batchSheets, sheetName) {
+  const findNamed = (list) =>
+    hasUsefulImportSheetList(list) ? list.find((s) => s && s.name === sheetName) || null : null;
+  const localSheet = findNamed(sheets);
+  const batchSheet = findNamed(batchSheets);
+  if (localSheet && Array.isArray(localSheet.headers) && localSheet.headers.length) return localSheet;
+  return batchSheet || localSheet || null;
+}
+
+function importMappingHeadersFromSheet(sheet, suggested) {
+  if (Array.isArray(sheet?.headers) && sheet.headers.length) return sheet.headers;
+  if (suggested && typeof suggested === "object") return Object.keys(suggested);
+  return [];
+}
+
 async function applyImportSheetSelection(sheetName, sheets) {
   if (!currentImportId || !sheetName) return;
   const response = await authenticatedFetch(`/api/imports/${currentImportId}/select-sheet`, {
@@ -12689,7 +12708,7 @@ async function applyImportSheetSelection(sheetName, sheets) {
     throw new Error(err.message || "No se pudo seleccionar la hoja.");
   }
   const batch = await response.json();
-  const sheet = (Array.isArray(sheets) ? sheets : batch.metadata?.sheets || []).find((s) => s.name === sheetName);
+  const sheet = resolveImportSheetMetadata(sheets, batch.metadata?.sheets, sheetName);
   importUi.sheetName = sheetName;
   importUi.sheetRows = Number(sheet?.totalDataRows || batch.totalRows || 0);
   importUi.batchStatus = batch.status || "UPLOADED";
@@ -12700,7 +12719,8 @@ async function applyImportSheetSelection(sheetName, sheets) {
     body: JSON.stringify({})
   });
   const mapped = mappingRes?.ok ? await mappingRes.json() : { suggested: {} };
-  renderImportMapping(sheet?.headers || [], mapped.suggested || mapped.mapping || {});
+  const suggested = mapped.suggested || mapped.mapping || {};
+  renderImportMapping(importMappingHeadersFromSheet(sheet, suggested), suggested);
   importUi.mappingApplied = false;
   importUi.mappingDirty = true;
   importUi.appliedMappingJson = "";
@@ -13805,8 +13825,7 @@ document.getElementById("importSheetSelect")?.addEventListener("change", (e) => 
   const sheetName = e.target.value;
   if (!sheetName) return;
   void withImportLock("Seleccionando hoja…", async () => {
-    const sheets = [];
-    await applyImportSheetSelection(sheetName, sheets);
+    await applyImportSheetSelection(sheetName);
   });
 });
 
