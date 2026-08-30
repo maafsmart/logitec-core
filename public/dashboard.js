@@ -157,9 +157,79 @@ function renderLiveClientMasterCard(row, slotIndex) {
     <div class="client-context-actions">
       <button type="button" class="btn-primary btn-compact" data-enter-client="${escCell(row.id)}"${enterDisabled}>Entrar</button>
       <button type="button" class="btn-secondary btn-compact" data-manage-client="${escCell(row.id)}">Administrar</button>
-      <button type="button" class="btn-secondary btn-compact" data-add-project-client="${escCell(row.id)}">Agregar proyecto</button>
+      ${
+        canAdminCreateProject()
+          ? `<button type="button" class="btn-secondary btn-compact" data-add-project-client="${escCell(row.id)}">Agregar proyecto</button>`
+          : ""
+      }
     </div>
   </article>`;
+}
+
+function canAdminCreateProject() {
+  return currentRole === "ADMIN";
+}
+
+function resolveClientForProjectForm(clientId) {
+  const id = String(clientId || "").trim();
+  if (!id) return null;
+  const pools = [clientContextCatalog, realClientsCache];
+  for (const pool of pools) {
+    const found = (Array.isArray(pool) ? pool : []).find((row) => row && row.id === id);
+    if (found) return found;
+  }
+  return { id };
+}
+
+function openAddProjectFromClientCard(clientId) {
+  if (!canAdminCreateProject()) return false;
+  const client = resolveClientForProjectForm(clientId);
+  if (!client?.id) return false;
+  void loadRealClientsQuiet().then(() => openProjectForm(null, client));
+  return true;
+}
+
+function handleClientContextCardAction(target) {
+  if (!target || typeof target.getAttribute !== "function") return { action: null };
+  const closest = typeof target.closest === "function" ? (sel) => target.closest(sel) : () => null;
+  if (closest("[data-placeholder-slot]")) {
+    if (closest("[data-configure-client-slot]")) return { action: "configure" };
+    return { action: "placeholder" };
+  }
+  const enterId = target.getAttribute("data-enter-client");
+  if (enterId) return { action: "enter", clientId: enterId };
+  const manageId = target.getAttribute("data-manage-client");
+  if (manageId) return { action: "manage", clientId: manageId };
+  const addProjectId = target.getAttribute("data-add-project-client");
+  if (addProjectId) return { action: "add-project", clientId: addProjectId };
+  if (typeof target.hasAttribute === "function" && target.hasAttribute("data-configure-client-slot")) {
+    return { action: "configure" };
+  }
+  return { action: null };
+}
+
+function dispatchClientContextCardClick(target) {
+  const parsed = handleClientContextCardAction(target);
+  if (parsed.action === "configure") {
+    setAdminClientGateVisible(false);
+    navigateTo("inventario", "clients");
+    return parsed;
+  }
+  if (parsed.action === "placeholder") return parsed;
+  if (parsed.action === "enter") {
+    void selectOperationalClient(parsed.clientId);
+    return parsed;
+  }
+  if (parsed.action === "manage") {
+    setAdminClientGateVisible(false);
+    navigateTo("inventario", "clients");
+    return parsed;
+  }
+  if (parsed.action === "add-project") {
+    openAddProjectFromClientCard(parsed.clientId);
+    return parsed;
+  }
+  return parsed;
 }
 
 function renderPlaceholderClientMasterCard(slotIndex) {
@@ -14392,35 +14462,7 @@ clientContextAddBtn?.addEventListener("click", () => {
 clientContextCards?.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
-  const placeholderCard = target.closest("[data-placeholder-slot]");
-  if (placeholderCard) {
-    if (target.closest("[data-configure-client-slot]")) {
-      setAdminClientGateVisible(false);
-      navigateTo("inventario", "clients");
-    }
-    return;
-  }
-  const enterId = target.getAttribute("data-enter-client");
-  if (enterId) {
-    void selectOperationalClient(enterId);
-    return;
-  }
-  const manageId = target.getAttribute("data-manage-client");
-  if (manageId) {
-    setAdminClientGateVisible(false);
-    navigateTo("inventario", "clients");
-    return;
-  }
-  const addProjectId = target.getAttribute("data-add-project-client");
-  if (addProjectId) {
-    setAdminClientGateVisible(false);
-    navigateTo("inventario", "projects");
-    return;
-  }
-  if (target.hasAttribute("data-configure-client-slot")) {
-    setAdminClientGateVisible(false);
-    navigateTo("inventario", "clients");
-  }
+  dispatchClientContextCardClick(target);
 });
 changeClientBtn?.addEventListener("click", () => {
   if (operationalClient) void clearAdminOperationalClient();

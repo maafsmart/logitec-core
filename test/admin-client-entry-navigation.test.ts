@@ -91,6 +91,102 @@ test("F: flag false mantiene el reset protegido en backend y UI", () => {
   assert.match(html, /ALLOW_TENANT_INVENTORY_RESET/);
 });
 
+function loadClientCardAddProjectHarness(role: string) {
+  return new Function(
+    "role",
+    `
+    let currentRole = role;
+    const clientContextCatalog = [
+      { id: "client-aviat", code: "AVIAT", tradeName: "AVIAT", name: "AVIAT" },
+      { id: "client-2", code: "CLI2", tradeName: "Cliente 2", name: "Cliente 2" }
+    ];
+    const realClientsCache = [];
+    const calls = { openProjectForm: [], navigateTo: [], selectOperationalClient: [], gate: [] };
+    function setAdminClientGateVisible(visible) { calls.gate.push(visible); }
+    function navigateTo(section, mod) { calls.navigateTo.push([section, mod]); }
+    function selectOperationalClient(id) { calls.selectOperationalClient.push(id); }
+    function loadRealClientsQuiet() { return Promise.resolve(clientContextCatalog); }
+    function openProjectForm(project, client) { calls.openProjectForm.push({ project, client }); }
+    ${sliceFunction(js, "canAdminCreateProject")}
+    ${sliceFunction(js, "resolveClientForProjectForm")}
+    ${sliceFunction(js, "openAddProjectFromClientCard")}
+    ${sliceFunction(js, "handleClientContextCardAction")}
+    ${sliceFunction(js, "dispatchClientContextCardClick")}
+    return {
+      calls,
+      dispatchClientContextCardClick,
+      handleClientContextCardAction,
+      openAddProjectFromClientCard
+    };
+  `
+  )(role) as {
+    calls: {
+      openProjectForm: Array<{ project: unknown; client: { id: string } }>;
+      navigateTo: Array<[string, string]>;
+      selectOperationalClient: string[];
+      gate: boolean[];
+    };
+    dispatchClientContextCardClick: (target: {
+      getAttribute: (name: string) => string | null;
+      closest: (sel: string) => unknown;
+      hasAttribute: (name: string) => boolean;
+    }) => { action: string | null; clientId?: string };
+    handleClientContextCardAction: (target: unknown) => { action: string | null; clientId?: string };
+    openAddProjectFromClientCard: (clientId: string) => boolean;
+  };
+}
+
+function fakeAttrTarget(attrs: Record<string, string>) {
+  return {
+    getAttribute: (name: string) => attrs[name] ?? null,
+    closest: () => null,
+    hasAttribute: (name: string) => Object.prototype.hasOwnProperty.call(attrs, name)
+  };
+}
+
+test("Agregar proyecto en tarjeta de cliente abre el formulario con el cliente preseleccionado", async () => {
+  const admin = loadClientCardAddProjectHarness("ADMIN");
+  const target = fakeAttrTarget({ "data-add-project-client": "client-aviat" });
+  const parsed = admin.dispatchClientContextCardClick(target);
+  assert.equal(parsed.action, "add-project");
+  assert.equal(parsed.clientId, "client-aviat");
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(admin.calls.openProjectForm.length, 1, "debe invocar openProjectForm");
+  assert.equal(admin.calls.openProjectForm[0].project, null, "alta nueva, no edición");
+  assert.equal(admin.calls.openProjectForm[0].client.id, "client-aviat");
+  assert.deepEqual(admin.calls.navigateTo, [], "no debe solo navegar a Proyectos");
+  assert.equal(admin.calls.selectOperationalClient.length, 0);
+
+  const supervisor = loadClientCardAddProjectHarness("SUPERVISOR");
+  supervisor.dispatchClientContextCardClick(target);
+  await Promise.resolve();
+  assert.equal(supervisor.calls.openProjectForm.length, 0, "SUPERVISOR no gana alta de proyecto");
+  assert.equal(supervisor.openAddProjectFromClientCard("client-aviat"), false);
+
+  const operator = loadClientCardAddProjectHarness("OPERATOR");
+  assert.equal(operator.openAddProjectFromClientCard("client-aviat"), false);
+  await Promise.resolve();
+  assert.equal(operator.calls.openProjectForm.length, 0);
+
+  const adminManage = loadClientCardAddProjectHarness("ADMIN");
+  const manage = adminManage.dispatchClientContextCardClick(fakeAttrTarget({ "data-manage-client": "client-aviat" }));
+  assert.equal(manage.action, "manage");
+  assert.deepEqual(adminManage.calls.navigateTo, [["inventario", "clients"]]);
+  assert.equal(adminManage.calls.openProjectForm.length, 0);
+
+  const adminEnter = loadClientCardAddProjectHarness("ADMIN");
+  const enter = adminEnter.dispatchClientContextCardClick(fakeAttrTarget({ "data-enter-client": "client-2" }));
+  assert.equal(enter.action, "enter");
+  assert.deepEqual(adminEnter.calls.selectOperationalClient, ["client-2"]);
+  assert.equal(adminEnter.calls.openProjectForm.length, 0);
+
+  assert.match(js, /data-add-project-client/);
+  assert.match(sliceFunction(js, "dispatchClientContextCardClick"), /openAddProjectFromClientCard/);
+  assert.match(sliceFunction(js, "openAddProjectFromClientCard"), /openProjectForm\(null, client\)/);
+  assert.doesNotMatch(sliceFunction(js, "openAddProjectFromClientCard"), /navigateTo\(/);
+});
+
 test("login ADMIN emite JWT sin operationalClientId embebido", () => {
   const sample = jwt.sign({ role: "ADMIN", email: "admin@test.local" }, env.JWT_SECRET, {
     subject: "admin-id"
