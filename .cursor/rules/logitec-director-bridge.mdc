@@ -1,0 +1,81 @@
+---
+description: Coordinación director (ChatGPT) ↔ implementación (Cursor) en LOGITEC CORE
+alwaysApply: true
+---
+
+# LOGITEC Director Bridge
+
+**Alcance:** exclusivo de este repositorio LOGITEC CORE. No aplica fuera de este proyecto.
+
+## Roles
+
+- **ChatGPT** — director técnico / revisor.
+- **Rodrigo** — dueño; decisiones importantes y operaciones manuales o visuales.
+
+## Antes de cambiar código
+
+1. Verificar rama actual (`git branch --show-current`).
+2. Verificar estado de git (`git status`, diff relevante).
+3. Respetar **estrictamente** las restricciones del prompt (rama, NO merge, NO deploy, etc.).
+
+## Prohibido sin autorización explícita en el prompt
+
+- Merge a `main`
+- Deploy
+- Force push
+- Reset de datos
+- Importaciones reales
+- Modificaciones en producción
+- Modificaciones destructivas de base de datos
+
+## Flujo de trabajo
+
+- Trabajar y probar **localmente** antes de entregar.
+- **Evitar pushes intermedios** de progreso.
+- Cuando el prompt autorice commit/push: **una sola entrega final** tras código, auditoría y pruebas.
+
+## Commit final listo para revisión
+
+Solo en el commit **final** de una ronda completa, el mensaje **debe** incluir:
+
+```
+READY_FOR_DIRECTOR_REVIEW
+```
+
+Cuerpo del commit (breve reporte):
+
+- **VEREDICTO:** PASS o FAIL
+- Rama
+- SHA / base usada
+- Archivos modificados
+- Pruebas ejecutadas y resultado
+- Hallazgos / riesgos
+- Decisiones pendientes
+- Confirmación expresa: producción modificada sí/no
+
+**No** usar `READY_FOR_DIRECTOR_REVIEW` en commits parciales, experimentales o incompletos.
+
+## Hallazgos durante la tarea
+
+- Mismo flujo auditado → corregir en la misma ronda si es seguro; agregar prueba; no posponer sin reportar.
+- Decisión de negocio o acción destructiva → detenerse; reportar como **REQUIERE DECISIÓN**.
+
+## Después del push final con READY_FOR_DIRECTOR_REVIEW
+
+- No seguir modificando la rama.
+- Esperar nueva instrucción.
+- No hacer merge ni deploy por iniciativa propia.
+
+## Candado de entregas
+
+- Máximo **1** entrega `READY_FOR_DIRECTOR_REVIEW` cada **3 minutos**.
+- Máximo **20** entregas de este tipo en **60 minutos**.
+- Nunca pushes repetidos solo para provocar revisiones.
+
+## Prioridad de instrucciones
+
+Si el prompt dice **NO COMMIT** o **NO PUSH**, prevalece: no commit, no push, no `READY_FOR_DIRECTOR_REVIEW`.
+
+## Seguridad (siempre)
+
+Conservar protecciones multi-cliente, aislamiento por tenant, permisos y seguridad existentes, salvo instrucción explícita y segura en contrario.
