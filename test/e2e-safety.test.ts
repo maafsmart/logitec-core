@@ -19,7 +19,9 @@ import {
   sanitizeE2eEvidence,
   sanitizeE2eUrl,
   sanitizePlaywrightResultsDump,
-  selectExistingActiveQaClient
+  selectExistingActiveQaClient,
+  resolveE2ePlaywrightTarget,
+  resolveSafeE2eBaseUrl
 } from "../src/scripts/e2e-safety.ts";
 
 const ensureSource = readFileSync(new URL("../scripts/ensure-qa-e2e-users.ts", import.meta.url), "utf8");
@@ -178,7 +180,9 @@ test("playwright-results.json no conserva env con secretos", () => {
   assert.doesNotMatch(playwrightConfigSource, /\.\.\.\s*process\.env/);
   assert.doesNotMatch(playwrightConfigSource, /Object\.entries\(\s*process\.env/);
   assert.match(playwrightConfigSource, /buildE2eWebServerEnv/);
+  assert.match(playwrightConfigSource, /resolveE2ePlaywrightTarget/);
   assert.match(playwrightConfigSource, /e2e-web-server\.ts/);
+  assert.doesNotMatch(playwrightConfigSource, /E2E_BASE_URL\s*\|\|/);
   assert.match(teardownSource, /sanitizePlaywrightResultsDump/);
   const dumped = {
     config: {
@@ -330,4 +334,42 @@ test("wrapper E2E aborta ANTES de importar el servidor en destinos inseguros", a
   });
   assert.equal(started, true);
   assert.doesNotThrow(() => assertE2eWebServerReady(DEV_ENV));
+});
+
+test("E2E_BASE_URL loopback local es el único destino HTTP permitido", () => {
+  assert.equal(resolveSafeE2eBaseUrl({ baseUrl: "http://127.0.0.1:3100" }), "http://127.0.0.1:3100");
+  assert.equal(resolveSafeE2eBaseUrl({ baseUrl: "http://localhost:3100" }), "http://localhost:3100");
+  assert.equal(resolveSafeE2eBaseUrl({ baseUrl: "http://[::1]:3100" }), "http://[::1]:3100");
+  assert.equal(resolveSafeE2eBaseUrl({ port: 3100 }), "http://127.0.0.1:3100");
+  const localProvided = resolveE2ePlaywrightTarget({ E2E_BASE_URL: "http://127.0.0.1:3100" });
+  assert.equal(localProvided.baseURL, "http://127.0.0.1:3100");
+  assert.equal(localProvided.startWebServer, false);
+  const generated = resolveE2ePlaywrightTarget({ E2E_PORT: "3100" });
+  assert.equal(generated.baseURL, "http://127.0.0.1:3100");
+  assert.equal(generated.startWebServer, true);
+});
+
+test("E2E_BASE_URL remoto o inseguro aborta ANTES de que Playwright navegue", () => {
+  const remote = [
+    { url: "https://www.logitec.example", code: "E2E_BASE_URL_INVALID" },
+    { url: "https://example.com", code: "E2E_BASE_URL_INVALID" },
+    { url: "http://192.168.1.10:3100", code: "E2E_BASE_URL_REMOTE_FORBIDDEN" },
+    { url: "http://10.0.0.2:3100", code: "E2E_BASE_URL_REMOTE_FORBIDDEN" },
+    { url: "https://127.0.0.1:3100", code: "E2E_BASE_URL_INVALID" },
+    { url: "ftp://127.0.0.1", code: "E2E_BASE_URL_INVALID" },
+    { url: "http://user:password@127.0.0.1:3100", code: "E2E_BASE_URL_INVALID" },
+    { url: "not-a-url", code: "E2E_BASE_URL_INVALID" }
+  ];
+  for (const row of remote) {
+    assert.throws(
+      () => resolveSafeE2eBaseUrl({ baseUrl: row.url }),
+      (err: unknown) => err instanceof E2eSafetyError && err.code === row.code,
+      row.url
+    );
+    assert.throws(
+      () => resolveE2ePlaywrightTarget({ E2E_BASE_URL: row.url }),
+      (err: unknown) => err instanceof E2eSafetyError && err.code === row.code,
+      `playwright target ${row.url}`
+    );
+  }
 });

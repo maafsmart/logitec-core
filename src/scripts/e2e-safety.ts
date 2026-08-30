@@ -288,3 +288,57 @@ const EVIDENCE_LEAK_PATTERNS: Array<{ id: string; re: RegExp }> = [
 export function findLeakedSecretMarkers(text: string): string[] {
   return EVIDENCE_LEAK_PATTERNS.filter((row) => row.re.test(text)).map((row) => row.id);
 }
+
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (host === "localhost" || host === "::1" || host === "0:0:0:0:0:0:0:1") return true;
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!ipv4) return false;
+  const octets = ipv4.slice(1).map(Number);
+  if (octets.some((n) => !Number.isInteger(n) || n > 255)) return false;
+  return octets[0] === 127;
+}
+
+export function resolveSafeE2eBaseUrl(args: { baseUrl?: string | null; port?: number }): string {
+  const port = Number(args.port || 3100);
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new E2eSafetyError("E2E_PORT inválido.", "E2E_BASE_URL_INVALID");
+  }
+  const raw = String(args.baseUrl || "").trim() || `http://127.0.0.1:${port}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new E2eSafetyError("E2E_BASE_URL inválida.", "E2E_BASE_URL_INVALID");
+  }
+  if (parsed.username || parsed.password) {
+    throw new E2eSafetyError(
+      "E2E_BASE_URL no puede incluir credenciales.",
+      "E2E_BASE_URL_INVALID"
+    );
+  }
+  if (parsed.protocol !== "http:") {
+    throw new E2eSafetyError(
+      "E2E_BASE_URL solo admite http en loopback local.",
+      "E2E_BASE_URL_INVALID"
+    );
+  }
+  if (!isLoopbackHostname(parsed.hostname)) {
+    throw new E2eSafetyError(
+      "E2E_BASE_URL remoto prohibido. El E2E solo navega loopback local.",
+      "E2E_BASE_URL_REMOTE_FORBIDDEN"
+    );
+  }
+  return parsed.origin;
+}
+
+export function resolveE2ePlaywrightTarget(env: NodeJS.ProcessEnv = process.env): {
+  baseURL: string;
+  port: number;
+  startWebServer: boolean;
+} {
+  const port = Number(env.E2E_PORT || 3100);
+  const provided = String(env.E2E_BASE_URL || "").trim();
+  const baseURL = resolveSafeE2eBaseUrl({ baseUrl: provided || undefined, port });
+  return { baseURL, port, startWebServer: provided.length === 0 };
+}
