@@ -7367,6 +7367,47 @@ function applyMustChangePasswordGate(required) {
   }
 }
 
+function isSafeHttpAvatarUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return "";
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return "";
+  return parsed.href;
+}
+
+function applyUserPhotoPreview(slot, rawUrl) {
+  if (!slot) return;
+  const frame = slot.querySelector(".user-photo-frame");
+  const img = slot.querySelector(".user-photo-image");
+  const silhouette = slot.querySelector(".user-photo-silhouette");
+  const showSilhouette = () => {
+    if (frame) frame.classList.remove("is-photo");
+    if (silhouette) silhouette.hidden = false;
+    if (img) {
+      img.alt = "";
+      img.removeAttribute("src");
+    }
+  };
+  const safe = isSafeHttpAvatarUrl(rawUrl);
+  if (!safe || !img) {
+    showSilhouette();
+    return;
+  }
+  img.referrerPolicy = "no-referrer";
+  img.alt = "Fotografía de usuario";
+  img.onerror = () => showSilhouette();
+  img.onload = () => {
+    if (frame) frame.classList.add("is-photo");
+    if (silhouette) silhouette.hidden = true;
+  };
+  img.src = safe;
+}
+
 function fillAccountProfileForm(user) {
   const meta = document.getElementById("accountProfileMeta");
   if (meta) {
@@ -7386,7 +7427,9 @@ function fillAccountProfileForm(user) {
   setVal("accountCity", user?.city);
   setVal("accountState", user?.state);
   setVal("accountPostalCode", user?.postalCode);
+  setVal("accountAvatarUrl", user?.avatarUrl);
   setVal("accountNotes", user?.notes);
+  applyUserPhotoPreview(document.getElementById("accountPhotoSlot"), user?.avatarUrl);
 }
 
 async function loadUsersModule(role) {
@@ -12597,11 +12640,13 @@ function openEditUserForm(userId) {
   document.getElementById("editJobTitle").value = user.jobTitle || "";
   document.getElementById("editPhone").value = user.phone || "";
   document.getElementById("editAlternatePhone").value = user.alternatePhone || "";
+  document.getElementById("editAvatarUrl").value = user.avatarUrl || "";
   document.getElementById("editAddress").value = user.address || "";
   document.getElementById("editCity").value = user.city || "";
   document.getElementById("editState").value = user.state || "";
   document.getElementById("editPostalCode").value = user.postalCode || "";
   document.getElementById("editNotes").value = user.notes || "";
+  applyUserPhotoPreview(document.getElementById("editUserPhotoSlot"), user.avatarUrl);
   const err = document.getElementById("editUserError");
   if (err) err.textContent = "";
   form.classList.remove("hidden");
@@ -12622,6 +12667,7 @@ async function saveEditUser(event) {
     jobTitle: document.getElementById("editJobTitle")?.value || null,
     phone: document.getElementById("editPhone")?.value || null,
     alternatePhone: document.getElementById("editAlternatePhone")?.value || null,
+    avatarUrl: document.getElementById("editAvatarUrl")?.value?.trim() || null,
     address: document.getElementById("editAddress")?.value || null,
     city: document.getElementById("editCity")?.value || null,
     state: document.getElementById("editState")?.value || null,
@@ -12705,6 +12751,7 @@ async function saveAccountProfile(event) {
     city: document.getElementById("accountCity")?.value || null,
     state: document.getElementById("accountState")?.value || null,
     postalCode: document.getElementById("accountPostalCode")?.value || null,
+    avatarUrl: document.getElementById("accountAvatarUrl")?.value?.trim() || null,
     notes: document.getElementById("accountNotes")?.value || null
   };
   try {
@@ -14567,6 +14614,12 @@ document.getElementById("editUserCancelBtn")?.addEventListener("click", () => {
   document.getElementById("editUserForm")?.classList.add("hidden");
 });
 document.getElementById("accountProfileForm")?.addEventListener("submit", (event) => void saveAccountProfile(event));
+document.getElementById("editAvatarUrl")?.addEventListener("input", (event) => {
+  applyUserPhotoPreview(document.getElementById("editUserPhotoSlot"), event.target.value);
+});
+document.getElementById("accountAvatarUrl")?.addEventListener("input", (event) => {
+  applyUserPhotoPreview(document.getElementById("accountPhotoSlot"), event.target.value);
+});
 document.getElementById("resetPasswordConfirmBtn")?.addEventListener("click", () => void confirmResetPassword());
 document.getElementById("resetPasswordCancelBtn")?.addEventListener("click", () => closeModal("resetPasswordModal"));
 document.getElementById("resetPasswordCloseX")?.addEventListener("click", () => closeModal("resetPasswordModal"));

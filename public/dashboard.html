@@ -1185,10 +1185,32 @@
         background: var(--accent-soft);
         max-width: 420px;
       }
+      .user-photo-frame {
+        position: relative;
+        flex: 0 0 72px;
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        background: #d9e4ee;
+      }
       .user-photo-silhouette {
-        flex: 0 0 auto;
-        width: 56px;
-        height: 56px;
+        width: 72px;
+        height: 72px;
+        display: block;
+      }
+      .user-photo-image {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center;
+        display: none;
+      }
+      .user-photo-frame.is-photo .user-photo-silhouette {
+        display: none;
+      }
+      .user-photo-frame.is-photo .user-photo-image {
         display: block;
       }
       .user-photo-slot .filter-hint {
@@ -4319,14 +4341,17 @@
             <div class="card-panel compact-module users-form-panel">
             <form id="editUserForm" class="hidden">
               <h4 class="secondary-panel-title">Ficha de usuario</h4>
-              <p class="assignee-hint">ADMIN edita ficha, rol y cliente. La contraseña no se lee; usa Restablecer contraseña. Fotografía pendiente; interfaz reservada con silueta.</p>
-              <div class="user-photo-slot" id="editUserPhotoPlaceholder" aria-label="Fotografía pendiente; interfaz reservada con silueta.">
-                <svg class="user-photo-silhouette" viewBox="0 0 64 64" role="img" aria-hidden="true" focusable="false">
-                  <circle cx="32" cy="32" r="31" fill="#d9e4ee" stroke="#c8d0d8" stroke-width="2"/>
-                  <circle cx="32" cy="24" r="10" fill="#5c6b7a"/>
-                  <path d="M14 54c3-12 11-18 18-18s15 6 18 18" fill="#5c6b7a"/>
-                </svg>
-                <p class="filter-hint">Fotografía — disponible próximamente</p>
+              <p class="assignee-hint">ADMIN edita ficha, rol y cliente. La contraseña no se lee; usa Restablecer contraseña. La fotografía usa una URL http(s) externa; se recomienda HTTPS.</p>
+              <div class="user-photo-slot" id="editUserPhotoSlot" aria-label="Fotografía de usuario">
+                <div class="user-photo-frame">
+                  <svg class="user-photo-silhouette" viewBox="0 0 64 64" role="img" aria-hidden="true" focusable="false">
+                    <circle cx="32" cy="32" r="31" fill="#d9e4ee" stroke="#c8d0d8" stroke-width="2"/>
+                    <circle cx="32" cy="24" r="10" fill="#5c6b7a"/>
+                    <path d="M14 54c3-12 11-18 18-18s15 6 18 18" fill="#5c6b7a"/>
+                  </svg>
+                  <img class="user-photo-image" alt="" referrerpolicy="no-referrer" decoding="async" />
+                </div>
+                <p class="filter-hint">Usa una URL HTTPS. Si la imagen no carga, se muestra la silueta.</p>
               </div>
               <input type="hidden" id="editUserId" />
               <div class="form-grid">
@@ -4364,6 +4389,10 @@
                 <div class="field">
                   <label for="editAlternatePhone">Teléfono alterno</label>
                   <input id="editAlternatePhone" type="text" />
+                </div>
+                <div class="field full">
+                  <label for="editAvatarUrl">URL de fotografía</label>
+                  <input id="editAvatarUrl" type="url" inputmode="url" placeholder="https://… (recomendado HTTPS)" autocomplete="off" />
                 </div>
                 <div class="field full">
                   <label for="editAddress">Dirección</label>
@@ -4742,14 +4771,17 @@
             </div>
             <div class="card-panel compact-module">
               <h4 class="secondary-panel-title">Mi ficha</h4>
-              <p id="accountProfileMeta" class="filter-hint">Rol y cliente asignado se muestran solo de lectura. Fotografía pendiente; interfaz reservada con silueta.</p>
-              <div class="user-photo-slot" id="accountPhotoPlaceholder" aria-label="Fotografía pendiente; interfaz reservada con silueta.">
-                <svg class="user-photo-silhouette" viewBox="0 0 64 64" role="img" aria-hidden="true" focusable="false">
-                  <circle cx="32" cy="32" r="31" fill="#d9e4ee" stroke="#c8d0d8" stroke-width="2"/>
-                  <circle cx="32" cy="24" r="10" fill="#5c6b7a"/>
-                  <path d="M14 54c3-12 11-18 18-18s15 6 18 18" fill="#5c6b7a"/>
-                </svg>
-                <p class="filter-hint">Fotografía — disponible próximamente</p>
+              <p id="accountProfileMeta" class="filter-hint">Rol y cliente asignado se muestran solo de lectura.</p>
+              <div class="user-photo-slot" id="accountPhotoSlot" aria-label="Fotografía de usuario">
+                <div class="user-photo-frame">
+                  <svg class="user-photo-silhouette" viewBox="0 0 64 64" role="img" aria-hidden="true" focusable="false">
+                    <circle cx="32" cy="32" r="31" fill="#d9e4ee" stroke="#c8d0d8" stroke-width="2"/>
+                    <circle cx="32" cy="24" r="10" fill="#5c6b7a"/>
+                    <path d="M14 54c3-12 11-18 18-18s15 6 18 18" fill="#5c6b7a"/>
+                  </svg>
+                  <img class="user-photo-image" alt="" referrerpolicy="no-referrer" decoding="async" />
+                </div>
+                <p class="filter-hint">Usa una URL HTTPS. Si la imagen no carga, se muestra la silueta.</p>
               </div>
               <form id="accountProfileForm" class="form-compact">
                 <div class="form-grid">
@@ -4784,6 +4816,10 @@
                   <div class="field">
                     <label for="accountPostalCode">CP</label>
                     <input id="accountPostalCode" type="text" />
+                  </div>
+                  <div class="field full">
+                    <label for="accountAvatarUrl">URL de fotografía</label>
+                    <input id="accountAvatarUrl" type="url" inputmode="url" placeholder="https://… (recomendado HTTPS)" autocomplete="off" />
                   </div>
                   <div class="field full">
                     <label for="accountNotes">Notas de contacto</label>

@@ -28,7 +28,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, "../public");
 
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        "img-src": ["'self'", "data:", "https:"]
+      }
+    }
+  })
+);
 app.use(cors());
 app.use(express.json());
 app.use(morgan("dev"));

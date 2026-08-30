@@ -21,7 +21,7 @@ import {
   previewOperationalHistoryCleanup,
   taskCleanupTouchesReservations
 } from "../src/modules/admin/operational-history.service.js";
-import { generateTemporaryPassword } from "../src/modules/users/user-profile.js";
+import { generateTemporaryPassword, userProfileSchema } from "../src/modules/users/user-profile.js";
 
 const html = readFileSync(new URL("../public/dashboard.html", import.meta.url), "utf8");
 const js = readFileSync(new URL("../public/dashboard.js", import.meta.url), "utf8");
@@ -35,6 +35,7 @@ const historyService = readFileSync(
 );
 const prismaSchema = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
 const userProfileSrc = readFileSync(new URL("../src/modules/users/user-profile.ts", import.meta.url), "utf8");
+const appSrc = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
 
 function sliceFunction(source: string, name: string): string {
   const token = `function ${name}(`;
@@ -59,6 +60,7 @@ const users = {
 };
 
 let lastUserUpdate: { id?: string; data?: Record<string, unknown> } = {};
+let lastUserCreate: Record<string, unknown> = {};
 const originals: Array<{ model: string; method: string; fn: unknown }> = [];
 
 function stub(model: string, method: string, fn: (...args: never[]) => unknown) {
@@ -646,7 +648,20 @@ before(async () => {
     if (data.passwordHash && current) current.passwordHash = String(data.passwordHash);
     if (data.mustChangePassword !== undefined && current) current.mustChangePassword = Boolean(data.mustChangePassword);
     if (data.fullName && current) current.fullName = String(data.fullName);
+    if ("avatarUrl" in data && current) (current as { avatarUrl?: unknown }).avatarUrl = data.avatarUrl;
     return { ...current, ...data, id: where.id, client: current?.client || null };
+  });
+  stub("user", "create", async ({ data }: { data: Record<string, unknown> }) => {
+    lastUserCreate = data;
+    const { passwordHash: _hash, ...rest } = data as Record<string, unknown> & { passwordHash?: unknown };
+    void _hash;
+    return {
+      id: "u-new",
+      isActive: true,
+      mustChangePassword: false,
+      client: null,
+      ...rest
+    };
   });
   stub("client", "findUnique", async ({ where }: { where: { id?: string } }) =>
     [AVIAT, OTHER].find((row) => row.id === where.id) || null
@@ -847,60 +862,195 @@ test("HTTP Mi cuenta rechaza fullName solo espacios y no permite escalación", a
   assert.equal(users.operator.isActive, true);
 });
 
-test("fotografía UI: silueta reservada, sin Foto (URL) ni inputs de avatar", () => {
+test("fotografía UI: URL editable, silueta, preview y sin upload", () => {
+  assert.match(html, /id="editAvatarUrl"/);
+  assert.match(html, /id="accountAvatarUrl"/);
+  assert.match(html, /<label for="editAvatarUrl">URL de fotografía<\/label>/);
+  assert.match(html, /<label for="accountAvatarUrl">URL de fotografía<\/label>/);
   assert.doesNotMatch(html, /Foto \(URL/);
-  assert.doesNotMatch(html, /id="editAvatarUrl"/);
-  assert.doesNotMatch(html, /id="accountAvatarUrl"/);
-  assert.doesNotMatch(html, /editAvatarUrl/);
-  assert.doesNotMatch(html, /accountAvatarUrl/);
-  assert.match(html, /id="editUserPhotoPlaceholder"/);
-  assert.match(html, /id="accountPhotoPlaceholder"/);
+  assert.doesNotMatch(html, /Fotografía pendiente/);
+  assert.doesNotMatch(html, /disponible próximamente/);
+  assert.match(html, /id="editUserPhotoSlot"/);
+  assert.match(html, /id="accountPhotoSlot"/);
   assert.match(html, /user-photo-silhouette/);
-  assert.match(html, /Fotografía — disponible próximamente/);
-  assert.match(html, /Fotografía pendiente; interfaz reservada con silueta/);
-  assert.doesNotMatch(js, /editAvatarUrl/);
-  assert.doesNotMatch(js, /accountAvatarUrl/);
-  assert.doesNotMatch(sliceFunction(js, "openEditUserForm"), /avatarUrl/);
-  assert.doesNotMatch(sliceFunction(js, "saveEditUser"), /avatarUrl/);
-  assert.doesNotMatch(sliceFunction(js, "saveAccountProfile"), /avatarUrl/);
-  assert.doesNotMatch(sliceFunction(js, "fillAccountProfileForm"), /avatarUrl/);
+  assert.match(html, /user-photo-image/);
+  assert.match(html, /object-fit:\s*cover/);
+  assert.match(html, /recomendado HTTPS/);
+  const editForm = html.slice(html.indexOf('id="editUserForm"'), html.indexOf('id="createUserForm"'));
+  const accountPane = html.slice(html.indexOf('id="moduleAccount"'), html.indexOf('id="changePasswordForm"'));
+  assert.doesNotMatch(editForm, /type="file"/);
+  assert.doesNotMatch(accountPane, /type="file"/);
+  assert.doesNotMatch(editForm, /accept="image/);
+  assert.doesNotMatch(js, /innerHTML[\s\S]{0,80}avatarUrl/);
+  assert.match(sliceFunction(js, "isSafeHttpAvatarUrl"), /protocol !== "https:"/);
+  assert.match(sliceFunction(js, "applyUserPhotoPreview"), /img\.src = safe/);
+  assert.match(sliceFunction(js, "applyUserPhotoPreview"), /onerror/);
+  assert.doesNotMatch(sliceFunction(js, "applyUserPhotoPreview"), /innerHTML/);
+  assert.match(sliceFunction(js, "openEditUserForm"), /editAvatarUrl/);
+  assert.match(sliceFunction(js, "saveEditUser"), /avatarUrl/);
+  assert.match(sliceFunction(js, "saveAccountProfile"), /avatarUrl/);
+  assert.match(sliceFunction(js, "fillAccountProfileForm"), /accountAvatarUrl/);
   assert.match(sliceFunction(js, "saveEditUser"), /fullName/);
-  assert.match(sliceFunction(js, "saveEditUser"), /\/api\/users\/\$\{encodeURIComponent\(id\)\}/);
-  assert.match(sliceFunction(js, "saveAccountProfile"), /fullName/);
   assert.match(sliceFunction(js, "saveAccountProfile"), /\/api\/auth\/me/);
   assert.match(userProfileSrc, /avatarUrl: true/);
   assert.match(prismaSchema, /avatarUrl\s+String\?/);
+  assert.match(appSrc, /"img-src": \["'self'", "data:", "https:"\]/);
+  assert.match(appSrc, /useDefaults:\s*true/);
+  assert.doesNotMatch(appSrc, /script-src[\s\S]{0,40}\*/);
+  assert.doesNotMatch(appSrc, /connect-src/);
+  assert.doesNotMatch(appSrc, /object-src[\s\S]{0,20}\*/);
+
+  const photo = new Function(`
+    ${sliceFunction(js, "isSafeHttpAvatarUrl")}
+    ${sliceFunction(js, "applyUserPhotoPreview")}
+    return { isSafeHttpAvatarUrl, applyUserPhotoPreview };
+  `)() as {
+    isSafeHttpAvatarUrl: (value: unknown) => string;
+    applyUserPhotoPreview: (slot: unknown, rawUrl: unknown) => void;
+  };
+  assert.equal(photo.isSafeHttpAvatarUrl("javascript:alert(1)"), "");
+  assert.equal(photo.isSafeHttpAvatarUrl("data:image/png;base64,abc"), "");
+  assert.equal(photo.isSafeHttpAvatarUrl("blob:https://example.com/1"), "");
+  assert.equal(photo.isSafeHttpAvatarUrl("file:///tmp/a.png"), "");
+  assert.equal(photo.isSafeHttpAvatarUrl(""), "");
+  assert.equal(photo.isSafeHttpAvatarUrl("https://cdn.example.com/u.png"), "https://cdn.example.com/u.png");
+  assert.match(photo.isSafeHttpAvatarUrl("http://example.com/u.png"), /^http:\/\//);
+
+  const img: {
+    alt: string;
+    src?: string;
+    onerror: null | (() => void);
+    onload: null | (() => void);
+    referrerPolicy: string;
+    removeAttribute: (name: string) => void;
+  } = {
+    alt: "",
+    src: "stale",
+    onerror: null,
+    onload: null,
+    referrerPolicy: "",
+    removeAttribute(name) {
+      if (name === "src") delete this.src;
+    }
+  };
+  const silhouette = { hidden: false };
+  const frame = {
+    classList: {
+      added: false,
+      add(name: string) {
+        if (name === "is-photo") this.added = true;
+      },
+      remove(name: string) {
+        if (name === "is-photo") this.added = false;
+      }
+    }
+  };
+  const slot = {
+    querySelector(sel: string) {
+      if (sel === ".user-photo-image") return img;
+      if (sel === ".user-photo-silhouette") return silhouette;
+      if (sel === ".user-photo-frame") return frame;
+      return null;
+    }
+  };
+  photo.applyUserPhotoPreview(slot, "https://cdn.example.com/u.png");
+  assert.equal(img.src, "https://cdn.example.com/u.png");
+  assert.equal(typeof img.onerror, "function");
+  img.onload && img.onload();
+  assert.equal(frame.classList.added, true);
+  img.onerror && img.onerror();
+  assert.equal(frame.classList.added, false);
+  assert.equal("src" in img, false);
+
+  photo.applyUserPhotoPreview(slot, "javascript:alert(1)");
+  assert.equal("src" in img, false);
 });
 
-test("HTTP ADMIN edita ficha sin avatarUrl y Mi cuenta sigue sin foto editable", async () => {
+test("HTTP avatarUrl ADMIN/create/me; inválidas y XSS rechazadas; sin hash ni escalación", async () => {
+  assert.equal(userProfileSchema.parse({ avatarUrl: "https://cdn.example.com/a.png" }).avatarUrl, "https://cdn.example.com/a.png");
+  assert.equal(userProfileSchema.parse({ avatarUrl: "  " }).avatarUrl, null);
+  assert.throws(() => userProfileSchema.parse({ avatarUrl: "javascript:alert(1)" }));
+  assert.throws(() => userProfileSchema.parse({ avatarUrl: "data:image/png;base64,abc" }));
+  assert.throws(() => userProfileSchema.parse({ avatarUrl: "not-a-url" }));
+
+  lastUserCreate = {};
+  const admin = tokenFor(users.admin, AVIAT.id);
+  const created = await request("/api/users", {
+    method: "POST",
+    token: admin,
+    body: {
+      email: "foto@test.local",
+      password: "secret12",
+      fullName: "Usuario Foto",
+      role: "ADMIN",
+      avatarUrl: "https://cdn.example.com/created.png"
+    }
+  });
+  assert.equal(created.status, 200);
+  const createdJson = created.json as Record<string, unknown>;
+  assert.equal(createdJson.avatarUrl, "https://cdn.example.com/created.png");
+  assert.ok(!("passwordHash" in createdJson));
+  assert.equal(lastUserCreate.avatarUrl, "https://cdn.example.com/created.png");
+
   lastUserUpdate = {};
   users.operator.mustChangePassword = false;
-  const admin = tokenFor(users.admin, AVIAT.id);
-  const edited = await request("/api/users/u-op", {
+  const patched = await request("/api/users/u-op", {
     method: "PATCH",
     token: admin,
-    body: { fullName: "Operador Ficha", phone: "5552223333" }
+    body: { avatarUrl: "https://cdn.example.com/admin.png" }
   });
-  assert.equal(edited.status, 200);
-  const editedJson = edited.json as Record<string, unknown>;
-  assert.equal(editedJson.fullName, "Operador Ficha");
-  assert.ok(!("passwordHash" in editedJson));
-  assert.equal(lastUserUpdate.data?.fullName, "Operador Ficha");
-  assert.equal("avatarUrl" in (lastUserUpdate.data || {}), false);
+  assert.equal(patched.status, 200);
+  const patchedJson = patched.json as Record<string, unknown>;
+  assert.equal(patchedJson.avatarUrl, "https://cdn.example.com/admin.png");
+  assert.equal(patchedJson.role, "OPERATOR");
+  assert.equal(patchedJson.clientId, AVIAT.id);
+  assert.ok(!("passwordHash" in patchedJson));
+  assert.equal(lastUserUpdate.data?.avatarUrl, "https://cdn.example.com/admin.png");
+
+  lastUserUpdate = {};
+  const invalid = await request("/api/users/u-op", {
+    method: "PATCH",
+    token: admin,
+    body: { avatarUrl: "javascript:alert(1)" }
+  });
+  assert.equal(invalid.status, 400);
+  assert.equal(lastUserUpdate.data, undefined);
 
   lastUserUpdate = {};
   const me = tokenFor(users.operator);
   const account = await request("/api/auth/me", {
     method: "PATCH",
     token: me,
-    body: { fullName: "Operador Mi Cuenta", phone: "5554445555" }
+    body: { avatarUrl: "https://cdn.example.com/me.png", fullName: "Operador Con Foto" }
   });
   assert.equal(account.status, 200);
   const accountJson = account.json as Record<string, unknown>;
-  assert.equal(accountJson.fullName, "Operador Mi Cuenta");
+  assert.equal(accountJson.avatarUrl, "https://cdn.example.com/me.png");
+  assert.equal(accountJson.fullName, "Operador Con Foto");
   assert.equal(accountJson.role, "OPERATOR");
+  assert.equal(accountJson.clientId, AVIAT.id);
   assert.ok(!("passwordHash" in accountJson));
-  assert.equal("avatarUrl" in (lastUserUpdate.data || {}), false);
+  assert.equal(lastUserUpdate.data?.avatarUrl, "https://cdn.example.com/me.png");
+
+  const escalate = await request("/api/auth/me", {
+    method: "PATCH",
+    token: me,
+    body: { avatarUrl: "https://cdn.example.com/me.png", role: "ADMIN", clientId: OTHER.id }
+  });
+  assert.equal(escalate.status, 403);
+  assert.equal((escalate.json as { code?: string }).code, "SELF_ESCALATION_FORBIDDEN");
+});
+
+test("CSP permite imágenes HTTPS y no relaja script-src ni object-src", async () => {
+  const response = await fetch(`${baseUrl}/health`);
+  const csp = response.headers.get("content-security-policy") || "";
+  assert.match(csp, /img-src[^;]*'self'/);
+  assert.match(csp, /img-src[^;]*data:/);
+  assert.match(csp, /img-src[^;]*https:/);
+  assert.match(csp, /script-src[^;]*'self'/);
+  assert.doesNotMatch(csp, /script-src[^;]*\*/);
+  assert.match(csp, /object-src[^;]*'none'/);
+  await response.arrayBuffer();
 });
 
 test("temporal generado no es hash y change-password limpia mustChangePassword", () => {

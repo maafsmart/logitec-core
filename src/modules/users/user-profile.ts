@@ -54,7 +54,15 @@ export const userProfileSchema = z.object({
       const trimmed = value.trim();
       return trimmed.length ? trimmed : null;
     })
-    .refine((value) => value == null || /^https?:\/\//i.test(value), {
+    .refine((value) => {
+      if (value == null) return true;
+      try {
+        const parsed = new URL(value);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+      } catch {
+        return false;
+      }
+    }, {
       message: "avatarUrl debe ser una URL http(s). No se aceptan archivos ni base64."
     })
 });
