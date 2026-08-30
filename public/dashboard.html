@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es" data-ui-version="compact-workspace-v1" data-visual="industrial-v84" data-import-cancel-version="server-cancel-v1" data-canonical-host-version="www-v1" data-grid-density="compact">
+<html lang="es" data-ui-version="compact-workspace-v1" data-visual="industrial-v84" data-visual-polish="v85" data-import-cancel-version="server-cancel-v1" data-canonical-host-version="www-v1" data-grid-density="compact">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -3645,6 +3645,198 @@
         border-radius: 8px;
         padding: 8px 10px;
       }
+      /* ===== visual-polish-v85 ===== */
+      html[data-visual-polish="v85"] .module-screen-header {
+        margin-bottom: 8px;
+      }
+      html[data-visual-polish="v85"] .module-screen-header h3 {
+        font-size: 1.08rem;
+        margin: 0 0 2px;
+      }
+      html[data-visual-polish="v85"] .module-lead {
+        font-size: 0.8rem;
+        line-height: 1.35;
+        margin-bottom: 6px;
+      }
+      html[data-visual-polish="v85"] .compact-module.card-panel {
+        padding: 10px 12px;
+        margin-bottom: 10px;
+      }
+      html[data-visual-polish="v85"] .secondary-panel-title {
+        margin: 0 0 8px;
+        font-size: 0.88rem;
+      }
+      html[data-visual-polish="v85"] .client-master-card.is-placeholder .client-context-actions-placeholder .btn-primary {
+        flex: 1 1 auto;
+      }
+      html[data-visual-polish="v85"] .client-master-card.is-placeholder .client-context-actions-placeholder .btn-secondary[disabled] {
+        opacity: 0.42;
+        cursor: not-allowed;
+        pointer-events: none;
+      }
+      html[data-visual-polish="v85"] .badge-incident-open,
+      html[data-visual-polish="v85"] .badge.status-open {
+        background: #fff4e8;
+        color: #9a4a0a;
+        border: 1px solid #f0c9a0;
+      }
+      html[data-visual-polish="v85"] .badge-incident-resolved,
+      html[data-visual-polish="v85"] .badge.badge-movement.success {
+        background: #e8f5ee;
+        color: #1f5c3a;
+        border: 1px solid #b8dcc8;
+      }
+      html[data-visual-polish="v85"] .badge.badge-movement.warn {
+        background: #fff4e8;
+        color: #9a4a0a;
+        border: 1px solid #f0c9a0;
+      }
+      html[data-visual-polish="v85"] .badge.badge-movement.info,
+      html[data-visual-polish="v85"] .badge.badge-incident-type.info {
+        background: #e8eef4;
+        color: #2a4a62;
+        border: 1px solid #c5d4de;
+      }
+      html[data-visual-polish="v85"] .badge.badge-incident-type.warn {
+        background: #fff4e8;
+        color: #9a4a0a;
+        border: 1px solid #f0c9a0;
+      }
+      html[data-visual-polish="v85"] .badge.badge-incident-type.error {
+        background: #fef3f2;
+        color: #9b221c;
+        border: 1px solid #f5c2c0;
+      }
+      html[data-visual-polish="v85"] .btn-resolve {
+        background: #fff;
+        color: var(--accent-dark);
+        border: 1px solid #9eb6c9;
+        font-weight: 700;
+      }
+      html[data-visual-polish="v85"] .btn-resolve:hover:not(:disabled) {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+      }
+      html[data-visual-polish="v85"] .excel-table th,
+      html[data-visual-polish="v85"] .data-grid-row.head .data-grid-cell {
+        background: #dfe6ec;
+        color: #3a4854;
+        border-bottom: 2px solid #b9c3cd;
+        font-weight: 750;
+      }
+      html[data-visual-polish="v85"] .excel-table tbody tr:nth-child(even),
+      html[data-visual-polish="v85"] .data-grid-row.body.row-alt {
+        background: #f6f8fa;
+      }
+      html[data-visual-polish="v85"] .excel-table tbody tr:hover,
+      html[data-visual-polish="v85"] .data-grid-row.body:hover {
+        background: #eef3f7;
+      }
+      html[data-visual-polish="v85"] .excel-table td.numeric,
+      html[data-visual-polish="v85"] .data-grid-cell.numeric-cell {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      html[data-visual-polish="v85"] .incidents-form-panel {
+        padding: 10px 12px;
+        border-left: 3px solid var(--warn);
+      }
+      html[data-visual-polish="v85"] .incidents-form-grid {
+        margin: 0;
+        gap: 8px;
+      }
+      html[data-visual-polish="v85"] .incidents-form-grid .field label {
+        font-size: 0.78rem;
+      }
+      html[data-visual-polish="v85"] .incidents-form-grid textarea {
+        min-height: 56px;
+      }
+      html[data-visual-polish="v85"] .incidents-list-panel {
+        padding: 0;
+        border-top: 3px solid var(--line);
+      }
+      html[data-visual-polish="v85"] .incidents-list-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 12px 0;
+      }
+      html[data-visual-polish="v85"] .export-section {
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px dashed var(--line);
+      }
+      html[data-visual-polish="v85"] .export-section:last-child {
+        margin-bottom: 0;
+        padding-bottom: 0;
+        border-bottom: 0;
+      }
+      html[data-visual-polish="v85"] .export-btn-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      html[data-visual-polish="v85"] .users-form-panel .form-grid,
+      html[data-visual-polish="v85"] #changePasswordForm.form-compact .form-grid {
+        gap: 8px;
+        margin: 0 0 8px;
+      }
+      html[data-visual-polish="v85"] .pipeline-flow {
+        gap: 6px;
+      }
+      html[data-visual-polish="v85"] .pipeline-step {
+        padding: 8px 10px;
+        min-width: 0;
+      }
+      html[data-visual-polish="v85"] .kpi-grid {
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      html[data-visual-polish="v85"] .kpi-card {
+        padding: 12px 12px 10px;
+      }
+      html[data-visual-polish="v85"] .kpi-card .kpi-value {
+        font-size: 1.45rem;
+      }
+      html[data-visual-polish="v85"] .lab-reset-card {
+        border: 1px solid #f0c9a0;
+        background: linear-gradient(180deg, #fffaf3 0%, #fff7eb 100%);
+      }
+      html[data-visual-polish="v85"] .lab-env-kicker {
+        display: inline-block;
+        font-size: 0.68rem;
+        font-weight: 800;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: #9a4a0a;
+        background: #fff4e8;
+        border: 1px solid #f0c9a0;
+        padding: 3px 8px;
+        border-radius: 4px;
+        margin-bottom: 4px;
+      }
+      html[data-visual-polish="v85"] .prod-danger-kicker {
+        display: inline-block;
+        font-size: 0.68rem;
+        font-weight: 800;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: #fff;
+        background: var(--error);
+        padding: 3px 8px;
+        border-radius: 4px;
+      }
+      html[data-visual-polish="v85"] .ops-form-group {
+        padding: 8px 10px;
+      }
+      html[data-visual-polish="v85"] .ops-form-footer {
+        margin-top: 2px;
+      }
+      html[data-visual-polish="v85"] .master-toolbar {
+        margin-bottom: 6px;
+      }
+      /* ===== /visual-polish-v85 ===== */
       /* ===== /visual-overhaul-v84 ===== */
       /* ===== /compact-workspace-v1 ===== */
     </style>
@@ -3970,10 +4162,12 @@
           <div id="moduleUsers" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Usuarios</h3>
-              <p class="module-lead">Administra accesos y roles del equipo operativo. Solo administración del sistema.</p>
+              <p class="module-lead">Accesos y roles del equipo operativo (solo administración).</p>
             </div>
-            <p id="usersMessage" class="subtitle" style="margin-bottom: 10px">Cargando usuarios...</p>
+            <p id="usersMessage" class="filter-hint" style="margin:0 0 8px">Cargando usuarios...</p>
+            <div class="card-panel compact-module users-form-panel">
             <form id="createUserForm" class="hidden">
+              <h4 class="secondary-panel-title">Alta de usuario</h4>
               <div class="form-grid">
                 <div class="field">
                   <label for="newFullName">Nombre completo</label>
@@ -4004,8 +4198,9 @@
                 </div>
               </div>
               <p id="createUserError" class="inline-error"></p>
-              <button id="createUserBtn" type="submit">Crear usuario</button>
+              <button id="createUserBtn" type="submit" class="btn-primary btn-compact">Crear usuario</button>
             </form>
+            </div>
             <div id="usersList"></div>
           </div>
           <div id="moduleTraceability" class="module-pane hidden">
@@ -4252,67 +4447,71 @@
           <div id="moduleIncidents" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Incidencias operativas</h3>
-              <p class="module-lead">Registra excepciones de piso (daños, faltantes, ubicaciones). Usado por operadores y revisado por supervisión.</p>
+              <p class="module-lead">Excepciones de piso: daños, faltantes, ubicaciones incorrectas.</p>
             </div>
-            <div class="card-panel ops-form-panel">
+            <div class="card-panel ops-form-panel incidents-form-panel compact-module">
               <h4 class="secondary-panel-title">Registrar incidencia</h4>
-            <div class="form-grid">
-              <div class="field">
-                <label for="incidentType">Tipo</label>
-                <select id="incidentType"></select>
-              </div>
-              <div class="field">
-                <label for="incidentWarehouse">Almacén</label>
-                <div class="smart-select-wrap">
-                  <select id="incidentWarehouseSelect"><option value="">— Seleccionar —</option></select>
-                  <input id="incidentWarehouse" type="text" class="smart-other-input hidden" placeholder="Otro almacén" />
+              <div class="form-grid incidents-form-grid">
+                <div class="field">
+                  <label for="incidentType">Tipo</label>
+                  <select id="incidentType"></select>
+                </div>
+                <div class="field">
+                  <label for="incidentWarehouse">Almacén</label>
+                  <div class="smart-select-wrap">
+                    <select id="incidentWarehouseSelect"><option value="">— Seleccionar —</option></select>
+                    <input id="incidentWarehouse" type="text" class="smart-other-input hidden" placeholder="Otro almacén" />
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="incidentLocation">Ubicación / detalle</label>
+                  <div class="smart-select-wrap">
+                    <select id="incidentLocationSelect"><option value="">— Seleccionar —</option></select>
+                    <input id="incidentLocation" type="text" class="smart-other-input hidden" placeholder="Otra ubicación o detalle" />
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="incidentProductSku">SKU / Código</label>
+                  <input id="incidentProductSku" type="text" placeholder="SKU o código de barras" />
+                </div>
+                <div class="field full">
+                  <label for="incidentNotes">Notas</label>
+                  <textarea id="incidentNotes" rows="2" placeholder="Describe el incidente"></textarea>
                 </div>
               </div>
-              <div class="field full">
-                <label for="incidentLocation">Ubicación / detalle</label>
-                <div class="smart-select-wrap">
-                  <select id="incidentLocationSelect"><option value="">— Seleccionar —</option></select>
-                  <input id="incidentLocation" type="text" class="smart-other-input hidden" placeholder="Otra ubicación o detalle" />
+              <div class="ops-form-footer">
+                <p id="incidentCreateError" class="inline-error" style="margin:0"></p>
+                <button type="button" id="incidentCreateBtn" class="btn-primary btn-compact">Enviar incidencia</button>
+              </div>
+            </div>
+            <div class="card-panel incidents-list-panel compact-module">
+              <div class="incidents-list-head">
+                <h4 class="secondary-panel-title" style="margin:0">Listado de incidencias</h4>
+                <p id="incidentMessage" class="filter-hint" style="margin:0"></p>
+              </div>
+              <div class="grid-toolbar" style="padding:0 12px" data-grid-toolbar="incidents">
+                <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
+                  <button type="button" data-density="compact" class="active">Modo compacto</button>
+                  <button type="button" data-density="comfortable">Modo cómodo</button>
                 </div>
+                <button type="button" class="btn-secondary btn-compact" data-reset-grid="incidents">Restablecer columnas</button>
               </div>
-              <div class="field full">
-                <label for="incidentProductSku">SKU / Código de producto</label>
-                <input id="incidentProductSku" type="text" placeholder="SKU o código de barras" />
-                <p class="assignee-hint">No uses IDs internos. Si el SKU no está en catálogo se registrará como referencia manual.</p>
-              </div>
-              <div class="field full">
-                <label for="incidentNotes">Notas</label>
-                <textarea id="incidentNotes" rows="3" placeholder="Describe el incidente"></textarea>
-              </div>
-            </div>
-            <p id="incidentCreateError" class="inline-error"></p>
-            <button type="button" id="incidentCreateBtn" class="btn-primary btn-compact">Enviar incidencia</button>
-            </div>
-            <div class="card-panel" style="padding:0">
-            <h4 class="secondary-panel-title" style="padding:16px 16px 0;margin:0">Listado de incidencias</h4>
-            <p id="incidentMessage" class="operational-table-meta" style="margin:0;border-bottom:0;min-height:1.2em"></p>
-            <div class="grid-toolbar" style="padding:0 12px" data-grid-toolbar="incidents">
-              <div class="grid-density-toggle" role="group" aria-label="Densidad de tabla">
-                <button type="button" data-density="compact" class="active">Modo compacto</button>
-                <button type="button" data-density="comfortable">Modo cómodo</button>
-              </div>
-              <button type="button" class="btn-secondary btn-compact" data-reset-grid="incidents">Restablecer columnas</button>
-            </div>
-            <div id="incidentList" style="overflow: auto; max-width: 100%; padding: 0 12px 12px"></div>
+              <div id="incidentList" style="overflow: auto; max-width: 100%; padding: 0 12px 10px"></div>
             </div>
           </div>
           <div id="moduleAccount" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Mi cuenta</h3>
-              <p class="module-lead">Gestiona tu contraseña y datos de acceso. Zona de configuración operativa del sistema (si aplica).</p>
+              <p class="module-lead">Contraseña y datos de acceso personal.</p>
             </div>
-            <form id="changePasswordForm">
+            <div class="card-panel compact-module">
+            <form id="changePasswordForm" class="form-compact">
               <div class="form-grid">
-                <div class="field full">
+                <div class="field">
                   <label for="currentPassword">Contraseña actual</label>
                   <input id="currentPassword" type="password" minlength="6" required />
                 </div>
-                <div class="field full">
+                <div class="field">
                   <label for="newAccountPassword">Nueva contraseña</label>
                   <input id="newAccountPassword" type="password" minlength="6" required />
                 </div>
@@ -4320,6 +4519,7 @@
               <p id="changePasswordError" class="inline-error"></p>
               <button id="changePasswordBtn" type="submit" class="btn-primary btn-compact">Actualizar contraseña</button>
             </form>
+            </div>
           </div>
           <div id="modulePicking" class="module-pane hidden picking-panel">
             <div class="module-screen-header module-header-band">
@@ -4978,20 +5178,24 @@
           <div id="moduleReports" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Reportes y exportaciones</h3>
-              <p class="module-lead">Exporta inventario, catálogo, movimientos y requisiciones. Las exportaciones de servidor respetan filtros y alcance por rol.</p>
+              <p class="module-lead">Exportaciones CSV/Excel respetando filtros y alcance por rol.</p>
             </div>
-            <div class="card-panel">
-              <h4 class="secondary-panel-title">Inventario</h4>
-              <div class="page-toolbar">
-                <button type="button" id="reportsExportStock" class="btn-secondary">Inventario CSV</button>
-                <button type="button" id="reportsExportStockXlsx" class="btn-secondary">Inventario Excel</button>
-                <button type="button" id="reportsExportMovements" class="btn-secondary">Movimientos CSV</button>
-                <button type="button" id="reportsExportRequisitions" class="btn-secondary">Requisiciones CSV</button>
+            <div class="card-panel compact-module">
+              <div class="export-section">
+                <h4 class="secondary-panel-title">Inventario y operación</h4>
+                <div class="export-btn-row">
+                  <button type="button" id="reportsExportStock" class="btn-secondary btn-compact">Inventario CSV</button>
+                  <button type="button" id="reportsExportStockXlsx" class="btn-secondary btn-compact">Inventario Excel</button>
+                  <button type="button" id="reportsExportMovements" class="btn-secondary btn-compact">Movimientos CSV</button>
+                  <button type="button" id="reportsExportRequisitions" class="btn-secondary btn-compact">Requisiciones CSV</button>
+                </div>
               </div>
-              <h4 class="secondary-panel-title">Catálogo y auditoría</h4>
-              <div class="page-toolbar">
-                <button type="button" id="reportsExportProducts" class="btn-secondary">Catálogo CSV</button>
-                <button type="button" id="reportsExportTrace" class="btn-secondary">Auditoría CSV</button>
+              <div class="export-section">
+                <h4 class="secondary-panel-title">Catálogo y auditoría</h4>
+                <div class="export-btn-row">
+                  <button type="button" id="reportsExportProducts" class="btn-secondary btn-compact">Catálogo CSV</button>
+                  <button type="button" id="reportsExportTrace" class="btn-secondary btn-compact">Auditoría CSV</button>
+                </div>
               </div>
             </div>
           </div>
@@ -5395,21 +5599,17 @@
           <div id="moduleBulkInbound" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
               <h3>Entrada masiva</h3>
-              <p class="module-lead">Registra mercancía recibida en volumen y aumenta existencias.</p>
+              <p class="module-lead">Carga en volumen vía asistente en Existencias.</p>
             </div>
-            <div class="card-panel">
-              <h4 class="secondary-panel-title">Carga masiva / archivo</h4>
-              <p class="module-lead" style="margin-bottom:12px">
-                La carga masiva desde archivo se realiza únicamente en <strong>Inventario → Existencias</strong>.
-                No es una orden de surtido: <strong>aumenta existencias</strong>. Para salida usa
-                <strong>Órdenes de surtido / Requisiciones</strong>. Para una sola línea usa
-                <strong>Entradas / Recepción</strong>.
+            <div class="card-panel compact-module">
+              <p class="module-hint" style="margin:0 0 8px">
+                La carga masiva desde archivo se realiza en <strong>Inventario → Existencias</strong>.
+                Aumenta existencias; para salida use <strong>Requisiciones</strong>; para una línea use <strong>Entradas / Recepción</strong>.
               </p>
-              <div class="page-toolbar">
-                <button type="button" class="btn-secondary btn-compact" data-goto-module="inventory">Ir a existencias</button>
+              <div class="export-btn-row">
+                <button type="button" class="btn-primary btn-compact" data-goto-module="inventory">Ir a existencias</button>
                 <button type="button" class="btn-secondary btn-compact" data-goto-module="inbound">Entrada unitaria</button>
               </div>
-              <p class="assignee-hint">Entrada con escaneo masivo queda preparada como concepto para versiones futuras.</p>
             </div>
           </div>
           <div id="moduleProjects" class="module-pane hidden">
@@ -5490,18 +5690,18 @@
               </ul>
             </div>
             <div class="card-panel lab-reset-card hidden" id="labResetSection">
-              <h4 class="secondary-panel-title">🧪 LABORATORIO / ENTORNO DEV</h4>
-              <p class="module-lead">Reinicia únicamente los datos operativos de este entorno de desarrollo. Usuarios, clientes, proyectos, productos y ubicaciones se conservan.</p>
-              <button type="button" id="labResetOpenBtn" class="btn-danger">Reiniciar laboratorio</button>
-              <p class="assignee-hint" style="margin-top:10px">Visible solo en DEV/QA y para administradores. No opera contra producción.</p>
+              <span class="lab-env-kicker">Laboratorio · Entorno DEV / QA</span>
+              <h4 class="secondary-panel-title" style="margin:4px 0 6px">Reiniciar laboratorio</h4>
+              <p class="module-hint" style="margin:0 0 8px">Reinicia solo datos operativos de este entorno. Usuarios, clientes, proyectos, productos y ubicaciones se conservan. No opera contra producción.</p>
+              <button type="button" id="labResetOpenBtn" class="btn-danger btn-compact">Reiniciar laboratorio</button>
             </div>
-            <section class="card-panel danger-zone-panel hidden" id="aviatDangerZone" aria-label="Zona de peligro">
+            <section class="card-panel danger-zone-panel hidden" id="aviatDangerZone" aria-label="Zona de peligro producción">
               <div class="danger-zone-banner">
                 <div>
-                  <span class="danger-zone-kicker">Acción sensible · Solo ADMIN</span>
-                  <h4 class="secondary-panel-title" style="margin:6px 0 0;color:var(--error)">Borrar inventario de AVIAT</h4>
+                  <span class="prod-danger-kicker">Producción · Acción sensible · Solo ADMIN</span>
+                  <h4 class="secondary-panel-title" id="aviatDangerZoneTitle" style="margin:6px 0 0;color:var(--error)">Borrar inventario de AVIAT</h4>
                 </div>
-                <button type="button" id="physicalInventoryResetImportBtn" class="btn-danger" disabled>Borrar inventario de AVIAT</button>
+                <button type="button" id="physicalInventoryResetImportBtn" class="btn-danger btn-compact" disabled>Borrar inventario de AVIAT</button>
               </div>
               <p class="module-lead">Reinicio operativo previo a la carga inicial. Elimina existencias, cubos, cantidades, reservados, capas, series, IMEI, reservas, requisiciones y tareas de ensayo, picking, scans, movimientos operativos de prueba, actividad operativa relacionada y sesiones temporales de importación del cliente AVIAT activo.</p>
               <p class="module-lead">Se conservan el cliente AVIAT, usuarios, roles, contraseñas, sesiones, proyectos oficiales, almacén oficial, ubicaciones aprobadas, configuración, permisos y catálogos maestros necesarios para volver a importar. El catálogo global de SKU no se borra.</p>
@@ -5738,6 +5938,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=84"></script>
+    <script src="/dashboard.js?v=85"></script>
   </body>
 </html>

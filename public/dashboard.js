@@ -188,10 +188,10 @@ function renderPlaceholderClientMasterCard(slotIndex) {
       <h4>Proyectos asociados</h4>
       <p class="client-placeholder-note">Estructura lista. Cuando se dé de alta el cliente, sus proyectos aparecerán aquí.</p>
     </div>
-    <div class="client-context-actions">
-      <button type="button" class="btn-primary btn-compact" disabled>Entrar</button>
-      <button type="button" class="btn-secondary btn-compact" data-configure-client-slot="${slotIndex}">Configurar</button>
-      <button type="button" class="btn-secondary btn-compact" disabled>Agregar proyecto</button>
+    <div class="client-context-actions client-context-actions-placeholder">
+      <button type="button" class="btn-primary btn-compact" data-configure-client-slot="${slotIndex}">Configurar</button>
+      <button type="button" class="btn-secondary btn-compact" disabled aria-disabled="true" tabindex="-1">Entrar</button>
+      <button type="button" class="btn-secondary btn-compact" disabled aria-disabled="true" tabindex="-1">Agregar proyecto</button>
     </div>
   </article>`;
 }
@@ -3330,12 +3330,19 @@ function statusBadge(value) {
   if (found) {
     return inventoryStatusBadge(found.code);
   }
+  const upper = raw.toUpperCase();
+  if (upper === "OPEN" || upper === "PENDING") {
+    return `<span class="badge warn">${escCell(upper === "OPEN" ? "Abierta" : "Pendiente")}</span>`;
+  }
+  if (upper === "RESOLVED" || upper === "CLOSED") {
+    return `<span class="badge success">${escCell(upper === "RESOLVED" ? "Resuelta" : "Cerrada")}</span>`;
+  }
   const tone =
-    raw.includes("COMPLETED") || raw.includes("RESOLVED") || raw === "OK"
+    upper.includes("COMPLETED") || upper.includes("RESOLVED") || upper === "OK"
       ? "success"
-      : raw.includes("IN_PROGRESS")
+      : upper.includes("IN_PROGRESS")
         ? "warn"
-        : raw.includes("ERROR") || raw.includes("REJECTED")
+        : upper.includes("ERROR") || upper.includes("REJECTED") || upper.includes("CONFLICT")
           ? "error"
           : "info";
   return `<span class="badge ${tone}">${escCell(raw)}</span>`;
@@ -4079,7 +4086,40 @@ function incidentTypeLabel(type) {
 }
 
 function incidentTypeBadge(type) {
-  return `<span class="badge info">${escCell(incidentTypeLabel(type))}</span>`;
+  const label = incidentTypeLabel(type);
+  const raw = String(type || "").toUpperCase();
+  const tone =
+    raw.includes("DAMAGED") || raw.includes("MISSING")
+      ? "error"
+      : raw.includes("STOCK") || raw.includes("WRONG") || raw.includes("DOUBLE")
+        ? "warn"
+        : "info";
+  return `<span class="badge badge-incident-type ${tone}">${escCell(label)}</span>`;
+}
+
+function incidentStatusBadge(status) {
+  const key = String(status || "").toUpperCase();
+  if (key === "RESOLVED" || key === "CLOSED") {
+    return `<span class="badge badge-incident-resolved">Resuelta</span>`;
+  }
+  if (key === "OPEN" || key === "PENDING") {
+    return `<span class="badge badge-incident-open">Abierta</span>`;
+  }
+  return statusBadge(status);
+}
+
+function movementTypeBadge(type) {
+  const label = formatMovementTypeLabel(type);
+  const raw = String(type || "").toUpperCase();
+  const tone =
+    raw === "IN" || raw === "INBOUND"
+      ? "success"
+      : raw === "OUT" || raw === "OUTBOUND" || raw === "PICK"
+        ? "warn"
+        : raw === "RELOCATE" || raw === "ASSIGNMENT_TRANSFER"
+          ? "info"
+          : "info";
+  return `<span class="badge badge-movement ${tone}">${escCell(label)}</span>`;
 }
 
 function fillSelectOptions(selectEl, options, { valueKey = "id", labelKey = "label", emptyLabel } = {}) {
@@ -4925,7 +4965,7 @@ const TRACE_COLUMNS = [
   { label: "Proyecto", sortKey: (r) => (r.movement?.movementType === "ASSIGNMENT_TRANSFER" ? formatTransferAssignment(r) : r.project?.code || r.project?.name || ""), render: (r) => renderCellWithClamp(r.movement?.movementType === "ASSIGNMENT_TRANSFER" ? formatTransferAssignment(r) : r.project?.code || r.project?.name || "—", "cell-truncate", 22) },
   { label: "SKU", sortKey: (r) => r.product?.sku || "", render: (r) => `<strong class="cell-nowrap">${escCell(r.product?.sku || "—")}</strong>` },
   { label: "Descripción", sortKey: (r) => r.product?.name || "", render: (r) => renderCellWithClamp(r.product?.name || "—", "cell-truncate", 25) },
-  { label: "Tipo", sortKey: (r) => r.movement?.movementType || "", render: (r) => statusBadge(formatMovementTypeLabel(r.movement?.movementType || r.movement?.type || "—")) },
+  { label: "Tipo", sortKey: (r) => r.movement?.movementType || "", render: (r) => movementTypeBadge(r.movement?.movementType || r.movement?.type || "—") },
   { label: "Movimiento", align: "right", sortKey: (r) => Number(r.movement?.signedQty) || 0, sortType: "number", render: movementQuantity },
   { label: "Antes", align: "right", sortKey: (r) => Number(r.movement?.quantityBefore) || 0, sortType: "number", render: (r) => formatQty(r.movement?.quantityBefore) },
   { label: "Después", align: "right", sortKey: (r) => Number(r.movement?.quantityAfter) || 0, sortType: "number", render: (r) => formatQty(r.movement?.quantityAfter) },
@@ -5096,7 +5136,7 @@ const MOVEMENT_COLUMNS = [
   {
     label: "Tipo",
     sortKey: (m) => m.movement?.movementType || m.movementType || "",
-    render: (m) => statusBadge(formatMovementTypeLabel(m.movement?.movementType || m.movementType))
+    render: (m) => movementTypeBadge(m.movement?.movementType || m.movementType)
   },
   {
     label: "Cantidad",
@@ -5209,7 +5249,7 @@ const REQ_COLUMNS = [
 const INCIDENT_COLUMNS = [
   { label: "Fecha", sortKey: (r) => r.createdAt, sortType: "date", render: (r) => formatDateShort(r.createdAt) },
   { label: "Tipo", sortKey: (r) => incidentTypeLabel(r.type), render: (r) => incidentTypeBadge(r.type) },
-  { label: "Estado", sortKey: (r) => r.status || "", render: (r) => statusBadge(r.status) },
+  { label: "Estado", sortKey: (r) => r.status || "", render: (r) => incidentStatusBadge(r.status) },
   { label: "Reportó", sortKey: (r) => r.reportedBy?.fullName || "", render: (r) => renderCellWithClamp(r.reportedBy?.fullName, "cell-truncate", 20), title: (r) => r.reportedBy?.fullName || "" },
   { label: "Producto", sortKey: (r) => r.product?.sku || "", render: (r) => escCell(r.product?.sku || "—"), title: (r) => r.product?.sku || "" },
   { label: "Notas", sortKey: (r) => r.notes || "", render: (r) => renderCellWithClamp(r.notes, "cell-notes", 120), title: (r) => r.notes || "" }
@@ -7284,7 +7324,7 @@ async function loadIncidents() {
     const incidentRows = rows.map((i) => ({
       ...i,
       _actionHtml: canResolve
-        ? `<button type="button" class="incident-resolve btn-table btn-danger btn-compact" data-incident-id="${escCell(i.id)}">Cerrar</button>`
+        ? `<button type="button" class="incident-resolve btn-table btn-resolve btn-compact" data-incident-id="${escCell(i.id)}" title="Marcar incidencia como resuelta">Cerrar</button>`
         : "—"
     }));
     renderExcelTable(incidentList, {
@@ -13655,6 +13695,10 @@ async function syncAviatDangerZone() {
   if (!zone) return;
   const visible = currentRole === "ADMIN" && isActiveAviatOperationalClient();
   zone.classList.toggle("hidden", !visible);
+  const clientLabel =
+    operationalClient?.tradeName || operationalClient?.name || operationalClient?.code || "AVIAT";
+  const titleEl = document.getElementById("aviatDangerZoneTitle");
+  if (titleEl) titleEl.textContent = `Borrar inventario de ${clientLabel}`;
   if (!visible) {
     if (btn) {
       btn.disabled = true;
@@ -13677,6 +13721,7 @@ async function syncAviatDangerZone() {
       btn.classList.remove("hidden");
       btn.style.display = currentRole === "ADMIN" ? "inline-block" : "none";
       btn.disabled = !enabled || physicalInventoryResetBusy;
+      btn.textContent = `Borrar inventario de ${clientLabel}`;
     }
   } catch (_err) {
     if (btn) btn.disabled = true;
@@ -13858,6 +13903,14 @@ clientContextAddBtn?.addEventListener("click", () => {
 clientContextCards?.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+  const placeholderCard = target.closest("[data-placeholder-slot]");
+  if (placeholderCard) {
+    if (target.closest("[data-configure-client-slot]")) {
+      setAdminClientGateVisible(false);
+      navigateTo("inventario", "clients");
+    }
+    return;
+  }
   const enterId = target.getAttribute("data-enter-client");
   if (enterId) {
     void selectOperationalClient(enterId);

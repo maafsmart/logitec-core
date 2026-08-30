@@ -275,8 +275,8 @@ function loadHarness(document: unknown) {
   )(document);
 }
 
-test("dashboard.js usa cache-buster v=84 para sincronizar alcance y tarjeta", () => {
-  assert.match(html, /dashboard\.js\?v=84/);
+test("dashboard.js usa cache-buster v=85 para sincronizar alcance y tarjeta", () => {
+  assert.match(html, /dashboard\.js\?v=85/);
   assert.doesNotMatch(html, /dashboard\.js\?v=76/);
   assert.match(sliceFunction(js, "setInventoryScope"), /refreshInventorySkuSelectedCard\(\)/);
   assert.match(sliceFunction(js, "wireInventoryScopeUi"), /inventoryScopeFromAssignmentOpt\(assignmentType\)/);
