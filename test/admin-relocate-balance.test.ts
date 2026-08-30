@@ -772,8 +772,8 @@ test("20 no modifica recepción v67, valuación v65, importación ni navegación
   assert.match(inbound, /Free to Sale/);
   assert.match(js, /✓ SKU seleccionado/);
   assert.match(js, /Cambiar SKU/);
-  assert.match(html, /id="inventoryOpsNavPanel"/);
-  assert.match(html, /data-goto-module="relocate"/);
+  assert.doesNotMatch(html, /id="inventoryOpsNavPanel"/);
+  assert.match(html, /data-module="relocate"/);
   assert.match(js, /canSeeEconomicValuation/);
   assert.match(js, /openInventoryImportAssistant/);
   assert.match(js, /persistNavRoute/);

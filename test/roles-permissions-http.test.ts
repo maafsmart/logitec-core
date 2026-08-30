@@ -675,7 +675,7 @@ test("UI ADMIN: importación, precio, reset y administración visibles", () => {
 });
 
 test("UI SUPERVISOR/OPERATOR: importación oculta, operación visible", () => {
-  assert.match(applyRoleFn, /inventoryOpsNavPanel[\s\S]{0,120}toggle\("hidden", !isAdmin\)/);
+  assert.doesNotMatch(applyRoleFn, /inventoryOpsNavPanel[\s\S]{0,120}toggle\("hidden", !isAdmin\)/);
   assert.match(applyRoleFn, /canOperate = role === "ADMIN" \|\| role === "SUPERVISOR" \|\| role === "OPERATOR"/);
   assert.match(applyRoleFn, /canExportTrace = role === "ADMIN" \|\| role === "OPERATOR" \|\| role === "SUPERVISOR"/);
   assert.doesNotMatch(applyRoleFn, /canExportTrace[\s\S]{0,80}CLIENT/);
@@ -713,7 +713,7 @@ test("UI SUPERVISOR: admin/import/users/clients ausentes del menú", () => {
   assert.doesNotMatch(js, /SUPERVISOR:[\s\S]{0,320}"clients"/);
   assert.doesNotMatch(js, /SUPERVISOR:[\s\S]{0,320}"config"/);
   assert.doesNotMatch(js, /SUPERVISOR:[\s\S]{0,320}"users"/);
-  assert.match(applyRoleFn, /inventoryOpsNavPanel[\s\S]{0,120}toggle\("hidden", !isAdmin\)/);
+  assert.doesNotMatch(applyRoleFn, /inventoryOpsNavPanel[\s\S]{0,120}toggle\("hidden", !isAdmin\)/);
   assert.match(applyRoleFn, /setRoleUiVisible\(clientContextGate, isAdmin\)/);
 });
 

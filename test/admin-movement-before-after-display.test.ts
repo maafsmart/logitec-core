@@ -110,7 +110,7 @@ test("conserva las demás columnas y no escribe inventario", () => {
     assert.match(movementColumns, new RegExp(`label:\\s*"${label}"`));
   }
   assert.doesNotMatch(html, /id="movementForm"/);
-  assert.match(html, /id="inventoryOpsNavPanel"/);
+  assert.doesNotMatch(html, /id="inventoryOpsNavPanel"/);
   assert.match(html, /id="exportMovementsBtn"/);
   assert.match(html, /dashboard\.js\?v=85/);
   assert.match(loadMovements, /authenticatedFetch\(`\/api\/inventory\/movements/);

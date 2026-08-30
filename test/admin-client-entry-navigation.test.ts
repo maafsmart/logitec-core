@@ -66,7 +66,8 @@ test("C: Entrada masiva abre Inventario → Existencias sin pantalla intermedia"
 
 test("D: reset habilitado solo con ADMIN, AVIAT operativo y flag true", () => {
   assert.match(syncAviatDangerZone, /currentRole === "ADMIN" && isActiveAviatOperationalClient\(\)/);
-  assert.match(syncAviatDangerZone, /const enabled = Boolean\(data\.flagEnabled && data\.isAviat && data\.canExecute\)/);
+  assert.match(syncAviatDangerZone, /const enabled = Boolean\(data\.flagEnabled && data\.isAviat && data\.canExecute && !empty\)/);
+  assert.match(syncAviatDangerZone, /isAviatOperationalInventoryEmpty/);
   assert.match(syncAviatDangerZone, /btn\.disabled = !enabled/);
 });
 

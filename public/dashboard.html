@@ -4760,7 +4760,7 @@
               </div>
               <div class="summary-card">
                 <span class="value" id="sumProducts">—</span>
-                <span class="label">Productos</span>
+                <span class="label" id="sumProductsLabel">Productos</span>
               </div>
               <div class="summary-card">
                 <span class="value" id="sumCustomers">—</span>
@@ -4880,13 +4880,21 @@
                       <option value="CLIENTS_PROJECTS">Clientes / proyectos</option>
                     </select>
                   </div>
-                  <div class="field">
+                  <div class="field" id="importInventoryModeField">
                     <label for="importInventoryMode">Modo inventario</label>
                     <select id="importInventoryMode">
-                      <option value="APPEND">APPEND / recepción</option>
-                      <option value="RECONCILE">RECONCILE / conciliación (solo preview)</option>
+                      <option value="APPEND">Carga de inventario</option>
                     </select>
+                    <p class="assignee-hint" id="importInventoryModeHint">Registra existencias, capas y movimientos al confirmar.</p>
                   </div>
+                  <details class="import-details" id="importReconcilePreviewDetails">
+                    <summary>Vista previa de conciliación (NO modifica inventario)</summary>
+                    <label class="lab-reset-check" for="importReconcilePreviewToggle" style="margin-top:8px">
+                      <input type="checkbox" id="importReconcilePreviewToggle" />
+                      Activar vista previa de conciliación
+                    </label>
+                    <p class="assignee-hint">Este modo sirve únicamente para comparar/revisar. No puede confirmarse.</p>
+                  </details>
                   <div class="field">
                     <label for="importPriceCurrency">Precio genérico →</label>
                     <select id="importPriceCurrency">
@@ -5124,14 +5132,6 @@
                 <button type="button" class="btn-secondary btn-compact" data-reset-grid="movements">Restablecer columnas</button>
               </div>
               <div id="inventoryMovementsList">Cargando...</div>
-            </div>
-            <div id="inventoryOpsNavPanel" class="card-panel hidden">
-              <p class="module-hint" style="margin:0 0 10px">Los movimientos de inventario se registran desde Operación para conservar asignación, ubicación y trazabilidad.</p>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button type="button" class="btn-secondary btn-compact" id="inventoryGoInboundBtn" data-goto-module="inbound" data-nav-section="operacion">Entradas / Recepción</button>
-                <button type="button" class="btn-secondary btn-compact" id="inventoryGoRelocateBtn" data-goto-module="relocate" data-nav-section="operacion">Movimiento interno / Reubicación</button>
-                <button type="button" class="btn-secondary btn-compact" id="inventoryGoOutboundBtn" data-goto-module="outbound" data-nav-section="operacion">Salidas / Despacho</button>
-              </div>
             </div>
           </div>
           <div id="moduleCatalog" class="module-pane hidden">

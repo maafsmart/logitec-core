@@ -1494,6 +1494,7 @@ function openInventoryImportAssistant() {
   const panel = document.getElementById("importWizardPanel");
   if (!panel) return false;
   hideImportCompletionNotice();
+  syncImportInventoryModeUi();
   if (isTerminalImportUiBatch(importUi.batchStatus) || importUi.confirmed) {
     dismissImportWizardSession({ clearStoredBatch: true });
   }
@@ -4699,6 +4700,10 @@ function updateInventorySummary(rows) {
   const elMovements = document.getElementById("sumMovements");
   const elConflicts = document.getElementById("sumConflicts");
   if (elProducts) elProducts.textContent = String(productCount || 0);
+  const elProductsLabel = document.getElementById("sumProductsLabel");
+  if (elProductsLabel) {
+    elProductsLabel.textContent = scoped ? "Productos con existencia" : "Productos en catálogo";
+  }
   if (elCustomers) elCustomers.textContent = String(kpi?.projects ?? inventoryProjectsCache.length);
   if (elLocations) elLocations.textContent = String(kpi?.locations || locations.size);
   if (elMovements) elMovements.textContent = String(kpi?.movements ?? movementsCountCache ?? 0);
@@ -11568,7 +11573,7 @@ function applyRoleNavigation(role) {
   const catalogImportModal = document.getElementById("catalogImportModal");
   if (catalogImportModal) catalogImportModal.classList.toggle("hidden", !isAdmin);
   const inventoryOpsNavPanel = document.getElementById("inventoryOpsNavPanel");
-  if (inventoryOpsNavPanel) inventoryOpsNavPanel.classList.toggle("hidden", !isAdmin);
+  if (inventoryOpsNavPanel) inventoryOpsNavPanel.remove();
   const openCatBtn = document.getElementById("openCatalogImportBtn");
   const openInvBtn = document.getElementById("openInventoryImportBtn");
   if (openCatBtn) openCatBtn.style.display = isAdmin ? "inline-block" : "none";
@@ -12588,6 +12593,118 @@ function importStatBadge(label, count, kind = "") {
   return `<span class="import-stat-badge${cls}">${escCell(label)}: ${formatImportCount(count)}</span>`;
 }
 
+const IMPORT_SHEET_PLACEHOLDER = "— Selecciona la hoja a importar —";
+const IMPORT_INFORMATIONAL_ISSUE_CODES = new Set(["PRODUCT_PROJECT_LINK_REQUIRED"]);
+
+function isMultiSheetImportUpload(sheets, fileName) {
+  const list = Array.isArray(sheets) ? sheets : [];
+  if (list.length <= 1) return false;
+  return /\.xlsx$/i.test(String(fileName || ""));
+}
+
+function suggestImportSheet(sheets, context) {
+  if (!Array.isArray(sheets) || sheets.length <= 1) return null;
+  const ctx = String(context || "").toUpperCase();
+  if (ctx !== "INVENTORY" && ctx !== "INBOUND") return null;
+  const keywords = ["inventario", "stock", "existencias", "físico", "fisico"];
+  const scored = sheets
+    .map((sheet) => {
+      const name = String(sheet.name || "").toLowerCase();
+      const score = keywords.reduce((acc, kw) => acc + (name.includes(kw) ? 1 : 0), 0);
+      return { sheet, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        Number(b.sheet.totalDataRows || 0) - Number(a.sheet.totalDataRows || 0)
+    );
+  return scored[0]?.sheet || null;
+}
+
+function renderImportSheetSelectOptions(sheets, { selected = "", includePlaceholder = false } = {}) {
+  const opts = [];
+  if (includePlaceholder) {
+    opts.push(`<option value="">${escCell(IMPORT_SHEET_PLACEHOLDER)}</option>`);
+  }
+  for (const sheet of sheets) {
+    opts.push(
+      `<option value="${escCell(sheet.name)}"${selected === sheet.name ? " selected" : ""}>${escCell(sheet.name)} (${formatImportCount(sheet.totalDataRows)} filas)</option>`
+    );
+  }
+  return opts.join("");
+}
+
+function getImportInventoryModeValue() {
+  const toggle = document.getElementById("importReconcilePreviewToggle");
+  return toggle?.checked ? "RECONCILE" : "APPEND";
+}
+
+function isImportReconcilePreviewMode() {
+  return getImportInventoryModeValue() === "RECONCILE";
+}
+
+function syncImportInventoryModeUi() {
+  const context = document.getElementById("importContext")?.value || "INVENTORY";
+  const isInventoryContext = context === "INVENTORY" || context === "INBOUND";
+  document.getElementById("importInventoryModeField")?.classList.toggle("hidden", !isInventoryContext);
+  document.getElementById("importReconcilePreviewDetails")?.classList.toggle("hidden", !isInventoryContext);
+  if (!isInventoryContext) {
+    const toggle = document.getElementById("importReconcilePreviewToggle");
+    if (toggle) toggle.checked = false;
+  }
+}
+
+function setImportReconcilePreviewMode(enabled) {
+  const toggle = document.getElementById("importReconcilePreviewToggle");
+  if (toggle) toggle.checked = Boolean(enabled);
+  syncImportInventoryModeUi();
+}
+
+function importReviewGroupActionCell(group, index) {
+  if (IMPORT_INFORMATIONAL_ISSUE_CODES.has(group.issueCode)) {
+    const project = String(group.sourceValue ?? "proyecto");
+    return `Se crearán ${formatImportCount(group.records)} vínculos producto-proyecto al confirmar (${escCell(project)}).`;
+  }
+  if (group.issueCode === "SOURCE_LOCATION_NOT_IN_MASTER") {
+    return "Dar de alta el código fuente";
+  }
+  if (group.issueCode === "ASSIGNMENT_UNRESOLVED") {
+    return `<button class="btn-secondary btn-compact" data-review-group="${index}" data-review-assign="project">Asignar proyecto</button> <button class="btn-secondary btn-compact" data-review-group="${index}" data-review-assign="fts">FREE TO SALE</button>`;
+  }
+  return `<button class="btn-secondary btn-compact" data-review-group="${index}">Corregir todos</button>`;
+}
+
+async function applyImportSheetSelection(sheetName, sheets) {
+  if (!currentImportId || !sheetName) return;
+  const response = await authenticatedFetch(`/api/imports/${currentImportId}/select-sheet`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sheetName })
+  });
+  if (!response?.ok) {
+    const err = await response?.json().catch(() => ({}));
+    throw new Error(err.message || "No se pudo seleccionar la hoja.");
+  }
+  const batch = await response.json();
+  const sheet = (Array.isArray(sheets) ? sheets : batch.metadata?.sheets || []).find((s) => s.name === sheetName);
+  importUi.sheetName = sheetName;
+  importUi.sheetRows = Number(sheet?.totalDataRows || batch.totalRows || 0);
+  importUi.batchStatus = batch.status || "UPLOADED";
+  resetImportDownstream(3);
+  const mappingRes = await authenticatedFetch(`/api/imports/${currentImportId}/mapping`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  const mapped = mappingRes?.ok ? await mappingRes.json() : { suggested: {} };
+  renderImportMapping(sheet?.headers || [], mapped.suggested || mapped.mapping || {});
+  importUi.mappingApplied = false;
+  importUi.mappingDirty = true;
+  importUi.appliedMappingJson = "";
+  setImportStatus(`✓ Hoja seleccionada: ${sheetName} — ${formatImportCount(importUi.sheetRows)} filas`);
+}
+
 function isCancellableImportUiStatus(status) {
   return ["UPLOADED", "MAPPED", "VALIDATED", "READY", "FAILED"].includes(String(status || ""));
 }
@@ -12721,6 +12838,9 @@ function getImportConfirmBlockReason() {
   }
   if (document.getElementById("importInventoryMode")?.value === "RECONCILE") {
     return "RECONCILE solo permite preview; no se puede confirmar.";
+  }
+  if (isImportReconcilePreviewMode()) {
+    return "La vista previa de conciliación no puede confirmarse.";
   }
   if (importUi.confirmableReason && importUi.confirmable === false) return importUi.confirmableReason;
   return "";
@@ -12921,7 +13041,19 @@ function syncImportWizardUi() {
   }
 
   const hint = document.getElementById("importConfirmHint");
-  if (busy && importUi.busyLabel.toLowerCase().includes("confirm")) {
+  const reconcilePreview = isImportReconcilePreviewMode();
+  if (reconcilePreview && !importUi.confirmed) {
+    setImportStep("confirm", "locked", "No aplica", "No aplica — vista previa únicamente");
+    setImportButton("importConfirmBtn", {
+      disabled: true,
+      locked: true,
+      label: "No aplica",
+      reason: "La vista previa de conciliación no modifica inventario."
+    });
+    if (hint) {
+      hint.textContent = "Este modo sirve únicamente para comparar/revisar. No puede confirmarse.";
+    }
+  } else if (busy && importUi.busyLabel.toLowerCase().includes("confirm")) {
     setImportStep("confirm", "busy", "En curso", "Confirmando importación…");
     setImportButton("importConfirmBtn", {
       disabled: true,
@@ -12981,6 +13113,7 @@ function syncImportWizardUi() {
     bannerCancel.disabled = busy || !showBannerCancel;
   }
   updateImportWizardChrome();
+  syncImportInventoryModeUi();
 }
 
 async function withImportLock(label, fn) {
@@ -13257,21 +13390,46 @@ function applyImportServerState(state) {
     applyImportCountsFromServer(state);
     const contextEl = document.getElementById("importContext");
     if (contextEl && state.context) contextEl.value = state.context;
-    const modeEl = document.getElementById("importInventoryMode");
-    if (modeEl && state.inventoryMode) modeEl.value = state.inventoryMode;
+    setImportReconcilePreviewMode(state.inventoryMode === "RECONCILE");
     const currencyEl = document.getElementById("importPriceCurrency");
     if (currencyEl) currencyEl.value = state.priceCurrency || "";
     const sheets = Array.isArray(state.sheets) ? state.sheets : [];
+    const multiSheet = isMultiSheetImportUpload(sheets, state.originalFileName || importUi.fileName);
+    const needsSheetPick = multiSheet && state.status === "UPLOADED" && !state.hasMapping;
+    if (needsSheetPick) {
+      importUi.sheetName = "";
+      importUi.sheetRows = 0;
+    }
     const select = document.getElementById("importSheetSelect");
     if (select) {
       select.innerHTML = sheets.length
-        ? sheets.map((s) => `<option value="${escCell(s.name)}">${escCell(s.name)} (${formatImportCount(s.totalDataRows)} filas)</option>`).join("")
+        ? renderImportSheetSelectOptions(sheets, {
+            selected: needsSheetPick ? "" : importUi.sheetName,
+            includePlaceholder: multiSheet
+          })
         : '<option value="">Sin hojas</option>';
-      if (importUi.sheetName) select.value = importUi.sheetName;
+      select.disabled = !sheets.length;
+      if (!needsSheetPick && importUi.sheetName) select.value = importUi.sheetName;
     }
-    const selected = sheets.find((s) => s.name === importUi.sheetName) || sheets[0];
+    const sheetMeta = document.getElementById("importSheetMeta");
+    if (sheetMeta) {
+      if (needsSheetPick) {
+        const suggested = suggestImportSheet(sheets, state.context);
+        sheetMeta.textContent = suggested
+          ? `Sugerida: ${suggested.name} (${formatImportCount(suggested.totalDataRows)} filas). Confirma la hoja en el selector.`
+          : "Selecciona la hoja a importar.";
+      } else if (importUi.sheetName) {
+        sheetMeta.textContent = `✓ Hoja seleccionada: ${importUi.sheetName} — ${formatImportCount(importUi.sheetRows)} filas`;
+      }
+    }
+    const selected = importUi.sheetName ? sheets.find((s) => s.name === importUi.sheetName) : null;
     const mapping = state.mapping && typeof state.mapping === "object" ? state.mapping : {};
-    renderImportMapping(selected?.headers || Object.keys(mapping), mapping);
+    if (selected || Object.keys(mapping).length) {
+      renderImportMapping(selected?.headers || Object.keys(mapping), mapping);
+    } else {
+      const mappingBox = document.getElementById("importMappingBox");
+      if (mappingBox) mappingBox.innerHTML = "";
+    }
     importUi.mappingApplied = Boolean(state.hasMapping) && ["MAPPED", "VALIDATED", "READY", "PROCESSING", "COMPLETED"].includes(state.status);
     importUi.appliedMappingJson = importUi.mappingApplied ? JSON.stringify(currentImportMapping) : "";
     importUi.mappingDirty = false;
@@ -13448,16 +13606,35 @@ function renderImportReviewFromState(data) {
     : "";
   const blockedCount = Number(counts.BLOCKED || importUi.blocked || 0);
   const warningCount = Number(counts.WARNING || importUi.warningRows || 0);
+  const informationalGroups = groups.filter((g) => IMPORT_INFORMATIONAL_ISSUE_CODES.has(g.issueCode));
+  const actionableGroups = groups.filter((g) => !IMPORT_INFORMATIONAL_ISSUE_CODES.has(g.issueCode));
+  const informationalCount = informationalGroups.reduce((sum, g) => sum + Number(g.records || 0), 0);
+  const reviewWarningCount = Math.max(0, warningCount - informationalCount);
   const warningNote =
-    blockedCount === 0 && warningCount > 0
-      ? `<p class="assignee-hint">Advertencias (${formatImportCount(warningCount)}): revisar si aplica. No bloquean la confirmación mientras no haya registros bloqueados.</p>`
+    blockedCount === 0 && reviewWarningCount > 0
+      ? `<p class="assignee-hint">Advertencias que requieren revisión (${formatImportCount(reviewWarningCount)}): revisar si aplica. No bloquean la confirmación mientras no haya registros bloqueados.</p>`
       : "";
+  const informationalBox = informationalGroups.length
+    ? `<div class="import-info-box" style="margin:10px 0">
+        <h5 class="secondary-panel-title">Informativos (${formatImportCount(informationalCount)})</h5>
+        <p class="assignee-hint">Estos avisos se resuelven automáticamente al confirmar. No requieren corrección manual.</p>
+        <div class="table-wrap"><table class="excel-table"><thead><tr><th>Detalle</th><th>Proyecto / valor</th><th>Registros</th><th>Al confirmar</th></tr></thead><tbody>
+          ${informationalGroups
+            .map(
+              (g) =>
+                `<tr><td>${escCell(g.issueCode)}</td><td>${escCell(String(g.sourceValue ?? "—"))}</td><td>${formatImportCount(g.records)}</td><td>${importReviewGroupActionCell(g, 0)}</td></tr>`
+            )
+            .join("")}
+        </tbody></table></div>
+      </div>`
+    : "";
   box.innerHTML = `
     <h4 class="secondary-panel-title">Bandeja de revisión</h4>
     ${(data.globalNotices || []).map((n) => `<p class="operational-table-meta">${escCell(n.message)}</p>`).join("")}
     <div class="page-toolbar">
       ${importStatBadge("Listos", counts.READY || 0, "ok")}
-      ${importStatBadge("Advertencias", warningCount, blockedCount > 0 ? "warning" : "info")}
+      ${importStatBadge("Informativos", informationalCount, "info")}
+      ${importStatBadge("Advertencias", reviewWarningCount, blockedCount > 0 || reviewWarningCount > 0 ? "warning" : "ok")}
       ${importStatBadge("Bloqueados", blockedCount, blockedCount > 0 ? "blocked" : "ok")}
       ${importStatBadge("Ignorados", counts.IGNORED || 0)}
       ${importStatBadge("FREE TO SALE", data.assignmentSummary?.freeToSaleAssigned || importUi.freeToSaleAssigned, "info")}
@@ -13466,18 +13643,13 @@ function renderImportReviewFromState(data) {
         : ""}
     </div>
     ${warningNote}
+    ${informationalBox}
     ${Number(data.assignmentSummary?.freeToSaleAssigned || importUi.freeToSaleAssigned || 0)
       ? `<p class="operational-table-meta">Las filas FREE TO SALE son inventario libre. No pertenecen a un proyecto y no se añaden a la lista de proyectos.</p>`
       : ""}
     ${missingBox}
     <div class="table-wrap"><table class="excel-table"><thead><tr><th>Problema</th><th>Valor fuente</th><th>Registros</th><th>Acción</th></tr></thead><tbody>
-      ${groups.map((g, index) => `<tr><td>${escCell(g.issueCode)} · ${escCell(g.field || "fila")}</td><td>${escCell(String(g.sourceValue ?? "—"))}</td><td>${g.records}</td><td>${
-        g.issueCode === "SOURCE_LOCATION_NOT_IN_MASTER"
-          ? "Dar de alta el código fuente"
-          : g.issueCode === "ASSIGNMENT_UNRESOLVED"
-          ? `<button class="btn-secondary btn-compact" data-review-group="${index}" data-review-assign="project">Asignar proyecto</button> <button class="btn-secondary btn-compact" data-review-group="${index}" data-review-assign="fts">FREE TO SALE</button>`
-          : `<button class="btn-secondary btn-compact" data-review-group="${index}">Corregir todos</button>`
-      }</td></tr>${
+      ${actionableGroups.map((g, index) => `<tr><td>${escCell(g.issueCode)} · ${escCell(g.field || "fila")}</td><td>${escCell(String(g.sourceValue ?? "—"))}</td><td>${g.records}</td><td>${importReviewGroupActionCell(g, index)}</td></tr>${
         Array.isArray(g.subgroups) && g.subgroups.length
           ? g.subgroups.slice(0, 12).map((sub, subIndex) => `<tr><td colspan="2" style="padding-left:18px">${escCell(sub.sku || "—")} · lote ${escCell(sub.lotNumber || "—")} · ${escCell(sub.location || "—")} · ${escCell(sub.status || "—")}</td><td>${sub.records}</td><td><button class="btn-secondary btn-compact" data-review-subgroup="${index}:${subIndex}">Asignar subconjunto</button></td></tr>`).join("")
           : ""
@@ -13488,7 +13660,7 @@ function renderImportReviewFromState(data) {
     </tbody></table></div>`;
   box.querySelectorAll("[data-review-group]").forEach((button) => button.addEventListener("click", () => {
     if (importUi.busy) return;
-    const group = groups[Number(button.getAttribute("data-review-group"))];
+    const group = actionableGroups[Number(button.getAttribute("data-review-group"))];
     if (!group) return;
     const assign = button.getAttribute("data-review-assign");
     let payload = null;
@@ -13509,7 +13681,7 @@ function renderImportReviewFromState(data) {
   box.querySelectorAll("[data-review-subgroup]").forEach((button) => button.addEventListener("click", () => {
     if (importUi.busy) return;
     const [groupIndex, subIndex] = String(button.getAttribute("data-review-subgroup") || "").split(":").map(Number);
-    const group = groups[groupIndex];
+    const group = actionableGroups[groupIndex];
     const sub = group?.subgroups?.[subIndex];
     if (!group || !sub) return;
     const value = window.prompt(`Asignar proyecto a ${sub.records} filas de ${sub.sku} (o escribe FREE TO SALE):`, "");
@@ -13573,7 +13745,7 @@ document.getElementById("importUploadBtn")?.addEventListener("click", () => {
     const body = new FormData();
     body.append("file", file);
     body.append("context", document.getElementById("importContext")?.value || "INVENTORY");
-    body.append("inventoryMode", document.getElementById("importInventoryMode")?.value || "APPEND");
+    body.append("inventoryMode", getImportInventoryModeValue());
     const priceCurrency = document.getElementById("importPriceCurrency")?.value;
     if (priceCurrency) body.append("priceCurrency", priceCurrency);
     const authToken = currentAccessToken();
@@ -13592,28 +13764,35 @@ document.getElementById("importUploadBtn")?.addEventListener("click", () => {
     hideImportResumeBanner();
     resetImportDownstream(3);
     const sheets = data.metadata?.sheets || [];
+    const multiSheet = isMultiSheetImportUpload(sheets, file.name);
     const select = document.getElementById("importSheetSelect");
     if (select) {
       select.innerHTML = sheets.length
-        ? sheets.map((s) => `<option value="${escCell(s.name)}">${escCell(s.name)} (${formatImportCount(s.totalDataRows)} filas)</option>`).join("")
+        ? renderImportSheetSelectOptions(sheets, { includePlaceholder: multiSheet })
         : '<option value="">Sin hojas</option>';
+      select.disabled = !sheets.length;
+      select.value = "";
     }
-    const activeSheet = sheets.find((s) => s.name === data.sheetName) || sheets[0];
-    importUi.sheetName = activeSheet?.name || data.sheetName || "";
-    importUi.sheetRows = Number(activeSheet?.totalDataRows || data.totalRows || 0);
-    if (select && importUi.sheetName) select.value = importUi.sheetName;
-    const headers = activeSheet?.headers || [];
-    const mappingRes = await authenticatedFetch(`/api/imports/${currentImportId}/mapping`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})
-    });
-    const mapped = mappingRes?.ok ? await mappingRes.json() : { suggested: {} };
-    renderImportMapping(headers, mapped.suggested || mapped.mapping || {});
-    importUi.mappingApplied = false;
-    importUi.mappingDirty = true;
-    importUi.appliedMappingJson = "";
-    setImportStatus(`✓ Archivo cargado: ${file.name}`);
+    importUi.sheetName = "";
+    importUi.sheetRows = 0;
+    const mappingBox = document.getElementById("importMappingBox");
+    if (mappingBox) mappingBox.innerHTML = "";
+    const sheetMeta = document.getElementById("importSheetMeta");
+    if (multiSheet) {
+      const suggested = suggestImportSheet(sheets, document.getElementById("importContext")?.value);
+      if (sheetMeta) {
+        sheetMeta.textContent = suggested
+          ? `Sugerida: ${suggested.name} (${formatImportCount(suggested.totalDataRows)} filas). Confirma la hoja en el selector.`
+          : "Selecciona la hoja a importar.";
+      }
+      setImportStatus(`✓ Archivo cargado: ${file.name}. Selecciona la hoja a importar.`);
+    } else if (sheets.length === 1) {
+      await applyImportSheetSelection(sheets[0].name, sheets);
+      setImportStatus(`✓ Archivo cargado: ${file.name}`);
+    } else {
+      if (sheetMeta) sheetMeta.textContent = "Selecciona la hoja a importar.";
+      setImportStatus(`✓ Archivo cargado: ${file.name}`);
+    }
     setImportSyncState("ok", "✓ Estado sincronizado con servidor");
     await refreshImportHistory();
   });
@@ -13624,31 +13803,8 @@ document.getElementById("importSheetSelect")?.addEventListener("change", (e) => 
   const sheetName = e.target.value;
   if (!sheetName) return;
   void withImportLock("Seleccionando hoja…", async () => {
-    const response = await authenticatedFetch(`/api/imports/${currentImportId}/select-sheet`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sheetName })
-    });
-    if (!response?.ok) {
-      const err = await response?.json().catch(() => ({}));
-      throw new Error(err.message || "No se pudo seleccionar la hoja.");
-    }
-    const batch = await response.json();
-    const sheet = (batch.metadata?.sheets || []).find((s) => s.name === sheetName);
-    importUi.sheetName = sheetName;
-    importUi.sheetRows = Number(sheet?.totalDataRows || batch.totalRows || 0);
-    importUi.batchStatus = batch.status || "UPLOADED";
-    resetImportDownstream(3);
-    const mappingRes = await authenticatedFetch(`/api/imports/${currentImportId}/mapping`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})
-    });
-    const mapped = mappingRes?.ok ? await mappingRes.json() : { suggested: {} };
-    renderImportMapping(sheet?.headers || [], mapped.suggested || mapped.mapping || {});
-    importUi.mappingApplied = false;
-    importUi.mappingDirty = true;
-    setImportStatus(`✓ Hoja seleccionada: ${sheetName} — ${formatImportCount(importUi.sheetRows)} filas`);
+    const sheets = [];
+    await applyImportSheetSelection(sheetName, sheets);
   });
 });
 
@@ -13825,6 +13981,11 @@ document.getElementById("importConfirmBtn")?.addEventListener("click", () => {
 });
 
 document.getElementById("importInventoryMode")?.addEventListener("change", () => syncImportWizardUi());
+document.getElementById("importContext")?.addEventListener("change", () => {
+  syncImportInventoryModeUi();
+  syncImportWizardUi();
+});
+document.getElementById("importReconcilePreviewToggle")?.addEventListener("change", () => syncImportWizardUi());
 document.getElementById("importResumeContinueBtn")?.addEventListener("click", () => {
   if (importUi.busy) return;
   continueResumableImport();
@@ -13928,23 +14089,57 @@ function isActiveAviatOperationalClient() {
     .some((value) => String(value || "").trim().toUpperCase() === "AVIAT");
 }
 
-function renderAviatResetCounts(target, counts) {
+function isAviatOperationalInventoryEmpty(counts) {
+  if (!counts) return true;
+  return (
+    Number(counts.inventories || 0) === 0 &&
+    Number(counts.layers || 0) === 0 &&
+    Number(counts.serials || 0) === 0 &&
+    Number(counts.movements || 0) === 0 &&
+    Number(counts.qty || 0) === 0 &&
+    Number(counts.importBatches || 0) === 0
+  );
+}
+
+function formatPhysicalResetPurgedSummary(data) {
+  return (
+    `Se eliminaron: ${formatImportCount(data.inventoriesPurged ?? 0)} saldos, ` +
+    `${formatImportCount(data.layersPurged ?? 0)} capas, ` +
+    `${formatImportCount(data.serialsPurged ?? 0)} series, ` +
+    `${formatImportCount(data.reservationsPurged ?? 0)} reservas, ` +
+    `${formatImportCount(data.movementsPurged ?? 0)} movimientos, ` +
+    `${formatImportCount(data.scanEventsPurged ?? 0)} escaneos, ` +
+    `${formatImportCount(data.requisitionsPurged ?? 0)} requisiciones, ` +
+    `${formatImportCount(data.tasksPurged ?? 0)} tareas, ` +
+    `${formatImportCount(data.importBatchesPurged ?? 0)} importaciones.`
+  );
+}
+
+function formatPhysicalResetCurrentSummary() {
+  return "Estado actual: 0 piezas, 0 saldos, 0 series, 0 movimientos, 0 importaciones.";
+}
+
+function renderAviatResetCounts(target, counts, { mode = "current" } = {}) {
   if (!target) return;
   if (!counts) {
     target.innerHTML = "";
     return;
   }
-  target.innerHTML = [
+  const heading = mode === "purge" ? "Se eliminarán" : "Estado actual";
+  const chips = [
     ["Piezas", counts.qty],
     ["Saldos", counts.inventories],
+    ["Capas", counts.layers],
     ["Series", counts.serials],
     ["Reservas", counts.reservations],
     ["Movimientos", counts.movements],
     ["Requisiciones", counts.requisitions],
-    ["Tareas", counts.tasks]
+    ["Tareas", counts.tasks],
+    ["Importaciones", counts.importBatches]
   ]
     .map(([label, value]) => `<span class="chip">${label}: ${value ?? 0}</span>`)
     .join("");
+  target.innerHTML = `<p class="assignee-hint" style="margin:0 0 8px"><strong>${heading}:</strong></p>${chips}`;
 }
 
 async function syncAviatDangerZone() {
@@ -13969,18 +14164,21 @@ async function syncAviatDangerZone() {
     const response = await authenticatedFetch("/api/v1/inventory/physical/reset/preview");
     const data = await response.json().catch(() => ({}));
     aviatResetPreview = data;
-    renderAviatResetCounts(document.getElementById("aviatResetCounts"), data.counts);
-    const enabled = Boolean(data.flagEnabled && data.isAviat && data.canExecute);
+    const empty = isAviatOperationalInventoryEmpty(data.counts);
+    renderAviatResetCounts(document.getElementById("aviatResetCounts"), data.counts, { mode: "current" });
+    const enabled = Boolean(data.flagEnabled && data.isAviat && data.canExecute && !empty);
     if (hint) {
-      hint.textContent = enabled
-        ? "Escribe la frase exacta y confirma por segunda vez. Esta variable se activará solamente para el ensayo y la carga inicial y deberá volver a false después de la carga aprobada por Hugo."
-        : "El reinicio está desactivado. ALLOW_TENANT_INVENTORY_RESET debe ser true solo para el ensayo y la carga inicial.";
+      hint.textContent = empty
+        ? "El inventario operativo ya está en cero. No hay nada que borrar."
+        : enabled
+          ? "Escribe la frase exacta y confirma por segunda vez. Esta variable se activará solamente para el ensayo y la carga inicial y deberá volver a false después de la carga aprobada por Hugo."
+          : "El reinicio está desactivado. ALLOW_TENANT_INVENTORY_RESET debe ser true solo para el ensayo y la carga inicial.";
     }
     if (btn) {
       btn.classList.remove("hidden");
       btn.style.display = currentRole === "ADMIN" ? "inline-block" : "none";
       btn.disabled = !enabled || physicalInventoryResetBusy;
-      btn.textContent = `Borrar inventario de ${clientLabel}`;
+      btn.textContent = empty ? "Inventario ya está en cero" : `Borrar inventario de ${clientLabel}`;
     }
   } catch (_err) {
     if (btn) btn.disabled = true;
@@ -13999,14 +14197,16 @@ function syncPhysicalInventoryResetConfirmEnabled() {
     phrase === PHYSICAL_RESET_CONFIRMATION &&
     ack &&
     !physicalInventoryResetBusy &&
-    Boolean(aviatResetPreview?.canExecute);
+    Boolean(aviatResetPreview?.canExecute) &&
+    !isAviatOperationalInventoryEmpty(aviatResetPreview?.counts);
   physicalInventoryResetConfirmBtn.disabled = !ready;
 }
 
 function setPhysicalInventoryResetBusy(busy) {
   physicalInventoryResetBusy = busy;
+  const empty = isAviatOperationalInventoryEmpty(aviatResetPreview?.counts);
   physicalInventoryResetBtns.forEach((btn) => {
-    btn.disabled = busy || !aviatResetPreview?.canExecute;
+    btn.disabled = busy || !aviatResetPreview?.canExecute || empty;
   });
   if (physicalInventoryResetPhrase) physicalInventoryResetPhrase.disabled = busy;
   if (physicalInventoryResetFinalAck) physicalInventoryResetFinalAck.disabled = busy;
@@ -14024,7 +14224,7 @@ function setPhysicalInventoryResetBusy(busy) {
 
 function openPhysicalInventoryResetModal() {
   if (currentRole !== "ADMIN" || physicalInventoryResetBusy) return;
-  if (!aviatResetPreview?.canExecute) return;
+  if (!aviatResetPreview?.canExecute || isAviatOperationalInventoryEmpty(aviatResetPreview?.counts)) return;
   setPhysicalInventoryResetError("");
   if (physicalInventoryResetSuccess) {
     physicalInventoryResetSuccess.textContent = "";
@@ -14032,7 +14232,9 @@ function openPhysicalInventoryResetModal() {
   }
   if (physicalInventoryResetPhrase) physicalInventoryResetPhrase.value = "";
   if (physicalInventoryResetFinalAck) physicalInventoryResetFinalAck.checked = false;
-  renderAviatResetCounts(document.getElementById("physicalInventoryResetPreviewCounts"), aviatResetPreview?.counts);
+  renderAviatResetCounts(document.getElementById("physicalInventoryResetPreviewCounts"), aviatResetPreview?.counts, {
+    mode: "purge"
+  });
   syncPhysicalInventoryResetConfirmEnabled();
   openModal("physicalInventoryResetModal");
 }
@@ -14046,6 +14248,10 @@ async function runPhysicalInventoryReset() {
   if (physicalInventoryResetBusy || currentRole !== "ADMIN") return;
   if (!aviatResetPreview?.canExecute) {
     setPhysicalInventoryResetError("El reinicio de inventario de AVIAT está desactivado.");
+    return;
+  }
+  if (isAviatOperationalInventoryEmpty(aviatResetPreview?.counts)) {
+    setPhysicalInventoryResetError("El inventario operativo ya está en cero.");
     return;
   }
   const phrase = String(physicalInventoryResetPhrase?.value || "").trim();
@@ -14071,8 +14277,7 @@ async function runPhysicalInventoryReset() {
     if (data.result !== "PURGED") {
       throw new Error("El servidor no confirmó la eliminación física del inventario.");
     }
-    const message =
-      `Inventario AVIAT eliminado. Existencias ${data.inventoriesPurged ?? 0}, capas ${data.layersPurged ?? 0}, series ${data.serialsPurged ?? 0}, reservas ${data.reservationsPurged ?? 0}, movimientos ${data.movementsPurged ?? 0}, scans ${data.scanEventsPurged ?? 0}, requisiciones ${data.requisitionsPurged ?? 0}, tareas ${data.tasksPurged ?? 0}, importaciones ${data.importBatchesPurged ?? 0}.`;
+    const message = `${formatPhysicalResetPurgedSummary(data)} ${formatPhysicalResetCurrentSummary()}`;
     if (physicalInventoryResetSuccess) {
       physicalInventoryResetSuccess.textContent = `✓ ${message}`;
       physicalInventoryResetSuccess.classList.remove("hidden");
@@ -14083,6 +14288,7 @@ async function runPhysicalInventoryReset() {
       resultBox.classList.remove("hidden");
     }
     await refreshInventoryAfterPhysicalPurge();
+    await syncAviatDangerZone();
   } catch (error) {
     setPhysicalInventoryResetError(error?.message || "No se pudo borrar el inventario.");
   } finally {

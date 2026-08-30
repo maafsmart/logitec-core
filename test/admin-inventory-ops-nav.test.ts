@@ -90,28 +90,18 @@ test("Existencias no puede hacer POST a /api/inventory/movements", () => {
   );
 });
 
-test("el panel ADMIN dirige a Operación con las claves canónicas", () => {
+test("Existencias ya no duplica la navegación operativa al final del módulo", () => {
   const inventory = inventoryHtml();
-  assert.match(inventory, /id="inventoryOpsNavPanel"/);
-  assert.match(
+  assert.doesNotMatch(inventory, /id="inventoryOpsNavPanel"/);
+  assert.doesNotMatch(inventory, /id="inventoryGoInboundBtn"/);
+  assert.doesNotMatch(inventory, /id="inventoryGoRelocateBtn"/);
+  assert.doesNotMatch(inventory, /id="inventoryGoOutboundBtn"/);
+  assert.doesNotMatch(
     inventory,
     /Los movimientos de inventario se registran desde Operación para conservar asignación, ubicación y trazabilidad\./
   );
-  assert.match(
-    inventory,
-    /id="inventoryGoInboundBtn"[^>]*data-goto-module="inbound"[^>]*data-nav-section="operacion"[^>]*>Entradas \/ Recepción</
-  );
-  assert.match(
-    inventory,
-    /id="inventoryGoRelocateBtn"[^>]*data-goto-module="relocate"[^>]*data-nav-section="operacion"[^>]*>Movimiento interno \/ Reubicación</
-  );
-  assert.match(
-    inventory,
-    /id="inventoryGoOutboundBtn"[^>]*data-goto-module="outbound"[^>]*data-nav-section="operacion"[^>]*>Salidas \/ Despacho</
-  );
   const applyRoleSrc = sliceFunction(js, "applyRoleNavigation");
-  assert.match(applyRoleSrc, /inventoryOpsNavPanel[\s\S]*classList\.toggle\("hidden", role !== "ADMIN"\)/);
-  assert.match(html, /dashboard\.js\?v=85/);
+  assert.match(applyRoleSrc, /inventoryOpsNavPanel[\s\S]*\.remove\(\)/);
 });
 
 test("los tres botones navegan al módulo canónico y no mutan inventario", () => {
