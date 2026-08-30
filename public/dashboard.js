@@ -2116,7 +2116,7 @@ function inventoryAssignmentLabel(row) {
 }
 
 function canSeeEconomicValuation() {
-  return ["ADMIN", "SUPERVISOR", "CLIENT"].includes(currentRole);
+  return ["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"].includes(currentRole);
 }
 
 function canEditEconomicValuation() {

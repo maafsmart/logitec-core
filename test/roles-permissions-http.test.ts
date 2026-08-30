@@ -131,7 +131,13 @@ const inventories = [
     client: AVIAT,
     project: null,
     product: { sku: "SKU-SHARED-1", name: "Radio", active: true, barcode: null },
-    layers: [{ lotNumber: "L1", qty: new Prisma.Decimal(10), reservedQty: new Prisma.Decimal(0), serials: [] }]
+    layers: [{
+      lotNumber: "L1",
+      qty: new Prisma.Decimal(10),
+      reservedQty: new Prisma.Decimal(0),
+      unitPriceMxn: new Prisma.Decimal(100),
+      serials: []
+    }]
   },
   {
     id: "inv-c2",
@@ -510,6 +516,55 @@ test("IMPORT MUTATIONS: solo ADMIN", async () => {
       assert.equal(res.status, 403, `${user.role} ${method} ${path}`);
     }
   }
+});
+
+test("VALUACIÓN GET: ADMIN/SUPERVISOR/OPERATOR/CLIENT ven precios de su tenant; solo ADMIN edita", async () => {
+  for (const user of [users.admin, users.supervisor, users.operator, users.clientAviat]) {
+    const token = tokenFor(user, AVIAT.id);
+    const stock = await request("/api/inventory/stock", { token });
+    assert.equal(stock.status, 200, `${user.role} stock`);
+    const rows = Array.isArray(stock.json) ? stock.json : [];
+    assert.ok(rows.length > 0, `${user.role} stock rows`);
+    assert.ok(
+      rows.every((row) => row && typeof row === "object" && "valuation" in row),
+      `${user.role} ve valuation`
+    );
+    assert.ok(
+      rows.every((row) => {
+        const item = row as { clientId?: string; valuation?: { totalValueMxn?: string } };
+        return item.clientId === AVIAT.id && item.valuation?.totalValueMxn === "1000.00";
+      }),
+      `${user.role} tenant + total`
+    );
+    assert.ok(
+      rows.every((row) => (row as { clientId?: string }).clientId !== CLIENT2.id),
+      `${user.role} no ve Cliente 2`
+    );
+    const price = await request("/api/inventory/layers/layer-aviat/price", {
+      method: "PATCH",
+      token,
+      body: { unitPriceMxn: 10 }
+    });
+    if (user.role === "ADMIN") {
+      assert.notEqual(price.status, 403, "ADMIN edita precio");
+    } else {
+      assert.equal(price.status, 403, `${user.role} no edita precio`);
+    }
+  }
+
+  const other = await request("/api/inventory/stock", { token: tokenFor(users.clientTwo) });
+  assert.equal(other.status, 200);
+  const otherRows = Array.isArray(other.json) ? other.json : [];
+  assert.ok(otherRows.every((row) => (row as { clientId?: string }).clientId === CLIENT2.id));
+  assert.ok(otherRows.every((row) => (row as { clientId?: string }).clientId !== AVIAT.id));
+
+  const op = tokenFor(users.operator, AVIAT.id);
+  assert.equal((await request("/api/imports", { token: op })).status, 403);
+  assert.equal(
+    (await request("/api/inventory/physical/reset", { method: "POST", token: op, body: {} })).status,
+    403
+  );
+  assert.equal((await request("/api/users", { token: op })).status, 403);
 });
 
 test("PRICE PATCH y RESET: solo ADMIN", async () => {

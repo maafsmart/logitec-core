@@ -313,9 +313,11 @@ test("matriz de roles: precios, import, users y maestros", () => {
   assert.equal(canExposeEconomicValuation("ADMIN"), true);
   assert.equal(canExposeEconomicValuation("SUPERVISOR"), true);
   assert.equal(canExposeEconomicValuation("CLIENT"), true);
-  assert.equal(canExposeEconomicValuation("OPERATOR"), false);
-  assert.match(sliceFunction(js, "canSeeEconomicValuation"), /\["ADMIN", "SUPERVISOR", "CLIENT"\]/);
+  assert.equal(canExposeEconomicValuation("OPERATOR"), true);
+  assert.match(sliceFunction(js, "canSeeEconomicValuation"), /\["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"\]/);
   assert.match(sliceFunction(js, "canEditEconomicValuation"), /currentRole === "ADMIN"/);
+  assert.match(html, /js-economic-edit hidden" id="inboundPriceHelp"/);
+  assert.match(sliceFunction(js, "applyEconomicVisibility"), /js-economic-edit[\s\S]{0,80}canEditEconomicValuation/);
   assert.match(sliceFunction(js, "applyRoleNavigation"), /btn\.disabled = false/);
   assert.match(js, /SUPERVISOR:[\s\S]{0,400}"account"/);
   assert.doesNotMatch(js, /SUPERVISOR:[\s\S]{0,400}"users"/);
