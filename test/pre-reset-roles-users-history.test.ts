@@ -34,6 +34,7 @@ const historyService = readFileSync(
   "utf8"
 );
 const prismaSchema = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
+const userProfileSrc = readFileSync(new URL("../src/modules/users/user-profile.ts", import.meta.url), "utf8");
 
 function sliceFunction(source: string, name: string): string {
   const token = `function ${name}(`;
@@ -431,7 +432,6 @@ test("UI ficha, reset de contraseña y historial no se autoejecutan", () => {
   assert.match(sliceFunction(js, "loadOperationalHistoryPreview"), /authenticatedFetch\("\/api\/admin\/operational-history\/preview"\)/);
   assert.doesNotMatch(sliceFunction(js, "validateSession"), /loadOperationalHistoryPreview/);
   assert.match(html, /id="historyCleanAll"/);
-  assert.match(html, /avatarUrl/);
   assert.match(html, /No borra historia de GitHub/);
   assert.match(sliceFunction(js, "loadOperationalHistoryPreview"), /doesNotTouchGitHub/);
   assert.match(sliceFunction(js, "executeOperationalHistoryCleanup"), /GitHub\/repositorio intacto/);
@@ -845,6 +845,62 @@ test("HTTP Mi cuenta rechaza fullName solo espacios y no permite escalación", a
   assert.equal(users.operator.role, "OPERATOR");
   assert.equal(users.operator.clientId, AVIAT.id);
   assert.equal(users.operator.isActive, true);
+});
+
+test("fotografía UI: silueta reservada, sin Foto (URL) ni inputs de avatar", () => {
+  assert.doesNotMatch(html, /Foto \(URL/);
+  assert.doesNotMatch(html, /id="editAvatarUrl"/);
+  assert.doesNotMatch(html, /id="accountAvatarUrl"/);
+  assert.doesNotMatch(html, /editAvatarUrl/);
+  assert.doesNotMatch(html, /accountAvatarUrl/);
+  assert.match(html, /id="editUserPhotoPlaceholder"/);
+  assert.match(html, /id="accountPhotoPlaceholder"/);
+  assert.match(html, /user-photo-silhouette/);
+  assert.match(html, /Fotografía — disponible próximamente/);
+  assert.match(html, /Fotografía pendiente; interfaz reservada con silueta/);
+  assert.doesNotMatch(js, /editAvatarUrl/);
+  assert.doesNotMatch(js, /accountAvatarUrl/);
+  assert.doesNotMatch(sliceFunction(js, "openEditUserForm"), /avatarUrl/);
+  assert.doesNotMatch(sliceFunction(js, "saveEditUser"), /avatarUrl/);
+  assert.doesNotMatch(sliceFunction(js, "saveAccountProfile"), /avatarUrl/);
+  assert.doesNotMatch(sliceFunction(js, "fillAccountProfileForm"), /avatarUrl/);
+  assert.match(sliceFunction(js, "saveEditUser"), /fullName/);
+  assert.match(sliceFunction(js, "saveEditUser"), /\/api\/users\/\$\{encodeURIComponent\(id\)\}/);
+  assert.match(sliceFunction(js, "saveAccountProfile"), /fullName/);
+  assert.match(sliceFunction(js, "saveAccountProfile"), /\/api\/auth\/me/);
+  assert.match(userProfileSrc, /avatarUrl: true/);
+  assert.match(prismaSchema, /avatarUrl\s+String\?/);
+});
+
+test("HTTP ADMIN edita ficha sin avatarUrl y Mi cuenta sigue sin foto editable", async () => {
+  lastUserUpdate = {};
+  users.operator.mustChangePassword = false;
+  const admin = tokenFor(users.admin, AVIAT.id);
+  const edited = await request("/api/users/u-op", {
+    method: "PATCH",
+    token: admin,
+    body: { fullName: "Operador Ficha", phone: "5552223333" }
+  });
+  assert.equal(edited.status, 200);
+  const editedJson = edited.json as Record<string, unknown>;
+  assert.equal(editedJson.fullName, "Operador Ficha");
+  assert.ok(!("passwordHash" in editedJson));
+  assert.equal(lastUserUpdate.data?.fullName, "Operador Ficha");
+  assert.equal("avatarUrl" in (lastUserUpdate.data || {}), false);
+
+  lastUserUpdate = {};
+  const me = tokenFor(users.operator);
+  const account = await request("/api/auth/me", {
+    method: "PATCH",
+    token: me,
+    body: { fullName: "Operador Mi Cuenta", phone: "5554445555" }
+  });
+  assert.equal(account.status, 200);
+  const accountJson = account.json as Record<string, unknown>;
+  assert.equal(accountJson.fullName, "Operador Mi Cuenta");
+  assert.equal(accountJson.role, "OPERATOR");
+  assert.ok(!("passwordHash" in accountJson));
+  assert.equal("avatarUrl" in (lastUserUpdate.data || {}), false);
 });
 
 test("temporal generado no es hash y change-password limpia mustChangePassword", () => {

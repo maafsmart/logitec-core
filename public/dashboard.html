@@ -1174,6 +1174,26 @@
         gap: 6px;
         margin-top: 8px;
       }
+      .user-photo-slot {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 8px 0 4px;
+        padding: 10px 12px;
+        border: 1px dashed var(--line);
+        border-radius: 12px;
+        background: var(--accent-soft);
+        max-width: 420px;
+      }
+      .user-photo-silhouette {
+        flex: 0 0 auto;
+        width: 56px;
+        height: 56px;
+        display: block;
+      }
+      .user-photo-slot .filter-hint {
+        margin: 0;
+      }
       .must-change-banner {
         margin: 0 16px 8px;
         padding: 8px 12px;
@@ -4299,7 +4319,15 @@
             <div class="card-panel compact-module users-form-panel">
             <form id="editUserForm" class="hidden">
               <h4 class="secondary-panel-title">Ficha de usuario</h4>
-              <p class="assignee-hint">ADMIN edita ficha, rol y cliente. La contraseña no se lee; usa Restablecer contraseña. Foto: URL http(s), no archivo ni base64.</p>
+              <p class="assignee-hint">ADMIN edita ficha, rol y cliente. La contraseña no se lee; usa Restablecer contraseña. Fotografía pendiente; interfaz reservada con silueta.</p>
+              <div class="user-photo-slot" id="editUserPhotoPlaceholder" aria-label="Fotografía pendiente; interfaz reservada con silueta.">
+                <svg class="user-photo-silhouette" viewBox="0 0 64 64" role="img" aria-hidden="true" focusable="false">
+                  <circle cx="32" cy="32" r="31" fill="#d9e4ee" stroke="#c8d0d8" stroke-width="2"/>
+                  <circle cx="32" cy="24" r="10" fill="#5c6b7a"/>
+                  <path d="M14 54c3-12 11-18 18-18s15 6 18 18" fill="#5c6b7a"/>
+                </svg>
+                <p class="filter-hint">Fotografía — disponible próximamente</p>
+              </div>
               <input type="hidden" id="editUserId" />
               <div class="form-grid">
                 <div class="field">
@@ -4336,10 +4364,6 @@
                 <div class="field">
                   <label for="editAlternatePhone">Teléfono alterno</label>
                   <input id="editAlternatePhone" type="text" />
-                </div>
-                <div class="field">
-                  <label for="editAvatarUrl">Foto (URL)</label>
-                  <input id="editAvatarUrl" type="url" placeholder="https://…" />
                 </div>
                 <div class="field full">
                   <label for="editAddress">Dirección</label>
@@ -4718,7 +4742,15 @@
             </div>
             <div class="card-panel compact-module">
               <h4 class="secondary-panel-title">Mi ficha</h4>
-              <p id="accountProfileMeta" class="filter-hint">Rol y cliente asignado se muestran solo de lectura.</p>
+              <p id="accountProfileMeta" class="filter-hint">Rol y cliente asignado se muestran solo de lectura. Fotografía pendiente; interfaz reservada con silueta.</p>
+              <div class="user-photo-slot" id="accountPhotoPlaceholder" aria-label="Fotografía pendiente; interfaz reservada con silueta.">
+                <svg class="user-photo-silhouette" viewBox="0 0 64 64" role="img" aria-hidden="true" focusable="false">
+                  <circle cx="32" cy="32" r="31" fill="#d9e4ee" stroke="#c8d0d8" stroke-width="2"/>
+                  <circle cx="32" cy="24" r="10" fill="#5c6b7a"/>
+                  <path d="M14 54c3-12 11-18 18-18s15 6 18 18" fill="#5c6b7a"/>
+                </svg>
+                <p class="filter-hint">Fotografía — disponible próximamente</p>
+              </div>
               <form id="accountProfileForm" class="form-compact">
                 <div class="form-grid">
                   <div class="field">
@@ -4752,10 +4784,6 @@
                   <div class="field">
                     <label for="accountPostalCode">CP</label>
                     <input id="accountPostalCode" type="text" />
-                  </div>
-                  <div class="field full">
-                    <label for="accountAvatarUrl">Foto (URL http/https)</label>
-                    <input id="accountAvatarUrl" type="url" placeholder="https://… — no se suben archivos en esta ronda" />
                   </div>
                   <div class="field full">
                     <label for="accountNotes">Notas de contacto</label>
@@ -5980,7 +6008,7 @@
               <h4 class="secondary-panel-title" style="margin:8px 0 6px">Limpiar historial operativo de AVIAT</h4>
               <p class="module-lead">Acción distinta al borrado de inventario. Lleva a cero la trazabilidad de ensayo de AVIAT (movimientos, scans, activity, tareas, requisiciones, imports, incidencias y comentarios). Conserva cliente, usuarios, roles, proyectos, catálogo, almacenes, ubicaciones y existencias. No se ejecuta sola.</p>
               <p class="module-lead"><strong>No borra historia de GitHub.</strong> CLEAN_START es solo datos operativos visibles de AVIAT en la base de datos. No elimina commits, no reescribe historial Git, no hace force push, no borra ramas, PRs, comentarios ni evidencia técnica del desarrollo.</p>
-              <p class="assignee-hint">Las 3 incidencias heredadas (04/08 y 14/08) son candidatas. Foto de usuario: solo <code>avatarUrl</code> externa; no hay carga de archivos. Limpiar <strong>tareas</strong> no libera reservas. Las reservas se liberan solo al limpiar <strong>requisiciones</strong>, y únicamente las de esas requisiciones AVIAT.</p>
+              <p class="assignee-hint">Las 3 incidencias heredadas (04/08 y 14/08) son candidatas. Limpiar <strong>tareas</strong> no libera reservas. Las reservas se liberan solo al limpiar <strong>requisiciones</strong>, y únicamente las de esas requisiciones AVIAT.</p>
               <div class="user-card-actions">
                 <button type="button" id="operationalHistoryPreviewBtn" class="btn-secondary btn-compact">Consultar preview</button>
               </div>

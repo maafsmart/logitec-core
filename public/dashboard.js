@@ -7386,7 +7386,6 @@ function fillAccountProfileForm(user) {
   setVal("accountCity", user?.city);
   setVal("accountState", user?.state);
   setVal("accountPostalCode", user?.postalCode);
-  setVal("accountAvatarUrl", user?.avatarUrl);
   setVal("accountNotes", user?.notes);
 }
 
@@ -12598,7 +12597,6 @@ function openEditUserForm(userId) {
   document.getElementById("editJobTitle").value = user.jobTitle || "";
   document.getElementById("editPhone").value = user.phone || "";
   document.getElementById("editAlternatePhone").value = user.alternatePhone || "";
-  document.getElementById("editAvatarUrl").value = user.avatarUrl || "";
   document.getElementById("editAddress").value = user.address || "";
   document.getElementById("editCity").value = user.city || "";
   document.getElementById("editState").value = user.state || "";
@@ -12624,7 +12622,6 @@ async function saveEditUser(event) {
     jobTitle: document.getElementById("editJobTitle")?.value || null,
     phone: document.getElementById("editPhone")?.value || null,
     alternatePhone: document.getElementById("editAlternatePhone")?.value || null,
-    avatarUrl: document.getElementById("editAvatarUrl")?.value || null,
     address: document.getElementById("editAddress")?.value || null,
     city: document.getElementById("editCity")?.value || null,
     state: document.getElementById("editState")?.value || null,
@@ -12708,7 +12705,6 @@ async function saveAccountProfile(event) {
     city: document.getElementById("accountCity")?.value || null,
     state: document.getElementById("accountState")?.value || null,
     postalCode: document.getElementById("accountPostalCode")?.value || null,
-    avatarUrl: document.getElementById("accountAvatarUrl")?.value || null,
     notes: document.getElementById("accountNotes")?.value || null
   };
   try {
