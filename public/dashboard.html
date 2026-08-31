@@ -6222,9 +6222,10 @@
                 </div>
                 <button type="button" id="physicalInventoryResetImportBtn" class="btn-danger btn-compact" disabled>Borrar inventario de AVIAT</button>
               </div>
-              <p class="module-lead">Reinicio operativo previo a la carga inicial. Elimina existencias, cubos, cantidades, reservados, capas, series, IMEI, reservas, requisiciones y tareas de ensayo, picking, scans, movimientos operativos de prueba, actividad operativa relacionada y sesiones temporales de importación del cliente AVIAT activo.</p>
+              <p class="module-lead">Se eliminan existencias y operación relacionada. Se conservan productos, proyectos válidos, asignaciones producto-proyecto, almacenes, ubicaciones, usuarios y demás datos maestros.</p>
+              <p class="module-lead">Reinicio operativo previo a la carga inicial: existencias, cubos, cantidades, reservados, capas, series, IMEI, reservas, requisiciones y tareas de ensayo, picking, scans, movimientos operativos de prueba, actividad operativa relacionada y sesiones temporales de importación del cliente AVIAT activo. No reconstruye maestros: deben sobrevivir intactos.</p>
               <p class="module-lead">Las incidencias y el historial operativo de Incident <strong>no forman parte de este reset de inventario</strong>. Usa la acción separada de abajo para consultar/limpiar historial; no se mezclan.</p>
-              <p class="module-lead">Se conservan el cliente AVIAT, usuarios, roles, contraseñas, sesiones, proyectos oficiales, almacén oficial, ubicaciones aprobadas, configuración, permisos y catálogos maestros necesarios para volver a importar. El catálogo global de SKU no se borra.</p>
+              <p class="module-lead">También se conservan el cliente AVIAT, roles, contraseñas, sesiones, InventoryStock, configuración y permisos. LOGITEC no es un proyecto de AVIAT: si aparece un registro heredado con esa etiqueta, el reset se bloquea hasta una limpieza explícita. El catálogo global de SKU no se borra.</p>
               <p class="assignee-hint">Ni este reset ni la limpieza de historial operativo tocan GitHub: no se borran commits, no se reescribe historial Git, no hay force push ni se eliminan ramas, PRs o evidencia técnica.</p>
               <div id="aviatResetCounts" class="import-summary-chips"></div>
               <p id="aviatResetFlagHint" class="assignee-hint">Esta función se activa solamente para el ensayo y la carga inicial (<code>ALLOW_TENANT_INVENTORY_RESET</code>) y debe volver a desactivarse después de la carga aprobada por Hugo.</p>
@@ -6400,8 +6401,9 @@
           <h3 id="physicalInventoryResetTitle">Borrar inventario de AVIAT</h3>
           <button type="button" class="modal-close" id="physicalInventoryResetCloseX" aria-label="Cerrar">×</button>
         </div>
-        <p>Esta acción elimina el inventario operativo del cliente AVIAT activo: existencias, cubos, cantidades, reservados, capas, series, reservas, requisiciones y tareas de ensayo, picking, scans, movimientos de prueba, actividad operativa relacionada y sesiones temporales de importación.</p>
-        <p>Se conservan AVIAT, usuarios, roles, contraseñas, sesiones, proyectos oficiales, almacén, ubicaciones aprobadas, configuración, permisos y catálogos maestros. El catálogo global de SKU no se borra.</p>
+        <p>Se eliminan existencias y operación relacionada. Se conservan productos, proyectos válidos, asignaciones producto-proyecto, almacenes, ubicaciones, usuarios y demás datos maestros.</p>
+        <p>Esta acción borra solo el inventario operativo del cliente AVIAT activo: existencias, cubos, cantidades, reservados, capas, series, reservas, requisiciones y tareas de ensayo, picking, scans, movimientos de prueba, actividad operativa relacionada y sesiones temporales de importación.</p>
+        <p>No se borran ProductProject de proyectos válidos, InventoryStock ni el catálogo global de SKU. Un proyecto heredado LOGITEC bloquea el reset; no se elimina ni se conserva como maestro.</p>
         <div id="physicalInventoryResetPreviewCounts" class="import-summary-chips"></div>
         <label class="lab-reset-check" for="physicalInventoryResetPhrase">
           Escribe <strong>BORRAR INVENTARIO DE AVIAT</strong> para confirmar
@@ -6518,6 +6520,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=88"></script>
+    <script src="/dashboard.js?v=90"></script>
   </body>
 </html>

@@ -9,6 +9,9 @@ export const PHYSICAL_RESET_PATH = "/api/v1/inventory/physical/reset";
 export const TENANT_INVENTORY_RESET_FLAG = "ALLOW_TENANT_INVENTORY_RESET";
 /** Distinct from Prisma migrate's advisory lock key 72707369. */
 export const PHYSICAL_RESET_ADVISORY_LOCK_CLASS = 90429101;
+export const FORBIDDEN_LEGACY_PROJECT_PRESENT = "FORBIDDEN_LEGACY_PROJECT_PRESENT";
+export const FORBIDDEN_LEGACY_PROJECT_MESSAGE =
+  "AVIAT contiene un proyecto heredado inválido LOGITEC. Debe auditarse y retirarse antes de reiniciar el inventario.";
 
 export type PhysicalResetDb = {
   $transaction<T>(
@@ -27,11 +30,12 @@ export type PhysicalResetCounts = {
   activityLogs: number;
   requisitions: number;
   tasks: number;
-  productProjects: number;
   importBatches: number;
   legacyStock: number;
   qty: string;
   reservedQty: string;
+  /** Master data. Never a purge candidate. */
+  productProjectsPreserved: number;
 };
 
 export type PhysicalResetResult = {
@@ -46,26 +50,14 @@ export type PhysicalResetResult = {
   activityLogsPurged: number;
   requisitionsPurged: number;
   tasksPurged: number;
-  productProjectsPurged: number;
+  productProjectsPurged: 0;
+  productProjectsPreserved: number;
   importBatchesPurged: number;
   legacyStockPurged: number;
   qtyCleared: string;
   reservedCleared: string;
   orphanProductsRetained: number;
-  legacyLogitec:
-    | {
-        found: false;
-      }
-    | {
-        found: true;
-        id: string;
-        clientId: string | null;
-        code: string;
-        name: string;
-        deleted: boolean;
-        retained: boolean;
-        remainingDependencies: number;
-      };
+  legacyLogitec: { found: false };
   result: "PURGED";
   inventoriesZeroed: number;
   layersZeroed: number;
@@ -75,12 +67,22 @@ export type PhysicalResetResult = {
   alreadyZero: false;
 };
 
+export type ForbiddenLegacyProject = {
+  id: string;
+  code: string;
+  name: string;
+  active: boolean;
+};
+
 export type PhysicalResetPreview = {
   flagEnabled: boolean;
   isAviat: boolean;
   canExecute: boolean;
   clientId: string;
   counts: PhysicalResetCounts;
+  forbiddenLegacyProjects: ForbiddenLegacyProject[];
+  blockCode: typeof FORBIDDEN_LEGACY_PROJECT_PRESENT | null;
+  blockMessage: string | null;
 };
 
 let physicalResetInFlight = false;
@@ -170,6 +172,39 @@ export async function tryAcquirePhysicalResetLock(
   return Boolean(rows[0]?.locked);
 }
 
+function emptyPhysicalResetCounts(): PhysicalResetCounts {
+  return {
+    inventories: 0,
+    layers: 0,
+    serials: 0,
+    reservations: 0,
+    movements: 0,
+    scanEvents: 0,
+    activityLogs: 0,
+    requisitions: 0,
+    tasks: 0,
+    importBatches: 0,
+    legacyStock: 0,
+    qty: "0",
+    reservedQty: "0",
+    productProjectsPreserved: 0
+  };
+}
+
+function isOperationalInventoryEmpty(counts: PhysicalResetCounts): boolean {
+  return (
+    counts.inventories === 0 &&
+    counts.layers === 0 &&
+    counts.serials === 0 &&
+    counts.reservations === 0 &&
+    counts.movements === 0 &&
+    counts.scanEvents === 0 &&
+    counts.requisitions === 0 &&
+    counts.tasks === 0 &&
+    counts.importBatches === 0
+  );
+}
+
 async function collectOperationalCounts(
   tx: Prisma.TransactionClient,
   clientId: string
@@ -188,7 +223,7 @@ async function collectOperationalCounts(
     activityLogs,
     requisitions,
     tasks,
-    productProjects,
+    productProjectsPreserved,
     importBatches
   ] = await Promise.all([
     tx.inventory.aggregate({ where: clientWhere, _sum: { qty: true } }),
@@ -220,11 +255,11 @@ async function collectOperationalCounts(
     activityLogs,
     requisitions,
     tasks,
-    productProjects,
     importBatches,
     legacyStock: 0,
     qty: decimalText(qtyAgg._sum.qty),
-    reservedQty: decimalText(reservedAgg._sum.reservedQty)
+    reservedQty: decimalText(reservedAgg._sum.reservedQty),
+    productProjectsPreserved
   };
 }
 
@@ -241,63 +276,27 @@ async function countOrphanProducts(tx: Prisma.TransactionClient): Promise<number
   });
 }
 
-async function inspectLegacyLogitec(
+async function findForbiddenCompanyProjects(
   tx: Prisma.TransactionClient,
   clientId: string
-): Promise<PhysicalResetResult["legacyLogitec"]> {
+): Promise<ForbiddenLegacyProject[]> {
   const projects = await tx.customer.findMany({
     where: { clientId },
-    select: { id: true, clientId: true, code: true, name: true }
+    select: { id: true, code: true, name: true, active: true }
   });
-  const matches = projects.filter(
-    (row) => isCompanyProjectLabel(row.code) || isCompanyProjectLabel(row.name)
-  );
-  if (matches.length === 0) return { found: false };
-  if (matches.length !== 1) {
-    return {
-      found: true,
-      id: matches.map((row) => row.id).join(","),
-      clientId,
-      code: "LOGITEC",
-      name: "LOGITEC",
-      deleted: false,
-      retained: true,
-      remainingDependencies: -1
-    };
+  return projects
+    .filter((row) => isCompanyProjectLabel(row.code) || isCompanyProjectLabel(row.name))
+    .map((row) => ({ id: row.id, code: row.code, name: row.name, active: row.active }));
+}
+
+export async function assertNoForbiddenCompanyProjects(
+  tx: Prisma.TransactionClient,
+  clientId: string
+): Promise<void> {
+  const found = await findForbiddenCompanyProjects(tx, clientId);
+  if (found.length > 0) {
+    throw new HttpError(409, FORBIDDEN_LEGACY_PROJECT_MESSAGE, FORBIDDEN_LEGACY_PROJECT_PRESENT);
   }
-  const project = matches[0]!;
-  const remainingDependencies =
-    (await tx.inventory.count({ where: { projectId: project.id } })) +
-    (await tx.requisition.count({ where: { projectId: project.id } })) +
-    (await tx.productProject.count({ where: { projectId: project.id } })) +
-    (await tx.inventoryMovement.count({
-      where: { OR: [{ fromProjectId: project.id }, { toProjectId: project.id }] }
-    })) +
-    (await tx.product.count({ where: { customerId: project.id } })) +
-    (await tx.activityLog.count({ where: { customerId: project.id } }));
-  if (remainingDependencies > 0) {
-    return {
-      found: true,
-      id: project.id,
-      clientId: project.clientId,
-      code: project.code,
-      name: project.name,
-      deleted: false,
-      retained: true,
-      remainingDependencies
-    };
-  }
-  await tx.customer.delete({ where: { id: project.id } });
-  return {
-    found: true,
-    id: project.id,
-    clientId: project.clientId,
-    code: project.code,
-    name: project.name,
-    deleted: true,
-    retained: false,
-    remainingDependencies: 0
-  };
 }
 
 export async function previewPhysicalInventoryReset(
@@ -309,29 +308,19 @@ export async function previewPhysicalInventoryReset(
     const isAviat = actor.clientId === aviatId;
     const counts = isAviat
       ? await collectOperationalCounts(tx, aviatId)
-      : {
-          inventories: 0,
-          layers: 0,
-          serials: 0,
-          reservations: 0,
-          movements: 0,
-          scanEvents: 0,
-          activityLogs: 0,
-          requisitions: 0,
-          tasks: 0,
-          productProjects: 0,
-          importBatches: 0,
-          legacyStock: 0,
-          qty: "0",
-          reservedQty: "0"
-        };
+      : emptyPhysicalResetCounts();
+    const forbiddenLegacyProjects = isAviat ? await findForbiddenCompanyProjects(tx, aviatId) : [];
+    const blocked = forbiddenLegacyProjects.length > 0;
     const flagEnabled = isTenantInventoryResetAllowed();
     return {
       flagEnabled,
       isAviat,
-      canExecute: flagEnabled && isAviat,
+      canExecute: flagEnabled && isAviat && !blocked,
       clientId: actor.clientId,
-      counts
+      counts,
+      forbiddenLegacyProjects,
+      blockCode: blocked ? FORBIDDEN_LEGACY_PROJECT_PRESENT : null,
+      blockMessage: blocked ? FORBIDDEN_LEGACY_PROJECT_MESSAGE : null
     };
   });
 }
@@ -342,20 +331,11 @@ export async function applyPhysicalInventoryPurge(
 ): Promise<PhysicalResetResult> {
   const aviatId = await resolveUniqueAviatClientId(tx);
   assertAviatOperationalClient(actor.clientId, aviatId);
+  await assertNoForbiddenCompanyProjects(tx, aviatId);
   const clientWhere = { clientId: aviatId };
   const projectWhere = { project: { clientId: aviatId } };
   const before = await collectOperationalCounts(tx, aviatId);
-  const alreadyEmpty =
-    before.inventories === 0 &&
-    before.layers === 0 &&
-    before.serials === 0 &&
-    before.reservations === 0 &&
-    before.movements === 0 &&
-    before.scanEvents === 0 &&
-    before.requisitions === 0 &&
-    before.tasks === 0 &&
-    before.productProjects === 0 &&
-    before.importBatches === 0;
+  const alreadyEmpty = isOperationalInventoryEmpty(before);
 
   const aviatTaskIds = await tx.task.findMany({
     where: clientWhere,
@@ -398,12 +378,6 @@ export async function applyPhysicalInventoryPurge(
     : { count: 0 };
 
   const requisitions = await tx.requisition.deleteMany({ where: projectWhere });
-  const productProjects = await tx.productProject.deleteMany({ where: { project: { clientId: aviatId } } });
-
-  await tx.product.updateMany({
-    where: { customer: { clientId: aviatId } },
-    data: { customerId: null }
-  });
 
   const importBatches = await tx.importBatch.deleteMany({
     where: { clientId: aviatId }
@@ -423,7 +397,6 @@ export async function applyPhysicalInventoryPurge(
     throw new HttpError(500, "El inventario operativo de AVIAT no quedó vacío. Se revirtió la operación.");
   }
 
-  const legacyLogitec = await inspectLegacyLogitec(tx, aviatId);
   const orphanProductsRetained = await countOrphanProducts(tx);
 
   const result: PhysicalResetResult = {
@@ -438,13 +411,14 @@ export async function applyPhysicalInventoryPurge(
     activityLogsPurged: activityLogs.count,
     requisitionsPurged: requisitions.count,
     tasksPurged: tasks.count,
-    productProjectsPurged: productProjects.count,
+    productProjectsPurged: 0,
+    productProjectsPreserved: before.productProjectsPreserved,
     importBatchesPurged: importBatches.count,
     legacyStockPurged: 0,
     qtyCleared: before.qty,
     reservedCleared: before.reservedQty,
     orphanProductsRetained,
-    legacyLogitec,
+    legacyLogitec: { found: false },
     result: "PURGED",
     inventoriesZeroed: inventories.count,
     layersZeroed: layers.count,
@@ -475,6 +449,7 @@ export async function applyPhysicalInventoryPurge(
         requisitionsPurged: result.requisitionsPurged,
         tasksPurged: result.tasksPurged,
         productProjectsPurged: result.productProjectsPurged,
+        productProjectsPreserved: result.productProjectsPreserved,
         importBatchesPurged: result.importBatchesPurged,
         legacyStockPurged: result.legacyStockPurged,
         qtyCleared: result.qtyCleared,

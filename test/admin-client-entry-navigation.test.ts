@@ -67,7 +67,8 @@ test("C: Operación no expone Entrada masiva; bookmarks reescriben a Existencias
 
 test("D: reset habilitado solo con ADMIN, AVIAT operativo y flag true", () => {
   assert.match(syncAviatDangerZone, /currentRole === "ADMIN" && isActiveAviatOperationalClient\(\)/);
-  assert.match(syncAviatDangerZone, /const enabled = Boolean\(data\.flagEnabled && data\.isAviat && data\.canExecute && !empty\)/);
+  assert.match(syncAviatDangerZone, /const enabled = Boolean\(data\.flagEnabled && data\.isAviat && data\.canExecute && !empty && !blocked\)/);
+  assert.match(syncAviatDangerZone, /isAviatResetBlocked/);
   assert.match(syncAviatDangerZone, /isAviatOperationalInventoryEmpty/);
   assert.match(sliceFunction(js, "runPhysicalInventoryReset"), /closePhysicalInventoryResetModal/);
   assert.match(syncAviatDangerZone, /btn\.disabled = !enabled/);

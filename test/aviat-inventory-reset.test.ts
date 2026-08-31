@@ -71,22 +71,29 @@ test("el reinicio es transaccional, idempotente y reporta conteos por entidad", 
   assert.match(js, /setPhysicalInventoryResetBusy\(true\)/);
 });
 
-test("SKU anterior deja de ser visible en AVIAT al quitar existencias y ProductProject", () => {
-  assert.match(service, /productProject\.deleteMany/);
+test("el catálogo AVIAT conserva ProductProject y SKUs después del reset operativo", () => {
+  assert.doesNotMatch(service, /productProject\.deleteMany/);
   assert.match(service, /inventory\.deleteMany/);
   assert.match(service, /inventorySerial\.deleteMany/);
   assert.match(service, /inventoryMovement\.deleteMany/);
+  assert.match(service, /productProjectsPreserved/);
 });
 
-test("LOGITEC exacto se limpia solo si queda sin dependencias", () => {
+test("LOGITEC no es maestro válido: un legacy bloquea el reset y no se borra con customer.delete", () => {
   assert.match(service, /isCompanyProjectLabel/);
-  assert.match(service, /customer\.delete/);
-  assert.match(js, /normalized === "LOGITEC"/);
+  assert.match(service, /FORBIDDEN_LEGACY_PROJECT_PRESENT/);
+  assert.match(service, /assertNoForbiddenCompanyProjects/);
+  assert.doesNotMatch(service, /customer\.delete/);
+  assert.doesNotMatch(service, /retained: true/);
+  assert.match(js, /isAviatResetBlocked/);
+  assert.match(js, /Reset bloqueado/);
+  assert.match(html, /proyectos válidos/);
+  assert.doesNotMatch(html, /el proyecto LOGITEC si existe/);
 });
 
-test("cache-buster de dashboard.js se actualiza una sola vez a v=88", () => {
+test("cache-buster de dashboard.js se actualiza una sola vez a v=90", () => {
   const matches = [...html.matchAll(/dashboard\.js\?v=(\d+)/g)].map((row) => row[1]);
-  assert.deepEqual(matches, ["88"]);
+  assert.deepEqual(matches, ["90"]);
 });
 
 test("la migración de coherencia de movimientos admite FTS namespaced y el valor histórico", () => {
