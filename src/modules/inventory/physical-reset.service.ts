@@ -211,39 +211,23 @@ async function collectOperationalCounts(
 ): Promise<PhysicalResetCounts> {
   const clientWhere = { clientId };
   const projectWhere = { project: { clientId } };
-  const [
-    qtyAgg,
-    reservedAgg,
-    inventories,
-    layers,
-    serials,
-    reservations,
-    movements,
-    scanEvents,
-    activityLogs,
-    requisitions,
-    tasks,
-    productProjectsPreserved,
-    importBatches
-  ] = await Promise.all([
-    tx.inventory.aggregate({ where: clientWhere, _sum: { qty: true } }),
-    tx.inventory.aggregate({ where: clientWhere, _sum: { reservedQty: true } }),
-    tx.inventory.count({ where: clientWhere }),
-    tx.inventoryLayer.count({ where: { inventory: clientWhere } }),
-    tx.inventorySerial.count({ where: clientWhere }),
-    tx.inventoryReservation.count({
-      where: {
-        OR: [{ inventory: clientWhere }, { requisitionLine: { requisition: projectWhere } }]
-      }
-    }),
-    tx.inventoryMovement.count({ where: clientWhere }),
-    tx.scanEvent.count({ where: clientWhere }),
-    tx.activityLog.count({ where: clientWhere }),
-    tx.requisition.count({ where: projectWhere }),
-    tx.task.count({ where: clientWhere }),
-    tx.productProject.count({ where: { project: { clientId } } }),
-    tx.importBatch.count({ where: clientWhere })
-  ]);
+  const qtyAgg = await tx.inventory.aggregate({ where: clientWhere, _sum: { qty: true } });
+  const reservedAgg = await tx.inventory.aggregate({ where: clientWhere, _sum: { reservedQty: true } });
+  const inventories = await tx.inventory.count({ where: clientWhere });
+  const layers = await tx.inventoryLayer.count({ where: { inventory: clientWhere } });
+  const serials = await tx.inventorySerial.count({ where: clientWhere });
+  const reservations = await tx.inventoryReservation.count({
+    where: {
+      OR: [{ inventory: clientWhere }, { requisitionLine: { requisition: projectWhere } }]
+    }
+  });
+  const movements = await tx.inventoryMovement.count({ where: clientWhere });
+  const scanEvents = await tx.scanEvent.count({ where: clientWhere });
+  const activityLogs = await tx.activityLog.count({ where: clientWhere });
+  const requisitions = await tx.requisition.count({ where: projectWhere });
+  const tasks = await tx.task.count({ where: clientWhere });
+  const productProjectsPreserved = await tx.productProject.count({ where: { project: { clientId } } });
+  const importBatches = await tx.importBatch.count({ where: clientWhere });
 
   return {
     inventories,
@@ -473,6 +457,41 @@ export async function applyPhysicalInventoryZero(
   return applyPhysicalInventoryPurge(tx, actor);
 }
 
+const RETRYABLE_PRISMA_CODES = new Set(["P2028", "P2034"]);
+
+function isRetryablePhysicalResetError(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return RETRYABLE_PRISMA_CODES.has(error.code);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /prepared statement|deadlock detected|the transaction is not found|unable to start a transaction/i.test(
+    message
+  );
+}
+
+function wrapPhysicalResetFailure(error: unknown): never {
+  if (error instanceof HttpError) throw error;
+  const prismaKnown = error instanceof Prisma.PrismaClientKnownRequestError;
+  const isPrisma =
+    prismaKnown ||
+    error instanceof Prisma.PrismaClientUnknownRequestError ||
+    error instanceof Prisma.PrismaClientValidationError ||
+    error instanceof Prisma.PrismaClientInitializationError ||
+    error instanceof Prisma.PrismaClientRustPanicError;
+  console.error("[physical-reset]", {
+    name: error instanceof Error ? error.name : typeof error,
+    code: prismaKnown ? error.code : undefined,
+    meta: prismaKnown ? error.meta : undefined,
+    message: error instanceof Error ? error.message : String(error)
+  });
+  if (!isPrisma) throw error;
+  throw new HttpError(
+    500,
+    "El reinicio de inventario falló y se revirtió.",
+    prismaKnown ? error.code : "PHYSICAL_RESET_INTERNAL"
+  );
+}
+
 export async function executePhysicalInventoryReset(
   actor: { userId: string; clientId: string },
   db: PhysicalResetDb = prisma
@@ -483,16 +502,27 @@ export async function executePhysicalInventoryReset(
   }
   physicalResetInFlight = true;
   try {
-    return await db.$transaction(async (tx) => {
-      const locked = await tryAcquirePhysicalResetLock(tx, actor.clientId);
-      if (!locked) {
-        throw new HttpError(409, "Ya hay un reinicio de inventario en curso.", "PHYSICAL_RESET_IN_FLIGHT");
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        return await db.$transaction(async (tx) => {
+          const locked = await tryAcquirePhysicalResetLock(tx, actor.clientId);
+          if (!locked) {
+            throw new HttpError(409, "Ya hay un reinicio de inventario en curso.", "PHYSICAL_RESET_IN_FLIGHT");
+          }
+          return applyPhysicalInventoryPurge(tx, actor);
+        }, {
+          maxWait: 15_000,
+          timeout: 300_000
+        });
+      } catch (error) {
+        lastError = error;
+        if (error instanceof HttpError || attempt === 2 || !isRetryablePhysicalResetError(error)) {
+          wrapPhysicalResetFailure(error);
+        }
       }
-      return applyPhysicalInventoryPurge(tx, actor);
-    }, {
-      maxWait: 15_000,
-      timeout: 300_000
-    });
+    }
+    wrapPhysicalResetFailure(lastError);
   } finally {
     physicalResetInFlight = false;
   }

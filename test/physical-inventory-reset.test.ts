@@ -910,6 +910,65 @@ test("el reset no borra ProductProject ni customerId maestro válido y no usa cu
   assert.doesNotMatch(html, /productProjects(?!Preserved)/);
 });
 
+test("un error Prisma de FK real no se oculta detrás de 500 genérico", async () => {
+  const { tx } = createFakeTx();
+  tx.inventoryMovement.deleteMany = async () => {
+    throw new Prisma.PrismaClientKnownRequestError("Foreign key constraint failed", {
+      code: "P2003",
+      clientVersion: "5.22.0",
+      meta: {
+        modelName: "InventoryMovement",
+        field_name: "InventoryMovement_inventorySerialId_fkey",
+        constraint: "InventoryMovement_inventorySerialId_fkey"
+      }
+    });
+  };
+  const db = {
+    $transaction: async (fn: (inner: typeof tx) => Promise<unknown>) => fn(tx)
+  };
+  await withResetFlag(true, async () => {
+    await assert.rejects(
+      () => executePhysicalInventoryReset({ userId: "admin-1", clientId: AVIAT_ID }, db as never),
+      (error: unknown) =>
+        error instanceof HttpError &&
+        error.statusCode === 500 &&
+        error.code === "P2003" &&
+        error.message === "El reinicio de inventario falló y se revirtió."
+    );
+  });
+});
+
+test("P2028 de transacción se reintenta una vez y luego expone el código Prisma", async () => {
+  const { tx } = createFakeTx();
+  let attempts = 0;
+  const db = {
+    $transaction: async (fn: (inner: typeof tx) => Promise<unknown>) => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Prisma.PrismaClientKnownRequestError("Transaction not found", {
+          code: "P2028",
+          clientVersion: "5.22.0"
+        });
+      }
+      return fn(tx);
+    }
+  };
+  await withResetFlag(true, async () => {
+    const result = await executePhysicalInventoryReset({ userId: "admin-1", clientId: AVIAT_ID }, db as never);
+    assert.equal(result.ok, true);
+    assert.equal(attempts, 2);
+  });
+});
+
+test("el middleware registra excepciones no HttpError en lugar de tragarlas", () => {
+  const middlewareSrc = readFileSync(new URL("../src/middlewares/error.middleware.ts", import.meta.url), "utf8");
+  assert.match(middlewareSrc, /\[unhandled\]/);
+  assert.match(middlewareSrc, /console\.error/);
+  assert.match(serviceSrc, /\[physical-reset\]/);
+  assert.match(serviceSrc, /PHYSICAL_RESET_INTERNAL/);
+  assert.doesNotMatch(serviceSrc, /Promise\.all\(/);
+});
+
 test("el reinicio no borra InventoryStock y usa advisory lock de PostgreSQL", () => {
   assert.equal(PHYSICAL_RESET_ADVISORY_LOCK_CLASS, 90429101);
   assert.notEqual(PHYSICAL_RESET_ADVISORY_LOCK_CLASS, 72707369);

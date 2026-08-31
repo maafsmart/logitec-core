@@ -27,5 +27,14 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return;
   }
 
+  const prismaCode = typeof err === "object" && err && "code" in err ? String((err as { code?: unknown }).code ?? "") : "";
+  const prismaMeta = typeof err === "object" && err && "meta" in err ? (err as { meta?: unknown }).meta : undefined;
+  console.error("[unhandled]", {
+    name: err instanceof Error ? err.name : typeof err,
+    code: prismaCode || undefined,
+    meta: prismaMeta,
+    message: err instanceof Error ? err.message : String(err),
+    stack: err instanceof Error ? err.stack : undefined
+  });
   res.status(500).json({ message: "Error interno del servidor" });
 }
