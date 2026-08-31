@@ -72,11 +72,13 @@ test("sidebar de módulos sigue oculta en concentración y la cabecera no se rec
   assert.doesNotMatch(html, /body\.focus-mode \.nav-section-body/);
 });
 
-test("login no cambia con el modo concentración", () => {
+test("login no mezcla modo concentración y no guarda password en LOGITEC", () => {
   assert.match(loginHtml, /id="rememberEmail"/);
+  assert.match(loginHtml, /id="rememberPassword"/);
   assert.match(loginHtml, /id="submitBtn"/);
   assert.match(loginJs, /logitec_remembered_email/);
   assert.doesNotMatch(loginJs, /focus-mode/);
   assert.doesNotMatch(loginHtml, /focusNavSlot/);
   assert.doesNotMatch(loginJs, /localStorage\.setItem\([^)]*password/i);
+  assert.match(loginJs, /navigator\.credentials\.store/);
 });

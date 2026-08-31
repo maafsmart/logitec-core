@@ -20,6 +20,8 @@ const submitBtn = document.getElementById("submitBtn");
 const emailInput = document.getElementById("email");
 const passwordInput = document.getElementById("password");
 const rememberEmail = document.getElementById("rememberEmail");
+const rememberPassword = document.getElementById("rememberPassword");
+const rememberPasswordRow = document.getElementById("rememberPasswordRow");
 const clearRememberedEmailBtn = document.getElementById("clearRememberedEmailBtn");
 
 function readRememberedEmail() {
@@ -63,7 +65,36 @@ function clearStoredNavRouteAfterLogin() {
   }
 }
 
+function canOfferBrowserPasswordSave() {
+  return Boolean(
+    window.isSecureContext &&
+      typeof window.PasswordCredential === "function" &&
+      navigator.credentials &&
+      typeof navigator.credentials.store === "function"
+  );
+}
+
+function revealRememberPasswordControl() {
+  if (!rememberPasswordRow) return;
+  rememberPasswordRow.hidden = !canOfferBrowserPasswordSave();
+  if (rememberPasswordRow.hidden && rememberPassword) rememberPassword.checked = false;
+}
+
+async function offerBrowserPasswordSave(email, password) {
+  if (!rememberPassword?.checked) return;
+  if (!canOfferBrowserPasswordSave()) return;
+  const id = String(email || "").trim();
+  if (!id || !password) return;
+  try {
+    const cred = new PasswordCredential({ id, password });
+    await navigator.credentials.store(cred);
+  } catch (_error) {
+    /* El usuario o el navegador pueden rechazar el guardado. El login no depende de esto. */
+  }
+}
+
 applyRememberedEmail();
+revealRememberPasswordControl();
 clearRememberedEmailBtn?.addEventListener("click", () => {
   clearRememberedEmail();
   if (passwordInput) passwordInput.value = "";
@@ -99,6 +130,8 @@ form.addEventListener("submit", async (event) => {
 
     if (rememberEmail?.checked) persistRememberedEmail(email);
     else persistRememberedEmail("");
+
+    await offerBrowserPasswordSave(email, password);
 
     clearStoredNavRouteAfterLogin();
     localStorage.setItem("token", token);

@@ -139,6 +139,29 @@ test.describe("regresión UI por roles", () => {
     const probe = attachProbes(page);
     await page.goto("/login.html");
     await expect(page.locator("#rememberEmail")).toBeVisible();
+    await expect(page.locator("#email")).toHaveAttribute("autocomplete", "username");
+    await expect(page.locator("#password")).toHaveAttribute("autocomplete", "current-password");
+    await expect(page.locator("#clearRememberedEmailBtn")).toBeVisible();
+    const nativePasswordApi = await page.evaluate(
+      () =>
+        Boolean(
+          window.isSecureContext &&
+            typeof window.PasswordCredential === "function" &&
+            navigator.credentials &&
+            typeof navigator.credentials.store === "function"
+        )
+    );
+    if (nativePasswordApi) {
+      await expect(page.locator("#rememberPasswordRow")).toBeVisible();
+      await expect(page.locator("#rememberPassword")).toBeVisible();
+    } else {
+      await expect(page.locator("#rememberPasswordRow")).toBeHidden();
+    }
+    await saveEvidence(page, "login-remember-controls", probe, { nativeStoreAvailable: nativePasswordApi });
+    await page.locator("#email").fill(users.ADMIN.email);
+    await page.locator("#clearRememberedEmailBtn").click();
+    await expect(page.locator("#email")).toHaveValue("");
+    await expect(page.locator("#password")).toHaveValue("");
     await page.locator("#email").fill(users.ADMIN.email);
     await page.locator("#rememberEmail").check();
     await page.locator("#password").fill(users.ADMIN.password);
@@ -146,10 +169,36 @@ test.describe("regresión UI por roles", () => {
     await page.waitForURL(/dashboard\.html/);
     const remembered = await page.evaluate(() => localStorage.getItem("logitec_remembered_email"));
     const storedKeys = await page.evaluate(() => Object.keys(localStorage));
+    const passwordLeaked = await page.evaluate((secret) => {
+      const inspect = (store: Storage) => {
+        for (let i = 0; i < store.length; i += 1) {
+          const key = store.key(i) || "";
+          const value = store.getItem(key) || "";
+          if (/password/i.test(key) || value === secret) return true;
+        }
+        return false;
+      };
+      return inspect(localStorage) || inspect(sessionStorage) || document.cookie.includes(secret);
+    }, users.ADMIN.password);
     expect(remembered).toBe(users.ADMIN.email.toLowerCase());
     expect(storedKeys.some((key) => /password/i.test(key))).toBe(false);
+    expect(passwordLeaked).toBe(false);
     expect(unexpected5xx(probe)).toEqual([]);
-    await saveEvidence(page, "login-remember-email", probe, { remembered, storedKeys });
+    await saveEvidence(page, "login-remember-email", probe, {
+      remembered,
+      storedKeys,
+      nativePasswordApi,
+      passwordLeaked
+    });
+
+    await page.goto("/login.html");
+    await expect(page.locator("#email")).toHaveValue(users.ADMIN.email.toLowerCase());
+    await page.locator("#rememberEmail").uncheck();
+    await page.locator("#password").fill(users.ADMIN.password);
+    await page.locator("#submitBtn").click();
+    await page.waitForURL(/dashboard\.html/);
+    const rememberedOff = await page.evaluate(() => localStorage.getItem("logitec_remembered_email"));
+    expect(rememberedOff).toBeFalsy();
   });
 
   test("ADMIN: sin Entrada masiva, sin Agregar proyecto en selector, catálogo distinto de inventario", async ({ page }) => {
