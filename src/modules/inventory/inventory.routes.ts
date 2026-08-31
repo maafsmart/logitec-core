@@ -906,6 +906,7 @@ const relocateSchema = z
     inventoryId: z.string().min(1),
     layerId: z.string().min(1).optional(),
     allocationMode: z.enum(["FIFO"]).optional(),
+    serialIds: z.array(z.string().min(1).max(120)).max(1_000).optional(),
     destinationLocation: z.string().min(1).max(120),
     quantity: z.coerce.number().positive(),
     reference: z.string().max(120).optional(),
@@ -964,6 +965,9 @@ const assignmentTransferSchema = z
 inventoryRouter.post("/relocate", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
   const body = relocateSchema.parse(req.body);
   await assertAccessibleInventory(req.auth!, body.inventoryId, prisma);
+  for (const serialId of body.serialIds || []) {
+    await assertAccessibleSerial(req.auth!, serialId, prisma);
+  }
   const source = await prisma.inventory.findFirst({
     where: { id: body.inventoryId, clientId: operationalClientId(req.auth!) },
     include: { product: true, location: true }
@@ -985,6 +989,7 @@ inventoryRouter.post("/relocate", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"
       inventoryId: source.id,
       layerId: body.layerId,
       allocationMode: body.allocationMode,
+      serialIds: body.serialIds,
       destinationLocationId: destination.id,
       qty: dec(body.quantity),
       reference: body.reference?.trim() || null,
