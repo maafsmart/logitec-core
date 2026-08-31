@@ -35,7 +35,7 @@ const createClientSchema = clientFieldsSchema.extend({
   name: z.string().min(1).max(160)
 });
 
-const clientSelect = {
+const clientFieldsSelect = {
   id: true,
   code: true,
   name: true,
@@ -54,6 +54,20 @@ const clientSelect = {
   contactPhone: true,
   contactEmail: true,
   notes: true,
+  active: true,
+  createdAt: true,
+  updatedAt: true
+} as const;
+
+// Keep the operational client picker on the same stable columns used by auth.
+// Optional master-data fields are enriched later via GET /:id; if production is
+// temporarily behind on an additive migration, the ADMIN can still select AVIAT.
+const clientListSelect = {
+  id: true,
+  code: true,
+  name: true,
+  legalName: true,
+  tradeName: true,
   active: true,
   createdAt: true,
   updatedAt: true
@@ -84,7 +98,7 @@ clientsRouter.get("/", async (req, res) => {
     orderBy: [{ active: "desc" }, { name: "asc" }],
     take: 200,
     select: {
-      ...clientSelect,
+      ...clientListSelect,
       _count: { select: { projects: true } }
     }
   });
@@ -97,7 +111,7 @@ clientsRouter.post("/", requireRole(["ADMIN"]), async (req, res) => {
   const client = await prisma.client.findUnique({
     where: { id: created.id },
     select: {
-      ...clientSelect,
+      ...clientFieldsSelect,
       projects: {
         orderBy: { createdAt: "desc" },
         select: { id: true, code: true, name: true, active: true, createdAt: true }
@@ -115,7 +129,7 @@ clientsRouter.get("/:id", async (req, res) => {
   const client = await prisma.client.findUnique({
     where: { id },
     select: {
-      ...clientSelect,
+      ...clientFieldsSelect,
       projects: {
         orderBy: { createdAt: "desc" },
         select: {
@@ -160,7 +174,7 @@ clientsRouter.put("/:id", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   const data = clientFieldsSchema.parse(req.body);
   const updated = await updateClientRecord(prisma as never, id, data);
-  const client = await prisma.client.findUnique({ where: { id: updated.id }, select: clientSelect });
+  const client = await prisma.client.findUnique({ where: { id: updated.id }, select: clientFieldsSelect });
   res.json(client);
 });
 
@@ -168,7 +182,7 @@ clientsRouter.patch("/:id/active", requireRole(["ADMIN"]), async (req, res) => {
   const id = z.string().min(1).parse(req.params.id);
   const { active } = z.object({ active: z.coerce.boolean() }).parse(req.body);
   const updated = await setClientActive(prisma as never, id, active);
-  const client = await prisma.client.findUnique({ where: { id: updated.id }, select: clientSelect });
+  const client = await prisma.client.findUnique({ where: { id: updated.id }, select: clientFieldsSelect });
   res.json(client);
 });
 
