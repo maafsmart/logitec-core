@@ -314,15 +314,22 @@ async function enrichClientContextCatalog(rows) {
   return enriched;
 }
 
+function adminClientCatalogLoadError(response) {
+  if (!response || typeof response.status !== "number") {
+    return "No se pudieron cargar los clientes.";
+  }
+  return `No se pudieron cargar los clientes. HTTP ${response.status}`;
+}
+
 async function loadAdminClientCatalog() {
   if (clientContextStatus) clientContextStatus.textContent = "Cargando clientes…";
   const response = await authenticatedFetch("/api/clients");
   if (!response) {
-    if (clientContextStatus) clientContextStatus.textContent = "No se pudieron cargar los clientes.";
+    if (clientContextStatus) clientContextStatus.textContent = adminClientCatalogLoadError(response);
     return;
   }
   if (!response.ok) {
-    if (clientContextStatus) clientContextStatus.textContent = "No se pudieron cargar los clientes.";
+    if (clientContextStatus) clientContextStatus.textContent = adminClientCatalogLoadError(response);
     return;
   }
   const rows = await response.json().catch(() => []);
