@@ -533,8 +533,8 @@ function makeRelocateDom(opts?: Record<string, string>) {
   };
 }
 
-test("dashboard.js usa cache-buster v=91 para reubicación", () => {
-  assert.match(html, /dashboard\.js\?v=91/);
+test("dashboard.js usa cache-buster v=95 para reubicación", () => {
+  assert.match(html, /dashboard\.js\?v=95/);
   assert.doesNotMatch(html, /dashboard\.js\?v=70/);
 });
 
@@ -1374,7 +1374,7 @@ function assertRelocateSubmitState(dom: ReturnType<typeof qaFifoDom>, enabled: b
 test("v71 1: FIFO completo sin layerId habilita el botón", () => {
   const complete = sliceFunction(js, "relocateFormIsComplete");
   assert.doesNotMatch(complete, /layerId/);
-  assert.doesNotMatch(complete, /relocateSerialsBlockRelocate/);
+  assert.match(complete, /relocateSerialsBlockRelocate/);
   assert.doesNotMatch(complete, /allocationMode/);
   assert.match(sliceFunction(js, "applyRelocateBalanceSelection"), /inv\.value = item\.inventoryId \|\| ""/);
   assert.match(sliceFunction(js, "applyRelocateBalanceSelection"), /layer\.value = ""/);

@@ -784,6 +784,36 @@ inventoryRouter.get("/serials/:serialId", requireRole(["ADMIN", "OPERATOR", "SUP
   res.json(serial);
 });
 
+inventoryRouter.get("/layers/:layerId/serials", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
+  const layerId = z.string().min(1).parse(req.params.layerId);
+  const query = z
+    .object({
+      cursor: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(50)
+    })
+    .parse(req.query);
+  await assertAccessibleLayer(req.auth!, layerId, prisma);
+  const serialWhere: Prisma.InventorySerialWhereInput = {
+    AND: [{ inventoryLayerId: layerId }, clientSerialWhere(req.auth!)]
+  };
+  const rows = await prisma.inventorySerial.findMany({
+    where: serialWhere,
+    orderBy: { id: "asc" },
+    take: query.limit + 1,
+    ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+    select: {
+      id: true,
+      serialNumber: true,
+      imei: true,
+      productId: true,
+      inventoryLayerId: true,
+      clientId: true
+    }
+  });
+  const next = rows.length > query.limit ? rows.pop() : undefined;
+  res.json({ items: rows, nextCursor: next?.id ?? null });
+});
+
 inventoryRouter.get("/layers/:layerId", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
   const layerId = z.string().min(1).parse(req.params.layerId);
   await assertAccessibleLayer(req.auth!, layerId, prisma);
@@ -827,7 +857,15 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
     const location = await resolveLocationByCode(body.location, body.warehouse);
     if (!location) throw new HttpError(400, "La ubicación indicada no existe.");
     locationId = location.id;
-  } else if (!inventoryId && body.location) {
+  } else if (inventoryId) {
+    const targeted = await prisma.inventory.findFirst({
+      where: { id: inventoryId, productId: product.id, clientId: activeClientId },
+      select: { id: true }
+    });
+    if (!targeted) {
+      throw new HttpError(404, "Línea de inventario no encontrada para ese inventoryId y SKU.");
+    }
+  } else if (body.location) {
     const location = await resolveLocationByCode(body.location, body.warehouse);
     if (!location) throw new HttpError(400, "La ubicación indicada no existe.");
     const stockRows = await prisma.inventory.findMany({
@@ -847,6 +885,11 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
     await assertAccessibleInventory(req.auth!, inventoryId, prisma);
   }
   if (body.layerId) await assertAccessibleLayer(req.auth!, body.layerId, prisma);
+  if (body.type === "OUT") {
+    for (const serialId of body.serialIds || []) {
+      await assertAccessibleSerial(req.auth!, serialId, prisma);
+    }
+  }
   if (body.taskId?.trim()) {
     const task = await prisma.task.findFirst({
       where: {
@@ -868,6 +911,7 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
       status: stockStatus,
       inventoryId,
       layerId: body.layerId,
+      serialIds: body.type === "OUT" ? body.serialIds : undefined,
       qty: qtyIn,
       reference: body.reference?.trim() || null,
       notes: body.notes?.trim() || null,
@@ -891,7 +935,12 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
     res.status(201).json(result.movement);
   } catch (error) {
     if (error instanceof InventoryMutationError) {
-      const status = ["AMBIGUOUS_LAYER", "INSUFFICIENT_STOCK", "SERIAL_SELECTION_REQUIRED"].includes(error.code)
+      const status = [
+        "AMBIGUOUS_LAYER",
+        "INSUFFICIENT_STOCK",
+        "SERIAL_SELECTION_REQUIRED",
+        "SERIAL_CONCURRENT_CHANGE"
+      ].includes(error.code)
         ? 409
         : 400;
       res.status(status).json({ code: error.code, message: error.message, details: error.details });

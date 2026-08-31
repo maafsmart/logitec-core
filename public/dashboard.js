@@ -552,6 +552,11 @@ let currentUserClient = null;
 let mustChangePassword = false;
 let usersCache = [];
 let operationalHistoryPreview = null;
+let outboundCubeSyncGuard = null;
+let outboundCubeLoadSeq = 0;
+let outboundLayerSerialSeq = 0;
+/** @type {"loading" | "error" | "ready"} */
+let outboundSerialsLoadState = "ready";
 let adminSelectedClientId = "";
 let movementsNextCursor = null;
 let movementsRows = [];
@@ -5198,6 +5203,16 @@ function movementQuantity(row) {
   return `${n > 0 ? "+" : ""}${formatQty(qty)}`;
 }
 
+/** Cantidad numérica del movimiento (nunca reutiliza etiquetas de tipo). */
+function formatMovementDetailQty(row) {
+  if (row?.qty != null && row.qty !== "") return formatQty(row.qty);
+  const signed = row?.movement?.signedQty;
+  if (signed == null || signed === "") return "—";
+  const n = Number(signed);
+  if (!Number.isFinite(n)) return formatQty(signed);
+  return formatQty(Math.abs(n));
+}
+
 function formatMovementTypeLabel(type) {
   const raw = String(type || "").toUpperCase();
   if (raw === "ASSIGNMENT_TRANSFER") return "Reasignación";
@@ -7725,13 +7740,13 @@ function openMovementDetail(row) {
   const transfer = row.movement?.movementType === "ASSIGNMENT_TRANSFER";
   const requisition = row.requisition;
   openDetailDrawer("Detalle de movimiento", [
-    { label: "Movimiento", value: formatMovementTypeLabel(row.movement?.movementType || row.movement?.type) },
+    { label: "Tipo", value: formatMovementTypeLabel(row.movement?.movementType || row.movement?.type) },
     { label: "Fecha / hora (Ciudad de México)", value: formatMexicoCityDateTime(row.createdAt) },
     { label: "Cliente", value: canonicalClientDisplay(row) },
     { label: "Proyecto", value: transfer ? formatTransferAssignment(row) : row.project ? `${row.project.code} — ${row.project.name}` : "—" },
     { label: "SKU", value: row.product?.sku },
     { label: "Descripción", value: row.product?.name },
-    { label: "Cantidad", value: transfer ? formatQty(row.qty) : movementQuantity(row) },
+    { label: "Cantidad", value: formatMovementDetailQty(row) },
     { label: relocation ? "Saldo origen antes" : "Antes", value: formatQty(row.movement?.quantityBefore) },
     { label: relocation ? "Saldo origen después" : "Después", value: formatQty(row.movement?.quantityAfter) },
     { label: "Almacén", value: row.toLocation?.warehouse || row.fromLocation?.warehouse },
@@ -9279,6 +9294,10 @@ function clearSkuSelectionFields(prefix, input, { keepSkuText = false } = {}) {
     const productIdEl = document.getElementById(`${prefix}ProductId`);
     if (productIdEl) productIdEl.value = "";
   }
+  if (prefix === "outbound") {
+    clearOutboundInventorySelection();
+    if (typeof syncOutboundSubmitEnabled === "function") syncOutboundSubmitEnabled();
+  }
   if (prefix === "inbound") {
     const hid = document.getElementById("inboundProductId");
     if (hid) hid.value = "";
@@ -9312,6 +9331,357 @@ function clearSkuSelectionFields(prefix, input, { keepSkuText = false } = {}) {
   }
 }
 
+function bumpOutboundCubeLoadSeq() {
+  outboundCubeLoadSeq += 1;
+  outboundLayerSerialSeq += 1;
+  outboundSerialsLoadState = "loading";
+  return outboundCubeLoadSeq;
+}
+
+function bumpOutboundLayerSerialSeq() {
+  outboundLayerSerialSeq += 1;
+  outboundSerialsLoadState = "loading";
+  return outboundLayerSerialSeq;
+}
+
+function resetOutboundSerialsPicker() {
+  const picker = document.getElementById("outboundSerialPicker");
+  if (picker) picker.innerHTML = "";
+  const field = document.getElementById("outboundSerialField");
+  if (field) {
+    field.classList.add("hidden");
+    field.hidden = true;
+  }
+  outboundSerialsLoadState = "ready";
+}
+
+function clearOutboundLayerAndSerials() {
+  const layerId = document.getElementById("outboundLayerId");
+  if (layerId) layerId.value = "";
+  const lote = document.getElementById("outboundLote");
+  if (lote) lote.value = "";
+  const sel = document.getElementById("outboundLayerSelect");
+  if (sel) {
+    sel.innerHTML = '<option value="">Seleccione el cubo exacto primero</option>';
+    sel.value = "";
+    sel.disabled = true;
+  }
+  resetOutboundSerialsPicker();
+}
+
+function clearOutboundAssignmentType() {
+  const inv = document.getElementById("outboundInventoryId");
+  if (inv?.dataset) delete inv.dataset.outboundAssignmentType;
+}
+
+function clearOutboundInventorySelection() {
+  bumpOutboundCubeLoadSeq();
+  const inv = document.getElementById("outboundInventoryId");
+  if (inv) inv.value = "";
+  clearOutboundAssignmentType();
+  const productId = document.getElementById("outboundProductId");
+  if (productId) productId.value = "";
+  clearOutboundLayerAndSerials();
+}
+
+function outboundHasValidSkuSelection() {
+  const input = document.getElementById("outboundSku");
+  if (!input) return false;
+  const code = String(input.dataset.skuSelectedCode || "").trim();
+  const selectedId = String(input.dataset.skuSelectedId || "").trim();
+  const typed = String(input.value || "").trim();
+  if (!code || !selectedId || !typed) return false;
+  return typed === code;
+}
+
+function outboundHasExactInventorySelection() {
+  const inv = String(document.getElementById("outboundInventoryId")?.value || "").trim();
+  return Boolean(inv) && outboundHasValidSkuSelection();
+}
+
+function outboundSelectedAssignmentType() {
+  return String(document.getElementById("outboundInventoryId")?.dataset?.outboundAssignmentType || "").trim();
+}
+
+function outboundProjectReady() {
+  if (outboundSelectedAssignmentType() === "FREE_TO_SALE") return true;
+  const customerCode = document.getElementById("outboundCustomer")?.value?.trim() || "";
+  return Boolean(customerCode) && customerCode !== SMART_OTHER;
+}
+
+function syncOutboundSubmitEnabled() {
+  const btn = document.getElementById("outboundSubmitBtn");
+  if (!btn) return;
+  const qty = Number(document.getElementById("outboundQty")?.value);
+  const warehouse =
+    (typeof readSmartFieldValue === "function" ? readSmartFieldValue("outboundWarehouse") : "") ||
+    document.getElementById("outboundWarehouse")?.value?.trim() ||
+    "";
+  const location =
+    (typeof readSmartFieldValue === "function" ? readSmartFieldValue("outboundLocation") : "") ||
+    document.getElementById("outboundLocation")?.value?.trim() ||
+    "";
+  const status = document.getElementById("outboundStatus")?.value || "";
+  const layerId = String(document.getElementById("outboundLayerId")?.value || "").trim();
+  const ready =
+    outboundHasExactInventorySelection() &&
+    Boolean(layerId) &&
+    outboundProjectReady() &&
+    Boolean(warehouse) &&
+    Boolean(location) &&
+    Boolean(status) &&
+    Number.isFinite(qty) &&
+    qty > 0 &&
+    !outboundSerialsBlockOutbound();
+  btn.disabled = !ready;
+}
+
+function outboundSelectedSerialIds() {
+  const picker = document.getElementById("outboundSerialPicker");
+  if (!picker) return [];
+  return Array.from(picker.querySelectorAll('input[type="checkbox"][data-outbound-serial-id]:checked'))
+    .map((input) => String(input.dataset.outboundSerialId || "").trim())
+    .filter(Boolean);
+}
+
+function outboundSerialsRequired() {
+  const picker = document.getElementById("outboundSerialPicker");
+  if (!picker) return false;
+  return picker.querySelectorAll('input[type="checkbox"][data-outbound-serial-id]').length > 0;
+}
+
+function outboundSerialsBlockOutbound() {
+  if (outboundSerialsLoadState === "loading" || outboundSerialsLoadState === "error") return true;
+  if (!outboundSerialsRequired()) return false;
+  const qty = Number(document.getElementById("outboundQty")?.value);
+  const ids = outboundSelectedSerialIds();
+  return !Number.isInteger(qty) || qty <= 0 || ids.length !== qty;
+}
+
+function outboundLayerOptionLabel(layer) {
+  const lot = layer?.lotNumber || "Sin lote";
+  const available = typeof formatQty === "function" ? formatQty(layer?.availableQty ?? layer?.qty ?? 0) : String(layer?.availableQty ?? layer?.qty ?? 0);
+  const ref = String(layer?.sourceReference || "").trim();
+  const dateRaw = layer?.receivedAt || layer?.createdAt || "";
+  const date = typeof formatDateShort === "function" ? formatDateShort(dateRaw) : String(dateRaw || "—");
+  return [lot, `disponible ${available}`, ref, date].filter(Boolean).join(" · ");
+}
+
+function setOutboundLayerSelection(layer) {
+  const layerId = String(layer?.layerId || layer?.id || "").trim();
+  const layerEl = document.getElementById("outboundLayerId");
+  if (layerEl) layerEl.value = layerId;
+  const lote = document.getElementById("outboundLote");
+  if (lote) lote.value = layer?.lotNumber || "";
+  const sel = document.getElementById("outboundLayerSelect");
+  if (sel && layerId) sel.value = layerId;
+  if (layerId) void loadOutboundSerialsForSelectedLayer(layerId);
+  else {
+    bumpOutboundLayerSerialSeq();
+    resetOutboundSerialsPicker();
+  }
+  syncOutboundSubmitEnabled();
+}
+
+function onOutboundLayerSelectChange() {
+  const sel = document.getElementById("outboundLayerSelect");
+  const layerId = String(sel?.value || "").trim();
+  bumpOutboundLayerSerialSeq();
+  const layerEl = document.getElementById("outboundLayerId");
+  if (layerEl) layerEl.value = layerId;
+  const lote = document.getElementById("outboundLote");
+  if (lote) {
+    const opt = sel?.selectedOptions?.[0];
+    lote.value = String(opt?.dataset?.lotNumber || "").trim();
+  }
+  if (layerId) void loadOutboundSerialsForSelectedLayer(layerId);
+  else {
+    resetOutboundSerialsPicker();
+  }
+  syncOutboundSubmitEnabled();
+}
+
+async function loadOutboundLayersForSelectedCube() {
+  const inventoryId = String(document.getElementById("outboundInventoryId")?.value || "").trim();
+  const sel = document.getElementById("outboundLayerSelect");
+  if (!inventoryId) {
+    clearOutboundLayerAndSerials();
+    syncOutboundSubmitEnabled();
+    return;
+  }
+  const seq = bumpOutboundCubeLoadSeq();
+  clearOutboundLayerAndSerials();
+  if (sel) {
+    sel.disabled = true;
+    sel.innerHTML = '<option value="">Cargando lotes…</option>';
+  }
+  syncOutboundSubmitEnabled();
+  try {
+    const response = await authenticatedFetch(`/api/inventory/stock/${encodeURIComponent(inventoryId)}/layers`);
+    if (seq !== outboundCubeLoadSeq) return;
+    if (String(document.getElementById("outboundInventoryId")?.value || "").trim() !== inventoryId) return;
+    if (!response?.ok) throw new Error("LAYER_LOAD_FAILED");
+    const rows = await response.json();
+    if (seq !== outboundCubeLoadSeq) return;
+    const layers = Array.isArray(rows) ? rows : [];
+    if (!sel) return;
+    if (!layers.length) {
+      sel.innerHTML = '<option value="">Sin lote/entrada con saldo</option>';
+      sel.disabled = true;
+      syncOutboundSubmitEnabled();
+      return;
+    }
+    const placeholder =
+      layers.length === 1 ? "" : '<option value="">— Seleccionar lote/entrada —</option>';
+    sel.innerHTML =
+      placeholder +
+      layers
+        .map((layer) => {
+          const id = String(layer.layerId || layer.id || "").trim();
+          return `<option value="${escCell(id)}" data-lot-number="${escCell(layer.lotNumber || "")}">${escCell(
+            outboundLayerOptionLabel(layer)
+          )}</option>`;
+        })
+        .join("");
+    sel.disabled = false;
+    if (layers.length === 1) {
+      setOutboundLayerSelection(layers[0]);
+    } else {
+      sel.value = "";
+      syncOutboundSubmitEnabled();
+    }
+  } catch (_error) {
+    if (seq !== outboundCubeLoadSeq) return;
+    if (sel) {
+      sel.innerHTML = '<option value="">No se pudieron cargar los lotes</option>';
+      sel.disabled = true;
+    }
+    syncOutboundSubmitEnabled();
+  }
+}
+
+async function loadOutboundSerialsForSelectedLayer(layerId) {
+  const picker = document.getElementById("outboundSerialPicker");
+  const field = document.getElementById("outboundSerialField");
+  if (!picker || !field) return;
+  const inventoryId = String(document.getElementById("outboundInventoryId")?.value || "").trim();
+  const selectedLayer = String(document.getElementById("outboundLayerId")?.value || "").trim();
+  if (!layerId || selectedLayer !== layerId) return;
+  const seq = bumpOutboundLayerSerialSeq();
+  const cubeSeq = outboundCubeLoadSeq;
+  field.classList.remove("hidden");
+  field.hidden = false;
+  picker.innerHTML = '<p class="price-new-help">Cargando series disponibles…</p>';
+  outboundSerialsLoadState = "loading";
+  syncOutboundSubmitEnabled();
+  const serials = [];
+  try {
+    let cursor = "";
+    do {
+      const params = new URLSearchParams({ limit: "100" });
+      if (cursor) params.set("cursor", cursor);
+      const response = await authenticatedFetch(
+        `/api/inventory/layers/${encodeURIComponent(layerId)}/serials?${params.toString()}`
+      );
+      if (seq !== outboundLayerSerialSeq || cubeSeq !== outboundCubeLoadSeq) return;
+      if (String(document.getElementById("outboundLayerId")?.value || "").trim() !== layerId) return;
+      if (String(document.getElementById("outboundInventoryId")?.value || "").trim() !== inventoryId) return;
+      if (!response?.ok) throw new Error("SERIAL_LOAD_FAILED");
+      const payload = await response.json();
+      const rows = Array.isArray(payload?.items) ? payload.items : [];
+      serials.push(...rows);
+      cursor = payload?.nextCursor ? String(payload.nextCursor) : "";
+      if (serials.length >= 1_000) cursor = "";
+    } while (cursor);
+  } catch (_error) {
+    if (seq !== outboundLayerSerialSeq || cubeSeq !== outboundCubeLoadSeq) return;
+    picker.innerHTML =
+      '<p class="ops-message error">No se pudieron cargar las series. Vuelve a seleccionar el lote.</p>';
+    outboundSerialsLoadState = "error";
+    syncOutboundSubmitEnabled();
+    return;
+  }
+  if (seq !== outboundLayerSerialSeq || cubeSeq !== outboundCubeLoadSeq) return;
+  if (String(document.getElementById("outboundLayerId")?.value || "").trim() !== layerId) return;
+
+  const unique = [...new Map(serials.map((serial) => [serial.id, serial])).values()];
+  if (!unique.length) {
+    field.classList.add("hidden");
+    field.hidden = true;
+    picker.innerHTML = "";
+    outboundSerialsLoadState = "ready";
+    syncOutboundSubmitEnabled();
+    return;
+  }
+  field.classList.remove("hidden");
+  field.hidden = false;
+  picker.innerHTML =
+    '<div class="sku-selected-card-title">Selecciona los números de serie a despachar</div>' +
+    '<p class="price-new-help">Marca las series exactas. La cantidad se ajusta automáticamente. No se permite salida serializada sin selección.</p>' +
+    `<div class="outbound-serial-list">${unique
+      .map(
+        (serial) =>
+          `<label class="inline-check"><input type="checkbox" data-outbound-serial-id="${escCell(
+            serial.id
+          )}" /> <strong>${escCell(serial.serialNumber || "Sin serie")}</strong>${
+            serial.imei ? ` · IMEI ${escCell(serial.imei)}` : ""
+          }</label>`
+      )
+      .join("")}</div>` +
+    '<p id="outboundSerialCountHint" class="price-new-help">Seleccionadas: 0</p>';
+  picker.querySelectorAll("input[data-outbound-serial-id]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const ids = outboundSelectedSerialIds();
+      const qtyEl = document.getElementById("outboundQty");
+      if (qtyEl) qtyEl.value = ids.length ? String(ids.length) : "";
+      const hint = document.getElementById("outboundSerialCountHint");
+      if (hint) hint.textContent = `Seleccionadas: ${ids.length}`;
+      setOpsMessage("outboundMessage", "", true);
+      syncOutboundSubmitEnabled();
+    });
+  });
+  outboundSerialsLoadState = "ready";
+  syncOutboundSubmitEnabled();
+}
+
+function setOutboundInventoryFromCube(row) {
+  if (!row?.inventoryId) return;
+  const syncing = { value: true };
+  outboundCubeSyncGuard = syncing;
+  try {
+    if (row.assignmentType === "FREE_TO_SALE") {
+      const projectSel = document.getElementById("outboundCustomer");
+      if (projectSel) projectSel.value = "";
+      const cliente = document.getElementById("outboundCliente");
+      if (cliente) cliente.value = "FREE TO SALE";
+    } else if (row.projectCode || row.project?.code) {
+      applyOperationalProjectToSelect("outboundCustomer", {
+        projectCode: row.projectCode || row.project?.code,
+        projectName: row.projectName || row.project?.name
+      });
+      const cliente = document.getElementById("outboundCliente");
+      if (cliente) cliente.value = row.projectName || row.project?.name || row.projectCode || row.project?.code || "";
+    }
+    if (row.warehouse) setSmartFieldValue("outboundWarehouse", row.warehouse);
+    if (row.location || row.locationCode) setSmartFieldValue("outboundLocation", row.location || row.locationCode);
+    if (row.status) {
+      setSelectValueFlexible("outboundStatus", row.status, {
+        allowCreate: true,
+        labelFn: (code) => formatInventoryStatus(code)
+      });
+    }
+    const inv = document.getElementById("outboundInventoryId");
+    if (inv) {
+      inv.value = row.inventoryId;
+      inv.dataset.outboundAssignmentType = String(row.assignmentType || "").trim();
+    }
+  } finally {
+    if (outboundCubeSyncGuard === syncing) outboundCubeSyncGuard = null;
+  }
+  void loadOutboundLayersForSelectedCube();
+  syncOutboundSubmitEnabled();
+}
+
 function beginSkuChange(listEl, input) {
   const prefix = opsPrefixFromTypeahead(listEl, input);
   const skuInput = input || listEl?.parentElement?.querySelector("input");
@@ -9330,7 +9700,7 @@ function invalidateSkuSelection(listEl, input) {
   return true;
 }
 
-function buildSkuContextDetailHtml(context, { pickingSelector = false } = {}) {
+function buildSkuContextDetailHtml(context, { pickingSelector = false, outboundSelector = false } = {}) {
   const locations = Array.isArray(context?.inventory?.locations) ? context.inventory.locations : [];
   const clientName = canonicalClientDisplay(context);
   const project =
@@ -9343,13 +9713,14 @@ function buildSkuContextDetailHtml(context, { pickingSelector = false } = {}) {
     : locations.length === 1
       ? "1 cubo encontrado."
       : `${locations.length} cubos: selecciona Proyecto / FREE TO SALE y ubicación antes de operar.`;
+  const selectable = pickingSelector || outboundSelector;
   const locationRows = locations
     .map((row) => {
       const assignmentLabel = assignmentDisplayLabel(row);
       const text = `${assignmentLabel} · ${row.locationCode || "—"} · ${formatInventoryStatus(row.status)} · ${formatQty(row.qty)} · Reservada ${formatQty(
         row.reservedQty
       )} · No reservada ${formatQty(row.unreservedQty)}`;
-      if (pickingSelector && row.inventoryId) {
+      if (selectable && row.inventoryId) {
         return `<li><button type="button" class="btn-secondary btn-compact" data-sku-cube="${escCell(
           row.inventoryId
         )}" style="text-align:left;justify-content:flex-start">${escCell(text)}</button></li>`;
@@ -9599,9 +9970,10 @@ function renderSkuContext(listEl, context) {
   panel.hidden = false;
   const locations = Array.isArray(context.inventory?.locations) ? context.inventory.locations : [];
   const pickingSelector = Boolean(document.getElementById("pickCandidates") && listEl?.id === "scanSkuSuggestions");
+  const outboundSelector = Boolean(listEl?.id === "outboundSkuSuggestions");
   panel.innerHTML = buildSkuSelectedCardHtml(
     context,
-    buildSkuContextDetailHtml(context, { pickingSelector }),
+    buildSkuContextDetailHtml(context, { pickingSelector, outboundSelector }),
     typeof skuCardScopeFromTypeahead === "function" ? skuCardScopeFromTypeahead(listEl) : null
   );
   rememberInventorySkuSelectedContext(listEl, context);
@@ -9609,15 +9981,34 @@ function renderSkuContext(listEl, context) {
     rememberRequisitionSkuSelectedContext(listEl, context);
   }
   const input = wrap?.querySelector("input");
+  const cardSku = String(context.product?.sku || "").trim();
+  if (input && cardSku && String(input.value || "").trim() !== cardSku) {
+    panel.classList.add("hidden");
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
   panel.querySelector(".sku-change-btn")?.addEventListener("click", () => {
     beginSkuChange(listEl, input);
   });
-  if (pickingSelector) {
+  if (pickingSelector || outboundSelector) {
     panel.querySelectorAll("[data-sku-cube]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const inventoryId = btn.getAttribute("data-sku-cube");
         const row = locations.find((item) => item.inventoryId === inventoryId);
         if (!row) return;
+        if (outboundSelector) {
+          setOutboundInventoryFromCube({
+            inventoryId: row.inventoryId,
+            assignmentType: row.assignmentType,
+            projectCode: row.project?.code || "",
+            projectName: row.project?.name || "",
+            location: row.locationCode,
+            warehouse: row.warehouse,
+            status: row.status
+          });
+          return;
+        }
         renderPickCandidates([
           {
             inventoryId: row.inventoryId,
@@ -9765,7 +10156,7 @@ function wireProductTypeahead(cfg) {
   input.dataset.ptaWired = "1";
   input.setAttribute("autocomplete", "off");
   const minChars = cfg.minChars ?? PRODUCT_TYPEAHEAD_MIN_CHARS;
-  const state = { items: /** @type {any[]} */ ([]), active: -1, timer: null, requestSeq: 0 };
+  const state = { items: /** @type {any[]} */ ([]), active: -1, timer: null, requestSeq: 0, contextSeq: 0 };
   productTypeaheadState.set(input, state);
 
   const close = () => {
@@ -9781,6 +10172,16 @@ function wireProductTypeahead(cfg) {
     input.dataset.skuSelectedId = item.productId || "";
     input.dataset.skuSelectedCode = item.sku || "";
     const prefix = opsPrefixFromTypeahead(listEl, input);
+    if (prefix === "outbound") {
+      clearOutboundInventorySelection();
+      const hid = document.getElementById("outboundProductId");
+      if (hid) hid.value = item.productId || "";
+      if (item.kind === "stock" && item.inventoryId) {
+        const inv = document.getElementById("outboundInventoryId");
+        if (inv) inv.value = item.inventoryId;
+      }
+      syncOutboundSubmitEnabled();
+    }
     if (prefix === "inbound") {
       const hid = document.getElementById("inboundProductId");
       if (hid) hid.value = item.productId || "";
@@ -9790,11 +10191,18 @@ function wireProductTypeahead(cfg) {
       syncInboundSubmitEnabled();
     }
     const selectedId = item.productId || "";
+    const selectedSku = item.sku || "";
+    const contextSeq = ++state.contextSeq;
     void loadSkuContext(selectedId).then((context) => {
+      if (contextSeq !== state.contextSeq) return;
       if (input.dataset.skuSelectedId !== selectedId) return;
+      if (String(input.dataset.skuSelectedCode || "").trim() !== String(selectedSku).trim()) return;
+      if (String(input.value || "").trim() !== String(selectedSku).trim()) return;
+      if (context?.product?.sku && String(context.product.sku).trim() !== String(selectedSku).trim()) return;
       hideProductTypeaheadList(listEl);
       if (context) renderSkuContext(listEl, context);
       cfg.onSelect({ ...item, context });
+      if (prefix === "outbound") syncOutboundSubmitEnabled();
     });
   };
 
@@ -9830,7 +10238,9 @@ function wireProductTypeahead(cfg) {
   };
 
   input.addEventListener("input", () => {
+    state.contextSeq += 1;
     invalidateSkuSelection(listEl, input);
+    if (opsPrefixFromTypeahead(listEl, input) === "outbound") syncOutboundSubmitEnabled();
     if (state.timer) clearTimeout(state.timer);
     state.timer = setTimeout(refresh, PRODUCT_TYPEAHEAD_DEBOUNCE_MS);
   });
@@ -9877,6 +10287,12 @@ function applyCatalogSuggestionToOps(prefix, item) {
   }
   const productEl = document.getElementById(`${prefix}Product`);
   if (productEl) productEl.value = item.productName || item.product?.name || "";
+  if (prefix === "outbound") {
+    const hid = document.getElementById("outboundProductId");
+    if (hid) hid.value = item.productId || "";
+    if (!(item.kind === "stock" && item.inventoryId)) clearOutboundInventorySelection();
+    syncOutboundSubmitEnabled();
+  }
   if (prefix === "inbound") {
     const hid = document.getElementById("inboundProductId");
     if (hid) hid.value = item.productId || "";
@@ -9904,6 +10320,9 @@ function applyStockSuggestionToOps(prefix, item) {
       allowCreate: true,
       labelFn: (code) => formatInventoryStatus(code)
     });
+  }
+  if (prefix === "outbound" && item.inventoryId) {
+    setOutboundInventoryFromCube(item);
   }
 }
 
@@ -10394,13 +10813,18 @@ async function submitOperationalMovement(kind) {
       syncInboundSubmitEnabled();
       return;
     }
-  } else if (!customerCode) {
+  } else if (!outboundProjectReady()) {
     setOpsMessage(msgId, "Seleccione un proyecto.", false);
     return;
   }
   if (kind === "in" && !inboundHasSystemSkuSelection()) {
     setOpsMessage(msgId, "Seleccione un SKU de las sugerencias.", false);
     syncInboundSubmitEnabled();
+    return;
+  }
+  if (kind !== "in" && !outboundHasValidSkuSelection()) {
+    setOpsMessage(msgId, "Seleccione un SKU de las sugerencias.", false);
+    syncOutboundSubmitEnabled();
     return;
   }
   if (!sku) {
@@ -10410,21 +10834,25 @@ async function submitOperationalMovement(kind) {
   if (!warehouse) {
     setOpsMessage(msgId, "Indique el almacén.", false);
     if (kind === "in") syncInboundSubmitEnabled();
+    if (kind !== "in") syncOutboundSubmitEnabled();
     return;
   }
   if (!location) {
     setOpsMessage(msgId, "Indique la ubicación.", false);
     if (kind === "in") syncInboundSubmitEnabled();
+    if (kind !== "in") syncOutboundSubmitEnabled();
     return;
   }
   if (!status) {
     setOpsMessage(msgId, "Seleccione un estatus.", false);
     if (kind === "in") syncInboundSubmitEnabled();
+    if (kind !== "in") syncOutboundSubmitEnabled();
     return;
   }
   if (!Number.isFinite(qty) || qty <= 0) {
     setOpsMessage(msgId, "La cantidad debe ser mayor que 0.", false);
     if (kind === "in") syncInboundSubmitEnabled();
+    if (kind !== "in") syncOutboundSubmitEnabled();
     return;
   }
 
@@ -10435,6 +10863,35 @@ async function submitOperationalMovement(kind) {
   }
   if (kind !== "in" && customerCode) {
     /* El propietario operativo lo decide el cubo, no product.customer. */
+  }
+
+  const outboundInventoryId =
+    kind !== "in" ? String(document.getElementById("outboundInventoryId")?.value || "").trim() : "";
+  if (kind !== "in" && !outboundInventoryId) {
+    setOpsMessage(
+      msgId,
+      "Seleccione el cubo exacto (proyecto/asignación, ubicación y estatus) antes de registrar la salida.",
+      false
+    );
+    syncOutboundSubmitEnabled();
+    return;
+  }
+  const outboundLayerId =
+    kind !== "in" ? String(document.getElementById("outboundLayerId")?.value || "").trim() : "";
+  if (kind !== "in" && !outboundLayerId) {
+    setOpsMessage(msgId, "Seleccione el lote/entrada exacto antes de registrar la salida.", false);
+    syncOutboundSubmitEnabled();
+    return;
+  }
+  const outboundSerialIds = kind !== "in" ? outboundSelectedSerialIds() : [];
+  if (kind !== "in" && outboundSerialsBlockOutbound()) {
+    setOpsMessage(
+      msgId,
+      "Selecciona exactamente un número de serie por cada pieza que vas a despachar.",
+      false
+    );
+    syncOutboundSubmitEnabled();
+    return;
   }
 
   const reference = buildOpsReference(lote, referenceRaw, kind);
@@ -10482,6 +10939,15 @@ async function submitOperationalMovement(kind) {
       reference,
       notes: notes || undefined
     };
+    if (kind !== "in" && outboundInventoryId) {
+      payload.inventoryId = outboundInventoryId;
+    }
+    if (kind !== "in" && outboundLayerId) {
+      payload.layerId = outboundLayerId;
+    }
+    if (kind !== "in" && outboundSerialIds.length) {
+      payload.serialIds = outboundSerialIds.slice();
+    }
     if (kind === "in") {
       payload.assignmentType = inboundAssignmentType;
       payload.projectId = inboundAssignmentType === "FREE_TO_SALE" ? null : inboundProjectId;
@@ -10510,6 +10976,16 @@ async function submitOperationalMovement(kind) {
       const priceEl = document.getElementById("inboundUnitPriceMxn");
       if (priceEl) priceEl.value = "";
       updateInboundEntryValue();
+    } else {
+      clearOutboundInventorySelection();
+      const skuEl = document.getElementById("outboundSku");
+      if (skuEl?.dataset) {
+        delete skuEl.dataset.skuSelectedId;
+        delete skuEl.dataset.skuSelectedCode;
+      }
+      const productEl = document.getElementById("outboundProduct");
+      if (productEl) productEl.value = "";
+      hideSkuSelectedCard(document.getElementById("outboundSkuSuggestions"));
     }
     await loadStockStrip();
     await loadInventoryMovements();
@@ -10519,7 +10995,7 @@ async function submitOperationalMovement(kind) {
     setOpsMessage(msgId, "Error de red.", false);
   } finally {
     if (kind === "in") syncInboundSubmitEnabled();
-    else if (btn) btn.disabled = false;
+    else syncOutboundSubmitEnabled();
   }
 }
 
@@ -11531,38 +12007,12 @@ async function renderPickRequisitionMode(requisitionId) {
         `reservado activo ${formatQty(cube.activeQty)} · ${cube.layerCount} capa(s) interna(s)`;
       const actions = document.createElement("div");
       actions.className = "pick-req-actions";
-      const qtyInput = document.createElement("input");
-      qtyInput.type = "number";
-      qtyInput.min = "0.0001";
-      qtyInput.step = "0.0001";
-      qtyInput.value = maxQty > 0 ? String(maxQty) : "";
-      qtyInput.setAttribute("aria-label", `Cantidad a surtir ${sku}`);
       const button = document.createElement("button");
       button.type = "button";
       button.className = "btn-primary btn-compact";
       button.textContent = "Surtir reservado";
-      button.addEventListener("click", () => {
-        void (async () => {
-          const qty = reqQtyNumber(qtyInput.value);
-          if (!(qty > 0) || qty > maxQty) {
-            setPickRequisitionMessage(
-              `Indica una cantidad mayor a 0 y no mayor a ${formatQty(maxQty)}.`,
-              false
-            );
-            return;
-          }
-          const result = await executeReservedFifoPick(req, line, cube, qty);
-          if (result.cancelled) return;
-          if (!result.ok) {
-            setPickRequisitionMessage(result.message || "No se pudo surtir la reserva.", false);
-            return;
-          }
-          setPickRequisitionMessage("Picking FIFO registrado.", true);
-          await loadPickRequisitions();
-          await refreshRequisitionViews(req.id);
-        })();
-      });
-      actions.appendChild(qtyInput);
+      button.disabled = maxQty <= 0;
+      button.addEventListener("click", () => openReservedPickModal(req, line, cube));
       actions.appendChild(button);
       card.appendChild(title);
       card.appendChild(details);
@@ -12082,6 +12532,38 @@ function wireOperationalForms() {
     outBtn.dataset.opsWired = "1";
     outBtn.addEventListener("click", () => void submitOperationalMovement("out"));
   }
+  [
+    "outboundCustomer",
+    "outboundSku",
+    "outboundQty",
+    "outboundWarehouse",
+    "outboundWarehouseSelect",
+    "outboundLocation",
+    "outboundLocationSelect",
+    "outboundStatus"
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.outboundReadyWired === "1") return;
+    el.dataset.outboundReadyWired = "1";
+    const sync = () => {
+      if (!outboundCubeSyncGuard && id !== "outboundSku" && id !== "outboundQty") {
+        bumpOutboundCubeLoadSeq();
+        const inv = document.getElementById("outboundInventoryId");
+        if (inv) inv.value = "";
+        clearOutboundAssignmentType();
+        clearOutboundLayerAndSerials();
+      }
+      syncOutboundSubmitEnabled();
+    };
+    el.addEventListener("input", sync);
+    el.addEventListener("change", sync);
+  });
+  const outboundLayerSel = document.getElementById("outboundLayerSelect");
+  if (outboundLayerSel && outboundLayerSel.dataset.outboundReadyWired !== "1") {
+    outboundLayerSel.dataset.outboundReadyWired = "1";
+    outboundLayerSel.addEventListener("change", () => onOutboundLayerSelectChange());
+  }
+  syncOutboundSubmitEnabled();
   const reqBtn = document.getElementById("reqSubmitBtn");
   if (reqBtn && reqBtn.dataset.opsWired !== "1") {
     reqBtn.dataset.opsWired = "1";

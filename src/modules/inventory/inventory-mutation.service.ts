@@ -380,6 +380,196 @@ async function selectOrCreateInboundLayer(
   });
 }
 
+async function consumeSerializedOutbound(
+  tx: Prisma.TransactionClient,
+  input: InventoryMutationInput,
+  inventory: LockedInventory,
+  serialIds: string[]
+) {
+  if (!input.qty.isInteger()) {
+    throw new InventoryMutationError("SERIAL_QTY_NOT_INTEGER", "La cantidad serializada debe ser un entero.");
+  }
+  if (serialIds.length !== Number(input.qty)) {
+    throw new InventoryMutationError(
+      "SERIAL_COUNT_MISMATCH",
+      "La cantidad de series seleccionadas no coincide con la cantidad a salir."
+    );
+  }
+  if (new Set(serialIds).size !== serialIds.length) {
+    throw new InventoryMutationError("SERIAL_DUPLICATE", "Hay series duplicadas en la selección.");
+  }
+
+  const assignment = assignmentFromInventory(inventory);
+  const requestedLayerId = input.layerId?.trim() || "";
+  const sortedSerialIds = [...serialIds].sort();
+  await tx.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "InventorySerial" WHERE "id" IN (${Prisma.join(
+      sortedSerialIds
+    )}) ORDER BY "id" FOR UPDATE`
+  );
+  const serials = await tx.inventorySerial.findMany({
+    where: { id: { in: sortedSerialIds } },
+    select: {
+      id: true,
+      productId: true,
+      clientId: true,
+      inventoryLayerId: true,
+      serialNumber: true,
+      imei: true
+    }
+  });
+  if (serials.length !== sortedSerialIds.length) {
+    throw new InventoryMutationError("SERIAL_NOT_FOUND", "Una o más series seleccionadas no existen.");
+  }
+  if (serials.some((serial) => !serial.inventoryLayerId)) {
+    throw new InventoryMutationError("SERIAL_NOT_IN_STOCK", "Una o más series ya no están en inventario.");
+  }
+
+  const sourceLayerIds = [...new Set(serials.map((serial) => serial.inventoryLayerId!))];
+  if (sourceLayerIds.length !== 1) {
+    throw new InventoryMutationError(
+      "SERIAL_LAYER_MISMATCH",
+      "Las series seleccionadas deben pertenecer a la misma capa."
+    );
+  }
+  const sourceLayerId = sourceLayerIds[0]!;
+  if (requestedLayerId && requestedLayerId !== sourceLayerId) {
+    throw new InventoryMutationError(
+      "SERIAL_LAYER_MISMATCH",
+      "Las series seleccionadas no pertenecen a la capa indicada."
+    );
+  }
+
+  await lockInventoryLayers(tx, inventory.id);
+  const sourceLayer = await tx.inventoryLayer.findUnique({ where: { id: sourceLayerId } });
+  if (!sourceLayer || sourceLayer.inventoryId !== inventory.id) {
+    throw new InventoryMutationError(
+      "SERIAL_SOURCE_MISMATCH",
+      "Una o más series no pertenecen al saldo origen seleccionado."
+    );
+  }
+
+  for (const serial of serials) {
+    if (serial.productId !== input.productId || serial.clientId !== assignment.clientId) {
+      throw new InventoryMutationError(
+        "SERIAL_SOURCE_MISMATCH",
+        "Una o más series no pertenecen al saldo origen seleccionado."
+      );
+    }
+  }
+
+  const inventoryAvailable = relocateUnreserved(inventory.qty, inventory.reservedQty);
+  if (inventoryAvailable.lessThan(input.qty)) {
+    throw new InventoryMutationError("INSUFFICIENT_STOCK", "La línea origen no tiene saldo suficiente no reservado.");
+  }
+  const layerAvailable = relocateUnreserved(sourceLayer.qty, sourceLayer.reservedQty);
+  if (layerAvailable.lessThan(input.qty)) {
+    throw new InventoryMutationError(
+      "INSUFFICIENT_STOCK",
+      "La capa de una serie seleccionada no tiene saldo suficiente no reservado."
+    );
+  }
+
+  const before = inventory.qty;
+  const result = await decrementLayerAndParent(tx, inventory.id, sourceLayer.id, input.qty);
+  const orderedSerials = [...serials].sort((a, b) => a.id.localeCompare(b.id));
+  let runningBefore = before;
+  let firstMovement: { id: string } | null = null;
+  const serialAudit: Prisma.InputJsonValue[] = [];
+
+  for (const serial of orderedSerials) {
+    const moved = await tx.inventorySerial.updateMany({
+      where: { id: serial.id, inventoryLayerId: sourceLayer.id },
+      data: { inventoryLayerId: null }
+    });
+    if (moved.count !== 1) {
+      throw new InventoryMutationError(
+        "SERIAL_CONCURRENT_CHANGE",
+        "Una serie cambió de ubicación durante la salida; no se aplicó ningún cambio."
+      );
+    }
+    const afterEach = runningBefore.minus(1);
+    const movement = await tx.inventoryMovement.create({
+      data: {
+        productId: input.productId,
+        type: "OUTBOUND",
+        movementType: "OUT",
+        stockStatus: inventory.status,
+        qty: new Prisma.Decimal(1),
+        warehouse: inventory.location.warehouse,
+        fromLocationId: inventory.locationId,
+        inventoryLayerId: sourceLayer.id,
+        inventorySerialId: serial.id,
+        quantityBefore: runningBefore,
+        quantityAfter: afterEach,
+        reference: input.reference ?? null,
+        notes: input.notes ?? null,
+        userId: input.userId,
+        taskId: input.taskId ?? null,
+        ...outboundAssignmentFields(assignment)
+      }
+    });
+    if (!firstMovement) firstMovement = movement;
+    runningBefore = afterEach;
+    serialAudit.push({
+      serialId: serial.id,
+      serialNumber: serial.serialNumber,
+      imei: serial.imei,
+      sourceLayerId: sourceLayer.id,
+      movementId: movement.id
+    });
+  }
+
+  if (!firstMovement) {
+    throw new InventoryMutationError("SERIAL_NOT_FOUND", "No se encontraron series válidas para salir.");
+  }
+
+  const scanEvent = input.scannedCode
+    ? await tx.scanEvent.create({
+        data: {
+          scannedCode: input.scannedCode,
+          result: "OK",
+          userId: input.userId,
+          productId: input.productId,
+          warehouse: inventory.location.warehouse,
+          location: inventory.location.code,
+          taskId: input.taskId ?? null,
+          clientId: inventory.clientId
+        }
+      })
+    : null;
+
+  await logActivity(
+    {
+      ...input.activity,
+      productId: input.productId,
+      customerId: inventory.projectId,
+      clientId: inventory.clientId,
+      warehouse: inventory.location.warehouse,
+      location: inventory.location.code,
+      qty: input.qty,
+      metadata: activityMetadata(input.activity, {
+        inventoryId: inventory.id,
+        layerId: sourceLayer.id,
+        serialIds: sortedSerialIds,
+        serials: serialAudit,
+        movementId: firstMovement.id,
+        scanEventId: scanEvent?.id ?? ""
+      })
+    },
+    tx
+  );
+
+  return {
+    inventory: result.inventory,
+    layer: result.layer,
+    movement: firstMovement,
+    before,
+    after: result.inventory.qty,
+    scanEvent
+  };
+}
+
 async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutationInput) {
   const status = input.status ?? "AVAILABLE";
 
@@ -878,6 +1068,15 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
   const statusDefinition = await tx.inventoryStatusDefinition.findUnique({ where: { code: inventory.status } });
   if (input.type === "PICK" && statusDefinition?.pickable === false) {
     throw new InventoryMutationError("STATUS_NOT_PICKABLE", "El estado de inventario no permite surtir.");
+  }
+
+  if (input.type === "OUT") {
+    const outboundSerialIds = (Array.isArray(input.serialIds) ? input.serialIds : [])
+      .map((id) => String(id || "").trim())
+      .filter(Boolean);
+    if (outboundSerialIds.length) {
+      return consumeSerializedOutbound(tx, input, inventory, outboundSerialIds);
+    }
   }
 
   const layer = await selectLayer(tx, inventory.id, input.layerId, input.type !== "ADJUST_SET");

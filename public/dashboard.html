@@ -598,6 +598,21 @@
         margin: 0 0 8px;
         color: #047857;
       }
+      .outbound-serial-list,
+      .relocate-serial-list {
+        display: grid;
+        gap: 6px;
+        margin: 8px 0;
+        max-height: 220px;
+        overflow: auto;
+      }
+      .outbound-serial-list .inline-check,
+      .relocate-serial-list .inline-check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.86rem;
+      }
       .sku-selected-card-meta {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
@@ -5911,8 +5926,12 @@
                   <input id="outboundCliente" type="text" class="field-readonly hidden" readonly tabindex="-1" aria-hidden="true" />
                 </div>
                 <div class="field">
-                  <label for="outboundLote">Lote</label>
-                  <input id="outboundLote" type="text" placeholder="Opcional" />
+                  <label for="outboundLayerSelect">Lote / Entrada</label>
+                  <select id="outboundLayerSelect">
+                    <option value="">Seleccione el cubo exacto primero</option>
+                  </select>
+                  <input id="outboundLayerId" type="hidden" value="" />
+                  <input id="outboundLote" type="hidden" value="" />
                 </div>
                 <div class="field">
                   <label for="outboundSku">SKU / Código de barras</label>
@@ -5926,6 +5945,11 @@
                     />
                     <div id="outboundSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
                   </div>
+                  <input id="outboundInventoryId" type="hidden" value="" />
+                  <input id="outboundProductId" type="hidden" value="" />
+                </div>
+                <div class="field full hidden" id="outboundSerialField" hidden>
+                  <div id="outboundSerialPicker"></div>
                 </div>
                 <div class="field">
                   <label for="outboundProduct">Producto</label>
@@ -5963,7 +5987,7 @@
                 </div>
               </div>
               <p id="outboundMessage" class="ops-message"></p>
-              <button type="button" id="outboundSubmitBtn" class="btn-primary btn-compact">Registrar salida</button>
+              <button type="button" id="outboundSubmitBtn" class="btn-primary btn-compact" disabled>Registrar salida</button>
             </div>
             <div class="card-panel" style="padding:0">
               <p id="outboundTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Salidas recientes</p>
@@ -6534,6 +6558,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=91"></script>
+    <script src="/dashboard.js?v=95"></script>
   </body>
 </html>
