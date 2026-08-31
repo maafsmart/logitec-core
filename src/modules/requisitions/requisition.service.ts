@@ -6,7 +6,7 @@ import type { UserRole } from "../../middlewares/auth.middleware.js";
 import { assignmentFromInventory, outboundAssignmentFields } from "../inventory/inventory-assignment.js";
 import { InventoryMutationError } from "../inventory/inventory-errors.js";
 import { isForbiddenInventoryProjectRecord, isOperationalProjectRecord } from "../inventory/inventory-project-rules.js";
-import { planRelocateFifoAllocation } from "../inventory/inventory-mutation.service.js";
+import { compareFifoLayers, planRelocateFifoAllocation } from "../inventory/inventory-mutation.service.js";
 import { assertNoSerialAmbiguity } from "../inventory/inventory-serial-guard.js";
 
 export class RequisitionError extends Error {
@@ -1105,16 +1105,16 @@ type PickFifoReservation = {
 };
 
 export function comparePickFifoReservations(a: PickFifoReservation, b: PickFifoReservation) {
-  const aReceived = a.inventoryLayer?.receivedAt ? a.inventoryLayer.receivedAt.getTime() : Number.POSITIVE_INFINITY;
-  const bReceived = b.inventoryLayer?.receivedAt ? b.inventoryLayer.receivedAt.getTime() : Number.POSITIVE_INFINITY;
-  if (aReceived !== bReceived) return aReceived - bReceived;
-  const aCreated = a.inventoryLayer?.createdAt.getTime() ?? 0;
-  const bCreated = b.inventoryLayer?.createdAt.getTime() ?? 0;
-  if (aCreated !== bCreated) return aCreated - bCreated;
-  const layerCmp = String(a.inventoryLayerId || a.inventoryLayer?.id || "").localeCompare(
-    String(b.inventoryLayerId || b.inventoryLayer?.id || "")
-  );
-  if (layerCmp !== 0) return layerCmp;
+  const aLayer = a.inventoryLayer;
+  const bLayer = b.inventoryLayer;
+  if (aLayer && bLayer) {
+    const layerCmp = compareFifoLayers(
+      { id: aLayer.id, receivedAt: aLayer.receivedAt, createdAt: aLayer.createdAt },
+      { id: bLayer.id, receivedAt: bLayer.receivedAt, createdAt: bLayer.createdAt }
+    );
+    if (layerCmp !== 0) return layerCmp;
+  } else if (!aLayer && bLayer) return 1;
+  else if (aLayer && !bLayer) return -1;
   return a.id.localeCompare(b.id);
 }
 

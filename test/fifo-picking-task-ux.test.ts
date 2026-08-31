@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { Prisma } from "@prisma/client";
 import {
   compareFifoLayers,
+  effectiveFifoDate,
   fifoAvailableLayers,
   planRelocateFifoAllocation,
   toFifoLayerCandidate
@@ -51,20 +52,76 @@ function sliceFunction(source: string, name: string): string {
   throw new Error(`unclosed function ${name}`);
 }
 
-test("FIFO: receivedAt más antiguo, luego createdAt, luego id", () => {
-  const older = new Date("2024-01-01T10:00:00.000Z");
-  const newer = new Date("2024-06-01T10:00:00.000Z");
-  const layers = [
-    { id: "b", receivedAt: newer, createdAt: newer },
-    { id: "a", receivedAt: older, createdAt: older },
-    { id: "c", receivedAt: null, createdAt: older },
-    { id: "d", receivedAt: null, createdAt: newer }
-  ];
-  const sorted = [...layers].sort(compareFifoLayers);
-  assert.deepEqual(sorted.map((l) => l.id), ["a", "b", "c", "d"]);
+function layer(input: {
+  id: string;
+  receivedAt?: Date | null;
+  createdAt: Date;
+  qty?: string;
+  reservedQty?: string;
+}): Parameters<typeof fifoAvailableLayers>[0][number] {
+  return {
+    id: input.id,
+    lotNumber: null,
+    qty: d(input.qty ?? "1"),
+    reservedQty: d(input.reservedQty ?? "0"),
+    receivedAt: input.receivedAt ?? null,
+    createdAt: input.createdAt,
+    unitPriceMxn: null,
+    unitPriceUsd: null,
+    sourceReference: null
+  };
+}
+
+test("A: receivedAt antiguo va antes que receivedAt nuevo", () => {
+  const older = new Date("2024-01-01T00:00:00.000Z");
+  const newer = new Date("2024-06-01T00:00:00.000Z");
+  const sorted = [
+    layer({ id: "new", receivedAt: newer, createdAt: newer }),
+    layer({ id: "old", receivedAt: older, createdAt: older })
+  ].sort(compareFifoLayers);
+  assert.deepEqual(sorted.map((row) => row.id), ["old", "new"]);
 });
 
-test("FIFO: fifoAvailableLayers excluye qty-reservedQty <= 0", () => {
+test("B: receivedAt null + createdAt antiguo va antes que receivedAt posterior (ejemplo Hugo)", () => {
+  const aug1 = new Date("2026-08-01T00:00:00.000Z");
+  const aug20 = new Date("2026-08-20T00:00:00.000Z");
+  const a = layer({ id: "A", receivedAt: null, createdAt: aug1 });
+  const b = layer({ id: "B", receivedAt: aug20, createdAt: aug20 });
+  assert.ok(compareFifoLayers(a, b) < 0);
+  const sorted = [b, a].sort(compareFifoLayers);
+  assert.deepEqual(sorted.map((row) => row.id), ["A", "B"]);
+  assert.equal(effectiveFifoDate(a).toISOString(), aug1.toISOString());
+});
+
+test("C: ambos receivedAt null ordenan por createdAt ASC", () => {
+  const early = new Date("2025-01-01T00:00:00.000Z");
+  const late = new Date("2025-06-01T00:00:00.000Z");
+  const sorted = [
+    layer({ id: "late", receivedAt: null, createdAt: late }),
+    layer({ id: "early", receivedAt: null, createdAt: early })
+  ].sort(compareFifoLayers);
+  assert.deepEqual(sorted.map((row) => row.id), ["early", "late"]);
+});
+
+test("D: misma fecha FIFO efectiva desempata por createdAt ASC", () => {
+  const effective = new Date("2026-03-01T00:00:00.000Z");
+  const sorted = [
+    layer({ id: "b", receivedAt: effective, createdAt: new Date("2026-03-05T00:00:00.000Z") }),
+    layer({ id: "a", receivedAt: effective, createdAt: new Date("2026-03-02T00:00:00.000Z") })
+  ].sort(compareFifoLayers);
+  assert.deepEqual(sorted.map((row) => row.id), ["a", "b"]);
+});
+
+test("E: mismo receivedAt y createdAt desempata por id ASC", () => {
+  const when = new Date("2026-01-01T00:00:00.000Z");
+  const sorted = [
+    layer({ id: "layer-z", receivedAt: when, createdAt: when }),
+    layer({ id: "layer-a", receivedAt: when, createdAt: when })
+  ].sort(compareFifoLayers);
+  assert.deepEqual(sorted.map((row) => row.id), ["layer-a", "layer-z"]);
+});
+
+test("F: qty - reservedQty <= 0 no se ofrece", () => {
   const available = fifoAvailableLayers([
     {
       id: "empty",
@@ -94,33 +151,73 @@ test("FIFO: fifoAvailableLayers excluye qty-reservedQty <= 0", () => {
   assert.equal(available[0]!.availableQty.toString(), "8");
 });
 
-test("FIFO: planRelocateFifoAllocation reutiliza la misma política", () => {
-  const layers = [
-    {
-      id: "new",
-      lotNumber: null,
-      qty: d(5),
-      reservedQty: d(0),
-      receivedAt: new Date("2025-01-01"),
-      createdAt: new Date("2025-01-01"),
-      unitPriceMxn: null,
-      unitPriceUsd: null,
-      sourceReference: null
-    },
-    {
-      id: "old",
-      lotNumber: null,
-      qty: d(5),
-      reservedQty: d(0),
-      receivedAt: new Date("2024-01-01"),
-      createdAt: new Date("2024-01-01"),
-      unitPriceMxn: null,
-      unitPriceUsd: null,
-      sourceReference: null
-    }
-  ];
-  const planned = planRelocateFifoAllocation(layers, d(3));
-  assert.equal(planned.allocations[0]!.layer.id, "old");
+test("G: la primera entrada FIFO queda fifoRecommended=true", () => {
+  const aug1 = new Date("2026-08-01T00:00:00.000Z");
+  const aug20 = new Date("2026-08-20T00:00:00.000Z");
+  const ranked = fifoAvailableLayers([
+    layer({ id: "B", receivedAt: aug20, createdAt: aug20 }),
+    layer({ id: "A", receivedAt: null, createdAt: aug1 })
+  ]);
+  const first = toFifoLayerCandidate(ranked[0]!.layer, ranked[0]!.availableQty, true);
+  const second = toFifoLayerCandidate(ranked[1]!.layer, ranked[1]!.availableQty, false);
+  assert.equal(ranked[0]!.layer.id, "A");
+  assert.equal(first.fifoRecommended, true);
+  assert.equal(second.fifoRecommended, false);
+});
+
+test("H: planRelocateFifoAllocation usa el mismo orden FIFO efectivo", () => {
+  const aug1 = new Date("2026-08-01T00:00:00.000Z");
+  const aug20 = new Date("2026-08-20T00:00:00.000Z");
+  const planned = planRelocateFifoAllocation(
+    [
+      {
+        id: "B",
+        lotNumber: null,
+        qty: d(5),
+        reservedQty: d(0),
+        receivedAt: aug20,
+        createdAt: aug20,
+        unitPriceMxn: null,
+        unitPriceUsd: null,
+        sourceReference: null
+      },
+      {
+        id: "A",
+        lotNumber: null,
+        qty: d(5),
+        reservedQty: d(0),
+        receivedAt: null,
+        createdAt: aug1,
+        unitPriceMxn: null,
+        unitPriceUsd: null,
+        sourceReference: null
+      }
+    ],
+    d(3)
+  );
+  assert.equal(planned.allocations[0]!.layer.id, "A");
+});
+
+test("I: picking libre preselecciona la misma entrada (renderPickLayerOptions)", () => {
+  const renderSrc = sliceFunction(js, "renderPickLayerOptions");
+  assert.match(renderSrc, /fifoRecommended/);
+  assert.match(renderSrc, /recommended\?\.layerId \|\| recommended\?\.id/);
+  assert.match(sliceFunction(js, "formatPickLayerEntryDate"), /receivedAt \|\| layer\?\.createdAt/);
+});
+
+test("J: override manual sigue enviando layerId y layerSelectionMode", () => {
+  const payload = sliceFunction(js, "buildPickScanPayload");
+  assert.match(payload, /layerSelectionMode/);
+  assert.match(payload, /body\.layerId/);
+  assert.match(sliceFunction(js, "renderPickLayerOptions"), /MANUAL/);
+  assert.match(pickingRoutes, /layerSelectionMode: z\.enum\(\["FIFO", "MANUAL"\]\)/);
+});
+
+test("comparePickFifoReservations reutiliza compareFifoLayers (requisiciones compatibles)", () => {
+  assert.match(reqService, /compareFifoLayers/);
+  assert.doesNotMatch(reqService, /POSITIVE_INFINITY/);
+  assert.match(mutationSrc, /effectiveFifoDate/);
+  assert.doesNotMatch(mutationSrc, /POSITIVE_INFINITY/);
 });
 
 test("Crear tarea tiene typeahead de SKU reutilizando wireProductTypeahead", () => {

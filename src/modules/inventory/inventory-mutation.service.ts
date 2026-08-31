@@ -64,13 +64,17 @@ export type FifoLayerShape = {
   sourceReference: string | null;
 };
 
+export function effectiveFifoDate(layer: { receivedAt: Date | null; createdAt: Date }): Date {
+  return layer.receivedAt ?? layer.createdAt;
+}
+
 export function compareFifoLayers(
   a: { id: string; receivedAt: Date | null; createdAt: Date },
   b: { id: string; receivedAt: Date | null; createdAt: Date }
 ) {
-  const aReceived = a.receivedAt ? a.receivedAt.getTime() : Number.POSITIVE_INFINITY;
-  const bReceived = b.receivedAt ? b.receivedAt.getTime() : Number.POSITIVE_INFINITY;
-  if (aReceived !== bReceived) return aReceived - bReceived;
+  const aEffective = effectiveFifoDate(a).getTime();
+  const bEffective = effectiveFifoDate(b).getTime();
+  if (aEffective !== bEffective) return aEffective - bEffective;
   const aCreated = a.createdAt.getTime();
   const bCreated = b.createdAt.getTime();
   if (aCreated !== bCreated) return aCreated - bCreated;

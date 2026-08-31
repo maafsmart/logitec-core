@@ -791,7 +791,7 @@ test("5 FIFO con 29 capas", async () => {
   assert.equal(world.state.scanEvents.length, 1);
 });
 
-test("6 receivedAt null al final", async () => {
+test("6 receivedAt null usa createdAt como fecha FIFO efectiva", async () => {
   const world = createPickWorld();
   setLayers(world, [
     { id: "layer-null", qty: "1", receivedAt: null, createdAt: new Date("2026-01-01T00:00:00.000Z") },
@@ -802,8 +802,21 @@ test("6 receivedAt null al final", async () => {
   await pickFifo(world, "1");
   const consumed = world.state.reservations.find((row) => row.status === "CONSUMED");
   assert.equal(consumed?.inventoryLayerId, "layer-old");
-  const still = world.state.reservations.filter((row) => row.status === "ACTIVE").map((row) => row.inventoryLayerId);
-  assert.ok(still.includes("layer-null"));
+  const sorted = [...world.state.layers]
+    .map((layer) => ({
+      id: "r",
+      requisitionLineId: "line-1",
+      inventoryId: "inv-proj",
+      inventoryLayerId: layer.id,
+      qty: d("1"),
+      consumedQty: d("0"),
+      releasedQty: d("0"),
+      status: "ACTIVE",
+      inventoryLayer: layer
+    }))
+    .sort(comparePickFifoReservations)
+    .map((row) => row.inventoryLayerId);
+  assert.deepEqual(sorted, ["layer-old", "layer-null", "layer-new"]);
 });
 
 test("7 orden createdAt e id", async () => {
