@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { logClientActivity } from "../activity/activity-log.service.js";
 import { HttpError } from "../../shared/http-error.js";
+import { safeErrorLog } from "../../shared/safe-log.js";
 import { isCompanyProjectLabel } from "./inventory-project-rules.js";
 
 export const PHYSICAL_RESET_CONFIRMATION = "BORRAR INVENTARIO DE AVIAT";
@@ -457,18 +458,6 @@ export async function applyPhysicalInventoryZero(
   return applyPhysicalInventoryPurge(tx, actor);
 }
 
-const RETRYABLE_PRISMA_CODES = new Set(["P2028", "P2034"]);
-
-function isRetryablePhysicalResetError(error: unknown): boolean {
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    return RETRYABLE_PRISMA_CODES.has(error.code);
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return /prepared statement|deadlock detected|the transaction is not found|unable to start a transaction/i.test(
-    message
-  );
-}
-
 function wrapPhysicalResetFailure(error: unknown): never {
   if (error instanceof HttpError) throw error;
   const prismaKnown = error instanceof Prisma.PrismaClientKnownRequestError;
@@ -478,12 +467,7 @@ function wrapPhysicalResetFailure(error: unknown): never {
     error instanceof Prisma.PrismaClientValidationError ||
     error instanceof Prisma.PrismaClientInitializationError ||
     error instanceof Prisma.PrismaClientRustPanicError;
-  console.error("[physical-reset]", {
-    name: error instanceof Error ? error.name : typeof error,
-    code: prismaKnown ? error.code : undefined,
-    meta: prismaKnown ? error.meta : undefined,
-    message: error instanceof Error ? error.message : String(error)
-  });
+  console.error("[physical-reset]", safeErrorLog(error));
   if (!isPrisma) throw error;
   throw new HttpError(
     500,
@@ -502,27 +486,18 @@ export async function executePhysicalInventoryReset(
   }
   physicalResetInFlight = true;
   try {
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      try {
-        return await db.$transaction(async (tx) => {
-          const locked = await tryAcquirePhysicalResetLock(tx, actor.clientId);
-          if (!locked) {
-            throw new HttpError(409, "Ya hay un reinicio de inventario en curso.", "PHYSICAL_RESET_IN_FLIGHT");
-          }
-          return applyPhysicalInventoryPurge(tx, actor);
-        }, {
-          maxWait: 15_000,
-          timeout: 300_000
-        });
-      } catch (error) {
-        lastError = error;
-        if (error instanceof HttpError || attempt === 2 || !isRetryablePhysicalResetError(error)) {
-          wrapPhysicalResetFailure(error);
-        }
+    return await db.$transaction(async (tx) => {
+      const locked = await tryAcquirePhysicalResetLock(tx, actor.clientId);
+      if (!locked) {
+        throw new HttpError(409, "Ya hay un reinicio de inventario en curso.", "PHYSICAL_RESET_IN_FLIGHT");
       }
-    }
-    wrapPhysicalResetFailure(lastError);
+      return applyPhysicalInventoryPurge(tx, actor);
+    }, {
+      maxWait: 15_000,
+      timeout: 300_000
+    });
+  } catch (error) {
+    wrapPhysicalResetFailure(error);
   } finally {
     physicalResetInFlight = false;
   }

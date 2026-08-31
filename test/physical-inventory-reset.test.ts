@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { Prisma } from "@prisma/client";
 import { HttpError } from "../src/shared/http-error.js";
+import { sanitizeLogText, safeErrorLog } from "../src/shared/safe-log.js";
 import {
   PHYSICAL_RESET_CONFIRMATION,
   PHYSICAL_RESET_PATH,
@@ -702,8 +703,12 @@ test("un fallo intermedio hace rollback y no deja seriales a medias", async () =
     reservations: cloneRows(state.reservations),
     movements: cloneRows(state.movements)
   };
+  let attempts = 0;
+  const logged: unknown[] = [];
+  const originalError = console.error;
   const db = {
     $transaction: async (fn: (inner: typeof tx) => Promise<unknown>) => {
+      attempts += 1;
       try {
         const originalCreate = tx.activityLog.create;
         tx.activityLog.create = async () => {
@@ -724,12 +729,21 @@ test("un fallo intermedio hace rollback y no deja seriales a medias", async () =
       }
     }
   };
-  await withResetFlag(true, async () => {
-    await assert.rejects(
-      () => executePhysicalInventoryReset({ userId: "admin-1", clientId: AVIAT_ID }, db as never),
-      /audit-fail/
-    );
-  });
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  try {
+    await withResetFlag(true, async () => {
+      await assert.rejects(
+        () => executePhysicalInventoryReset({ userId: "admin-1", clientId: AVIAT_ID }, db as never),
+        /audit-fail/
+      );
+    });
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(attempts, 1);
+  assert.ok(logged.some((entry) => Array.isArray(entry) && entry[0] === "[physical-reset]"));
   assert.equal(state.inventory.length, 1);
   assert.equal(String(state.inventory[0]!.qty), "10");
   assert.equal(state.serials[0]!.serialNumber, "1659");
@@ -912,6 +926,7 @@ test("el reset no borra ProductProject ni customerId maestro válido y no usa cu
 
 test("un error Prisma de FK real no se oculta detrás de 500 genérico", async () => {
   const { tx } = createFakeTx();
+  let attempts = 0;
   tx.inventoryMovement.deleteMany = async () => {
     throw new Prisma.PrismaClientKnownRequestError("Foreign key constraint failed", {
       code: "P2003",
@@ -924,7 +939,10 @@ test("un error Prisma de FK real no se oculta detrás de 500 genérico", async (
     });
   };
   const db = {
-    $transaction: async (fn: (inner: typeof tx) => Promise<unknown>) => fn(tx)
+    $transaction: async (fn: (inner: typeof tx) => Promise<unknown>) => {
+      attempts += 1;
+      return fn(tx);
+    }
   };
   await withResetFlag(true, async () => {
     await assert.rejects(
@@ -933,40 +951,101 @@ test("un error Prisma de FK real no se oculta detrás de 500 genérico", async (
         error instanceof HttpError &&
         error.statusCode === 500 &&
         error.code === "P2003" &&
-        error.message === "El reinicio de inventario falló y se revirtió."
+        error.message === "El reinicio de inventario falló y se revirtió." &&
+        !("meta" in error)
     );
   });
+  assert.equal(attempts, 1);
 });
 
-test("P2028 de transacción se reintenta una vez y luego expone el código Prisma", async () => {
+test("P2028 termina en una sola transacción y expone el código Prisma", async () => {
   const { tx } = createFakeTx();
   let attempts = 0;
   const db = {
     $transaction: async (fn: (inner: typeof tx) => Promise<unknown>) => {
       attempts += 1;
-      if (attempts === 1) {
-        throw new Prisma.PrismaClientKnownRequestError("Transaction not found", {
-          code: "P2028",
-          clientVersion: "5.22.0"
-        });
-      }
-      return fn(tx);
+      void fn;
+      throw new Prisma.PrismaClientKnownRequestError("Transaction not found", {
+        code: "P2028",
+        clientVersion: "5.22.0"
+      });
     }
   };
   await withResetFlag(true, async () => {
-    const result = await executePhysicalInventoryReset({ userId: "admin-1", clientId: AVIAT_ID }, db as never);
-    assert.equal(result.ok, true);
-    assert.equal(attempts, 2);
+    await assert.rejects(
+      () => executePhysicalInventoryReset({ userId: "admin-1", clientId: AVIAT_ID }, db as never),
+      (error: unknown) =>
+        error instanceof HttpError &&
+        error.statusCode === 500 &&
+        error.code === "P2028" &&
+        error.message === "El reinicio de inventario falló y se revirtió." &&
+        !("meta" in error)
+    );
   });
+  assert.equal(attempts, 1);
+});
+
+test("P2034 termina en una sola transacción y expone el código Prisma", async () => {
+  const { tx } = createFakeTx();
+  let attempts = 0;
+  const db = {
+    $transaction: async (fn: (inner: typeof tx) => Promise<unknown>) => {
+      attempts += 1;
+      void fn;
+      throw new Prisma.PrismaClientKnownRequestError("Deadlock detected", {
+        code: "P2034",
+        clientVersion: "5.22.0"
+      });
+    }
+  };
+  await withResetFlag(true, async () => {
+    await assert.rejects(
+      () => executePhysicalInventoryReset({ userId: "admin-1", clientId: AVIAT_ID }, db as never),
+      (error: unknown) =>
+        error instanceof HttpError &&
+        error.statusCode === 500 &&
+        error.code === "P2034" &&
+        error.message === "El reinicio de inventario falló y se revirtió." &&
+        !("meta" in error)
+    );
+  });
+  assert.equal(attempts, 1);
 });
 
 test("el middleware registra excepciones no HttpError en lugar de tragarlas", () => {
   const middlewareSrc = readFileSync(new URL("../src/middlewares/error.middleware.ts", import.meta.url), "utf8");
   assert.match(middlewareSrc, /\[unhandled\]/);
-  assert.match(middlewareSrc, /console\.error/);
+  assert.match(middlewareSrc, /safeErrorLog/);
   assert.match(serviceSrc, /\[physical-reset\]/);
   assert.match(serviceSrc, /PHYSICAL_RESET_INTERNAL/);
+  assert.match(serviceSrc, /safeErrorLog/);
   assert.doesNotMatch(serviceSrc, /Promise\.all\(/);
+  assert.doesNotMatch(serviceSrc, /for \(let attempt/);
+  assert.doesNotMatch(serviceSrc, /attempt <= 2/);
+  assert.doesNotMatch(serviceSrc, /RETRYABLE_PRISMA/);
+  assert.doesNotMatch(serviceSrc, /isRetryablePhysicalResetError/);
+  assert.doesNotMatch(serviceSrc, /prepared statement\|deadlock/);
+});
+
+test("el logger sanitiza URLs con contraseña y no las imprime", () => {
+  const leaked = "postgresql://owner:super-secret-pass@ep-example.neon.tech/neondb?sslmode=require";
+  const cleaned = sanitizeLogText(`failed: ${leaked}`);
+  assert.equal(cleaned.includes("super-secret-pass"), false);
+  assert.equal(cleaned.includes("postgresql://owner:"), false);
+  assert.match(cleaned, /\[redacted-url\]/);
+  const bearer = sanitizeLogText("Authorization: Bearer abc.def.ghi extra");
+  assert.equal(/Bearer abc\.def\.ghi/i.test(bearer), false);
+  const logged = safeErrorLog(
+    new Prisma.PrismaClientKnownRequestError(`query failed ${leaked}`, {
+      code: "P2010",
+      clientVersion: "5.22.0",
+      meta: { modelName: "Inventory", constraint: "Inventory_pkey" }
+    })
+  );
+  assert.equal(String(logged.message).includes("super-secret-pass"), false);
+  assert.equal(logged.code, "P2010");
+  assert.equal(logged.modelName, "Inventory");
+  assert.equal(logged.constraint, "Inventory_pkey");
 });
 
 test("el reinicio no borra InventoryStock y usa advisory lock de PostgreSQL", () => {
