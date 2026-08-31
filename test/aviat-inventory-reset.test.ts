@@ -79,16 +79,21 @@ test("el catálogo AVIAT conserva ProductProject y SKUs después del reset opera
   assert.match(service, /productProjectsPreserved/);
 });
 
-test("LOGITEC se conserva siempre durante el reset de inventario", () => {
+test("LOGITEC no es maestro válido: un legacy bloquea el reset y no se borra con customer.delete", () => {
   assert.match(service, /isCompanyProjectLabel/);
+  assert.match(service, /FORBIDDEN_LEGACY_PROJECT_PRESENT/);
+  assert.match(service, /assertNoForbiddenCompanyProjects/);
   assert.doesNotMatch(service, /customer\.delete/);
-  assert.match(service, /retained: true/);
-  assert.match(js, /normalized === "LOGITEC"/);
+  assert.doesNotMatch(service, /retained: true/);
+  assert.match(js, /isAviatResetBlocked/);
+  assert.match(js, /Reset bloqueado/);
+  assert.match(html, /proyectos válidos/);
+  assert.doesNotMatch(html, /el proyecto LOGITEC si existe/);
 });
 
-test("cache-buster de dashboard.js se actualiza una sola vez a v=89", () => {
+test("cache-buster de dashboard.js se actualiza una sola vez a v=90", () => {
   const matches = [...html.matchAll(/dashboard\.js\?v=(\d+)/g)].map((row) => row[1]);
-  assert.deepEqual(matches, ["89"]);
+  assert.deepEqual(matches, ["90"]);
 });
 
 test("la migración de coherencia de movimientos admite FTS namespaced y el valor histórico", () => {

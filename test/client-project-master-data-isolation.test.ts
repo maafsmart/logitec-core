@@ -240,6 +240,56 @@ test("proyecto sin cliente y código duplicado se rechazan", async () => {
   );
 });
 
+test("AVIAT rechaza crear o renombrar un proyecto LOGITEC y sus variantes", async () => {
+  const db = makeDb();
+  const aviat = await createClientRecord(db as never, { code: "AVIAT", name: "AVIAT" });
+  const forbidden = (error: unknown) =>
+    error instanceof HttpError && error.code === MASTER_DEACTIVATE_CODES.FORBIDDEN_MASTER_LABEL;
+  await assert.rejects(
+    () => createProjectRecord(db as never, { clientId: aviat.id, code: "LOGITEC", name: "Proyecto X" }),
+    forbidden
+  );
+  await assert.rejects(
+    () => createProjectRecord(db as never, { clientId: aviat.id, code: "PX", name: "LOGITEC" }),
+    forbidden
+  );
+  for (const variant of [" logitec ", "Logitec", "LOGITEC"] as const) {
+    await assert.rejects(
+      () => createProjectRecord(db as never, { clientId: aviat.id, code: variant, name: "Proyecto X" }),
+      forbidden
+    );
+    await assert.rejects(
+      () => createProjectRecord(db as never, { clientId: aviat.id, code: `OK_${variant.trim()}`, name: variant }),
+      forbidden
+    );
+  }
+  const valid = await createProjectRecord(db as never, {
+    clientId: aviat.id,
+    code: "AIRBUS_SLC",
+    name: "AIRBUS_SLC"
+  });
+  await assert.rejects(() => updateProjectRecord(db as never, valid.id, { code: "LOGITEC" }), forbidden);
+  await assert.rejects(() => updateProjectRecord(db as never, valid.id, { name: "LOGITEC" }), forbidden);
+  await assert.rejects(() => updateProjectRecord(db as never, valid.id, { name: "Logitec" }), forbidden);
+  await assert.rejects(() => updateProjectRecord(db as never, valid.id, { code: " logitec " }), forbidden);
+});
+
+test("catálogo e importadores no pueden crear LOGITEC; usan assertAllowedMasterLabel", () => {
+  const importExecuteSrc = readFileSync(new URL("../src/modules/imports/import-execute.service.ts", import.meta.url), "utf8");
+  const importValidateSrc = readFileSync(new URL("../src/modules/imports/import-validate.service.ts", import.meta.url), "utf8");
+  assert.match(catalogSrc, /createProjectRecord/);
+  assert.match(catalogSrc, /isForbiddenInventoryProjectLabel/);
+  assert.match(catalogSrc, /isForbiddenInventoryProjectRecord/);
+  assert.match(catalogSrc, /MASTER_DEACTIVATE_CODES\.FORBIDDEN_MASTER_LABEL/);
+  assert.doesNotMatch(catalogSrc, /prisma\.customer\.create/);
+  assert.match(importExecuteSrc, /createProjectRecord/);
+  assert.match(importExecuteSrc, /isForbiddenInventoryProjectLabel/);
+  assert.match(importExecuteSrc, /FORBIDDEN_MASTER_LABEL/);
+  assert.doesNotMatch(importExecuteSrc, /prisma\.customer\.create/);
+  assert.match(importValidateSrc, /FORBIDDEN_MASTER_LABEL/);
+  assert.match(importValidateSrc, /isForbiddenInventoryProjectLabel/);
+});
+
 test("catálogos de almacén y ubicación, duplicado y bloqueo con inventario", async () => {
   const db = makeDb();
   const warehouse = await createWarehouseRecord(db as never, { code: "TULTITLAN24", name: "Tultitlán 24" });
@@ -301,8 +351,8 @@ test("Crear producto manual no crea inventario ficticio", () => {
   assert.doesNotMatch(block, /qty:\s*1/);
 });
 
-test("frontend Clientes, catálogos y cache-buster v=89", () => {
-  assert.match(html, /dashboard\.js\?v=89/);
+test("frontend Clientes, catálogos y cache-buster v=90", () => {
+  assert.match(html, /dashboard\.js\?v=90/);
   assert.doesNotMatch(html, /dashboard\.js\?v=81/);
   assert.match(html, /id="btnClients"/);
   assert.match(html, /data-inv-master-tab="clients"/);

@@ -14747,34 +14747,45 @@ function formatPhysicalResetCurrentSummary() {
   return "Estado actual: 0 piezas, 0 saldos, 0 series, 0 movimientos, 0 importaciones.";
 }
 
-function renderAviatResetCounts(target, counts, { mode = "current" } = {}) {
+function isAviatResetBlocked(preview) {
+  return (
+    preview?.blockCode === "FORBIDDEN_LEGACY_PROJECT_PRESENT" ||
+    (Array.isArray(preview?.forbiddenLegacyProjects) && preview.forbiddenLegacyProjects.length > 0)
+  );
+}
+
+function renderAviatResetCounts(target, counts, { mode = "current", blockMessage = "" } = {}) {
   if (!target) return;
-  if (!counts) {
+  if (!counts && !blockMessage) {
     target.innerHTML = "";
     return;
   }
   const heading = mode === "purge" ? "SE BORRARÁ: datos operativos" : "Estado operativo actual";
   const chips = [
-    ["Piezas", counts.qty],
-    ["Saldos", counts.inventories],
-    ["Capas", counts.layers],
-    ["Series", counts.serials],
-    ["Reservas", counts.reservations],
-    ["Movimientos", counts.movements],
-    ["Requisiciones", counts.requisitions],
-    ["Tareas", counts.tasks],
-    ["Importaciones", counts.importBatches]
+    ["Piezas", counts?.qty],
+    ["Saldos", counts?.inventories],
+    ["Capas", counts?.layers],
+    ["Series", counts?.serials],
+    ["Reservas", counts?.reservations],
+    ["Movimientos", counts?.movements],
+    ["Requisiciones", counts?.requisitions],
+    ["Tareas", counts?.tasks],
+    ["Importaciones", counts?.importBatches]
   ]
     .map(([label, value]) => `<span class="chip">${label}: ${value ?? 0}</span>`)
     .join("");
   const preserved = [
-    ["Asignaciones producto-proyecto", counts.productProjectsPreserved]
+    ["Asignaciones producto-proyecto", counts?.productProjectsPreserved]
   ]
     .map(([label, value]) => `<span class="chip">${label}: ${value ?? 0}</span>`)
     .join("");
+  const block = blockMessage
+    ? `<p class="ops-message error" style="margin:0 0 8px">${blockMessage}</p>`
+    : "";
   target.innerHTML =
+    block +
     `<p class="assignee-hint" style="margin:0 0 8px"><strong>${heading}</strong></p>${chips}` +
-    `<p class="assignee-hint" style="margin:10px 0 8px"><strong>SE CONSERVARÁ:</strong> productos, proyectos, asignaciones producto-proyecto y demás maestros.</p>${preserved}`;
+    `<p class="assignee-hint" style="margin:10px 0 8px"><strong>SE CONSERVARÁ:</strong> productos, proyectos válidos, asignaciones producto-proyecto, almacenes, ubicaciones, usuarios y demás datos maestros.</p>${preserved}`;
 }
 
 async function syncAviatDangerZone() {
@@ -14799,21 +14810,31 @@ async function syncAviatDangerZone() {
     const response = await authenticatedFetch("/api/v1/inventory/physical/reset/preview");
     const data = await response.json().catch(() => ({}));
     aviatResetPreview = data;
-    const empty = isAviatOperationalInventoryEmpty(data.counts);
-    renderAviatResetCounts(document.getElementById("aviatResetCounts"), data.counts, { mode: "current" });
-    const enabled = Boolean(data.flagEnabled && data.isAviat && data.canExecute && !empty);
+    const blocked = isAviatResetBlocked(data);
+    const empty = !blocked && isAviatOperationalInventoryEmpty(data.counts);
+    renderAviatResetCounts(document.getElementById("aviatResetCounts"), data.counts, {
+      mode: "current",
+      blockMessage: blocked ? data.blockMessage : ""
+    });
+    const enabled = Boolean(data.flagEnabled && data.isAviat && data.canExecute && !empty && !blocked);
     if (hint) {
-      hint.textContent = empty
-        ? "El inventario operativo ya está en cero. No hay nada que borrar."
-        : enabled
-          ? "Escribe la frase exacta y confirma por segunda vez. Esta variable se activará solamente para el ensayo y la carga inicial y deberá volver a false después de la carga aprobada por Hugo."
-          : "El reinicio está desactivado. ALLOW_TENANT_INVENTORY_RESET debe ser true solo para el ensayo y la carga inicial.";
+      hint.textContent = blocked
+        ? data.blockMessage || "AVIAT contiene un proyecto heredado inválido LOGITEC. Debe auditarse y retirarse antes de reiniciar el inventario."
+        : empty
+          ? "El inventario operativo ya está en cero. No hay nada que borrar."
+          : enabled
+            ? "Escribe la frase exacta y confirma por segunda vez. Esta variable se activará solamente para el ensayo y la carga inicial y deberá volver a false después de la carga aprobada por Hugo."
+            : "El reinicio está desactivado. ALLOW_TENANT_INVENTORY_RESET debe ser true solo para el ensayo y la carga inicial.";
     }
     if (btn) {
       btn.classList.remove("hidden");
       btn.style.display = currentRole === "ADMIN" ? "inline-block" : "none";
       btn.disabled = !enabled || physicalInventoryResetBusy;
-      btn.textContent = empty ? "Inventario ya está en cero" : `Borrar inventario de ${clientLabel}`;
+      btn.textContent = blocked
+        ? "Reset bloqueado"
+        : empty
+          ? "Inventario ya está en cero"
+          : `Borrar inventario de ${clientLabel}`;
     }
   } catch (_err) {
     if (btn) btn.disabled = true;
@@ -14833,15 +14854,17 @@ function syncPhysicalInventoryResetConfirmEnabled() {
     ack &&
     !physicalInventoryResetBusy &&
     Boolean(aviatResetPreview?.canExecute) &&
+    !isAviatResetBlocked(aviatResetPreview) &&
     !isAviatOperationalInventoryEmpty(aviatResetPreview?.counts);
   physicalInventoryResetConfirmBtn.disabled = !ready;
 }
 
 function setPhysicalInventoryResetBusy(busy) {
   physicalInventoryResetBusy = busy;
-  const empty = isAviatOperationalInventoryEmpty(aviatResetPreview?.counts);
+  const blocked = isAviatResetBlocked(aviatResetPreview);
+  const empty = !blocked && isAviatOperationalInventoryEmpty(aviatResetPreview?.counts);
   physicalInventoryResetBtns.forEach((btn) => {
-    btn.disabled = busy || !aviatResetPreview?.canExecute || empty;
+    btn.disabled = busy || blocked || !aviatResetPreview?.canExecute || empty;
   });
   if (physicalInventoryResetPhrase) physicalInventoryResetPhrase.disabled = busy;
   if (physicalInventoryResetFinalAck) physicalInventoryResetFinalAck.disabled = busy;
@@ -14859,6 +14882,7 @@ function setPhysicalInventoryResetBusy(busy) {
 
 function openPhysicalInventoryResetModal() {
   if (currentRole !== "ADMIN" || physicalInventoryResetBusy) return;
+  if (isAviatResetBlocked(aviatResetPreview)) return;
   if (!aviatResetPreview?.canExecute || isAviatOperationalInventoryEmpty(aviatResetPreview?.counts)) return;
   setPhysicalInventoryResetError("");
   if (physicalInventoryResetSuccess) {
@@ -14881,6 +14905,13 @@ function closePhysicalInventoryResetModal() {
 
 async function runPhysicalInventoryReset() {
   if (physicalInventoryResetBusy || currentRole !== "ADMIN") return;
+  if (isAviatResetBlocked(aviatResetPreview)) {
+    setPhysicalInventoryResetError(
+      aviatResetPreview?.blockMessage ||
+        "AVIAT contiene un proyecto heredado inválido LOGITEC. Debe auditarse y retirarse antes de reiniciar el inventario."
+    );
+    return;
+  }
   if (!aviatResetPreview?.canExecute) {
     setPhysicalInventoryResetError("El reinicio de inventario de AVIAT está desactivado.");
     return;

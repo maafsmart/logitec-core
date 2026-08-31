@@ -12,7 +12,7 @@ import {
   updateProjectRecord
 } from "../master-data/master-data.service.js";
 import { getSkuContext, searchSkuProducts } from "./sku-search.service.js";
-import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
+import { isForbiddenInventoryProjectLabel, isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
 import { ensureCanonicalProductProject } from "../inventory/inventory-assignment.js";
 import { canExposeEconomicValuation } from "../inventory/inventory-economic-access.js";
 import {
@@ -221,6 +221,13 @@ catalogRouter.post("/products", requireRole(["ADMIN"]), async (req, res) => {
     if (!customer) {
       throw new HttpError(400, `Customer no existe: ${data.customerCode}`);
     }
+    if (isForbiddenInventoryProjectRecord(customer)) {
+      throw new HttpError(
+        400,
+        "LOGITEC, Free to Sale, ASO y Customer Owns no son clientes ni proyectos operativos.",
+        MASTER_DEACTIVATE_CODES.FORBIDDEN_MASTER_LABEL
+      );
+    }
     customerId = customer.id;
   }
   const product = await prisma.product.create({
@@ -401,8 +408,19 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
         }
       });
     }
+    if (customer && isForbiddenInventoryProjectRecord(customer)) {
+      unknownCustomers.add(customerInput || customerCode);
+      preview.push({ sku, action: "SKIP", reason: "CUSTOMER/proyecto reservado; no se asigna." });
+      skipped += 1;
+      continue;
+    }
     if (!customer && mode === "apply" && autoCreateCustomers) {
-      if (!customerCode || customerCode === "LOGITEC") {
+      if (
+        !customerCode ||
+        isForbiddenInventoryProjectLabel(customerCode) ||
+        isForbiddenInventoryProjectLabel(customerDisplayName) ||
+        isForbiddenInventoryProjectLabel(customerInput)
+      ) {
         unknownCustomers.add(customerInput || customerCode || "(vacío)");
         preview.push({ sku, action: "SKIP", reason: "CUSTOMER vacío o reservado; no se crea automáticamente." });
         skipped += 1;
@@ -414,14 +432,22 @@ catalogRouter.post("/import/products", requireRole(["ADMIN"]), async (req, res) 
         skipped += 1;
         continue;
       }
-      customer = await prisma.customer.create({
-        data: {
+      try {
+        customer = await createProjectRecord(prisma as never, {
           code: customerCode,
           name: customerDisplayName || customerInput || customerCode,
           clientId: owner.id,
           active: true
+        });
+      } catch (error) {
+        if (error instanceof HttpError && error.code === MASTER_DEACTIVATE_CODES.FORBIDDEN_MASTER_LABEL) {
+          unknownCustomers.add(customerInput || customerCode);
+          preview.push({ sku, action: "SKIP", reason: "CUSTOMER/proyecto reservado; no se crea automáticamente." });
+          skipped += 1;
+          continue;
         }
-      });
+        throw error;
+      }
     }
     if (!customer) {
       unknownCustomers.add(customerInput || customerCode);

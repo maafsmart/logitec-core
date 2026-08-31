@@ -263,7 +263,7 @@ test("la interfaz muestra FREE TO SALE y no lo trata como error pendiente ni lo 
 });
 
 test("LOGITEC, CUSTOMER OWNS, CUSTOMR OWNS y ASO no se clasifican como proyecto", () => {
-  for (const customer of ["LOGITEC", "CUSTOMER OWNS", "CUSTOMR OWNS", "ASO"]) {
+  for (const customer of ["LOGITEC", " logitec ", "Logitec", "CUSTOMER OWNS", "CUSTOMR OWNS", "ASO"]) {
     const classified = classifyImportAssignment({ customer, lotNumber: "LOT-1" });
     assert.equal(classified.kind, "UNASSIGNED", customer);
     assert.equal(classified.assignmentType, "LEGACY_UNASSIGNED", customer);

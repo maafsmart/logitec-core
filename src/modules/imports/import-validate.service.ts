@@ -14,7 +14,7 @@ import {
   normalizeImportLabel,
   summarizeImportAssignments
 } from "./import-assignment.js";
-import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
+import { isForbiddenInventoryProjectLabel, isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
 
 export { FREE_TO_SALE_LABEL };
 export type { ImportAssignmentType } from "./import-assignment.js";
@@ -360,17 +360,35 @@ export async function validateMappedRows(
         if (context === "REQUISITIONS" || context === "PRODUCTS") {
           errors.push({ field: "project", value: projectCode, code: "PROJECT_NOT_FOUND", message: "Proyecto no encontrado.", severity: "ERROR" });
         } else if (context === "CLIENTS_PROJECTS") {
-          warnings.push({
-            field: "project",
-            value: projectCode,
-            code: "NEW_PROJECT",
-            message: "Proyecto nuevo propuesto; se creará al confirmar.",
-            severity: "WARNING"
-          });
-          normalized.action = "CREATE";
+          if (isForbiddenInventoryProjectLabel(projectCode) || isForbiddenInventoryProjectLabel(projectNorm) || isForbiddenInventoryProjectLabel(mapped.project)) {
+            errors.push({
+              field: "project",
+              value: projectCode,
+              code: "FORBIDDEN_MASTER_LABEL",
+              message: "LOGITEC no es un proyecto válido y no se creará.",
+              severity: "ERROR"
+            });
+          } else {
+            warnings.push({
+              field: "project",
+              value: projectCode,
+              code: "NEW_PROJECT",
+              message: "Proyecto nuevo propuesto; se creará al confirmar.",
+              severity: "WARNING"
+            });
+            normalized.action = "CREATE";
+          }
         } else {
           warnings.push({ field: "project", value: projectCode, code: "PROJECT_UNRESOLVED", message: "Proyecto no resuelto.", severity: "WARNING" });
         }
+      } else if (isForbiddenInventoryProjectRecord(project)) {
+        errors.push({
+          field: "project",
+          value: projectCode,
+          code: "FORBIDDEN_MASTER_LABEL",
+          message: "LOGITEC no es un proyecto válido y no se asignará.",
+          severity: "ERROR"
+        });
       } else {
         normalized.projectId = project.id;
         normalized.projectCode = project.code;

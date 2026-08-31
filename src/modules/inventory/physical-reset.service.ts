@@ -9,6 +9,9 @@ export const PHYSICAL_RESET_PATH = "/api/v1/inventory/physical/reset";
 export const TENANT_INVENTORY_RESET_FLAG = "ALLOW_TENANT_INVENTORY_RESET";
 /** Distinct from Prisma migrate's advisory lock key 72707369. */
 export const PHYSICAL_RESET_ADVISORY_LOCK_CLASS = 90429101;
+export const FORBIDDEN_LEGACY_PROJECT_PRESENT = "FORBIDDEN_LEGACY_PROJECT_PRESENT";
+export const FORBIDDEN_LEGACY_PROJECT_MESSAGE =
+  "AVIAT contiene un proyecto heredado inválido LOGITEC. Debe auditarse y retirarse antes de reiniciar el inventario.";
 
 export type PhysicalResetDb = {
   $transaction<T>(
@@ -54,20 +57,7 @@ export type PhysicalResetResult = {
   qtyCleared: string;
   reservedCleared: string;
   orphanProductsRetained: number;
-  legacyLogitec:
-    | {
-        found: false;
-      }
-    | {
-        found: true;
-        id: string;
-        clientId: string | null;
-        code: string;
-        name: string;
-        deleted: boolean;
-        retained: boolean;
-        remainingDependencies: number;
-      };
+  legacyLogitec: { found: false };
   result: "PURGED";
   inventoriesZeroed: number;
   layersZeroed: number;
@@ -77,12 +67,22 @@ export type PhysicalResetResult = {
   alreadyZero: false;
 };
 
+export type ForbiddenLegacyProject = {
+  id: string;
+  code: string;
+  name: string;
+  active: boolean;
+};
+
 export type PhysicalResetPreview = {
   flagEnabled: boolean;
   isAviat: boolean;
   canExecute: boolean;
   clientId: string;
   counts: PhysicalResetCounts;
+  forbiddenLegacyProjects: ForbiddenLegacyProject[];
+  blockCode: typeof FORBIDDEN_LEGACY_PROJECT_PRESENT | null;
+  blockMessage: string | null;
 };
 
 let physicalResetInFlight = false;
@@ -276,50 +276,27 @@ async function countOrphanProducts(tx: Prisma.TransactionClient): Promise<number
   });
 }
 
-async function inspectLegacyLogitec(
+async function findForbiddenCompanyProjects(
   tx: Prisma.TransactionClient,
   clientId: string
-): Promise<PhysicalResetResult["legacyLogitec"]> {
+): Promise<ForbiddenLegacyProject[]> {
   const projects = await tx.customer.findMany({
     where: { clientId },
-    select: { id: true, clientId: true, code: true, name: true }
+    select: { id: true, code: true, name: true, active: true }
   });
-  const matches = projects.filter(
-    (row) => isCompanyProjectLabel(row.code) || isCompanyProjectLabel(row.name)
-  );
-  if (matches.length === 0) return { found: false };
-  if (matches.length !== 1) {
-    return {
-      found: true,
-      id: matches.map((row) => row.id).join(","),
-      clientId,
-      code: "LOGITEC",
-      name: "LOGITEC",
-      deleted: false,
-      retained: true,
-      remainingDependencies: -1
-    };
+  return projects
+    .filter((row) => isCompanyProjectLabel(row.code) || isCompanyProjectLabel(row.name))
+    .map((row) => ({ id: row.id, code: row.code, name: row.name, active: row.active }));
+}
+
+export async function assertNoForbiddenCompanyProjects(
+  tx: Prisma.TransactionClient,
+  clientId: string
+): Promise<void> {
+  const found = await findForbiddenCompanyProjects(tx, clientId);
+  if (found.length > 0) {
+    throw new HttpError(409, FORBIDDEN_LEGACY_PROJECT_MESSAGE, FORBIDDEN_LEGACY_PROJECT_PRESENT);
   }
-  const project = matches[0]!;
-  const remainingDependencies =
-    (await tx.inventory.count({ where: { projectId: project.id } })) +
-    (await tx.requisition.count({ where: { projectId: project.id } })) +
-    (await tx.productProject.count({ where: { projectId: project.id } })) +
-    (await tx.inventoryMovement.count({
-      where: { OR: [{ fromProjectId: project.id }, { toProjectId: project.id }] }
-    })) +
-    (await tx.product.count({ where: { customerId: project.id } })) +
-    (await tx.activityLog.count({ where: { customerId: project.id } }));
-  return {
-    found: true,
-    id: project.id,
-    clientId: project.clientId,
-    code: project.code,
-    name: project.name,
-    deleted: false,
-    retained: true,
-    remainingDependencies
-  };
 }
 
 export async function previewPhysicalInventoryReset(
@@ -332,13 +309,18 @@ export async function previewPhysicalInventoryReset(
     const counts = isAviat
       ? await collectOperationalCounts(tx, aviatId)
       : emptyPhysicalResetCounts();
+    const forbiddenLegacyProjects = isAviat ? await findForbiddenCompanyProjects(tx, aviatId) : [];
+    const blocked = forbiddenLegacyProjects.length > 0;
     const flagEnabled = isTenantInventoryResetAllowed();
     return {
       flagEnabled,
       isAviat,
-      canExecute: flagEnabled && isAviat,
+      canExecute: flagEnabled && isAviat && !blocked,
       clientId: actor.clientId,
-      counts
+      counts,
+      forbiddenLegacyProjects,
+      blockCode: blocked ? FORBIDDEN_LEGACY_PROJECT_PRESENT : null,
+      blockMessage: blocked ? FORBIDDEN_LEGACY_PROJECT_MESSAGE : null
     };
   });
 }
@@ -349,6 +331,7 @@ export async function applyPhysicalInventoryPurge(
 ): Promise<PhysicalResetResult> {
   const aviatId = await resolveUniqueAviatClientId(tx);
   assertAviatOperationalClient(actor.clientId, aviatId);
+  await assertNoForbiddenCompanyProjects(tx, aviatId);
   const clientWhere = { clientId: aviatId };
   const projectWhere = { project: { clientId: aviatId } };
   const before = await collectOperationalCounts(tx, aviatId);
@@ -414,7 +397,6 @@ export async function applyPhysicalInventoryPurge(
     throw new HttpError(500, "El inventario operativo de AVIAT no quedó vacío. Se revirtió la operación.");
   }
 
-  const legacyLogitec = await inspectLegacyLogitec(tx, aviatId);
   const orphanProductsRetained = await countOrphanProducts(tx);
 
   const result: PhysicalResetResult = {
@@ -436,7 +418,7 @@ export async function applyPhysicalInventoryPurge(
     qtyCleared: before.qty,
     reservedCleared: before.reservedQty,
     orphanProductsRetained,
-    legacyLogitec,
+    legacyLogitec: { found: false },
     result: "PURGED",
     inventoriesZeroed: inventories.count,
     layersZeroed: layers.count,

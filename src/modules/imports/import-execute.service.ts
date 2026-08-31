@@ -3,6 +3,8 @@ import { prisma } from "../../db/prisma.js";
 import { ensureCanonicalProductProject } from "../inventory/inventory-assignment.js";
 import { createRequisition } from "../requisitions/requisition.service.js";
 import { logActivity } from "../activity/activity-log.service.js";
+import { createProjectRecord } from "../master-data/master-data.service.js";
+import { isForbiddenInventoryProjectLabel } from "../inventory/inventory-project-rules.js";
 import type { ImportContext } from "./import-mapping.js";
 import { executeInventoryImportBulk, ImportExecuteError } from "./import-execute-bulk.service.js";
 
@@ -144,20 +146,27 @@ export async function executeImportBatch(input: {
       const n = row.normalized;
       try {
         const clientId = input.clientId;
-        const projectCode = String(n.project || "").toUpperCase().replace(/\s+/g, "_").slice(0, 60);
+        const rawProject = String(n.project || "");
+        const projectCode = rawProject.toUpperCase().replace(/\s+/g, "_").slice(0, 60);
         if (!projectCode) throw new Error("PROJECT_REQUIRED");
+        if (isForbiddenInventoryProjectLabel(rawProject) || isForbiddenInventoryProjectLabel(projectCode)) {
+          throw new Error("FORBIDDEN_MASTER_LABEL");
+        }
         const existing = await prisma.customer.findUnique({ where: { code: projectCode } });
-        if (!existing) {
-          await prisma.customer.create({
-            data: {
-              code: projectCode,
-              name: String(n.project || projectCode),
-              clientId,
-              active: true
-            }
+        if (existing) {
+          if (isForbiddenInventoryProjectLabel(existing.code) || isForbiddenInventoryProjectLabel(existing.name)) {
+            throw new Error("FORBIDDEN_MASTER_LABEL");
+          }
+          if (existing.clientId !== clientId) {
+            throw new Error("PROJECT_WRONG_CLIENT");
+          }
+        } else {
+          await createProjectRecord(prisma as never, {
+            code: projectCode,
+            name: rawProject || projectCode,
+            clientId,
+            active: true
           });
-        } else if (existing.clientId !== clientId) {
-          throw new Error("PROJECT_WRONG_CLIENT");
         }
         await logActivity({
           type: "IMPORT",
