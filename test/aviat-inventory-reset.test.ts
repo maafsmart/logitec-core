@@ -71,22 +71,24 @@ test("el reinicio es transaccional, idempotente y reporta conteos por entidad", 
   assert.match(js, /setPhysicalInventoryResetBusy\(true\)/);
 });
 
-test("SKU anterior deja de ser visible en AVIAT al quitar existencias y ProductProject", () => {
-  assert.match(service, /productProject\.deleteMany/);
+test("el catálogo AVIAT conserva ProductProject y SKUs después del reset operativo", () => {
+  assert.doesNotMatch(service, /productProject\.deleteMany/);
   assert.match(service, /inventory\.deleteMany/);
   assert.match(service, /inventorySerial\.deleteMany/);
   assert.match(service, /inventoryMovement\.deleteMany/);
+  assert.match(service, /productProjectsPreserved/);
 });
 
-test("LOGITEC exacto se limpia solo si queda sin dependencias", () => {
+test("LOGITEC se conserva siempre durante el reset de inventario", () => {
   assert.match(service, /isCompanyProjectLabel/);
-  assert.match(service, /customer\.delete/);
+  assert.doesNotMatch(service, /customer\.delete/);
+  assert.match(service, /retained: true/);
   assert.match(js, /normalized === "LOGITEC"/);
 });
 
-test("cache-buster de dashboard.js se actualiza una sola vez a v=88", () => {
+test("cache-buster de dashboard.js se actualiza una sola vez a v=89", () => {
   const matches = [...html.matchAll(/dashboard\.js\?v=(\d+)/g)].map((row) => row[1]);
-  assert.deepEqual(matches, ["88"]);
+  assert.deepEqual(matches, ["89"]);
 });
 
 test("la migración de coherencia de movimientos admite FTS namespaced y el valor histórico", () => {

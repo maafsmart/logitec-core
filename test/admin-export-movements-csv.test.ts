@@ -114,7 +114,7 @@ test("no cambia visibilidad de roles ni el Excel económico", () => {
   assert.match(js, /exportMovementsBtn\.style\.display = canExportInventory/);
   assert.match(js, /downloadExport\("\/api\/exports\/inventory\.xlsx",\s*"inventory\.xlsx"\)/);
   assert.match(js, /canSeeEconomicValuation/);
-  assert.match(html, /dashboard\.js\?v=88/);
+  assert.match(html, /dashboard\.js\?v=89/);
   assert.match(html, /id="openInventoryImportBtn"[^>]*>Abrir asistente de importación</);
   assert.match(js, /function openInventoryImportAssistant\(/);
 });

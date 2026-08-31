@@ -14753,7 +14753,7 @@ function renderAviatResetCounts(target, counts, { mode = "current" } = {}) {
     target.innerHTML = "";
     return;
   }
-  const heading = mode === "purge" ? "Se eliminarán" : "Estado actual";
+  const heading = mode === "purge" ? "SE BORRARÁ: datos operativos" : "Estado operativo actual";
   const chips = [
     ["Piezas", counts.qty],
     ["Saldos", counts.inventories],
@@ -14767,7 +14767,14 @@ function renderAviatResetCounts(target, counts, { mode = "current" } = {}) {
   ]
     .map(([label, value]) => `<span class="chip">${label}: ${value ?? 0}</span>`)
     .join("");
-  target.innerHTML = `<p class="assignee-hint" style="margin:0 0 8px"><strong>${heading}:</strong></p>${chips}`;
+  const preserved = [
+    ["Asignaciones producto-proyecto", counts.productProjectsPreserved]
+  ]
+    .map(([label, value]) => `<span class="chip">${label}: ${value ?? 0}</span>`)
+    .join("");
+  target.innerHTML =
+    `<p class="assignee-hint" style="margin:0 0 8px"><strong>${heading}</strong></p>${chips}` +
+    `<p class="assignee-hint" style="margin:10px 0 8px"><strong>SE CONSERVARÁ:</strong> productos, proyectos, asignaciones producto-proyecto y demás maestros.</p>${preserved}`;
 }
 
 async function syncAviatDangerZone() {

@@ -6,6 +6,7 @@ import { HttpError } from "../src/shared/http-error.js";
 import {
   PHYSICAL_RESET_CONFIRMATION,
   PHYSICAL_RESET_PATH,
+  previewPhysicalInventoryReset,
   applyPhysicalInventoryPurge,
   assertPhysicalResetConfirmation,
   assertPhysicalResetFinalConfirmation,
@@ -50,10 +51,11 @@ function createFakeTx(seed?: Partial<{
   activity: Array<{ id: string; clientId: string }>;
   requisitions: Array<{ id: string; clientId: string }>;
   tasks: Array<{ id: string; clientId?: string }>;
-  productProjects: Array<{ id: string; clientId: string }>;
+  productProjects: Array<{ id: string; clientId: string; productId?: string; projectId?: string }>;
   importBatches: Array<{ id: string; clientId: string }>;
   products: Array<{ id: string; customerId?: string | null }>;
   customers: Array<{ id: string; clientId: string; code: string; name: string }>;
+  warehouses: Array<{ id: string }>;
   clients: Array<{ id: string; code: string; name: string; tradeName: string; legalName: string }>;
 }>) {
   const state = {
@@ -76,6 +78,7 @@ function createFakeTx(seed?: Partial<{
       { id: "proj-att", clientId: AVIAT_ID, code: "ATT", name: "AT&T" },
       { id: "proj-logitec", clientId: AVIAT_ID, code: "LOGITEC", name: "LOGITEC" }
     ]),
+    warehouses: cloneRows(seed?.warehouses || [{ id: "wh-1" }]),
     clients: cloneRows(seed?.clients || [
       { id: AVIAT_ID, code: "AVIAT", name: "AVIAT", tradeName: "AVIAT", legalName: "AVIAT" }
     ]),
@@ -135,10 +138,8 @@ function createFakeTx(seed?: Partial<{
     customer: {
       findMany: async ({ where }: { where?: { clientId?: string } }) =>
         state.customers.filter((row) => !where?.clientId || row.clientId === where.clientId),
-      delete: async ({ where }: { where: { id: string } }) => {
-        const row = state.customers.find((item) => item.id === where.id);
-        state.customers = state.customers.filter((item) => item.id !== where.id);
-        return row;
+      delete: async () => {
+        throw new Error("customer.delete forbidden");
       },
       count: async ({ where }: { where?: { projectId?: string; clientId?: string } }) => {
         if (where && "projectId" in (where as object) && (where as { projectId?: string }).projectId) {
@@ -321,13 +322,12 @@ function createFakeTx(seed?: Partial<{
     productProject: {
       count: async ({ where }: { where?: unknown } = {}) => {
         const clientId = clientIdFromWhere(where);
-        if ((where as { projectId?: string } | undefined)?.projectId) return 0;
+        const projectId = (where as { projectId?: string } | undefined)?.projectId;
+        if (projectId) return state.productProjects.filter((row) => row.projectId === projectId).length;
         return clientId ? state.productProjects.filter((row) => row.clientId === clientId).length : state.productProjects.length;
       },
-      deleteMany: async ({ where }: { where?: unknown }) => {
-        const result = scopedDelete(state.productProjects, where);
-        state.productProjects = result.next;
-        return { count: result.count };
+      deleteMany: async () => {
+        throw new Error("productProject.deleteMany forbidden");
       }
     },
     importBatch: {
@@ -354,8 +354,7 @@ function createFakeTx(seed?: Partial<{
         return state.products.filter((row) => !row.customerId).length;
       },
       updateMany: async () => {
-        state.products = state.products.map((row) => ({ ...row, customerId: null }));
-        return { count: state.products.length };
+        throw new Error("product.customerId mutation forbidden");
       },
       deleteMany: async () => {
         state.deleted.product += 1;
@@ -445,15 +444,26 @@ test("la zona de peligro está en Sistema y el importador único en Existencias"
   assert.doesNotMatch(inventorySlice, /id="physicalInventoryResetBtn"/);
   assert.doesNotMatch(inventorySlice, /Borrar inventario de AVIAT/);
   assert.match(html, /id="physicalInventoryResetModal"/);
+  assert.match(html, /Se eliminan existencias y operación relacionada/);
+  assert.match(html, /Se conservan productos, proyectos, asignaciones producto-proyecto/);
   assert.match(html, /Escribe <strong>BORRAR INVENTARIO DE AVIAT<\/strong> para confirmar/);
   assert.match(html, /id="physicalInventoryResetFinalAck"/);
   assert.match(js, /physicalInventoryResetConfirmBtn\.addEventListener\("click", \(\) => void runPhysicalInventoryReset\(\)\)/);
   assert.match(js, /refreshInventoryAfterPhysicalPurge/);
   assert.match(js, /bumpClientContextEpoch/);
-  assert.match(html, /dashboard\.js\?v=88/);
+  assert.match(js, /productProjectsPreserved/);
+  assert.match(js, /SE CONSERVARÁ/);
+  assert.doesNotMatch(js, /productProjectsPurged/);
+  assert.match(html, /dashboard\.js\?v=89/);
 });
 
 test("elimina el inventario operativo de AVIAT y conserva catálogos y el otro cliente", async () => {
+  const officialProjects = Array.from({ length: 9 }, (_, i) => ({
+    id: `proj-${i + 1}`,
+    clientId: AVIAT_ID,
+    code: `P${String(i + 1).padStart(2, "0")}`,
+    name: `Proyecto ${i + 1}`
+  }));
   const { state, tx } = createFakeTx({
     inventory: [
       { id: "inv-1", clientId: AVIAT_ID, qty: d(10), reservedQty: d(2) },
@@ -492,27 +502,59 @@ test("elimina el inventario operativo de AVIAT y conserva catálogos y el otro c
       { id: "t-1", clientId: AVIAT_ID },
       { id: "t-other", clientId: OTHER_ID }
     ],
+    products: [
+      { id: "p-1", customerId: "proj-1" },
+      { id: "p-2", customerId: "proj-logitec" }
+    ],
     productProjects: [
-      { id: "pp-1", clientId: AVIAT_ID },
-      { id: "pp-other", clientId: OTHER_ID }
+      ...officialProjects.map((project) => ({
+        id: `pp-${project.id}`,
+        clientId: AVIAT_ID,
+        productId: "p-1",
+        projectId: project.id
+      })),
+      { id: "pp-logitec", clientId: AVIAT_ID, productId: "p-2", projectId: "proj-logitec" },
+      { id: "pp-other", clientId: OTHER_ID, productId: "p-other", projectId: "proj-other" }
     ],
     customers: [
-      { id: "proj-att", clientId: AVIAT_ID, code: "ATT", name: "AT&T" },
+      ...officialProjects,
       { id: "proj-logitec", clientId: AVIAT_ID, code: "LOGITEC", name: "LOGITEC" },
       { id: "proj-other", clientId: OTHER_ID, code: "OTHER-PROJECT", name: "Other Project" }
+    ],
+    warehouses: [{ id: "wh-1" }, { id: "wh-2" }],
+    importBatches: [
+      { id: "ib-aviat", clientId: AVIAT_ID },
+      { id: "ib-other", clientId: OTHER_ID }
     ],
     clients: [
       { id: AVIAT_ID, code: "AVIAT", name: "AVIAT", tradeName: "AVIAT", legalName: "AVIAT" },
       { id: OTHER_ID, code: "CLI2", name: "Cliente 2", tradeName: "Cliente 2", legalName: "Cliente 2" }
     ]
   });
+  const productProjectsBefore = cloneRows(state.productProjects);
+  const productsBefore = cloneRows(state.products);
+  const customersBefore = cloneRows(state.customers);
+  const warehousesBefore = cloneRows(state.warehouses);
+  const locationsBefore = cloneRows(state.locations);
+  const usersBefore = cloneRows(state.users);
+  const stockBefore = cloneRows(state.stock);
+
   const first = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: AVIAT_ID });
   assert.equal(first.result, "PURGED");
   assert.equal(first.alreadyZero, false);
   assert.equal(first.inventoriesPurged, 2);
   assert.equal(first.serialsPurged, 1);
   assert.equal(first.movementsPurged, 1);
+  assert.equal(first.productProjectsPurged, 0);
+  assert.equal(first.productProjectsPreserved, productProjectsBefore.filter((row) => row.clientId === AVIAT_ID).length);
   assert.equal(state.inventory.some((row) => row.clientId === AVIAT_ID), false);
+  assert.equal(state.layers.some((row) => row.clientId === AVIAT_ID), false);
+  assert.equal(state.serials.some((row) => row.clientId === AVIAT_ID), false);
+  assert.equal(state.reservations.some((row) => row.clientId === AVIAT_ID), false);
+  assert.equal(state.movements.some((row) => row.clientId === AVIAT_ID), false);
+  assert.equal(state.scans.some((row) => row.clientId === AVIAT_ID), false);
+  assert.equal(state.requisitions.some((row) => row.clientId === AVIAT_ID), false);
+  assert.equal(state.tasks.some((row) => row.clientId === AVIAT_ID), false);
   assert.equal(state.inventory.find((row) => row.id === "inv-other")?.clientId, OTHER_ID);
   assert.equal(state.serials.find((row) => row.id === "s-other")?.serialNumber, "OTHER");
   assert.equal(state.movements.find((row) => row.id === "m-other")?.clientId, OTHER_ID);
@@ -522,14 +564,29 @@ test("elimina el inventario operativo de AVIAT y conserva catálogos y el otro c
   assert.equal(state.activity.some((row) => row.id === "a-other"), true);
   assert.equal(state.requisitions.some((row) => row.id === "rq-other"), true);
   assert.equal(state.tasks.some((row) => row.id === "t-other"), true);
+  assert.deepEqual(state.productProjects, productProjectsBefore);
+  assert.deepEqual(state.products, productsBefore);
+  assert.deepEqual(state.customers, customersBefore);
+  assert.deepEqual(state.warehouses, warehousesBefore);
+  assert.deepEqual(state.locations, locationsBefore);
+  assert.deepEqual(state.users, usersBefore);
+  assert.deepEqual(state.stock, stockBefore);
+  assert.equal(state.importBatches.some((row) => row.id === "ib-aviat"), false);
+  assert.equal(state.importBatches.some((row) => row.id === "ib-other"), true);
+  assert.equal(first.importBatchesPurged, 1);
   assert.equal(state.productProjects.some((row) => row.id === "pp-other"), true);
-  assert.equal(state.products.length, 1);
+  assert.equal(state.products.length, 2);
   assert.equal(state.deleted.product, 0);
   assert.equal(state.deleted.location, 0);
   assert.equal(state.deleted.user, 0);
-  assert.equal(state.customers.some((row) => row.code === "ATT"), true);
-  assert.equal(state.customers.some((row) => row.code === "LOGITEC"), false);
+  assert.equal(state.customers.filter((row) => row.clientId === AVIAT_ID && row.code !== "LOGITEC").length, 9);
+  assert.equal(state.customers.some((row) => row.code === "LOGITEC"), true);
   assert.equal(state.customers.some((row) => row.code === "OTHER-PROJECT"), true);
+  assert.equal(first.legacyLogitec.found, true);
+  if (first.legacyLogitec.found) {
+    assert.equal(first.legacyLogitec.deleted, false);
+    assert.equal(first.legacyLogitec.retained, true);
+  }
   assert.equal(state.logs[0]!.subtype, "PHYSICAL_RESET");
 
   const second = await applyPhysicalInventoryPurge(tx as never, { userId: "admin-1", clientId: AVIAT_ID });
@@ -537,6 +594,8 @@ test("elimina el inventario operativo de AVIAT y conserva catálogos y el otro c
   assert.equal(second.alreadyEmpty, true);
   assert.equal(second.inventoriesPurged, 0);
   assert.equal(second.movementsPurged, 0);
+  assert.deepEqual(state.productProjects, productProjectsBefore);
+  assert.deepEqual(state.products, productsBefore);
 });
 
 test("conserva InventoryStock y las importaciones de otro cliente", async () => {
@@ -670,6 +729,7 @@ test("impide una segunda solicitud simultánea", async () => {
         requisitionsPurged: 0,
         tasksPurged: 0,
         productProjectsPurged: 0,
+        productProjectsPreserved: 0,
         importBatchesPurged: 0,
         legacyStockPurged: 0,
         qtyCleared: "0",
@@ -729,6 +789,36 @@ test("Existencias no consulta qty=0 y AN102/202 siguen sin remapeo", () => {
   assert.doesNotMatch(js, /AN203\s*[:=]\s*["']AN103["']/);
   assert.doesNotMatch(js, /AN204\s*[:=]\s*["']AN104["']/);
   assert.match(js, /Number\(row\.qty\) > 0/);
+});
+
+test("preview reporta productProjectsPreserved y no lo trata como purge", async () => {
+  const { tx } = createFakeTx({
+    productProjects: [
+      { id: "pp-1", clientId: AVIAT_ID, productId: "p-1", projectId: "proj-1" },
+      { id: "pp-2", clientId: AVIAT_ID, productId: "p-1", projectId: "proj-2" },
+      { id: "pp-other", clientId: OTHER_ID, productId: "p-x", projectId: "proj-other" }
+    ],
+    clients: [
+      { id: AVIAT_ID, code: "AVIAT", name: "AVIAT", tradeName: "AVIAT", legalName: "AVIAT" },
+      { id: OTHER_ID, code: "CLI2", name: "Cliente 2", tradeName: "Cliente 2", legalName: "Cliente 2" }
+    ]
+  });
+  const db = {
+    $transaction: async (fn: (inner: typeof tx) => Promise<unknown>) => fn(tx)
+  };
+  const preview = await previewPhysicalInventoryReset({ userId: "admin-1", clientId: AVIAT_ID }, db as never);
+  assert.equal(preview.counts.productProjectsPreserved, 2);
+  assert.equal("productProjects" in preview.counts, false);
+});
+
+test("el reset no borra ProductProject, customerId maestro ni el proyecto LOGITEC", () => {
+  assert.doesNotMatch(serviceSrc, /productProject\.deleteMany/);
+  assert.doesNotMatch(serviceSrc, /customerId:\s*null/);
+  assert.doesNotMatch(serviceSrc, /customer\.delete/);
+  assert.match(serviceSrc, /productProjectsPreserved/);
+  assert.match(serviceSrc, /productProjectsPurged:\s*0/);
+  assert.match(serviceSrc, /retained:\s*true/);
+  assert.doesNotMatch(html, /productProjects(?!Preserved)/);
 });
 
 test("el reinicio no borra InventoryStock y usa advisory lock de PostgreSQL", () => {

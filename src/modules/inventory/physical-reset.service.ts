@@ -27,11 +27,12 @@ export type PhysicalResetCounts = {
   activityLogs: number;
   requisitions: number;
   tasks: number;
-  productProjects: number;
   importBatches: number;
   legacyStock: number;
   qty: string;
   reservedQty: string;
+  /** Master data. Never a purge candidate. */
+  productProjectsPreserved: number;
 };
 
 export type PhysicalResetResult = {
@@ -46,7 +47,8 @@ export type PhysicalResetResult = {
   activityLogsPurged: number;
   requisitionsPurged: number;
   tasksPurged: number;
-  productProjectsPurged: number;
+  productProjectsPurged: 0;
+  productProjectsPreserved: number;
   importBatchesPurged: number;
   legacyStockPurged: number;
   qtyCleared: string;
@@ -170,6 +172,39 @@ export async function tryAcquirePhysicalResetLock(
   return Boolean(rows[0]?.locked);
 }
 
+function emptyPhysicalResetCounts(): PhysicalResetCounts {
+  return {
+    inventories: 0,
+    layers: 0,
+    serials: 0,
+    reservations: 0,
+    movements: 0,
+    scanEvents: 0,
+    activityLogs: 0,
+    requisitions: 0,
+    tasks: 0,
+    importBatches: 0,
+    legacyStock: 0,
+    qty: "0",
+    reservedQty: "0",
+    productProjectsPreserved: 0
+  };
+}
+
+function isOperationalInventoryEmpty(counts: PhysicalResetCounts): boolean {
+  return (
+    counts.inventories === 0 &&
+    counts.layers === 0 &&
+    counts.serials === 0 &&
+    counts.reservations === 0 &&
+    counts.movements === 0 &&
+    counts.scanEvents === 0 &&
+    counts.requisitions === 0 &&
+    counts.tasks === 0 &&
+    counts.importBatches === 0
+  );
+}
+
 async function collectOperationalCounts(
   tx: Prisma.TransactionClient,
   clientId: string
@@ -188,7 +223,7 @@ async function collectOperationalCounts(
     activityLogs,
     requisitions,
     tasks,
-    productProjects,
+    productProjectsPreserved,
     importBatches
   ] = await Promise.all([
     tx.inventory.aggregate({ where: clientWhere, _sum: { qty: true } }),
@@ -220,11 +255,11 @@ async function collectOperationalCounts(
     activityLogs,
     requisitions,
     tasks,
-    productProjects,
     importBatches,
     legacyStock: 0,
     qty: decimalText(qtyAgg._sum.qty),
-    reservedQty: decimalText(reservedAgg._sum.reservedQty)
+    reservedQty: decimalText(reservedAgg._sum.reservedQty),
+    productProjectsPreserved
   };
 }
 
@@ -275,28 +310,15 @@ async function inspectLegacyLogitec(
     })) +
     (await tx.product.count({ where: { customerId: project.id } })) +
     (await tx.activityLog.count({ where: { customerId: project.id } }));
-  if (remainingDependencies > 0) {
-    return {
-      found: true,
-      id: project.id,
-      clientId: project.clientId,
-      code: project.code,
-      name: project.name,
-      deleted: false,
-      retained: true,
-      remainingDependencies
-    };
-  }
-  await tx.customer.delete({ where: { id: project.id } });
   return {
     found: true,
     id: project.id,
     clientId: project.clientId,
     code: project.code,
     name: project.name,
-    deleted: true,
-    retained: false,
-    remainingDependencies: 0
+    deleted: false,
+    retained: true,
+    remainingDependencies
   };
 }
 
@@ -309,22 +331,7 @@ export async function previewPhysicalInventoryReset(
     const isAviat = actor.clientId === aviatId;
     const counts = isAviat
       ? await collectOperationalCounts(tx, aviatId)
-      : {
-          inventories: 0,
-          layers: 0,
-          serials: 0,
-          reservations: 0,
-          movements: 0,
-          scanEvents: 0,
-          activityLogs: 0,
-          requisitions: 0,
-          tasks: 0,
-          productProjects: 0,
-          importBatches: 0,
-          legacyStock: 0,
-          qty: "0",
-          reservedQty: "0"
-        };
+      : emptyPhysicalResetCounts();
     const flagEnabled = isTenantInventoryResetAllowed();
     return {
       flagEnabled,
@@ -345,17 +352,7 @@ export async function applyPhysicalInventoryPurge(
   const clientWhere = { clientId: aviatId };
   const projectWhere = { project: { clientId: aviatId } };
   const before = await collectOperationalCounts(tx, aviatId);
-  const alreadyEmpty =
-    before.inventories === 0 &&
-    before.layers === 0 &&
-    before.serials === 0 &&
-    before.reservations === 0 &&
-    before.movements === 0 &&
-    before.scanEvents === 0 &&
-    before.requisitions === 0 &&
-    before.tasks === 0 &&
-    before.productProjects === 0 &&
-    before.importBatches === 0;
+  const alreadyEmpty = isOperationalInventoryEmpty(before);
 
   const aviatTaskIds = await tx.task.findMany({
     where: clientWhere,
@@ -398,12 +395,6 @@ export async function applyPhysicalInventoryPurge(
     : { count: 0 };
 
   const requisitions = await tx.requisition.deleteMany({ where: projectWhere });
-  const productProjects = await tx.productProject.deleteMany({ where: { project: { clientId: aviatId } } });
-
-  await tx.product.updateMany({
-    where: { customer: { clientId: aviatId } },
-    data: { customerId: null }
-  });
 
   const importBatches = await tx.importBatch.deleteMany({
     where: { clientId: aviatId }
@@ -438,7 +429,8 @@ export async function applyPhysicalInventoryPurge(
     activityLogsPurged: activityLogs.count,
     requisitionsPurged: requisitions.count,
     tasksPurged: tasks.count,
-    productProjectsPurged: productProjects.count,
+    productProjectsPurged: 0,
+    productProjectsPreserved: before.productProjectsPreserved,
     importBatchesPurged: importBatches.count,
     legacyStockPurged: 0,
     qtyCleared: before.qty,
@@ -475,6 +467,7 @@ export async function applyPhysicalInventoryPurge(
         requisitionsPurged: result.requisitionsPurged,
         tasksPurged: result.tasksPurged,
         productProjectsPurged: result.productProjectsPurged,
+        productProjectsPreserved: result.productProjectsPreserved,
         importBatchesPurged: result.importBatchesPurged,
         legacyStockPurged: result.legacyStockPurged,
         qtyCleared: result.qtyCleared,

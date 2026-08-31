@@ -339,7 +339,7 @@ test("la UI de recepción tiene precio opcional, valor y ayuda", () => {
   assert.match(html, /#inboundSubmitBtn:disabled/);
   assert.match(html, /background:\s*#94a3b8/);
   assert.match(html, /cursor:\s*not-allowed/);
-  assert.match(html, /dashboard\.js\?v=88/);
+  assert.match(html, /dashboard\.js\?v=89/);
 });
 
 test("vacío, null y espacios son null; 0 explícito no se convierte desde vacío", () => {

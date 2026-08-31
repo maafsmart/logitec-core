@@ -284,7 +284,10 @@ test("reset UX distingue eliminado vs estado actual y bloquea inventario en cero
   assert.match(sliceFunction(js, "syncAviatDangerZone"), /Inventario ya está en cero/);
   assert.match(sliceFunction(js, "formatPhysicalResetPurgedSummary"), /Se eliminaron:/);
   assert.match(sliceFunction(js, "formatPhysicalResetCurrentSummary"), /Estado actual:/);
-  assert.match(sliceFunction(js, "renderAviatResetCounts"), /mode === "purge" \? "Se eliminarán" : "Estado actual"/);
+  assert.match(sliceFunction(js, "renderAviatResetCounts"), /SE BORRARÁ: datos operativos/);
+  assert.match(sliceFunction(js, "renderAviatResetCounts"), /Estado operativo actual/);
+  assert.match(sliceFunction(js, "renderAviatResetCounts"), /productProjectsPreserved/);
+  assert.match(sliceFunction(js, "renderAviatResetCounts"), /SE CONSERVARÁ/);
   assert.match(sliceFunction(js, "runPhysicalInventoryReset"), /closePhysicalInventoryResetModal/);
   assert.match(sliceFunction(js, "runPhysicalInventoryReset"), /syncAviatDangerZone/);
 });
