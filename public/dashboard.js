@@ -1566,6 +1566,7 @@ function navigateTo(sectionId, moduleName) {
   if (showTraceability) void loadTraceability();
   if (showTasks) {
     wireTasksModuleUi();
+    void populateTaskOperationalFields();
     void loadTasks();
   }
   if (showIncidents) {
@@ -3738,6 +3739,11 @@ function applyTaskViewModeUi() {
     if (taskActiveTab === "notices" || taskActiveTab === "notices-sent") taskActiveTab = "mine";
   }
 
+  const moveHint = document.getElementById("taskMovementHint");
+  if (moveHint && typeSel) {
+    moveHint.classList.toggle("hidden", typeSel.value !== "MOVE" || notices);
+  }
+
   document.querySelectorAll("#taskTabs .tasks-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.getAttribute("data-task-tab") === taskActiveTab);
   });
@@ -4451,7 +4457,22 @@ function wireTasksModuleUi() {
       if (taskViewMode === "notices") return;
       const hint = document.getElementById("taskInternalNoticeHint");
       if (hint) hint.classList.toggle("hidden", typeSel.value !== "INTERNAL_NOTICE");
+      const moveHint = document.getElementById("taskMovementHint");
+      if (moveHint) moveHint.classList.toggle("hidden", typeSel.value !== "MOVE");
     });
+  }
+  const whSel = document.getElementById("taskWarehouseSelect");
+  if (whSel && whSel.dataset.taskLocWired !== "1") {
+    whSel.dataset.taskLocWired = "1";
+    whSel.addEventListener("change", () => {
+      populateTaskLocationSelect(readSmartFieldValue("taskWarehouse") || whSel.value || "TULTITLAN24");
+    });
+  }
+  const whInp = document.getElementById("taskWarehouse");
+  if (whInp && whInp.dataset.taskLocWired !== "1") {
+    whInp.dataset.taskLocWired = "1";
+    whInp.addEventListener("change", () => populateTaskLocationSelect(whInp.value.trim()));
+    whInp.addEventListener("blur", () => populateTaskLocationSelect(whInp.value.trim()));
   }
   ["taskFilterType", "taskFilterStatus", "taskFilterAssignee", "taskFilterPriority", "taskFilterDue", "taskFilterText"].forEach(
     (id) => {
@@ -4476,6 +4497,11 @@ function wireTasksModuleUi() {
       renderTasksTable();
     });
   }
+  const relocateBtn = document.getElementById("taskGoRelocateBtn");
+  if (relocateBtn && relocateBtn.dataset.wired !== "1") {
+    relocateBtn.dataset.wired = "1";
+    relocateBtn.addEventListener("click", () => navigateTo("operacion", "relocate"));
+  }
 }
 
 function resetPickingFlow() {
@@ -4490,6 +4516,116 @@ function clearPickCandidates() {
   if (!box) return;
   box.innerHTML = "";
   box.classList.add("hidden");
+  delete box.dataset.inventoryId;
+  delete box.dataset.layerId;
+  delete box.dataset.layerSelectionMode;
+  clearPickLayerOptions();
+}
+
+function clearPickLayerOptions() {
+  const box = document.getElementById("pickLayerOptions");
+  if (!box) return;
+  box.innerHTML = "";
+  box.classList.add("hidden");
+  delete box.dataset.layerId;
+  delete box.dataset.layerSelectionMode;
+  delete box.dataset.fifoRecommendedLayerId;
+}
+
+function formatPickLayerEntryDate(layer) {
+  const raw = layer?.receivedAt || layer?.createdAt;
+  if (!raw) return "—";
+  return formatDateShort(raw);
+}
+
+function renderPickLayerOptions(layers, { inventoryId } = {}) {
+  const box = document.getElementById("pickLayerOptions");
+  if (!box) return;
+  const list = (Array.isArray(layers) ? layers : []).filter((layer) => {
+    const available = Number(layer.availableQty ?? Number(layer.qty || 0) - Number(layer.reservedQty || 0));
+    return available > 0;
+  });
+  if (!list.length) {
+    clearPickLayerOptions();
+    return;
+  }
+  const recommended = list.find((layer) => layer.fifoRecommended) || list[0];
+  const recommendedId = recommended?.layerId || recommended?.id || "";
+  box.classList.remove("hidden");
+  box.dataset.fifoRecommendedLayerId = recommendedId;
+  box.dataset.layerId = recommendedId;
+  box.dataset.layerSelectionMode = "FIFO";
+  if (inventoryId) box.dataset.inventoryId = inventoryId;
+  const showPrice = typeof canSeeEconomicValuation === "function" && canSeeEconomicValuation();
+  box.innerHTML = `
+    <p class="module-hint" style="margin:0 0 6px">Existencias disponibles / orden FIFO</p>
+    <p class="filter-hint" style="margin:0 0 8px">FIFO recomienda utilizar primero la existencia más antigua. Puedes elegir otra si existe una indicación operativa.</p>
+    <div style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto">
+      ${list
+        .map((layer) => {
+          const layerId = layer.layerId || layer.id;
+          const available = layer.availableQty ?? Number(layer.qty || 0) - Number(layer.reservedQty || 0);
+          const isRecommended = Boolean(layer.fifoRecommended) || layerId === recommendedId;
+          const price =
+            showPrice && layer.unitPriceMxn != null && layer.unitPriceMxn !== ""
+              ? ` · $${formatQty(layer.unitPriceMxn)} MXN`
+              : "";
+          const label = [
+            isRecommended ? "Recomendado FIFO · más antiguo" : "Entrada alternativa",
+            `Entrada ${formatPickLayerEntryDate(layer)}`,
+            layer.lotNumber ? `Lote ${layer.lotNumber}` : null,
+            `Disponible ${formatQty(available)}`,
+            `Reservada ${formatQty(layer.reservedQty ?? 0)}`,
+            layer.sourceReference ? `Origen ${layer.sourceReference}` : null,
+            price
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return `<button type="button" class="btn-secondary btn-compact pick-layer-option${
+            isRecommended ? " active" : ""
+          }" data-pick-layer="${escCell(layerId)}" data-fifo-rec="${isRecommended ? "1" : "0"}" style="text-align:left;justify-content:flex-start">${escCell(
+            label
+          )}</button>`;
+        })
+        .join("")}
+    </div>`;
+  box.querySelectorAll("[data-pick-layer]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      box.querySelectorAll(".pick-layer-option").forEach((el) => el.classList.remove("active"));
+      btn.classList.add("active");
+      const id = btn.getAttribute("data-pick-layer") || "";
+      box.dataset.layerId = id;
+      box.dataset.layerSelectionMode = btn.getAttribute("data-fifo-rec") === "1" ? "FIFO" : "MANUAL";
+      setScanResult("Entrada de existencia seleccionada. Confirma de nuevo el surtido.", "ok");
+    });
+  });
+}
+
+async function prefetchPickLayersForInventory(inventoryId) {
+  if (!inventoryId) {
+    clearPickLayerOptions();
+    return;
+  }
+  try {
+    const response = await authenticatedFetch(`/api/inventory/stock/${encodeURIComponent(inventoryId)}/layers`);
+    if (!response?.ok) return;
+    const layers = await response.json().catch(() => []);
+    if (Array.isArray(layers) && layers.length > 1) {
+      renderPickLayerOptions(layers, { inventoryId });
+    } else if (Array.isArray(layers) && layers.length === 1) {
+      const invBox = document.getElementById("pickCandidates");
+      const only = layers[0];
+      if (invBox) {
+        invBox.dataset.layerId = only.layerId || only.id || "";
+        invBox.dataset.layerSelectionMode = "FIFO";
+      }
+      clearPickLayerOptions();
+    } else {
+      clearPickLayerOptions();
+    }
+  } catch (_error) {
+    clearPickLayerOptions();
+  }
 }
 
 function populatePickContextSelects() {
@@ -4598,6 +4734,7 @@ function renderPickCandidates(candidates) {
         locSel.value = c.location;
       }
       box.dataset.inventoryId = c.inventoryId || "";
+      void prefetchPickLayersForInventory(c.inventoryId || "");
       setScanResult(
         `Línea seleccionada: ${c.assignmentLabel || assignmentDisplayLabel(c)} · ${c.location} / ${formatInventoryStatus(c.status)} (qty ${c.qty}, no reservada ${c.unreservedQty ?? "—"}). Confirma de nuevo el surtido.`,
         "ok"
@@ -4615,6 +4752,9 @@ function buildPickScanPayload(code) {
   const qty = qtyRaw === "" || qtyRaw == null ? 1 : Number(qtyRaw);
   const invBox = document.getElementById("pickCandidates");
   const inventoryId = invBox?.dataset?.inventoryId || "";
+  const layerBox = document.getElementById("pickLayerOptions");
+  const layerId = layerBox?.dataset?.layerId || invBox?.dataset?.layerId || "";
+  const layerSelectionMode = layerBox?.dataset?.layerSelectionMode || invBox?.dataset?.layerSelectionMode || "";
   /** @type {Record<string, unknown>} */
   const body = { code };
   if (project) body.project = project;
@@ -4623,6 +4763,8 @@ function buildPickScanPayload(code) {
   if (location) body.location = location;
   if (Number.isFinite(qty) && qty > 0) body.quantity = qty;
   if (inventoryId) body.inventoryId = inventoryId;
+  if (layerId) body.layerId = layerId;
+  if (layerSelectionMode) body.layerSelectionMode = layerSelectionMode;
   return body;
 }
 
@@ -7935,6 +8077,64 @@ function getKnownLocations() {
   return uniqueSortedStrings(fromStock.concat(fromMov).concat(fromCatalog));
 }
 
+function getKnownLocationsForWarehouse(warehouseCode) {
+  const wh = String(warehouseCode || "").trim().toUpperCase();
+  const fromStock = stockRowsCache
+    .filter((r) => {
+      if (!wh) return true;
+      const rowWh = String(r?.location?.warehouse || r?.warehouse || r?.Location?.warehouse || "").toUpperCase();
+      return rowWh === wh;
+    })
+    .map((r) => r.location?.code || r.locationCode || r.location || r.Location?.code);
+  const fromMov = movementsRowsCache
+    .filter((m) => {
+      if (!wh) return true;
+      const rowWh = String(m?.location?.warehouse || m?.warehouse || "").toUpperCase();
+      return rowWh === wh;
+    })
+    .map((m) => m.location?.code || m.location || m.locationCode);
+  const fromCatalog = locationsCatalogCache
+    .filter((l) => l.active !== false)
+    .filter((l) => !wh || String(l.warehouse || "").toUpperCase() === wh)
+    .map((l) => l.code);
+  return uniqueSortedStrings(fromStock.concat(fromMov).concat(fromCatalog));
+}
+
+function populateTaskLocationSelect(warehouseCode) {
+  const locations = getKnownLocationsForWarehouse(warehouseCode || readSmartFieldValue("taskWarehouse") || "TULTITLAN24");
+  fillSmartSelect("taskLocationSelect", locations, { preferred: "", otherLabel: "Otra ubicación" });
+  wireSmartSelectPair("taskLocationSelect", "taskLocation", { otherLabel: "Otra ubicación" });
+}
+
+async function populateTaskOperationalFields() {
+  await Promise.all([loadWarehousesQuiet(), loadLocationsQuiet()]);
+  const warehouses = getKnownWarehouses();
+  fillSmartSelect("taskWarehouseSelect", warehouses, { preferred: "TULTITLAN24", otherLabel: "Otro almacén" });
+  wireSmartSelectPair("taskWarehouseSelect", "taskWarehouse", { otherLabel: "Otro almacén" });
+  const whSel = document.getElementById("taskWarehouseSelect");
+  const whInp = document.getElementById("taskWarehouse");
+  if (whSel && whInp && !whSel.value && warehouses.includes("TULTITLAN24")) {
+    whSel.value = "TULTITLAN24";
+    whInp.value = "TULTITLAN24";
+    whInp.classList.add("hidden");
+  }
+  populateTaskLocationSelect(readSmartFieldValue("taskWarehouse") || whSel?.value || "TULTITLAN24");
+  const projects = getOperationalProjectsForSelect();
+  const taskProjectSelect = document.getElementById("taskProjectSelect");
+  const taskProject = document.getElementById("taskProject");
+  if (taskProjectSelect && taskProject) {
+    const prev = taskProjectSelect.value;
+    let html = '<option value="">— Seleccionar proyecto —</option>';
+    projects.forEach((p) => {
+      html += `<option value="${escCell(p.code)}">${escCell(p.name)} (${escCell(p.code)})</option>`;
+    });
+    html += `<option value="${SMART_OTHER}">Otro proyecto</option>`;
+    taskProjectSelect.innerHTML = html;
+    if (prev) taskProjectSelect.value = prev;
+    wireSmartSelectPair("taskProjectSelect", "taskProject");
+  }
+}
+
 function getKnownProjects() {
   return getCustomersForSelect();
 }
@@ -9834,6 +10034,25 @@ function wireAllProductTypeaheads() {
     });
   });
   if (typeof wireRelocateBalanceTypeahead === "function") wireRelocateBalanceTypeahead();
+
+  const taskSku = document.getElementById("taskSku");
+  const taskSkuList = document.getElementById("taskSkuSuggestions");
+  if (taskSku instanceof HTMLInputElement && taskSkuList) {
+    wireProductTypeahead({
+      input: taskSku,
+      listEl: taskSkuList,
+      mode: "catalog",
+      getCustomerCode: () => readSmartFieldValue("taskProject") || "",
+      onSelect: (item) => {
+        taskSku.value = item.sku || "";
+        const nameEl = document.getElementById("taskSkuName");
+        if (nameEl) nameEl.textContent = item.productName || item.product?.name || item.name || "";
+        if (isSuggestedOperationalProject(item)) {
+          applyOperationalProjectToSelect("taskProject", item);
+        }
+      }
+    });
+  }
 }
 
 function wireReqLineSkuTypeahead(input) {
@@ -9877,7 +10096,7 @@ function populateSmartOperationalFields() {
     ["incidentWarehouseSelect", "incidentWarehouse", warehouses, "", "Otro almacén"],
     ["incidentLocationSelect", "incidentLocation", locations, "", "Otra ubicación"],
     ["taskWarehouseSelect", "taskWarehouse", warehouses, "TULTITLAN24", "Otro almacén"],
-    ["taskLocationSelect", "taskLocation", locations, "", "Otra ubicación"],
+    ["taskLocationSelect", "taskLocation", getKnownLocationsForWarehouse(readSmartFieldValue("taskWarehouse") || "TULTITLAN24"), "", "Otra ubicación"],
     ["relocateWarehouseSelect", "relocateWarehouse", warehouses, "TULTITLAN24", "Otro almacén"]
   ];
 
@@ -10838,7 +11057,10 @@ function showReqAmbiguity(data) {
     return;
   }
   if (code === "AMBIGUOUS_LAYER") {
-    setReqActionMessage("Hay varias capas libres. La reserva canónica usa FIFO por cubo; no se selecciona capa.", false);
+    setReqActionMessage(
+      "Hay varias entradas libres. La reserva canónica usa FIFO por cubo; no se selecciona entrada manualmente.",
+      false
+    );
   }
 }
 
@@ -11132,6 +11354,7 @@ function wireReqActionModal() {
 
 async function loadPickRequisitions() {
   const select = document.getElementById("pickRequisitionSelect");
+  const emptyHint = document.getElementById("pickRequisitionEmptyHint");
   if (!select) return;
   const previous = select.value;
   try {
@@ -11143,7 +11366,9 @@ async function loadPickRequisitions() {
     select.innerHTML = "";
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = "— Selecciona una requisición aprobada o en progreso —";
+    placeholder.textContent = open.length
+      ? "— Selecciona una requisición aprobada o en progreso —"
+      : "— No hay requisiciones aprobadas o en progreso para surtir —";
     select.appendChild(placeholder);
     for (const row of open) {
       const option = document.createElement("option");
@@ -11151,6 +11376,11 @@ async function loadPickRequisitions() {
       const project = row.project ? `${row.project.code}` : "";
       option.textContent = `${row.number || row.id}${project ? ` · ${project}` : ""} · ${row.status}`;
       select.appendChild(option);
+    }
+    if (emptyHint) {
+      emptyHint.textContent = open.length
+        ? ""
+        : "No hay requisiciones aprobadas o en progreso para surtir. Crea y aprueba una requisición en Operación → Órdenes de surtido / Requisiciones.";
     }
     if (previous && open.some((row) => row.id === previous)) {
       select.value = previous;
@@ -12602,6 +12832,22 @@ async function scanCode(event) {
         resetPickingFlow();
         return;
       }
+      if (payload.code === "AMBIGUOUS_LAYER") {
+        const layers = Array.isArray(payload.details?.layers) ? payload.details.layers : [];
+        setPickingFlowState("stock");
+        if (layers.length) {
+          renderPickLayerOptions(layers, { inventoryId: document.getElementById("pickCandidates")?.dataset?.inventoryId });
+        }
+        scanHint.textContent =
+          payload.message ||
+          "Hay varias entradas con saldo. Elige lote u origen de existencia y confirma de nuevo.";
+        setScanResult(
+          `Ambiguo — ${payload.product?.sku || code}: elige la entrada FIFO recomendada u otra con indicación operativa. No se descontó inventario.`,
+          "error"
+        );
+        resetPickingFlow();
+        return;
+      }
       clearPickCandidates();
       const candHint = payload.candidate
         ? ` Disponible en ${payload.candidate.location} / ${formatInventoryStatus(payload.candidate.status)}: ${payload.candidate.qty}.`
@@ -12624,7 +12870,12 @@ async function scanCode(event) {
 
     clearPickCandidates();
     const candBox = document.getElementById("pickCandidates");
-    if (candBox) delete candBox.dataset.inventoryId;
+    if (candBox) {
+      delete candBox.dataset.inventoryId;
+      delete candBox.dataset.layerId;
+      delete candBox.dataset.layerSelectionMode;
+    }
+    clearPickLayerOptions();
 
     const product = payload.product;
     setPickingFlowState("stock");

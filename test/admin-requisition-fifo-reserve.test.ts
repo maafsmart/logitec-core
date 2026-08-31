@@ -660,16 +660,16 @@ test("6 capas parcialmente reservadas", async () => {
   assert.equal(world.state.reservations.length, 2);
 });
 
-test("7 receivedAt null al final", async () => {
+test("7 receivedAt null usa createdAt como fecha FIFO efectiva", async () => {
   const world = createReqWorld({ requestedQty: "1" });
   setLayers(world, [
     { id: "layer-null", qty: "1", lot: "NULL", receivedAt: null, createdAt: new Date("2020-01-01T00:00:00.000Z") },
     { id: "layer-dated", qty: "1", lot: "DATED", receivedAt: new Date("2026-06-01T00:00:00.000Z") }
   ]);
   await reserveFifo(world.tx, "1");
-  assert.equal(String(world.state.layers.find((layer) => layer.id === "layer-dated")?.reservedQty), "1");
-  assert.equal(String(world.state.layers.find((layer) => layer.id === "layer-null")?.reservedQty), "0");
-  assert.equal(world.state.reservations[0]?.inventoryLayerId, "layer-dated");
+  assert.equal(String(world.state.layers.find((layer) => layer.id === "layer-null")?.reservedQty), "1");
+  assert.equal(String(world.state.layers.find((layer) => layer.id === "layer-dated")?.reservedQty), "0");
+  assert.equal(world.state.reservations[0]?.inventoryLayerId, "layer-null");
 });
 
 test("8 orden createdAt/id", async () => {
@@ -910,7 +910,7 @@ test("21 encabezado completo y cache-buster v72", () => {
   assert.match(html, /#moduleRequisitions \.req-stock-hint/);
   assert.match(html, /white-space:\s*normal/);
   assert.match(html, /max-height:\s*52px/);
-  assert.match(html, /dashboard\.js\?v=90/);
+  assert.match(html, /dashboard\.js\?v=91/);
   assert.doesNotMatch(html, /dashboard\.js\?v=72/);
 });
 

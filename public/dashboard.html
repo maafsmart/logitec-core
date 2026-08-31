@@ -4795,6 +4795,13 @@
                 <div class="field" data-ops-field>
                   <label for="taskType">Tipo de tarea</label>
                   <select id="taskType"></select>
+                  <p id="taskMovementHint" class="module-hint hidden">
+                    Esta tarea no modifica existencias. Para ejecutar el movimiento usa Operación →
+                    Movimiento interno / Reubicación.
+                    <button type="button" id="taskGoRelocateBtn" class="btn-secondary btn-compact" style="margin-top:8px">
+                      Ir a Reubicación
+                    </button>
+                  </p>
                 </div>
                 <div class="field">
                   <label for="taskPriority">Prioridad</label>
@@ -4822,7 +4829,11 @@
                 </div>
                 <div class="field" data-ops-field>
                   <label for="taskSku">SKU / Código de barras</label>
-                  <input id="taskSku" type="text" placeholder="Opcional" />
+                  <div class="product-typeahead" data-pta="task">
+                    <input id="taskSku" type="text" placeholder="Buscar SKU…" autocomplete="off" />
+                    <div id="taskSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
+                  </div>
+                  <p id="taskSkuName" class="assignee-hint"></p>
                 </div>
                 <div class="field" data-ops-field>
                   <label for="taskLocation">Ubicación</label>
@@ -5093,6 +5104,7 @@
                   <option value="">— Selecciona una requisición aprobada o en progreso —</option>
                 </select>
               </div>
+              <p id="pickRequisitionEmptyHint" class="filter-hint" style="margin:8px 0 0"></p>
               <div id="pickRequisitionMeta" class="pick-req-meta"></div>
               <div id="pickRequisitionCubes"></div>
             </section>
@@ -5100,7 +5112,8 @@
               <h4>Picking libre</h4>
               <p class="picking-mode-lead">
                 Utiliza únicamente saldo no reservado (cantidad menos reservedQty). No puede consumir
-                inventario apartado por una requisición.
+                inventario apartado por una requisición. Si hay varias entradas/lotes, el sistema propone
+                primero la existencia más antigua (FIFO) y puedes elegir otra con indicación operativa.
               </p>
             <form id="scanForm" class="picking-scan-card">
               <div class="field full">
@@ -5156,6 +5169,7 @@
                 Primero puede escanearse el código; si hay ambigüedad, elige ubicación/estatus y vuelve a confirmar.
               </p>
               <div id="pickCandidates" class="hidden" style="margin:8px 0 12px"></div>
+              <div id="pickLayerOptions" class="hidden pick-layer-options" style="margin:8px 0 12px"></div>
               <p id="scanHint" class="inline-error"></p>
               <button id="scanBtn" class="btn-scan" type="submit">Confirmar surtido / escaneo</button>
             </form>
@@ -6520,6 +6534,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=90"></script>
+    <script src="/dashboard.js?v=91"></script>
   </body>
 </html>

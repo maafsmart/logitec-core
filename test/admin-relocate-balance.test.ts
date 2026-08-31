@@ -532,8 +532,8 @@ function makeRelocateDom(opts?: Record<string, string>) {
   };
 }
 
-test("dashboard.js usa cache-buster v=90 para reubicación", () => {
-  assert.match(html, /dashboard\.js\?v=90/);
+test("dashboard.js usa cache-buster v=91 para reubicación", () => {
+  assert.match(html, /dashboard\.js\?v=91/);
   assert.doesNotMatch(html, /dashboard\.js\?v=70/);
 });
 
@@ -1277,7 +1277,38 @@ test("FIFO 19-20: destino excluye origen activo y cancelar no hace POST", () => 
   assert.match(src, /allocationMode: "FIFO"/);
 });
 
-test("FIFO: receivedAt nulo va al final del orden", () => {
+test("FIFO: receivedAt nulo usa createdAt como fecha efectiva", () => {
+  const planned = planRelocateFifoAllocation(
+    [
+      {
+        id: "newer-received",
+        qty: d("1"),
+        reservedQty: d("0"),
+        lotNumber: "NEW",
+        receivedAt: new Date("2026-08-20T00:00:00Z"),
+        createdAt: new Date("2026-08-20T00:00:00Z"),
+        unitPriceMxn: d("1"),
+        unitPriceUsd: null,
+        sourceReference: null
+      },
+      {
+        id: "older-created",
+        qty: d("1"),
+        reservedQty: d("0"),
+        lotNumber: "OLD",
+        receivedAt: null,
+        createdAt: new Date("2026-08-01T00:00:00Z"),
+        unitPriceMxn: d("2"),
+        unitPriceUsd: null,
+        sourceReference: null
+      }
+    ],
+    d("1")
+  );
+  assert.equal(planned.allocations[0]?.layer.id, "older-created");
+});
+
+test("FIFO: receivedAt nulo con createdAt posterior a receivedAt antiguo va después", () => {
   const planned = planRelocateFifoAllocation(
     [
       {
