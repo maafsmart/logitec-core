@@ -84,9 +84,9 @@ test("LOGITEC exacto se limpia solo si queda sin dependencias", () => {
   assert.match(js, /normalized === "LOGITEC"/);
 });
 
-test("cache-buster de dashboard.js se actualiza una sola vez a v=86", () => {
+test("cache-buster de dashboard.js se actualiza una sola vez a v=87", () => {
   const matches = [...html.matchAll(/dashboard\.js\?v=(\d+)/g)].map((row) => row[1]);
-  assert.deepEqual(matches, ["86"]);
+  assert.deepEqual(matches, ["87"]);
 });
 
 test("la migración de coherencia de movimientos admite FTS namespaced y el valor histórico", () => {

@@ -6180,9 +6180,27 @@ function syncFocusModeButton() {
   btn.textContent = on ? "Salir de concentración" : "Modo concentración";
 }
 
+function placeNavTabsForFocusMode(on) {
+  const tabs = document.querySelector(".nav-section-tabs");
+  const home = document.getElementById("focusNavHome");
+  const slot = document.getElementById("focusNavSlot");
+  if (!tabs || !home || !slot) return;
+  if (on) {
+    slot.appendChild(tabs);
+    slot.hidden = false;
+  } else if (tabs.parentElement !== home) {
+    home.appendChild(tabs);
+    slot.hidden = true;
+  } else {
+    slot.hidden = true;
+  }
+}
+
 function applyFocusMode(on) {
   document.body.classList.toggle("focus-mode", Boolean(on));
+  placeNavTabsForFocusMode(Boolean(on));
   syncFocusModeButton();
+  if (!on) announceNav("");
 }
 
 function wireFocusMode() {
@@ -6197,7 +6215,7 @@ function wireFocusMode() {
       return;
     }
     applyFocusMode(true);
-    announceNav("Modo concentración: navegación oculta para más espacio. Pulsa «Salir de concentración» o Esc.");
+    announceNav("Concentración activa. Usa Inicio, Operación, Inventario, Control y Sistema en la barra superior.");
     if (!canUseFullscreenApi()) {
       announceNav("Modo concentración activo (compacto). Este navegador no permite pantalla completa web.");
       return;
@@ -11804,8 +11822,9 @@ function applyRoleNavigation(role) {
     panel.dataset.roleHidden = anyVisible ? "0" : "1";
     const sectionId = panel.getAttribute("data-nav-section-panel");
     if (anyVisible && !firstVisibleSection) firstVisibleSection = sectionId;
-    const tab = document.querySelector(`.nav-section-tab[data-nav-section="${sectionId}"]`);
-    if (tab) tab.style.display = anyVisible ? "" : "none";
+    document.querySelectorAll(`.nav-section-tab[data-nav-section="${sectionId}"]`).forEach((tab) => {
+      tab.style.display = anyVisible ? "" : "none";
+    });
     if (!anyVisible) {
       panel.classList.remove("active");
       panel.style.display = "none";

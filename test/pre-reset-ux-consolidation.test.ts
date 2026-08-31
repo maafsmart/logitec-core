@@ -162,6 +162,8 @@ test("Mi cuenta es ficha de solo lectura y el modo concentración oculta chrome"
   assert.match(sliceFunction(js, "saveAccountProfile"), /solo lectura/i);
   assert.doesNotMatch(sliceFunction(js, "saveAccountProfile"), /method: "PATCH"/);
   assert.match(html, /body\.focus-mode \.sidebar \{\s*display: none/);
+  assert.match(html, /id="focusNavSlot"/);
+  assert.match(js, /function placeNavTabsForFocusMode/);
   assert.match(js, /Salir de concentración/);
   assert.match(html, /id="focusModeBtn"/);
   const wire = sliceFunction(js, "wireFocusMode");

@@ -106,12 +106,66 @@
       body.focus-mode .aviat-context-bar span:not(:first-child) {
         display: none !important;
       }
+      .focus-nav-slot {
+        display: none;
+      }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .app-topbar,
       body.focus-mode .app-topbar {
         padding: 6px 12px;
         max-height: none;
         height: auto;
+        overflow: visible;
+        flex-wrap: wrap;
+        row-gap: 6px;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .app-topbar .aviat-context-bar,
+      body.focus-mode .app-topbar .aviat-context-bar {
+        max-width: none;
+        overflow: visible;
+        flex: 0 1 auto;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .app-topbar-meta,
+      body.focus-mode .app-topbar-meta {
+        flex: 0 1 auto;
+        min-width: 0;
+        flex-wrap: nowrap;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .focus-nav-slot:not([hidden]),
+      body.focus-mode .focus-nav-slot:not([hidden]) {
+        display: flex;
+        flex: 1 1 360px;
+        min-width: 0;
+        max-width: 100%;
+        align-items: center;
+        justify-content: center;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .focus-nav-slot .nav-section-tabs,
+      body.focus-mode .focus-nav-slot .nav-section-tabs {
+        width: 100%;
+        max-width: 640px;
+        margin: 0;
+        padding: 2px;
+        min-height: 34px;
+        max-height: none;
+        flex-wrap: nowrap;
+        overflow: visible;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .focus-nav-slot .nav-section-tab,
+      body.focus-mode .focus-nav-slot .nav-section-tab {
+        min-width: 0;
+        flex: 1 1 0;
+        padding: 6px 8px;
+        font-size: 0.78rem;
+        min-height: 32px;
+        white-space: nowrap;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .nav-announce,
+      body.focus-mode .nav-announce {
+        position: absolute;
+        width: 1px;
+        height: 1px;
         overflow: hidden;
+        clip: rect(0, 0, 0, 0);
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .sidebar,
       body.focus-mode .sidebar {
@@ -4058,6 +4112,7 @@
           <h1>LOGITEC CORE WMS</h1>
           <p>Control operativo de almacén</p>
         </div>
+        <div id="focusNavSlot" class="focus-nav-slot" hidden></div>
         <div class="app-topbar-meta">
           <div class="aviat-context-bar">
             <span>Cliente activo: <strong data-aviat-primary-label>—</strong></span>
@@ -4082,12 +4137,14 @@
       <div class="app-body">
         <aside class="sidebar" aria-label="Navegación principal">
           <div class="nav-shell">
+            <div id="focusNavHome">
             <div class="nav-section-tabs" role="tablist" aria-label="Áreas del sistema">
               <button type="button" class="nav-section-tab active" data-nav-section="inicio" role="tab" aria-selected="true">Inicio</button>
               <button type="button" class="nav-section-tab" data-nav-section="operacion" role="tab" aria-selected="false">Operación</button>
               <button type="button" class="nav-section-tab" data-nav-section="inventario" role="tab" aria-selected="false">Inventario</button>
               <button type="button" class="nav-section-tab" data-nav-section="control" role="tab" aria-selected="false">Control</button>
               <button type="button" class="nav-section-tab" data-nav-section="sistema" role="tab" aria-selected="false">Sistema</button>
+            </div>
             </div>
             <div class="nav-section-body">
               <div class="nav-section-panel active" data-nav-section-panel="inicio" data-nav-group="inicio">
@@ -6334,6 +6391,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=86"></script>
+    <script src="/dashboard.js?v=87"></script>
   </body>
 </html>
