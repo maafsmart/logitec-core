@@ -552,6 +552,7 @@ let currentUserClient = null;
 let mustChangePassword = false;
 let usersCache = [];
 let operationalHistoryPreview = null;
+let outboundCubeSyncGuard = null;
 let adminSelectedClientId = "";
 let movementsNextCursor = null;
 let movementsRows = [];
@@ -5198,6 +5199,16 @@ function movementQuantity(row) {
   return `${n > 0 ? "+" : ""}${formatQty(qty)}`;
 }
 
+/** Cantidad numérica del movimiento (nunca reutiliza etiquetas de tipo). */
+function formatMovementDetailQty(row) {
+  if (row?.qty != null && row.qty !== "") return formatQty(row.qty);
+  const signed = row?.movement?.signedQty;
+  if (signed == null || signed === "") return "—";
+  const n = Number(signed);
+  if (!Number.isFinite(n)) return formatQty(signed);
+  return formatQty(Math.abs(n));
+}
+
 function formatMovementTypeLabel(type) {
   const raw = String(type || "").toUpperCase();
   if (raw === "ASSIGNMENT_TRANSFER") return "Reasignación";
@@ -7725,13 +7736,13 @@ function openMovementDetail(row) {
   const transfer = row.movement?.movementType === "ASSIGNMENT_TRANSFER";
   const requisition = row.requisition;
   openDetailDrawer("Detalle de movimiento", [
-    { label: "Movimiento", value: formatMovementTypeLabel(row.movement?.movementType || row.movement?.type) },
+    { label: "Tipo", value: formatMovementTypeLabel(row.movement?.movementType || row.movement?.type) },
     { label: "Fecha / hora (Ciudad de México)", value: formatMexicoCityDateTime(row.createdAt) },
     { label: "Cliente", value: canonicalClientDisplay(row) },
     { label: "Proyecto", value: transfer ? formatTransferAssignment(row) : row.project ? `${row.project.code} — ${row.project.name}` : "—" },
     { label: "SKU", value: row.product?.sku },
     { label: "Descripción", value: row.product?.name },
-    { label: "Cantidad", value: transfer ? formatQty(row.qty) : movementQuantity(row) },
+    { label: "Cantidad", value: formatMovementDetailQty(row) },
     { label: relocation ? "Saldo origen antes" : "Antes", value: formatQty(row.movement?.quantityBefore) },
     { label: relocation ? "Saldo origen después" : "Después", value: formatQty(row.movement?.quantityAfter) },
     { label: "Almacén", value: row.toLocation?.warehouse || row.fromLocation?.warehouse },
@@ -9279,6 +9290,10 @@ function clearSkuSelectionFields(prefix, input, { keepSkuText = false } = {}) {
     const productIdEl = document.getElementById(`${prefix}ProductId`);
     if (productIdEl) productIdEl.value = "";
   }
+  if (prefix === "outbound") {
+    clearOutboundInventorySelection();
+    if (typeof syncOutboundSubmitEnabled === "function") syncOutboundSubmitEnabled();
+  }
   if (prefix === "inbound") {
     const hid = document.getElementById("inboundProductId");
     if (hid) hid.value = "";
@@ -9312,6 +9327,88 @@ function clearSkuSelectionFields(prefix, input, { keepSkuText = false } = {}) {
   }
 }
 
+function clearOutboundInventorySelection() {
+  const inv = document.getElementById("outboundInventoryId");
+  if (inv) inv.value = "";
+  const productId = document.getElementById("outboundProductId");
+  if (productId) productId.value = "";
+}
+
+function outboundHasValidSkuSelection() {
+  const input = document.getElementById("outboundSku");
+  if (!input) return false;
+  const code = String(input.dataset.skuSelectedCode || "").trim();
+  const selectedId = String(input.dataset.skuSelectedId || "").trim();
+  const typed = String(input.value || "").trim();
+  if (!code || !selectedId || !typed) return false;
+  return typed === code;
+}
+
+function outboundHasExactInventorySelection() {
+  const inv = String(document.getElementById("outboundInventoryId")?.value || "").trim();
+  return Boolean(inv) && outboundHasValidSkuSelection();
+}
+
+function syncOutboundSubmitEnabled() {
+  const btn = document.getElementById("outboundSubmitBtn");
+  if (!btn) return;
+  const qty = Number(document.getElementById("outboundQty")?.value);
+  const warehouse =
+    (typeof readSmartFieldValue === "function" ? readSmartFieldValue("outboundWarehouse") : "") ||
+    document.getElementById("outboundWarehouse")?.value?.trim() ||
+    "";
+  const location =
+    (typeof readSmartFieldValue === "function" ? readSmartFieldValue("outboundLocation") : "") ||
+    document.getElementById("outboundLocation")?.value?.trim() ||
+    "";
+  const status = document.getElementById("outboundStatus")?.value || "";
+  const customerCode = document.getElementById("outboundCustomer")?.value?.trim() || "";
+  const ready =
+    outboundHasExactInventorySelection() &&
+    Boolean(customerCode) &&
+    customerCode !== SMART_OTHER &&
+    Boolean(warehouse) &&
+    Boolean(location) &&
+    Boolean(status) &&
+    Number.isFinite(qty) &&
+    qty > 0;
+  btn.disabled = !ready;
+}
+
+function setOutboundInventoryFromCube(row) {
+  if (!row?.inventoryId) return;
+  const syncing = { value: true };
+  outboundCubeSyncGuard = syncing;
+  try {
+    if (row.assignmentType === "FREE_TO_SALE") {
+      const projectSel = document.getElementById("outboundCustomer");
+      if (projectSel) projectSel.value = "";
+      const cliente = document.getElementById("outboundCliente");
+      if (cliente) cliente.value = "FREE TO SALE";
+    } else if (row.projectCode || row.project?.code) {
+      applyOperationalProjectToSelect("outboundCustomer", {
+        projectCode: row.projectCode || row.project?.code,
+        projectName: row.projectName || row.project?.name
+      });
+      const cliente = document.getElementById("outboundCliente");
+      if (cliente) cliente.value = row.projectName || row.project?.name || row.projectCode || row.project?.code || "";
+    }
+    if (row.warehouse) setSmartFieldValue("outboundWarehouse", row.warehouse);
+    if (row.location || row.locationCode) setSmartFieldValue("outboundLocation", row.location || row.locationCode);
+    if (row.status) {
+      setSelectValueFlexible("outboundStatus", row.status, {
+        allowCreate: true,
+        labelFn: (code) => formatInventoryStatus(code)
+      });
+    }
+    const inv = document.getElementById("outboundInventoryId");
+    if (inv) inv.value = row.inventoryId;
+  } finally {
+    if (outboundCubeSyncGuard === syncing) outboundCubeSyncGuard = null;
+  }
+  syncOutboundSubmitEnabled();
+}
+
 function beginSkuChange(listEl, input) {
   const prefix = opsPrefixFromTypeahead(listEl, input);
   const skuInput = input || listEl?.parentElement?.querySelector("input");
@@ -9330,7 +9427,7 @@ function invalidateSkuSelection(listEl, input) {
   return true;
 }
 
-function buildSkuContextDetailHtml(context, { pickingSelector = false } = {}) {
+function buildSkuContextDetailHtml(context, { pickingSelector = false, outboundSelector = false } = {}) {
   const locations = Array.isArray(context?.inventory?.locations) ? context.inventory.locations : [];
   const clientName = canonicalClientDisplay(context);
   const project =
@@ -9343,13 +9440,14 @@ function buildSkuContextDetailHtml(context, { pickingSelector = false } = {}) {
     : locations.length === 1
       ? "1 cubo encontrado."
       : `${locations.length} cubos: selecciona Proyecto / FREE TO SALE y ubicación antes de operar.`;
+  const selectable = pickingSelector || outboundSelector;
   const locationRows = locations
     .map((row) => {
       const assignmentLabel = assignmentDisplayLabel(row);
       const text = `${assignmentLabel} · ${row.locationCode || "—"} · ${formatInventoryStatus(row.status)} · ${formatQty(row.qty)} · Reservada ${formatQty(
         row.reservedQty
       )} · No reservada ${formatQty(row.unreservedQty)}`;
-      if (pickingSelector && row.inventoryId) {
+      if (selectable && row.inventoryId) {
         return `<li><button type="button" class="btn-secondary btn-compact" data-sku-cube="${escCell(
           row.inventoryId
         )}" style="text-align:left;justify-content:flex-start">${escCell(text)}</button></li>`;
@@ -9599,9 +9697,10 @@ function renderSkuContext(listEl, context) {
   panel.hidden = false;
   const locations = Array.isArray(context.inventory?.locations) ? context.inventory.locations : [];
   const pickingSelector = Boolean(document.getElementById("pickCandidates") && listEl?.id === "scanSkuSuggestions");
+  const outboundSelector = Boolean(listEl?.id === "outboundSkuSuggestions");
   panel.innerHTML = buildSkuSelectedCardHtml(
     context,
-    buildSkuContextDetailHtml(context, { pickingSelector }),
+    buildSkuContextDetailHtml(context, { pickingSelector, outboundSelector }),
     typeof skuCardScopeFromTypeahead === "function" ? skuCardScopeFromTypeahead(listEl) : null
   );
   rememberInventorySkuSelectedContext(listEl, context);
@@ -9609,15 +9708,34 @@ function renderSkuContext(listEl, context) {
     rememberRequisitionSkuSelectedContext(listEl, context);
   }
   const input = wrap?.querySelector("input");
+  const cardSku = String(context.product?.sku || "").trim();
+  if (input && cardSku && String(input.value || "").trim() !== cardSku) {
+    panel.classList.add("hidden");
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
   panel.querySelector(".sku-change-btn")?.addEventListener("click", () => {
     beginSkuChange(listEl, input);
   });
-  if (pickingSelector) {
+  if (pickingSelector || outboundSelector) {
     panel.querySelectorAll("[data-sku-cube]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const inventoryId = btn.getAttribute("data-sku-cube");
         const row = locations.find((item) => item.inventoryId === inventoryId);
         if (!row) return;
+        if (outboundSelector) {
+          setOutboundInventoryFromCube({
+            inventoryId: row.inventoryId,
+            assignmentType: row.assignmentType,
+            projectCode: row.project?.code || "",
+            projectName: row.project?.name || "",
+            location: row.locationCode,
+            warehouse: row.warehouse,
+            status: row.status
+          });
+          return;
+        }
         renderPickCandidates([
           {
             inventoryId: row.inventoryId,
@@ -9765,7 +9883,7 @@ function wireProductTypeahead(cfg) {
   input.dataset.ptaWired = "1";
   input.setAttribute("autocomplete", "off");
   const minChars = cfg.minChars ?? PRODUCT_TYPEAHEAD_MIN_CHARS;
-  const state = { items: /** @type {any[]} */ ([]), active: -1, timer: null, requestSeq: 0 };
+  const state = { items: /** @type {any[]} */ ([]), active: -1, timer: null, requestSeq: 0, contextSeq: 0 };
   productTypeaheadState.set(input, state);
 
   const close = () => {
@@ -9781,6 +9899,16 @@ function wireProductTypeahead(cfg) {
     input.dataset.skuSelectedId = item.productId || "";
     input.dataset.skuSelectedCode = item.sku || "";
     const prefix = opsPrefixFromTypeahead(listEl, input);
+    if (prefix === "outbound") {
+      clearOutboundInventorySelection();
+      const hid = document.getElementById("outboundProductId");
+      if (hid) hid.value = item.productId || "";
+      if (item.kind === "stock" && item.inventoryId) {
+        const inv = document.getElementById("outboundInventoryId");
+        if (inv) inv.value = item.inventoryId;
+      }
+      syncOutboundSubmitEnabled();
+    }
     if (prefix === "inbound") {
       const hid = document.getElementById("inboundProductId");
       if (hid) hid.value = item.productId || "";
@@ -9790,11 +9918,18 @@ function wireProductTypeahead(cfg) {
       syncInboundSubmitEnabled();
     }
     const selectedId = item.productId || "";
+    const selectedSku = item.sku || "";
+    const contextSeq = ++state.contextSeq;
     void loadSkuContext(selectedId).then((context) => {
+      if (contextSeq !== state.contextSeq) return;
       if (input.dataset.skuSelectedId !== selectedId) return;
+      if (String(input.dataset.skuSelectedCode || "").trim() !== String(selectedSku).trim()) return;
+      if (String(input.value || "").trim() !== String(selectedSku).trim()) return;
+      if (context?.product?.sku && String(context.product.sku).trim() !== String(selectedSku).trim()) return;
       hideProductTypeaheadList(listEl);
       if (context) renderSkuContext(listEl, context);
       cfg.onSelect({ ...item, context });
+      if (prefix === "outbound") syncOutboundSubmitEnabled();
     });
   };
 
@@ -9830,7 +9965,9 @@ function wireProductTypeahead(cfg) {
   };
 
   input.addEventListener("input", () => {
+    state.contextSeq += 1;
     invalidateSkuSelection(listEl, input);
+    if (opsPrefixFromTypeahead(listEl, input) === "outbound") syncOutboundSubmitEnabled();
     if (state.timer) clearTimeout(state.timer);
     state.timer = setTimeout(refresh, PRODUCT_TYPEAHEAD_DEBOUNCE_MS);
   });
@@ -9877,6 +10014,12 @@ function applyCatalogSuggestionToOps(prefix, item) {
   }
   const productEl = document.getElementById(`${prefix}Product`);
   if (productEl) productEl.value = item.productName || item.product?.name || "";
+  if (prefix === "outbound") {
+    const hid = document.getElementById("outboundProductId");
+    if (hid) hid.value = item.productId || "";
+    if (!(item.kind === "stock" && item.inventoryId)) clearOutboundInventorySelection();
+    syncOutboundSubmitEnabled();
+  }
   if (prefix === "inbound") {
     const hid = document.getElementById("inboundProductId");
     if (hid) hid.value = item.productId || "";
@@ -9904,6 +10047,9 @@ function applyStockSuggestionToOps(prefix, item) {
       allowCreate: true,
       labelFn: (code) => formatInventoryStatus(code)
     });
+  }
+  if (prefix === "outbound" && item.inventoryId) {
+    setOutboundInventoryFromCube(item);
   }
 }
 
@@ -10403,6 +10549,11 @@ async function submitOperationalMovement(kind) {
     syncInboundSubmitEnabled();
     return;
   }
+  if (kind !== "in" && !outboundHasValidSkuSelection()) {
+    setOpsMessage(msgId, "Seleccione un SKU de las sugerencias.", false);
+    syncOutboundSubmitEnabled();
+    return;
+  }
   if (!sku) {
     setOpsMessage(msgId, "Seleccione un SKU del catálogo.", false);
     return;
@@ -10410,21 +10561,25 @@ async function submitOperationalMovement(kind) {
   if (!warehouse) {
     setOpsMessage(msgId, "Indique el almacén.", false);
     if (kind === "in") syncInboundSubmitEnabled();
+    if (kind !== "in") syncOutboundSubmitEnabled();
     return;
   }
   if (!location) {
     setOpsMessage(msgId, "Indique la ubicación.", false);
     if (kind === "in") syncInboundSubmitEnabled();
+    if (kind !== "in") syncOutboundSubmitEnabled();
     return;
   }
   if (!status) {
     setOpsMessage(msgId, "Seleccione un estatus.", false);
     if (kind === "in") syncInboundSubmitEnabled();
+    if (kind !== "in") syncOutboundSubmitEnabled();
     return;
   }
   if (!Number.isFinite(qty) || qty <= 0) {
     setOpsMessage(msgId, "La cantidad debe ser mayor que 0.", false);
     if (kind === "in") syncInboundSubmitEnabled();
+    if (kind !== "in") syncOutboundSubmitEnabled();
     return;
   }
 
@@ -10435,6 +10590,18 @@ async function submitOperationalMovement(kind) {
   }
   if (kind !== "in" && customerCode) {
     /* El propietario operativo lo decide el cubo, no product.customer. */
+  }
+
+  const outboundInventoryId =
+    kind !== "in" ? String(document.getElementById("outboundInventoryId")?.value || "").trim() : "";
+  if (kind !== "in" && !outboundInventoryId) {
+    setOpsMessage(
+      msgId,
+      "Seleccione el cubo exacto (proyecto/asignación, ubicación y estatus) antes de registrar la salida.",
+      false
+    );
+    syncOutboundSubmitEnabled();
+    return;
   }
 
   const reference = buildOpsReference(lote, referenceRaw, kind);
@@ -10482,6 +10649,9 @@ async function submitOperationalMovement(kind) {
       reference,
       notes: notes || undefined
     };
+    if (kind !== "in" && outboundInventoryId) {
+      payload.inventoryId = outboundInventoryId;
+    }
     if (kind === "in") {
       payload.assignmentType = inboundAssignmentType;
       payload.projectId = inboundAssignmentType === "FREE_TO_SALE" ? null : inboundProjectId;
@@ -10510,6 +10680,16 @@ async function submitOperationalMovement(kind) {
       const priceEl = document.getElementById("inboundUnitPriceMxn");
       if (priceEl) priceEl.value = "";
       updateInboundEntryValue();
+    } else {
+      clearOutboundInventorySelection();
+      const skuEl = document.getElementById("outboundSku");
+      if (skuEl?.dataset) {
+        delete skuEl.dataset.skuSelectedId;
+        delete skuEl.dataset.skuSelectedCode;
+      }
+      const productEl = document.getElementById("outboundProduct");
+      if (productEl) productEl.value = "";
+      hideSkuSelectedCard(document.getElementById("outboundSkuSuggestions"));
     }
     await loadStockStrip();
     await loadInventoryMovements();
@@ -10519,7 +10699,7 @@ async function submitOperationalMovement(kind) {
     setOpsMessage(msgId, "Error de red.", false);
   } finally {
     if (kind === "in") syncInboundSubmitEnabled();
-    else if (btn) btn.disabled = false;
+    else syncOutboundSubmitEnabled();
   }
 }
 
@@ -12082,6 +12262,30 @@ function wireOperationalForms() {
     outBtn.dataset.opsWired = "1";
     outBtn.addEventListener("click", () => void submitOperationalMovement("out"));
   }
+  [
+    "outboundCustomer",
+    "outboundSku",
+    "outboundQty",
+    "outboundWarehouse",
+    "outboundWarehouseSelect",
+    "outboundLocation",
+    "outboundLocationSelect",
+    "outboundStatus"
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.outboundReadyWired === "1") return;
+    el.dataset.outboundReadyWired = "1";
+    const sync = () => {
+      if (!outboundCubeSyncGuard && id !== "outboundSku" && id !== "outboundQty") {
+        const inv = document.getElementById("outboundInventoryId");
+        if (inv?.value) inv.value = "";
+      }
+      syncOutboundSubmitEnabled();
+    };
+    el.addEventListener("input", sync);
+    el.addEventListener("change", sync);
+  });
+  syncOutboundSubmitEnabled();
   const reqBtn = document.getElementById("reqSubmitBtn");
   if (reqBtn && reqBtn.dataset.opsWired !== "1") {
     reqBtn.dataset.opsWired = "1";

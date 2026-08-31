@@ -5926,6 +5926,8 @@
                     />
                     <div id="outboundSkuSuggestions" class="product-typeahead-list hidden" role="listbox" hidden></div>
                   </div>
+                  <input id="outboundInventoryId" type="hidden" value="" />
+                  <input id="outboundProductId" type="hidden" value="" />
                 </div>
                 <div class="field">
                   <label for="outboundProduct">Producto</label>
@@ -5963,7 +5965,7 @@
                 </div>
               </div>
               <p id="outboundMessage" class="ops-message"></p>
-              <button type="button" id="outboundSubmitBtn" class="btn-primary btn-compact">Registrar salida</button>
+              <button type="button" id="outboundSubmitBtn" class="btn-primary btn-compact" disabled>Registrar salida</button>
             </div>
             <div class="card-panel" style="padding:0">
               <p id="outboundTableMeta" class="operational-table-meta" style="margin:0;border-radius:12px 12px 0 0">Salidas recientes</p>
@@ -6534,6 +6536,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=91"></script>
+    <script src="/dashboard.js?v=92"></script>
   </body>
 </html>

@@ -827,7 +827,15 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
     const location = await resolveLocationByCode(body.location, body.warehouse);
     if (!location) throw new HttpError(400, "La ubicación indicada no existe.");
     locationId = location.id;
-  } else if (!inventoryId && body.location) {
+  } else if (inventoryId) {
+    const targeted = await prisma.inventory.findFirst({
+      where: { id: inventoryId, productId: product.id, clientId: activeClientId },
+      select: { id: true }
+    });
+    if (!targeted) {
+      throw new HttpError(404, "Línea de inventario no encontrada para ese inventoryId y SKU.");
+    }
+  } else if (body.location) {
     const location = await resolveLocationByCode(body.location, body.warehouse);
     if (!location) throw new HttpError(400, "La ubicación indicada no existe.");
     const stockRows = await prisma.inventory.findMany({
