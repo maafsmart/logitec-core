@@ -2943,8 +2943,10 @@
       }
       .grid-detail-actions button { width: 100%; }
       #reqActionModal .modal-panel { width: min(480px, 96vw); }
-      #reqActionSerialField .req-serial-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 160px; overflow: auto; }
-      #reqActionSerialField .req-serial-list li { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border, #e5e7eb); font-size: 13px; }
+      #relocateSerialsField .relocate-serial-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 180px; overflow: auto; }
+      #relocateSerialsField .relocate-serial-list li { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border, #e5e7eb); font-size: 13px; }
+      #relocateSerialsField .relocate-serial-group { margin: 8px 0 0; }
+      #relocateSerialsField .relocate-serial-group-title { margin: 0 0 4px; font-size: 0.78rem; font-weight: 700; color: var(--muted); }
       #reqActionSummary .detail-field { margin-bottom: 8px; padding-bottom: 8px; }
       #reqActionMessage { min-height: 1.2em; margin: 8px 0 0; }
       .data-grid-row.body .data-grid-cell {
@@ -6088,7 +6090,7 @@
             <div class="card-panel ops-form-panel">
               <p class="ops-aviat-banner">Cliente: <strong data-aviat-primary-label>—</strong> · Control operativo de reubicación</p>
               <p class="module-lead" style="margin:0 0 12px">
-                Reubicación atómica: descuenta origen y acredita destino en una sola transacción. Si el saldo tiene varias capas, la cantidad se asigna en FIFO conservando lote y precio de cada tramo.
+                Reubicación atómica: descuenta origen y acredita destino en una sola transacción. Si el saldo tiene varias capas, la cantidad se asigna en FIFO conservando lote y precio de cada tramo. Si el saldo tiene series/IMEI, elige las piezas exactas; el lote se conserva automáticamente.
               </p>
               <h4 class="secondary-panel-title">Reubicación de inventario</h4>
               <div class="form-grid">
@@ -6141,6 +6143,17 @@
                   <label for="relocateQty">Cantidad</label>
                   <input id="relocateQty" type="number" step="0.0001" min="0.0001" inputmode="decimal" required />
                   <p id="relocateAvailableHint" class="price-new-help">Disponible para reubicar: —</p>
+                </div>
+                <div id="relocateSerialsField" class="field full hidden" hidden>
+                  <label for="relocateSerialScan">Series / IMEI a reubicar</label>
+                  <input id="relocateSerialScan" type="text" autocomplete="off" placeholder="Escanear o escribir serie / IMEI" />
+                  <p id="relocateSerialHint" class="price-new-help">Este saldo tiene series. Elige las piezas exactas. La cantidad debe coincidir con las series seleccionadas. El lote se conserva automáticamente.</p>
+                  <p id="relocateSerialCounter" class="module-lead">0 de 0</p>
+                  <p id="relocateSerialMessage" class="ops-message"></p>
+                  <ul id="relocateSerialSelected" class="relocate-serial-list"></ul>
+                  <p class="module-lead">Series disponibles por lote</p>
+                  <div id="relocateSerialEligible"></div>
+                  <input id="relocateSerialIds" type="hidden" value="" />
                 </div>
                 <div class="field full">
                   <label for="relocateReference">Referencia (opcional)</label>
@@ -6534,6 +6547,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=91"></script>
+    <script src="/dashboard.js?v=92"></script>
   </body>
 </html>

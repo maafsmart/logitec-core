@@ -559,6 +559,7 @@ let catalogApplyCompleted = false;
 let stockRowsCache = [];
 /** @type {Array<{ id?: string, code?: string, warehouse?: string, active?: boolean }>} */
 let relocateLocationsCache = [];
+let relocateSerialPlan = null;
 let productsCache = [];
 let movementsCountCache = 0;
 let movementsRowsCache = [];
@@ -8705,6 +8706,281 @@ function relocateSerialsBlockRelocate() {
   return relocateSelectedBalance().serialCount > 0;
 }
 
+function relocateSelectedSerialIds() {
+  const raw = document.getElementById("relocateSerialIds")?.value?.trim() || "";
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map((id) => String(id || "").trim()).filter(Boolean);
+  } catch (_e) {
+    /* ignore malformed hidden payload */
+  }
+  return raw
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
+function setRelocateSelectedSerialIds(ids) {
+  const el = document.getElementById("relocateSerialIds");
+  const unique = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(ids) ? ids : []) {
+    const id = String(raw || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(id);
+  }
+  if (el) el.value = unique.length ? JSON.stringify(unique) : "";
+  return unique;
+}
+
+function relocateSerialMismatchMessage(expected, actual) {
+  const missing = Number(expected) - Number(actual);
+  if (missing > 0) {
+    return `Faltan ${missing} series. Elige exactamente ${expected} series para reubicar ${expected} piezas.`;
+  }
+  if (missing < 0) {
+    return `Hay ${-missing} series de más. Elige exactamente ${expected} series para reubicar ${expected} piezas.`;
+  }
+  return `Seleccionaste ${expected} series.`;
+}
+
+function relocateSerialsNeedExactMatch() {
+  return Number(document.getElementById("relocateSku")?.dataset?.relocateSerialCount || 0) > 0;
+}
+
+function flattenRelocateEligibleSerials(plan) {
+  const layers = Array.isArray(plan?.layers) ? plan.layers : [];
+  const rows = [];
+  const seen = new Set();
+  for (const layer of layers) {
+    const serials = Array.isArray(layer?.serials) ? layer.serials : [];
+    for (const serial of serials) {
+      if (!serial?.id) continue;
+      const id = String(serial.id);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      rows.push({
+        id,
+        serialNumber: String(serial.serialNumber || ""),
+        imei: serial.imei ? String(serial.imei) : null,
+        inventoryLayerId: String(layer.inventoryLayerId || layer.id || ""),
+        lotNumber: layer.lotNumber ? String(layer.lotNumber) : null
+      });
+    }
+  }
+  return rows;
+}
+
+function formatRelocateSerialLabel(row) {
+  const lot = row.lotNumber ? `Lote ${row.lotNumber}` : "Sin lote";
+  const imei = row.imei ? ` · IMEI ${row.imei}` : "";
+  return `${row.serialNumber}${imei} · ${lot}`;
+}
+
+function relocateSerialNeededQty() {
+  if (!relocateSerialsNeedExactMatch()) return 0;
+  const qty = parseRelocateQty();
+  if (!qty.ok || qty.value == null || !Number.isInteger(qty.value)) return 0;
+  return qty.value;
+}
+
+function hideRelocateSerialSelector() {
+  relocateSerialPlan = null;
+  setRelocateSelectedSerialIds([]);
+  const field = document.getElementById("relocateSerialsField");
+  if (field) {
+    field.classList.add("hidden");
+    field.hidden = true;
+  }
+  const scan = document.getElementById("relocateSerialScan");
+  if (scan) scan.value = "";
+  const eligible = document.getElementById("relocateSerialEligible");
+  if (eligible) eligible.innerHTML = "";
+  const selected = document.getElementById("relocateSerialSelected");
+  if (selected) selected.innerHTML = "";
+  const counter = document.getElementById("relocateSerialCounter");
+  if (counter) counter.textContent = "0 de 0";
+  const msg = document.getElementById("relocateSerialMessage");
+  if (msg) msg.textContent = "";
+}
+
+function showRelocateSerialSelector() {
+  const field = document.getElementById("relocateSerialsField");
+  if (!field) return;
+  field.classList.remove("hidden");
+  field.hidden = false;
+}
+
+function renderRelocateSerialSelector() {
+  const field = document.getElementById("relocateSerialsField");
+  if (!field || field.classList.contains("hidden") || field.hidden) return;
+  const needed = relocateSerialNeededQty();
+  const selectedIds = relocateSelectedSerialIds();
+  const counter = document.getElementById("relocateSerialCounter");
+  if (counter) counter.textContent = `${selectedIds.length} de ${needed || 0}`;
+  const msg = document.getElementById("relocateSerialMessage");
+  const qty = parseRelocateQty();
+  if (msg) {
+    if (relocateSerialsNeedExactMatch() && qty.ok && Number.isInteger(qty.value) && selectedIds.length !== qty.value) {
+      msg.textContent = relocateSerialMismatchMessage(qty.value, selectedIds.length);
+    } else if (relocateSerialsNeedExactMatch() && qty.ok && Number.isInteger(qty.value) && selectedIds.length === qty.value) {
+      msg.textContent = `Seleccionaste ${qty.value} series.`;
+    } else if (relocateSerialsNeedExactMatch() && qty.ok && !Number.isInteger(qty.value)) {
+      msg.textContent = "La cantidad serializada debe ser un entero positivo.";
+    } else {
+      msg.textContent = "";
+    }
+  }
+  const rows = flattenRelocateEligibleSerials(relocateSerialPlan);
+  const selectedSet = new Set(selectedIds);
+  const selectedEl = document.getElementById("relocateSerialSelected");
+  if (selectedEl) {
+    const selectedRows = selectedIds.map((id) => rows.find((row) => row.id === id)).filter(Boolean);
+    selectedEl.innerHTML = selectedRows
+      .map(
+        (row) =>
+          `<li><span>${escCell(formatRelocateSerialLabel(row))}</span><button type="button" class="btn-secondary" data-remove-relocate-serial="${escCell(row.id)}">Quitar</button></li>`
+      )
+      .join("");
+  }
+  const eligibleEl = document.getElementById("relocateSerialEligible");
+  if (eligibleEl) {
+    const layers = Array.isArray(relocateSerialPlan?.layers) ? relocateSerialPlan.layers : [];
+    eligibleEl.innerHTML = layers
+      .map((layer) => {
+        const lot = layer.lotNumber ? `Lote ${layer.lotNumber}` : "Sin lote";
+        const serials = Array.isArray(layer.serials) ? layer.serials : [];
+        const items = serials
+          .map((serial) => {
+            const row = {
+              id: String(serial.id || ""),
+              serialNumber: String(serial.serialNumber || ""),
+              imei: serial.imei ? String(serial.imei) : null,
+              lotNumber: layer.lotNumber || null
+            };
+            if (!row.id) return "";
+            const taken = selectedSet.has(row.id);
+            return `<li><span>${escCell(formatRelocateSerialLabel(row))}</span><button type="button" class="btn-secondary" data-add-relocate-serial="${escCell(row.id)}" ${taken ? "disabled" : ""}>${taken ? "Seleccionada" : "Elegir"}</button></li>`;
+          })
+          .join("");
+        return `<div class="relocate-serial-group"><p class="relocate-serial-group-title">${escCell(lot)}</p><ul class="relocate-serial-list">${items}</ul></div>`;
+      })
+      .join("");
+  }
+}
+
+function addRelocateSerialId(id) {
+  const serialId = String(id || "").trim();
+  if (!serialId) return { ok: false, message: "Serie no válida." };
+  const rows = flattenRelocateEligibleSerials(relocateSerialPlan);
+  if (!rows.some((row) => row.id === serialId)) {
+    return { ok: false, message: "La serie no pertenece a este saldo, producto o lote origen." };
+  }
+  const selected = relocateSelectedSerialIds();
+  if (selected.includes(serialId)) {
+    return { ok: false, message: "La serie ya está seleccionada." };
+  }
+  const needed = relocateSerialNeededQty();
+  if (needed && selected.length >= needed) {
+    return { ok: false, message: relocateSerialMismatchMessage(needed, selected.length + 1) };
+  }
+  setRelocateSelectedSerialIds([...selected, serialId]);
+  renderRelocateSerialSelector();
+  syncRelocateSubmitEnabled();
+  return { ok: true };
+}
+
+function addRelocateSerialFromScan(raw) {
+  const token = String(raw || "").trim();
+  if (!token) return { ok: false, message: "Indica una serie o IMEI." };
+  const rows = flattenRelocateEligibleSerials(relocateSerialPlan);
+  const upper = token.toUpperCase();
+  const match = rows.find(
+    (row) =>
+      String(row.serialNumber || "").toUpperCase() === upper || String(row.imei || "").toUpperCase() === upper
+  );
+  if (!match) {
+    return { ok: false, message: "La serie o IMEI no pertenece a este saldo origen." };
+  }
+  return addRelocateSerialId(match.id);
+}
+
+function removeRelocateSerialId(id) {
+  const serialId = String(id || "").trim();
+  setRelocateSelectedSerialIds(relocateSelectedSerialIds().filter((row) => row !== serialId));
+  renderRelocateSerialSelector();
+  syncRelocateSubmitEnabled();
+}
+
+async function syncRelocateSerialSelector(item) {
+  const serialCount = Number(item?.serialCount || 0);
+  const inventoryId = item?.inventoryId || "";
+  if (!(serialCount > 0) || !inventoryId) {
+    hideRelocateSerialSelector();
+    syncRelocateSubmitEnabled();
+    return;
+  }
+  showRelocateSerialSelector();
+  relocateSerialPlan = null;
+  setRelocateSelectedSerialIds([]);
+  const msg = document.getElementById("relocateSerialMessage");
+  if (typeof authenticatedFetch !== "function") {
+    renderRelocateSerialSelector();
+    syncRelocateSubmitEnabled();
+    return;
+  }
+  try {
+    const response = await authenticatedFetch(
+      `/api/inventory/relocate-serials?inventoryId=${encodeURIComponent(inventoryId)}`
+    );
+    if (!response?.ok) {
+      if (msg) msg.textContent = "No se pudieron cargar las series de este saldo.";
+      renderRelocateSerialSelector();
+      syncRelocateSubmitEnabled();
+      return;
+    }
+    const data = await response.json();
+    relocateSerialPlan = data && typeof data === "object" ? data : { layers: [] };
+    renderRelocateSerialSelector();
+  } catch (_e) {
+    if (msg) msg.textContent = "No se pudieron cargar las series de este saldo.";
+  }
+  syncRelocateSubmitEnabled();
+}
+
+function wireRelocateSerialSelector() {
+  const field = document.getElementById("relocateSerialsField");
+  if (!field || field.dataset.relocateSerialWired === "1") return;
+  field.dataset.relocateSerialWired = "1";
+  field.addEventListener("click", (ev) => {
+    const add = ev.target?.closest?.("[data-add-relocate-serial]");
+    if (add) {
+      ev.preventDefault();
+      addRelocateSerialId(add.getAttribute("data-add-relocate-serial"));
+      return;
+    }
+    const remove = ev.target?.closest?.("[data-remove-relocate-serial]");
+    if (remove) {
+      ev.preventDefault();
+      removeRelocateSerialId(remove.getAttribute("data-remove-relocate-serial"));
+    }
+  });
+  const scan = document.getElementById("relocateSerialScan");
+  if (scan && scan.dataset.relocateSerialWired !== "1") {
+    scan.dataset.relocateSerialWired = "1";
+    scan.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      const result = addRelocateSerialFromScan(scan.value);
+      const msg = document.getElementById("relocateSerialMessage");
+      if (result.ok) scan.value = "";
+      if (msg && result.message) msg.textContent = result.message;
+    });
+  }
+}
+
 function relocateFormIsComplete() {
   if (!relocateOriginContextReady()) return false;
   if (!relocateHasBalanceSelection()) return false;
@@ -8716,6 +8992,11 @@ function relocateFormIsComplete() {
   if (qty.empty || !qty.ok) return false;
   const available = relocateAvailableQtyNumber();
   if (available == null || qty.value > available) return false;
+  const serialCount = Number(document.getElementById("relocateSku")?.dataset?.relocateSerialCount || 0);
+  if (serialCount > 0) {
+    if (!Number.isInteger(qty.value)) return false;
+    if (relocateSelectedSerialIds().length !== qty.value) return false;
+  }
   return true;
 }
 
@@ -8835,6 +9116,7 @@ function clearRelocateBalanceFields(input, { keepSkuText = false } = {}) {
   if (inv) inv.value = "";
   const layer = document.getElementById("relocateLayerId");
   if (layer) layer.value = "";
+  if (typeof hideRelocateSerialSelector === "function") hideRelocateSerialSelector();
   clearRelocateDestination();
 }
 
@@ -8883,6 +9165,7 @@ function applyRelocateBalanceSelection(item) {
   if (layer) layer.value = "";
   renderRelocateSelectedCard(item);
   syncRelocateLocationSelects();
+  if (typeof syncRelocateSerialSelector === "function") void syncRelocateSerialSelector(item);
   syncRelocateFormState();
 }
 
@@ -8991,6 +9274,7 @@ function syncRelocateSubmitEnabled() {
 function syncRelocateFormState() {
   syncRelocateSkuEnabled();
   updateRelocateAvailableHint();
+  if (typeof renderRelocateSerialSelector === "function") renderRelocateSerialSelector();
   syncRelocateSubmitEnabled();
 }
 
@@ -9011,12 +9295,15 @@ function buildRelocateConfirmMessage(input) {
   const lote = Number(input.layerCount) > 1 ? `${input.layerCount} capas internas` : input.lotNumber ? `lote ${input.lotNumber}` : "sin lote";
   const statusLabel =
     typeof formatInventoryStatus === "function" ? formatInventoryStatus(input.status) : input.status;
-  const fifo =
-    Number(input.layerCount) > 1
+  const serialLines = Array.isArray(input.serialLines) ? input.serialLines.filter(Boolean) : [];
+  const fifo = serialLines.length
+    ? " Los lotes se conservan automáticamente."
+    : Number(input.layerCount) > 1
       ? ` Asignación FIFO sobre ${input.layerCount} capas.`
       : " La cantidad se distribuirá automáticamente respetando FIFO, lotes y precios.";
+  const serials = serialLines.length ? ` Series: ${serialLines.join(", ")}.` : "";
   const reference = input.reference ? ` Referencia ${input.reference}.` : "";
-  return `Se reubicará ${qty} piezas del SKU ${sku}${product}, ${assignment}, almacén ${input.warehouse}, de ${input.fromLoc} a ${input.toLoc}, estatus ${statusLabel}, ${lote}.${reference}${fifo} ¿Deseas continuar?`;
+  return `Se reubicará ${qty} piezas del SKU ${sku}${product}, ${assignment}, almacén ${input.warehouse}, de ${input.fromLoc} a ${input.toLoc}, estatus ${statusLabel}, ${lote}.${reference}${serials}${fifo} ¿Deseas continuar?`;
 }
 
 function showRelocateBalanceSuggestions(listEl, items, activeIdx, onPick) {
@@ -10480,6 +10767,22 @@ async function submitRelocate() {
     setOpsMessage(msgId, "La cantidad no puede superar la disponible no reservada.", false);
     return;
   }
+  const serialIds = typeof relocateSelectedSerialIds === "function" ? relocateSelectedSerialIds() : [];
+  if (selected.serialCount > 0) {
+    if (!Number.isInteger(qty.value)) {
+      setOpsMessage(msgId, "La cantidad serializada debe ser un entero positivo.", false);
+      return;
+    }
+    if (serialIds.length !== qty.value) {
+      setOpsMessage(msgId, relocateSerialMismatchMessage(qty.value, serialIds.length), false);
+      return;
+    }
+  }
+  const serialRows = flattenRelocateEligibleSerials(relocateSerialPlan);
+  const serialLines = serialIds.map((id) => {
+    const row = serialRows.find((item) => item.id === id);
+    return row ? formatRelocateSerialLabel(row) : id;
+  });
 
   const confirmMsg = buildRelocateConfirmMessage({
     qty: qty.raw || qty.value,
@@ -10493,18 +10796,10 @@ async function submitRelocate() {
     status: stockStatus,
     lotNumber: selected.lotNumber,
     layerCount: selected.layerCount,
-    reference: referenceRaw || ""
+    reference: referenceRaw || "",
+    serialLines
   });
   if (typeof window !== "undefined" && window.confirm && !window.confirm(confirmMsg)) {
-    syncRelocateSubmitEnabled();
-    return;
-  }
-  if (selected.serialCount > 0) {
-    setOpsMessage(
-      msgId,
-      "El saldo contiene series; requiere selección explícita de seriales. Esta reubicación no puede continuar.",
-      false
-    );
     syncRelocateSubmitEnabled();
     return;
   }
@@ -10519,6 +10814,7 @@ async function submitRelocate() {
       reference: referenceRaw || `RELOC-${Date.now()}`,
       notes: notesExtra || undefined
     };
+    if (serialIds.length) body.serialIds = serialIds.slice();
 
     const response = await authenticatedFetch("/api/inventory/relocate", {
       method: "POST",
@@ -11985,6 +12281,7 @@ function wireOperationalForms() {
     el.addEventListener("change", onReady);
   });
   if (typeof wireRelocateBalanceTypeahead === "function") wireRelocateBalanceTypeahead();
+  if (typeof wireRelocateSerialSelector === "function") wireRelocateSerialSelector();
   syncRelocateLocationSelects();
   syncRelocateFormState();
   const outBtn = document.getElementById("outboundSubmitBtn");

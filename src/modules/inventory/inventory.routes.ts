@@ -52,7 +52,7 @@ import {
 } from "./physical-reset.service.js";
 import { isForbiddenInventoryProjectRecord } from "./inventory-project-rules.js";
 import { createMovementSchema } from "./inventory-movement.schema.js";
-import { searchRelocateBalances } from "./inventory-relocate-search.service.js";
+import { searchRelocateBalances, searchRelocateSerials } from "./inventory-relocate-search.service.js";
 
 const inventoryRouter = Router();
 
@@ -906,6 +906,7 @@ const relocateSchema = z
     inventoryId: z.string().min(1),
     layerId: z.string().min(1).optional(),
     allocationMode: z.enum(["FIFO"]).optional(),
+    serialIds: z.array(z.string().min(1).max(120)).max(1_000).optional(),
     destinationLocation: z.string().min(1).max(120),
     quantity: z.coerce.number().positive(),
     reference: z.string().max(120).optional(),
@@ -918,6 +919,29 @@ const relocateSchema = z
         code: z.ZodIssueCode.custom,
         message: "No se puede indicar layerId y allocationMode al mismo tiempo."
       });
+    }
+    const serialIds = Array.isArray(data.serialIds)
+      ? data.serialIds.map((id) => id.trim()).filter(Boolean)
+      : [];
+    if (!serialIds.length) return;
+    if (!Number.isInteger(data.quantity)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "La cantidad serializada debe ser un entero positivo."
+      });
+    }
+    if (serialIds.length !== data.quantity) {
+      const missing = data.quantity - serialIds.length;
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          missing > 0
+            ? `Faltan ${missing} series. Elige exactamente ${data.quantity} series para reubicar ${data.quantity} piezas.`
+            : `Hay ${-missing} series de más. Elige exactamente ${data.quantity} series para reubicar ${data.quantity} piezas.`
+      });
+    }
+    if (new Set(serialIds).size !== serialIds.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Hay series duplicadas." });
     }
   });
 
@@ -940,6 +964,18 @@ inventoryRouter.get("/relocate-balances", requireRole(["ADMIN", "SUPERVISOR", "O
     req.auth!
   );
   res.json(items);
+});
+
+const relocateSerialQuerySchema = z.object({
+  inventoryId: z.string().trim().min(1)
+});
+
+inventoryRouter.get("/relocate-serials", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"]), async (req, res) => {
+  const query = relocateSerialQuerySchema.parse(req.query);
+  await assertAccessibleInventory(req.auth!, query.inventoryId, prisma);
+  const result = await searchRelocateSerials(query.inventoryId, req.auth!);
+  if (!result) throw new HttpError(404, "Línea de inventario origen no encontrada.");
+  res.json(result);
 });
 
 const assignmentTransferSchema = z
@@ -978,6 +1014,12 @@ inventoryRouter.post("/relocate", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"
   if (destination.warehouse !== source.location.warehouse) {
     throw new HttpError(400, "El destino debe estar en el mismo almacén.");
   }
+  const serialIds = Array.isArray(body.serialIds)
+    ? body.serialIds.map((id) => String(id || "").trim()).filter(Boolean)
+    : [];
+  for (const serialId of serialIds) {
+    await assertAccessibleSerial(req.auth!, serialId, prisma);
+  }
   try {
     const result = await mutateInventory({
       type: "RELOCATE",
@@ -985,6 +1027,7 @@ inventoryRouter.post("/relocate", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"
       inventoryId: source.id,
       layerId: body.layerId,
       allocationMode: body.allocationMode,
+      serialIds,
       destinationLocationId: destination.id,
       qty: dec(body.quantity),
       reference: body.reference?.trim() || null,
@@ -1003,7 +1046,19 @@ inventoryRouter.post("/relocate", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR"
     res.status(201).json(result.movement);
   } catch (error) {
     if (error instanceof InventoryMutationError) {
-      const status = ["AMBIGUOUS_LAYER", "INSUFFICIENT_STOCK", "SERIAL_SELECTION_REQUIRED"].includes(error.code)
+      const status = [
+        "AMBIGUOUS_LAYER",
+        "INSUFFICIENT_STOCK",
+        "SERIAL_SELECTION_REQUIRED",
+        "SERIAL_COUNT_MISMATCH",
+        "SERIAL_DUPLICATE",
+        "SERIAL_NOT_FOUND",
+        "SERIAL_PRODUCT_MISMATCH",
+        "SERIAL_CLIENT_MISMATCH",
+        "SERIAL_LAYER_MISMATCH",
+        "SERIAL_QTY_NOT_INTEGER",
+        "SERIAL_ALREADY_SHIPPED"
+      ].includes(error.code)
         ? 409
         : 400;
       res.status(status).json({ code: error.code, message: error.message, details: error.details });

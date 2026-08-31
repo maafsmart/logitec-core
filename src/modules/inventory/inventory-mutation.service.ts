@@ -10,7 +10,13 @@ import {
   sameAssignmentFields,
   type InventoryAssignment
 } from "./inventory-assignment.js";
-import { assertNoSerialAmbiguity } from "./inventory-serial-guard.js";
+import {
+  assertNoSerialAmbiguity,
+  assertRelocateSerialSelection,
+  groupRelocateSerialsByLayer,
+  lockInventorySerialsById,
+  normalizeRelocateSerialIds
+} from "./inventory-serial-guard.js";
 
 export { InventoryMutationError } from "./inventory-errors.js";
 
@@ -27,6 +33,7 @@ export type InventoryMutationInput = {
   inventoryId?: string;
   layerId?: string;
   allocationMode?: RelocateAllocationMode;
+  serialIds?: string[] | null;
   qty: Prisma.Decimal;
   reference?: string | null;
   notes?: string | null;
@@ -497,6 +504,194 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
     }
     if (allocationMode && allocationMode !== "FIFO") {
       throw new InventoryMutationError("INVALID_ALLOCATION_MODE", "allocationMode debe ser FIFO.");
+    }
+
+    const serialIds = normalizeRelocateSerialIds(input.serialIds);
+    if (serialIds.length) {
+      assertRelocateSerialSelection(serialIds, input.qty);
+      await lockInventoryLayers(tx, sourceFresh.id);
+      await lockInventorySerialsById(tx, serialIds);
+      const sourceReloaded = await lockInventory(tx, sourceFresh.id);
+      const destReloaded = await lockInventory(tx, destFresh.id);
+      if (!sourceReloaded || !destReloaded) {
+        throw new InventoryMutationError("INVENTORY_NOT_FOUND", "No se pudieron releer las líneas de reubicación.");
+      }
+      if (sourceReloaded.locationId === destReloaded.locationId) {
+        throw new InventoryMutationError("SAME_LOCATION", "Origen y destino deben ser distintos.");
+      }
+      if (sourceReloaded.clientId !== destReloaded.clientId) {
+        throw new InventoryMutationError(
+          "CROSS_CLIENT_TRANSFER",
+          "No se puede mezclar inventario de otro cliente en este cubo."
+        );
+      }
+      const inventoryAvailable = relocateUnreserved(sourceReloaded.qty, sourceReloaded.reservedQty);
+      if (inventoryAvailable.lessThan(input.qty)) {
+        throw new InventoryMutationError("INSUFFICIENT_STOCK", "La línea origen no tiene saldo suficiente no reservado.");
+      }
+
+      const layers = await tx.inventoryLayer.findMany({ where: { inventoryId: sourceReloaded.id } });
+      const layerById = new Map(layers.map((layer) => [layer.id, layer]));
+      const lockedSerials = await tx.inventorySerial.findMany({
+        where: { id: { in: serialIds } },
+        select: {
+          id: true,
+          productId: true,
+          clientId: true,
+          inventoryLayerId: true,
+          serialNumber: true,
+          imei: true
+        }
+      });
+      if (lockedSerials.length !== serialIds.length) {
+        throw new InventoryMutationError("SERIAL_NOT_FOUND", "Una o más series no existen.");
+      }
+      const serialById = new Map(lockedSerials.map((row) => [row.id, row]));
+      const orderedSerials = serialIds.map((id) => serialById.get(id)!);
+      const grouped = groupRelocateSerialsByLayer(orderedSerials, {
+        productId: input.productId,
+        clientId: sourceReloaded.clientId,
+        sourceLayerIds: new Set(layers.map((layer) => layer.id)),
+        requiredLayerId: layerId || undefined
+      });
+
+      for (const [sourceLayerId, serials] of grouped) {
+        const layer = layerById.get(sourceLayerId);
+        if (!layer) {
+          throw new InventoryMutationError(
+            "SERIAL_LAYER_MISMATCH",
+            "La serie no pertenece a las capas origen de este saldo."
+          );
+        }
+        const take = new Prisma.Decimal(serials.length);
+        const available = relocateUnreserved(layer.qty, layer.reservedQty);
+        if (available.lessThan(take)) {
+          throw new InventoryMutationError(
+            "INSUFFICIENT_STOCK",
+            "La capa origen no tiene saldo suficiente no reservado."
+          );
+        }
+      }
+
+      const before = sourceReloaded.qty;
+      const allocationAudit: Prisma.InputJsonValue[] = [];
+      const serialAudit: Prisma.InputJsonValue[] = [];
+      let firstDestLayer: { id: string } | null = null;
+      let destAfter: { id: string; qty: Prisma.Decimal } | null = null;
+      const orderedGroups = [...grouped.entries()].sort((left, right) => {
+        const a = layerById.get(left[0]);
+        const b = layerById.get(right[0]);
+        if (!a || !b) return left[0].localeCompare(right[0]);
+        return compareFifoLayers(a, b);
+      });
+
+      for (const [sourceLayerId, serials] of orderedGroups) {
+        const sourceLayer = layerById.get(sourceLayerId)!;
+        const take = new Prisma.Decimal(serials.length);
+        await decrementLayerAndParent(tx, sourceReloaded.id, sourceLayer.id, take);
+        const destLayer = await tx.inventoryLayer.create({
+          data: {
+            inventoryId: destReloaded.id,
+            lotNumber: sourceLayer.lotNumber,
+            qty: take,
+            reservedQty: 0,
+            receivedAt: sourceLayer.receivedAt,
+            unitPriceMxn: sourceLayer.unitPriceMxn,
+            unitPriceUsd: sourceLayer.unitPriceUsd,
+            sourceReference: sourceLayer.sourceReference,
+            sourceType: "RELOCATION"
+          }
+        });
+        destAfter = await incrementParent(tx, destReloaded.id, take);
+        if (!firstDestLayer) firstDestLayer = destLayer;
+        for (const serial of serials) {
+          const updated = await tx.inventorySerial.updateMany({
+            where: {
+              id: serial.id,
+              inventoryLayerId: sourceLayer.id,
+              productId: input.productId,
+              clientId: sourceReloaded.clientId
+            },
+            data: { inventoryLayerId: destLayer.id }
+          });
+          if (updated.count !== 1) {
+            throw new InventoryMutationError(
+              "SERIAL_LAYER_MISMATCH",
+              "No se pudo reubicar una serie hacia la capa destino."
+            );
+          }
+          serialAudit.push({
+            id: serial.id,
+            serialNumber: serial.serialNumber,
+            imei: serial.imei,
+            sourceLayerId: sourceLayer.id,
+            destinationLayerId: destLayer.id
+          });
+        }
+        allocationAudit.push({
+          sourceLayerId: sourceLayer.id,
+          destinationLayerId: destLayer.id,
+          qty: take.toString(),
+          lotNumber: sourceLayer.lotNumber,
+          unitPriceMxn: sourceLayer.unitPriceMxn == null ? null : sourceLayer.unitPriceMxn.toString(),
+          unitPriceUsd: sourceLayer.unitPriceUsd == null ? null : sourceLayer.unitPriceUsd.toString(),
+          receivedAt: sourceLayer.receivedAt ? sourceLayer.receivedAt.toISOString() : null,
+          sourceReference: sourceLayer.sourceReference,
+          serialIds: serials.map((row) => row.id)
+        });
+      }
+
+      const sourceAfter = await tx.inventory.findUniqueOrThrow({ where: { id: sourceReloaded.id } });
+      const movement = await tx.inventoryMovement.create({
+        data: {
+          productId: input.productId,
+          type: "RELOCATE",
+          movementType: "RELOCATE",
+          stockStatus: sourceReloaded.status,
+          qty: input.qty,
+          warehouse: sourceReloaded.location.warehouse,
+          fromLocationId: sourceReloaded.locationId,
+          toLocationId: destReloaded.locationId,
+          inventoryLayerId: firstDestLayer?.id,
+          quantityBefore: before,
+          quantityAfter: sourceAfter.qty,
+          reference: input.reference ?? null,
+          notes: input.notes ?? null,
+          userId: input.userId,
+          taskId: input.taskId ?? null,
+          ...sameAssignmentFields(sourceAssignment)
+        }
+      });
+      await logActivity(
+        {
+          ...input.activity,
+          productId: input.productId,
+          customerId: sourceReloaded.projectId,
+          clientId: sourceAssignment.clientId,
+          warehouse: sourceReloaded.location.warehouse,
+          location: `${sourceReloaded.location.code} → ${destReloaded.location.code}`,
+          qty: input.qty,
+          metadata: activityMetadata(input.activity, {
+            inventoryId: sourceReloaded.id,
+            destinationInventoryId: destReloaded.id,
+            allocationMode: "SERIAL",
+            serialIds,
+            serials: serialAudit,
+            allocations: allocationAudit,
+            movementId: movement.id
+          })
+        },
+        tx
+      );
+      return {
+        inventory: sourceAfter,
+        layer: firstDestLayer,
+        movement,
+        before,
+        after: sourceAfter.qty,
+        destinationInventory: destAfter,
+        scanEvent: null
+      };
     }
 
     if (allocationMode === "FIFO") {

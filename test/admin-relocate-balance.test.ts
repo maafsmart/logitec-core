@@ -13,7 +13,8 @@ import {
   matchesRelocateProductQuery,
   relocateLocationCodeMatches,
   relocateWarehouseMatches,
-  toRelocateBalanceSuggestions
+  toRelocateBalanceSuggestions,
+  toRelocateSerialGroups
 } from "../src/modules/inventory/inventory-relocate-search.service.js";
 
 const html = readFileSync(new URL("../public/dashboard.html", import.meta.url), "utf8");
@@ -190,9 +191,19 @@ function createRelocateTx(opts?: {
     movements: [] as Array<Record<string, unknown>>,
     activities: [] as Array<Record<string, unknown>>,
     serialCount: opts?.serials ?? 0,
+    serials: [] as Array<{
+      id: string;
+      productId: string;
+      clientId: string;
+      inventoryLayerId: string | null;
+      serialNumber: string;
+      imei: string | null;
+    }>,
     nextId: 1,
     destLayerCreates: 0,
-    failOnDestLayerCreate: 0
+    failOnDestLayerCreate: 0,
+    failOnSerialUpdate: 0,
+    serialUpdates: 0
   };
   if (opts?.destExists) {
     state.inventories.push({
@@ -305,8 +316,49 @@ function createRelocateTx(opts?: {
       }
     },
     inventorySerial: {
-      count: async ({ where }: { where: { inventoryLayerId: string } }) =>
-        where.inventoryLayerId === "layer-src" ? state.serialCount : 0
+      count: async ({ where }: { where: { inventoryLayerId: string } }) => {
+        if (state.serials.length) {
+          return state.serials.filter((row) => row.inventoryLayerId === where.inventoryLayerId).length;
+        }
+        return where.inventoryLayerId === "layer-src" ? state.serialCount : 0;
+      },
+      findMany: async ({
+        where
+      }: {
+        where: { id?: { in: string[] }; inventoryLayerId?: string | { in: string[] }; productId?: string; clientId?: string };
+      }) => {
+        let rows = state.serials.slice();
+        if (where.id?.in) rows = rows.filter((row) => where.id!.in.includes(row.id));
+        if (typeof where.inventoryLayerId === "string") {
+          rows = rows.filter((row) => row.inventoryLayerId === where.inventoryLayerId);
+        } else if (where.inventoryLayerId?.in) {
+          rows = rows.filter((row) => row.inventoryLayerId && where.inventoryLayerId!.in.includes(row.inventoryLayerId));
+        }
+        if (where.productId) rows = rows.filter((row) => row.productId === where.productId);
+        if (where.clientId) rows = rows.filter((row) => row.clientId === where.clientId);
+        return rows.map((row) => ({ ...row }));
+      },
+      updateMany: async ({
+        where,
+        data
+      }: {
+        where: { id: string; inventoryLayerId?: string; productId?: string; clientId?: string };
+        data: { inventoryLayerId: string | null };
+      }) => {
+        state.serialUpdates += 1;
+        if (state.failOnSerialUpdate > 0 && state.serialUpdates >= state.failOnSerialUpdate) {
+          throw new Error("simulated serial update failure");
+        }
+        const matches = state.serials.filter(
+          (row) =>
+            row.id === where.id &&
+            (where.inventoryLayerId == null || row.inventoryLayerId === where.inventoryLayerId) &&
+            (where.productId == null || row.productId === where.productId) &&
+            (where.clientId == null || row.clientId === where.clientId)
+        );
+        for (const row of matches) row.inventoryLayerId = data.inventoryLayerId;
+        return { count: matches.length };
+      }
     },
     activityLog: {
       create: async ({ data }: { data?: Record<string, unknown> } = {}) => {
@@ -344,6 +396,9 @@ function createRelocateTx(opts?: {
         inv.qty = inv.qty.plus(delta);
         return [{ id: inv.id, qty: inv.qty }];
       }
+      if (text.includes("FOR UPDATE") && text.includes("InventorySerial")) {
+        return state.serials.map((row) => ({ id: row.id }));
+      }
       if (text.includes("FOR UPDATE") && text.includes("InventoryLayer")) return state.layers.map((layer) => ({ id: layer.id }));
       if (text.includes("FOR UPDATE")) return state.inventories.map((row) => ({ id: row.id }));
       return [];
@@ -356,13 +411,14 @@ function createRelocateTx(opts?: {
 async function relocateQty(
   tx: unknown,
   qty: string,
-  extra: { layerId?: string } = {}
+  extra: { layerId?: string; serialIds?: string[] } = {}
 ) {
   return mutateInventoryInTransaction(tx as never, {
     type: "RELOCATE",
     productId: "prod-1",
     inventoryId: "inv-src",
     layerId: extra.layerId ?? "layer-src",
+    serialIds: extra.serialIds,
     destinationLocationId: "loc-2",
     qty: d(qty),
     userId: "admin-1",
@@ -375,13 +431,14 @@ async function relocateQty(
 async function relocateFifoQty(
   tx: unknown,
   qty: string,
-  extra: { destinationLocationId?: string } = {}
+  extra: { destinationLocationId?: string; serialIds?: string[] } = {}
 ) {
   return mutateInventoryInTransaction(tx as never, {
     type: "RELOCATE",
     productId: "prod-1",
     inventoryId: "inv-src",
     allocationMode: "FIFO",
+    serialIds: extra.serialIds,
     destinationLocationId: extra.destinationLocationId ?? "loc-2",
     qty: d(qty),
     userId: "admin-1",
@@ -395,6 +452,8 @@ function snapshotRelocateState(state: {
   inventories: Array<{ qty: Prisma.Decimal; reservedQty: Prisma.Decimal } & Record<string, unknown>>;
   layers: Array<{ qty: Prisma.Decimal; reservedQty: Prisma.Decimal; unitPriceMxn: Prisma.Decimal | null } & Record<string, unknown>>;
   movements: Array<Record<string, unknown>>;
+  serials?: Array<Record<string, unknown>>;
+  activities?: Array<Record<string, unknown>>;
 }) {
   return {
     inventories: state.inventories.map((row) => ({ ...row, qty: d(row.qty), reservedQty: d(row.reservedQty) })),
@@ -404,17 +463,21 @@ function snapshotRelocateState(state: {
       reservedQty: d(layer.reservedQty),
       unitPriceMxn: layer.unitPriceMxn == null ? null : d(layer.unitPriceMxn)
     })),
-    movements: state.movements.slice()
+    movements: state.movements.slice(),
+    serials: (state.serials || []).map((row) => ({ ...row })),
+    activities: (state.activities || []).slice()
   };
 }
 
 function restoreRelocateState(
-  state: { inventories: unknown[]; layers: unknown[]; movements: unknown[] },
+  state: { inventories: unknown[]; layers: unknown[]; movements: unknown[]; serials?: unknown[]; activities?: unknown[] },
   snapshot: ReturnType<typeof snapshotRelocateState>
 ) {
   state.inventories.splice(0, state.inventories.length, ...snapshot.inventories);
   state.layers.splice(0, state.layers.length, ...snapshot.layers);
   state.movements.splice(0, state.movements.length, ...snapshot.movements);
+  if (state.serials) state.serials.splice(0, state.serials.length, ...snapshot.serials);
+  if (state.activities) state.activities.splice(0, state.activities.length, ...snapshot.activities);
 }
 
 function setFifoCube(
@@ -451,6 +514,28 @@ function setFifoCube(
   }));
 }
 
+function seedRelocateSerials(
+  world: ReturnType<typeof createRelocateTx>,
+  rows: Array<{
+    id: string;
+    layerId?: string;
+    serialNumber?: string;
+    imei?: string | null;
+    productId?: string;
+    clientId?: string;
+  }>
+) {
+  world.state.serials = rows.map((row) => ({
+    id: row.id,
+    productId: row.productId ?? "prod-1",
+    clientId: row.clientId ?? "client-aviat",
+    inventoryLayerId: row.layerId ?? "layer-src",
+    serialNumber: row.serialNumber ?? row.id,
+    imei: row.imei === undefined ? null : row.imei
+  }));
+  world.state.serialCount = world.state.serials.length;
+}
+
 function loadRelocateUi(document: unknown) {
   const src = [
     sliceFunction(js, "relocateWarehouseValue"),
@@ -463,6 +548,10 @@ function loadRelocateUi(document: unknown) {
     sliceFunction(js, "relocateAvailableQtyNumber"),
     sliceFunction(js, "relocateSelectedBalance"),
     sliceFunction(js, "relocateSerialsBlockRelocate"),
+    sliceFunction(js, "relocateSelectedSerialIds"),
+    sliceFunction(js, "setRelocateSelectedSerialIds"),
+    sliceFunction(js, "relocateSerialMismatchMessage"),
+    sliceFunction(js, "relocateSerialsNeedExactMatch"),
     sliceFunction(js, "relocateFormIsComplete"),
     sliceFunction(js, "syncRelocateSubmitEnabled"),
     sliceFunction(js, "buildRelocateConfirmMessage"),
@@ -470,7 +559,7 @@ function loadRelocateUi(document: unknown) {
   ].join("\n");
   return new Function(
     "document",
-    `${src}; return { relocateOriginContextReady, relocateHasBalanceSelection, parseRelocateQty, relocateFormIsComplete, relocateSerialsBlockRelocate, syncRelocateSubmitEnabled, buildRelocateConfirmMessage, relocateLayerSummary, relocateStatusValue, relocateFromValue };`
+    `${src}; return { relocateOriginContextReady, relocateHasBalanceSelection, parseRelocateQty, relocateFormIsComplete, relocateSerialsBlockRelocate, relocateSelectedSerialIds, setRelocateSelectedSerialIds, relocateSerialMismatchMessage, relocateSerialsNeedExactMatch, syncRelocateSubmitEnabled, buildRelocateConfirmMessage, relocateLayerSummary, relocateStatusValue, relocateFromValue };`
   )(document);
 }
 
@@ -491,6 +580,7 @@ function makeRelocateDom(opts?: Record<string, string>) {
   set("relocateInventoryId", opts?.inventoryId ?? "inv-fts");
   set("relocateLayerId", opts?.layerId ?? "layer-1");
   set("relocateQty", opts?.qty ?? "2");
+  set("relocateSerialIds", opts?.serialIds ?? "");
   set("relocateSubmitBtn", "");
   const submitBtn = values.relocateSubmitBtn as {
     disabled?: boolean;
@@ -520,20 +610,48 @@ function makeRelocateDom(opts?: Record<string, string>) {
     textContent: "",
     dataset: { available: opts?.available ?? "8" }
   };
+  const serialField = {
+    id: "relocateSerialsField",
+    classList: {
+      hidden: !(Number(opts?.serialCount || 0) > 0),
+      contains(name: string) {
+        return name === "hidden" ? this.hidden : false;
+      },
+      add(name: string) {
+        if (name === "hidden") this.hidden = true;
+      },
+      remove(name: string) {
+        if (name === "hidden") this.hidden = false;
+      }
+    },
+    hidden: !(Number(opts?.serialCount || 0) > 0),
+    innerHTML: ""
+  };
+  const extras: Record<string, unknown> = {
+    relocateSerialsField: serialField,
+    relocateSerialCounter: { id: "relocateSerialCounter", textContent: "0 de 0" },
+    relocateSerialMessage: { id: "relocateSerialMessage", textContent: "" },
+    relocateSerialEligible: { id: "relocateSerialEligible", innerHTML: "" },
+    relocateSerialSelected: { id: "relocateSerialSelected", innerHTML: "" },
+    relocateSerialScan: { id: "relocateSerialScan", value: "" }
+  };
   return {
     document: {
       getElementById(id: string) {
         if (id === "relocateAvailableHint") return hint;
+        if (id in extras) return extras[id];
         return values[id] || null;
       }
     },
     values,
-    hint
+    hint,
+    serialField
   };
 }
 
-test("dashboard.js usa cache-buster v=91 para reubicación", () => {
-  assert.match(html, /dashboard\.js\?v=91/);
+test("dashboard.js usa cache-buster v=92 para reubicación", () => {
+  assert.match(html, /dashboard\.js\?v=92/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=91/);
   assert.doesNotMatch(html, /dashboard\.js\?v=70/);
 });
 
@@ -753,14 +871,18 @@ test("19 comportamiento seguro con seriales", async () => {
       assert.equal(error.code, "SERIAL_SELECTION_REQUIRED");
     }
   );
-  assert.match(js, /El saldo contiene series; requiere selección explícita de seriales/);
+  assert.match(html, /id="relocateSerialsField"/);
+  assert.match(js, /\/api\/inventory\/relocate-serials\?inventoryId=/);
+  assert.match(js, /body\.serialIds = serialIds\.slice\(\)/);
   const serialDom = makeRelocateDom({ serialCount: "2" });
   const serialUi = loadRelocateUi(serialDom.document);
   assert.equal(serialUi.relocateSerialsBlockRelocate(), true);
+  assert.equal(serialUi.relocateFormIsComplete(), false);
+  serialUi.setRelocateSelectedSerialIds(["ser-a", "ser-b"]);
   assert.equal(serialUi.relocateFormIsComplete(), true);
   const submitSrc = sliceFunction(js, "submitRelocate");
-  assert.ok(submitSrc.indexOf("window.confirm") < submitSrc.indexOf("selected.serialCount > 0"));
-  assert.ok(submitSrc.indexOf("selected.serialCount > 0") < submitSrc.indexOf('authenticatedFetch("/api/inventory/relocate"'));
+  assert.ok(submitSrc.indexOf("selected.serialCount > 0") < submitSrc.indexOf("window.confirm"));
+  assert.ok(submitSrc.indexOf("window.confirm") < submitSrc.indexOf('authenticatedFetch("/api/inventory/relocate"'));
 });
 
 test("20 no modifica recepción v67, valuación v65, importación ni navegación", () => {
@@ -809,10 +931,11 @@ test("GET relocate-balances y POST relocate reutilizan el motor canónico", () =
   assert.match(routes, /searchRelocateBalances/);
   const postStart = routes.indexOf('inventoryRouter.post("/relocate"');
   assert.ok(postStart >= 0);
-  const post = routes.slice(postStart, postStart + 1800);
+  const post = routes.slice(postStart, postStart + 2800);
   assert.match(post, /mutateInventory\(/);
   assert.match(post, /type: "RELOCATE"/);
   assert.match(post, /allocationMode: body\.allocationMode/);
+  assert.match(post, /serialIds/);
   assert.match(post, /El destino debe estar en el mismo almacén/);
   assert.doesNotMatch(post, /ASSIGNMENT_TRANSFER/);
   assert.match(js, /allocationMode: "FIFO"/);
@@ -1463,4 +1586,339 @@ test("v71 confirmación FIFO incluye SKU, destino, referencia y capas", () => {
   assert.match(msg, /QA-CANCELAR/);
   assert.match(msg, /Asignación FIFO sobre 3 capas/);
 });
+
+function expectRelocateError(error: unknown, code: string) {
+  assert.ok(error instanceof InventoryMutationError, `expected InventoryMutationError ${code}, got ${String(error)}`);
+  assert.equal(error.code, code);
+}
+
+test("serial UI: selector visible, cantidad 2 exige 2 series y payload con serialIds", () => {
+  const pane = relocateHtml();
+  assert.match(pane, /id="relocateSerialsField"/);
+  assert.match(pane, /Series \/ IMEI a reubicar/);
+  assert.match(pane, /id="relocateSerialEligible"/);
+  assert.match(js, /function syncRelocateSerialSelector\(/);
+  assert.match(js, /\/api\/inventory\/relocate-serials\?inventoryId=/);
+  assert.match(routes, /inventoryRouter\.get\("\/relocate-serials"/);
+  assert.match(routes, /searchRelocateSerials/);
+  assert.match(routes, /assertAccessibleSerial\(req\.auth!, serialId/);
+  const submitSrc = sliceFunction(js, "submitRelocate");
+  assert.match(submitSrc, /body\.serialIds = serialIds\.slice\(\)/);
+  assert.match(submitSrc, /relocateSerialMismatchMessage/);
+  const missing = makeRelocateDom({ serialCount: "2", qty: "2" });
+  const missingUi = loadRelocateUi(missing.document);
+  assert.equal(missingUi.relocateFormIsComplete(), false);
+  assert.match(missingUi.relocateSerialMismatchMessage(2, 0), /Faltan 2 series/);
+  assert.match(missingUi.relocateSerialMismatchMessage(2, 1), /Faltan 1 series/);
+  assert.match(missingUi.relocateSerialMismatchMessage(2, 3), /Hay 1 series de más/);
+  missingUi.setRelocateSelectedSerialIds(["ser-a"]);
+  assert.equal(missingUi.relocateFormIsComplete(), false);
+  missingUi.setRelocateSelectedSerialIds(["ser-a", "ser-b"]);
+  assert.equal(missingUi.relocateFormIsComplete(), true);
+  const decimal = makeRelocateDom({ serialCount: "2", qty: "1.5" });
+  assert.equal(loadRelocateUi(decimal.document).relocateFormIsComplete(), false);
+});
+
+test("serial UI: confirmación incluye series y lotes elegidos", () => {
+  const msg = loadRelocateUi(makeRelocateDom({ serialCount: "2" }).document).buildRelocateConfirmMessage({
+    qty: "2",
+    sku: "SKU-X",
+    productName: "Radio",
+    assignmentLabel: "Free to Sale",
+    warehouse: "TULTITLAN24",
+    fromLoc: "AN14-F",
+    toLoc: "AN15-A",
+    status: "AVAILABLE",
+    lotNumber: "L-77",
+    serialLines: ["SN-1 · IMEI 111 · Lote L-77", "SN-2 · Lote L-88"]
+  });
+  assert.match(msg, /SN-1/);
+  assert.match(msg, /Lote L-77/);
+  assert.match(msg, /Lote L-88/);
+  assert.match(msg, /Los lotes se conservan automáticamente/);
+  assert.doesNotMatch(msg, /Asignación FIFO sobre/);
+});
+
+test("serial GET: no mezcla cliente, producto, inventario ni capa agotada", () => {
+  const grouped = toRelocateSerialGroups({
+    id: "inv-src",
+    productId: "prod-1",
+    clientId: "client-aviat",
+    qty: d("2"),
+    reservedQty: d("0"),
+    layers: [
+      {
+        id: "layer-src",
+        lotNumber: "L-77",
+        qty: d("2"),
+        reservedQty: d("0"),
+        receivedAt: new Date("2026-03-01T00:00:00Z")
+      },
+      {
+        id: "layer-empty",
+        lotNumber: "L-GONE",
+        qty: d("1"),
+        reservedQty: d("1"),
+        receivedAt: new Date("2026-03-02T00:00:00Z")
+      }
+    ],
+    serials: [
+      {
+        id: "ser-ok",
+        serialNumber: "SN-OK",
+        imei: "111",
+        inventoryLayerId: "layer-src",
+        productId: "prod-1",
+        clientId: "client-aviat"
+      },
+      {
+        id: "ser-other-product",
+        serialNumber: "SN-OTHER-SKU",
+        imei: null,
+        inventoryLayerId: "layer-src",
+        productId: "prod-other",
+        clientId: "client-aviat"
+      },
+      {
+        id: "ser-other-client",
+        serialNumber: "SN-OTHER-CLIENT",
+        imei: null,
+        inventoryLayerId: "layer-src",
+        productId: "prod-1",
+        clientId: "client-other"
+      },
+      {
+        id: "ser-reserved-layer",
+        serialNumber: "SN-RESERVED",
+        imei: null,
+        inventoryLayerId: "layer-empty",
+        productId: "prod-1",
+        clientId: "client-aviat"
+      },
+      {
+        id: "ser-other-inv",
+        serialNumber: "SN-OTHER-INV",
+        imei: null,
+        inventoryLayerId: "layer-foreign",
+        productId: "prod-1",
+        clientId: "client-aviat"
+      }
+    ]
+  });
+  assert.equal(grouped.inventoryId, "inv-src");
+  assert.equal(grouped.serialCount, 1);
+  assert.equal(grouped.layers.length, 1);
+  assert.equal(grouped.layers[0]?.lotNumber, "L-77");
+  assert.equal(grouped.layers[0]?.serials[0]?.id, "ser-ok");
+  assert.match(searchSrc, /clientSerialWhere\(auth\)/);
+  assert.match(searchSrc, /clientInventoryWhere\(auth\)/);
+  assert.match(searchSrc, /productId: inventory\.productId/);
+});
+
+test("serial 1: cantidad 2 exige exactamente 2 series", async () => {
+  const world = createRelocateTx();
+  seedRelocateSerials(world, [
+    { id: "ser-a", serialNumber: "SN-A" },
+    { id: "ser-b", serialNumber: "SN-B" }
+  ]);
+  await relocateFifoQty(world.tx, "2", { serialIds: ["ser-a"] }).then(
+    () => {
+      throw new Error("should reject count mismatch");
+    },
+    (error) => expectRelocateError(error, "SERIAL_COUNT_MISMATCH")
+  );
+  assert.equal(world.state.movements.length, 0);
+  assert.equal(String(world.state.inventories.find((row) => row.id === "inv-src")?.qty), "10");
+});
+
+test("serial 2: duplicada, inexistente, otro producto, otro cliente y otra capa se rechazan sin mutación", async () => {
+  const world = createRelocateTx();
+  seedRelocateSerials(world, [
+    { id: "ser-a", serialNumber: "SN-A" },
+    { id: "ser-b", serialNumber: "SN-B" },
+    { id: "ser-other-sku", serialNumber: "SN-SKU", productId: "prod-other" },
+    { id: "ser-other-client", serialNumber: "SN-CLIENT", clientId: "client-other" },
+    { id: "ser-other-layer", serialNumber: "SN-LAYER", layerId: "layer-foreign" }
+  ]);
+  const snap = snapshotRelocateState(world.state);
+  await relocateFifoQty(world.tx, "2", { serialIds: ["ser-a", "ser-a"] }).then(
+    () => {
+      throw new Error("duplicate should fail");
+    },
+    (error) => expectRelocateError(error, "SERIAL_DUPLICATE")
+  );
+  await relocateFifoQty(world.tx, "1", { serialIds: ["missing"] }).then(
+    () => {
+      throw new Error("missing should fail");
+    },
+    (error) => expectRelocateError(error, "SERIAL_NOT_FOUND")
+  );
+  await relocateFifoQty(world.tx, "1", { serialIds: ["ser-other-sku"] }).then(
+    () => {
+      throw new Error("other product should fail");
+    },
+    (error) => expectRelocateError(error, "SERIAL_PRODUCT_MISMATCH")
+  );
+  await relocateFifoQty(world.tx, "1", { serialIds: ["ser-other-client"] }).then(
+    () => {
+      throw new Error("other client should fail");
+    },
+    (error) => expectRelocateError(error, "SERIAL_CLIENT_MISMATCH")
+  );
+  await relocateFifoQty(world.tx, "1", { serialIds: ["ser-other-layer"] }).then(
+    () => {
+      throw new Error("other layer should fail");
+    },
+    (error) => expectRelocateError(error, "SERIAL_LAYER_MISMATCH")
+  );
+  restoreRelocateState(world.state, snap);
+  assert.equal(String(world.state.inventories.find((row) => row.id === "inv-src")?.qty), "10");
+  assert.equal(world.state.movements.length, 0);
+  assert.equal(world.state.serials.find((row) => row.id === "ser-a")?.inventoryLayerId, "layer-src");
+});
+
+test("serial 3: dos series del mismo lote se mueven y preservan lote/precio", async () => {
+  const world = createRelocateTx({ price: "100", lot: "L-77" });
+  seedRelocateSerials(world, [
+    { id: "ser-a", serialNumber: "SN-A", imei: "111" },
+    { id: "ser-b", serialNumber: "SN-B", imei: "222" }
+  ]);
+  const before = world.state.inventories.reduce((sum, row) => sum.plus(row.qty), d("0"));
+  await relocateFifoQty(world.tx, "2", { serialIds: ["ser-a", "ser-b"] });
+  const src = world.state.inventories.find((row) => row.id === "inv-src");
+  const dest = world.state.inventories.find((row) => row.locationId === "loc-2");
+  assert.equal(String(src?.qty), "8");
+  assert.equal(String(dest?.qty), "2");
+  assert.equal(src?.assignmentType, dest?.assignmentType);
+  assert.equal(src?.assignmentKey, dest?.assignmentKey);
+  assert.equal(src?.projectId, dest?.projectId);
+  const destLayer = world.state.layers.find((layer) => layer.inventoryId === dest?.id);
+  assert.ok(destLayer);
+  assert.equal(destLayer?.lotNumber, "L-77");
+  assert.equal(String(destLayer?.unitPriceMxn), "100");
+  assert.equal(destLayer?.sourceType, "RELOCATION");
+  assert.equal(world.state.serials.find((row) => row.id === "ser-a")?.inventoryLayerId, destLayer?.id);
+  assert.equal(world.state.serials.find((row) => row.id === "ser-b")?.inventoryLayerId, destLayer?.id);
+  assert.equal(String(world.state.inventories.reduce((sum, row) => sum.plus(row.qty), d("0"))), String(before));
+  assert.equal(world.state.movements.length, 1);
+  assert.equal(world.state.movements[0]?.type, "RELOCATE");
+  const meta = world.state.activities[0]?.metadata as { serialIds?: string[]; allocations?: Array<Record<string, unknown>> };
+  assert.deepEqual(meta?.serialIds, ["ser-a", "ser-b"]);
+  assert.equal(meta?.allocations?.length, 1);
+  assert.deepEqual(meta?.allocations?.[0]?.serialIds, ["ser-a", "ser-b"]);
+});
+
+test("serial 4: series de dos capas/lotes crean tramos destino correctos", async () => {
+  const world = createRelocateTx();
+  setFifoCube(world, [
+    { id: "layer-a", qty: "1", price: "100", lot: "L-A", sourceReference: "REF-A" },
+    { id: "layer-b", qty: "1", price: "110", lot: "L-B", sourceReference: "REF-B" }
+  ]);
+  seedRelocateSerials(world, [
+    { id: "ser-a", layerId: "layer-a", serialNumber: "SN-A" },
+    { id: "ser-b", layerId: "layer-b", serialNumber: "SN-B" }
+  ]);
+  const before = world.state.inventories.reduce((sum, row) => sum.plus(row.qty), d("0"));
+  await relocateFifoQty(world.tx, "2", { serialIds: ["ser-b", "ser-a"] });
+  const dest = world.state.inventories.find((row) => row.locationId === "loc-2");
+  const destLayers = world.state.layers.filter((layer) => layer.inventoryId === dest?.id);
+  assert.equal(destLayers.length, 2);
+  assert.equal(destLayers[0]?.lotNumber, "L-A");
+  assert.equal(String(destLayers[0]?.unitPriceMxn), "100");
+  assert.equal(destLayers[0]?.sourceReference, "REF-A");
+  assert.equal(destLayers[0]?.sourceType, "RELOCATION");
+  assert.equal(destLayers[1]?.lotNumber, "L-B");
+  assert.equal(String(destLayers[1]?.unitPriceMxn), "110");
+  assert.equal(world.state.serials.find((row) => row.id === "ser-a")?.inventoryLayerId, destLayers[0]?.id);
+  assert.equal(world.state.serials.find((row) => row.id === "ser-b")?.inventoryLayerId, destLayers[1]?.id);
+  assert.equal(String(world.state.inventories.find((row) => row.id === "inv-src")?.qty), "0");
+  assert.equal(String(dest?.qty), "2");
+  assert.equal(String(world.state.inventories.reduce((sum, row) => sum.plus(row.qty), d("0"))), String(before));
+});
+
+test("serial 5: reservado insuficiente rechaza y no muta", async () => {
+  const world = createRelocateTx({ reserved: "1" });
+  seedRelocateSerials(world, [
+    { id: "ser-a", serialNumber: "SN-A" },
+    { id: "ser-b", serialNumber: "SN-B" }
+  ]);
+  const snap = snapshotRelocateState(world.state);
+  await relocateFifoQty(world.tx, "10", { serialIds: ["ser-a", "ser-b"] }).then(
+    () => {
+      throw new Error("qty 10 with 2 serials should fail count");
+    },
+    (error) => expectRelocateError(error, "SERIAL_COUNT_MISMATCH")
+  );
+  world.state.layers[0]!.reservedQty = d("9");
+  world.state.inventories[0]!.reservedQty = d("9");
+  await relocateFifoQty(world.tx, "2", { serialIds: ["ser-a", "ser-b"] }).then(
+    () => {
+      throw new Error("should reject reserved");
+    },
+    (error) => expectRelocateError(error, "INSUFFICIENT_STOCK")
+  );
+  restoreRelocateState(world.state, snap);
+  assert.equal(String(world.state.inventories.find((row) => row.id === "inv-src")?.qty), "10");
+  assert.equal(world.state.movements.length, 0);
+  assert.equal(world.state.serials.find((row) => row.id === "ser-a")?.inventoryLayerId, "layer-src");
+});
+
+test("serial 6: fallo intermedio hace rollback de inventarios, capas, series, movimientos y actividad", async () => {
+  const world = createRelocateTx();
+  setFifoCube(world, [
+    { id: "layer-a", qty: "1", price: "100", lot: "L-A" },
+    { id: "layer-b", qty: "1", price: "110", lot: "L-B" }
+  ]);
+  seedRelocateSerials(world, [
+    { id: "ser-a", layerId: "layer-a", serialNumber: "SN-A" },
+    { id: "ser-b", layerId: "layer-b", serialNumber: "SN-B" }
+  ]);
+  const snap = snapshotRelocateState(world.state);
+  world.state.failOnDestLayerCreate = 2;
+  await relocateFifoQty(world.tx, "2", { serialIds: ["ser-a", "ser-b"] }).then(
+    () => {
+      throw new Error("should fail on second dest layer");
+    },
+    (error) => {
+      assert.equal(String(error.message), "simulated dest layer failure");
+    }
+  );
+  restoreRelocateState(world.state, snap);
+  assert.equal(String(world.state.inventories.find((row) => row.id === "inv-src")?.qty), "2");
+  assert.equal(world.state.layers.filter((layer) => layer.inventoryId === "inv-src").length, 2);
+  assert.equal(world.state.serials.find((row) => row.id === "ser-a")?.inventoryLayerId, "layer-a");
+  assert.equal(world.state.serials.find((row) => row.id === "ser-b")?.inventoryLayerId, "layer-b");
+  assert.equal(world.state.movements.length, 0);
+  assert.equal(world.state.activities.length, 0);
+
+  world.state.failOnDestLayerCreate = 0;
+  world.state.failOnSerialUpdate = 2;
+  const snap2 = snapshotRelocateState(world.state);
+  await relocateFifoQty(world.tx, "2", { serialIds: ["ser-a", "ser-b"] }).then(
+    () => {
+      throw new Error("should fail on serial update");
+    },
+    (error) => {
+      assert.equal(String(error.message), "simulated serial update failure");
+    }
+  );
+  restoreRelocateState(world.state, snap2);
+  assert.equal(world.state.serials.find((row) => row.id === "ser-a")?.inventoryLayerId, "layer-a");
+  assert.equal(world.state.movements.length, 0);
+  assert.equal(world.state.activities.length, 0);
+});
+
+test("serial 7: FIFO no serializado no cambia y tenant se aísla por clientId", async () => {
+  const world = createRelocateTx();
+  await relocateFifoQty(world.tx, "2");
+  assert.equal(String(world.state.inventories.find((row) => row.id === "inv-src")?.qty), "8");
+  assert.equal(world.state.serials.length, 0);
+  assert.match(mutationSrc, /normalizeRelocateSerialIds/);
+  assert.match(mutationSrc, /groupRelocateSerialsByLayer/);
+  assert.match(mutationSrc, /sourceReloaded\.clientId !== destReloaded\.clientId/);
+  assert.match(routes, /clientId: operationalClientId\(req\.auth!\)/);
+  assert.match(searchSrc, /clientSerialWhere\(auth\)/);
+  assert.match(js, /Faltan \$\{missing\} series/);
+});
+
 
