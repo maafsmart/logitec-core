@@ -12007,38 +12007,12 @@ async function renderPickRequisitionMode(requisitionId) {
         `reservado activo ${formatQty(cube.activeQty)} · ${cube.layerCount} capa(s) interna(s)`;
       const actions = document.createElement("div");
       actions.className = "pick-req-actions";
-      const qtyInput = document.createElement("input");
-      qtyInput.type = "number";
-      qtyInput.min = "0.0001";
-      qtyInput.step = "0.0001";
-      qtyInput.value = maxQty > 0 ? String(maxQty) : "";
-      qtyInput.setAttribute("aria-label", `Cantidad a surtir ${sku}`);
       const button = document.createElement("button");
       button.type = "button";
       button.className = "btn-primary btn-compact";
       button.textContent = "Surtir reservado";
-      button.addEventListener("click", () => {
-        void (async () => {
-          const qty = reqQtyNumber(qtyInput.value);
-          if (!(qty > 0) || qty > maxQty) {
-            setPickRequisitionMessage(
-              `Indica una cantidad mayor a 0 y no mayor a ${formatQty(maxQty)}.`,
-              false
-            );
-            return;
-          }
-          const result = await executeReservedFifoPick(req, line, cube, qty);
-          if (result.cancelled) return;
-          if (!result.ok) {
-            setPickRequisitionMessage(result.message || "No se pudo surtir la reserva.", false);
-            return;
-          }
-          setPickRequisitionMessage("Picking FIFO registrado.", true);
-          await loadPickRequisitions();
-          await refreshRequisitionViews(req.id);
-        })();
-      });
-      actions.appendChild(qtyInput);
+      button.disabled = maxQty <= 0;
+      button.addEventListener("click", () => openReservedPickModal(req, line, cube));
       actions.appendChild(button);
       card.appendChild(title);
       card.appendChild(details);

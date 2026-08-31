@@ -322,11 +322,18 @@ test("Serializados mantienen flujo FIFO elegible", () => {
   assert.match(js, /refreshReservedPickEligibleSerials/);
 });
 
+test("Picking de requisición (modo folio) no surte FIFO directo; abre openReservedPickModal", () => {
+  const pickMode = sliceFunction(js, "renderPickRequisitionMode");
+  assert.match(pickMode, /openReservedPickModal\(req, line, cube\)/);
+  assert.doesNotMatch(pickMode, /executeReservedFifoPick/);
+  assert.match(sliceFunction(js, "confirmReservedPickFromModal"), /plan\.serialRequired \? serialIds : undefined/);
+});
+
 test("Reubicación sigue usando planRelocateFifoAllocation compartido", () => {
   assert.match(mutationSrc, /planRelocateFifoAllocation/);
   assert.match(js, /allocationMode:\s*"FIFO"/);
 });
 
-test("Cache buster v=94 para dashboard.js", () => {
-  assert.match(html, /dashboard\.js\?v=94/);
+test("Cache buster v=95 para dashboard.js", () => {
+  assert.match(html, /dashboard\.js\?v=95/);
 });

@@ -103,7 +103,7 @@ test("login.html carga canonical-host.js antes de login.js", () => {
 test("dashboard.html carga canonical-host.js antes de dashboard.js", () => {
   assert.match(dashboardHtml, /data-canonical-host-version="www-v1"/);
   const canonical = dashboardHtml.indexOf("canonical-host.js?v=1");
-  const dash = dashboardHtml.indexOf("dashboard.js?v=94");
+  const dash = dashboardHtml.indexOf("dashboard.js?v=95");
   assert.ok(canonical >= 0 && dash > canonical);
 });
 
@@ -118,10 +118,10 @@ test("login.js impide enviar el formulario si todavía está en el apex", () => 
   assert.match(loginJs, /location\.replace\(\s*"https:\/\/www\.control\.logitec\.com\.mx"/);
 });
 
-test("se conservan compact-workspace-v1, server-cancel-v1 y dashboard.js?v=94", () => {
+test("se conservan compact-workspace-v1, server-cancel-v1 y dashboard.js?v=95", () => {
   assert.match(dashboardHtml, /data-ui-version="compact-workspace-v1"/);
   assert.match(dashboardHtml, /data-import-cancel-version="server-cancel-v1"/);
-  assert.match(dashboardHtml, /dashboard\.js\?v=94/);
+  assert.match(dashboardHtml, /dashboard\.js\?v=95/);
   assert.doesNotMatch(dashboardHtml, /dashboard\.js\?v=64/);
   assert.doesNotMatch(dashboardHtml, /qa-admin-bridge/);
   assert.match(bootJs, /redirectedToCanonicalWww/);

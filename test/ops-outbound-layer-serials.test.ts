@@ -470,17 +470,18 @@ test("g) reubicación serializada, picking FIFO y salidas no serializadas siguen
   assert.match(html, /id="inboundAssignmentType"/);
   assert.match(html, /id="relocateSubmitBtn"/);
   assert.match(mutationSrc, /await assertNoSerialAmbiguity\(tx, layer.id\)/);
-  assert.match(html, /dashboard\.js\?v=94/);
+  assert.match(html, /dashboard\.js\?v=95/);
 });
 
-test("ruta de series por capa no lista otras capas y cache-buster v=94", () => {
+test("ruta de series por capa no lista otras capas y cache-buster v=95", () => {
   const start = routes.indexOf('inventoryRouter.get("/layers/:layerId/serials"');
   assert.ok(start >= 0);
   const chunk = routes.slice(start, start + 1200);
   assert.match(chunk, /inventoryLayerId: layerId/);
   assert.match(chunk, /clientSerialWhere\(req.auth!\)/);
   assert.match(chunk, /assertAccessibleLayer/);
-  assert.match(html, /dashboard\.js\?v=94/);
+  assert.match(html, /dashboard\.js\?v=95/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=94/);
   assert.doesNotMatch(html, /dashboard\.js\?v=93/);
 });
 

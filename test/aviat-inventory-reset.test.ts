@@ -91,9 +91,9 @@ test("LOGITEC no es maestro válido: un legacy bloquea el reset y no se borra co
   assert.doesNotMatch(html, /el proyecto LOGITEC si existe/);
 });
 
-test("cache-buster de dashboard.js se actualiza una sola vez a v=94", () => {
+test("cache-buster de dashboard.js se actualiza una sola vez a v=95", () => {
   const matches = [...html.matchAll(/dashboard\.js\?v=(\d+)/g)].map((row) => row[1]);
-  assert.deepEqual(matches, ["94"]);
+  assert.deepEqual(matches, ["95"]);
 });
 
 test("la migración de coherencia de movimientos admite FTS namespaced y el valor histórico", () => {

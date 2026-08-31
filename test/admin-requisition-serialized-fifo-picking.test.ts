@@ -78,11 +78,31 @@ test("no hay migración ni cambio de schema Prisma", () => {
   assert.match(schema, /inventorySerialId String\?/);
 });
 
-test("cache-buster dashboard.js?v=94", () => {
-  assert.match(html, /dashboard\.js\?v=94/);
+test("cache-buster dashboard.js?v=95", () => {
+  assert.match(html, /dashboard\.js\?v=95/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=94/);
   assert.doesNotMatch(html, /dashboard\.js\?v=85/);
   assert.doesNotMatch(html, /dashboard\.js\?v=78/);
   assert.doesNotMatch(html, /dashboard\.js\?v=77/);
+});
+
+test("renderPickRequisitionMode abre el mismo modal serial-aware; no ejecuta FIFO sin series", () => {
+  const pickMode = sliceFunction(js, "renderPickRequisitionMode");
+  const detail = sliceFunction(js, "renderRequisitionDetail");
+  const openModal = sliceFunction(js, "openReservedPickModal");
+  const confirm = sliceFunction(js, "confirmReservedPickFromModal");
+
+  assert.match(pickMode, /openReservedPickModal\(req, line, cube\)/);
+  assert.match(detail, /openReservedPickModal\(row, line, cube\)/);
+  assert.doesNotMatch(pickMode, /executeReservedFifoPick/);
+  assert.doesNotMatch(pickMode, /serialIds/);
+  assert.doesNotMatch(pickMode, /eligible-serials/);
+  assert.match(openModal, /refreshReservedPickEligibleSerials/);
+  assert.match(openModal, /serialLoading = true/);
+  assert.match(confirm, /plan\.serialRequired \? serialIds : undefined/);
+  assert.match(confirm, /executeReservedFifoPick\(req, line, cube, qty, plan\.serialRequired \? serialIds : undefined\)/);
+  assert.match(confirm, /loadPickRequisitions/);
+  assert.match(confirm, /refreshRequisitionViews/);
 });
 
 test("Surtir reservado consulta elegibles y exige series antes de confirmar", () => {
