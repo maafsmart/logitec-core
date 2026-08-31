@@ -77,6 +77,16 @@ test("no se eliminaron IDs operativos", () => {
   }
 });
 
+test("cabecera normal no empuja Cerrar sesión a otra línea en escritorio", () => {
+  const compact = html.slice(html.indexOf("/* ===== compact-workspace-v1 ===== */"), html.indexOf("/* ===== /compact-workspace-v1 ===== */"));
+  assert.match(compact, /body\.workspace-compact:not\(\.focus-mode\) \.nav-announce/);
+  assert.match(compact, /@media \(min-width: 1366px\)/);
+  assert.match(compact, /body\.workspace-compact:not\(\.focus-mode\) \.app-topbar-meta/);
+  assert.match(compact, /flex-wrap:\s*nowrap/);
+  assert.match(html, /id="logoutBtn"/);
+  assert.match(html, /id="focusModeBtn"/);
+});
+
 test("contexto AVIAT permanece en el DOM", () => {
   assert.match(html, /client-active-cluster/);
   assert.match(html, /id="changeClientBtn"/);

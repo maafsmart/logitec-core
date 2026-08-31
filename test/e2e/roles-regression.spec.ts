@@ -133,6 +133,33 @@ async function expectUsersAndConfigAbsent(page: Page) {
   await expect(page.locator("#moduleConfig")).toBeHidden();
 }
 
+async function expectNormalHeaderLogoutInline(page: Page, width: number) {
+  await expect(page.locator("body")).not.toHaveClass(/focus-mode/);
+  await expect(page.locator("#logoutBtn")).toBeVisible();
+  await expect(page.locator("#focusModeBtn")).toBeVisible();
+  const layout = await page.evaluate(() => {
+    const logout = document.getElementById("logoutBtn");
+    const focus = document.getElementById("focusModeBtn");
+    const bar = document.querySelector(".app-topbar") as HTMLElement | null;
+    const cluster = document.querySelector(".client-active-cluster") as HTMLElement | null;
+    if (!logout || !focus || !bar) return { ok: false, reason: "missing" };
+    const lr = logout.getBoundingClientRect();
+    const fr = focus.getBoundingClientRect();
+    const sameRowAsFocus = Math.abs(lr.top - fr.top) < 10;
+    const headerOverflow = bar.scrollWidth > bar.clientWidth + 2 || bar.getBoundingClientRect().width > window.innerWidth + 2;
+    let clusterClip = false;
+    if (cluster) {
+      const cr = cluster.getBoundingClientRect();
+      clusterClip = cr.right > window.innerWidth + 2 || cr.left < -2 || cluster.scrollWidth > cluster.clientWidth + 2;
+    }
+    return { ok: true, sameRowAsFocus, headerOverflow, clusterClip, logoutTop: lr.top, focusTop: fr.top };
+  });
+  expect(layout.ok, `header nodes @ ${width}`).toBe(true);
+  expect(layout.headerOverflow, `header overflow @ ${width}`).toBe(false);
+  expect(layout.clusterClip, `cliente activo clipped @ ${width}`).toBe(false);
+  expect(layout.sameRowAsFocus, `Cerrar sesión sola @ ${width}`).toBe(true);
+}
+
 async function expectHeaderAndClientClusterComplete(page: Page) {
   const clip = await page.evaluate(() => {
     const bar = document.querySelector(".app-topbar") as HTMLElement | null;
@@ -379,6 +406,9 @@ test.describe("regresión UI por roles", () => {
       await sectionTab(page, "inventario").click();
       await page.locator('[data-module="inventory"]').click();
       await expect(page.locator("#moduleInventory")).toBeVisible();
+      await expectNormalHeaderLogoutInline(page, size.width);
+      await expectHeaderAndClientClusterComplete(page);
+      await saveEvidence(page, `admin-normal-header-${size.width}x${size.height}`, probe, { viewport: size, mode: "normal" });
       await page.locator("#focusModeBtn").click();
       await expect(page.locator("body")).toHaveClass(/focus-mode/);
       await expect(page.locator("#focusModeBtn")).toHaveText(/Salir de concentración/);

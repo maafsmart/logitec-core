@@ -3312,11 +3312,43 @@
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .app-topbar-meta {
         flex-wrap: wrap;
-        gap: 10px;
+        gap: 8px 10px;
         min-width: 0;
         flex: 1 1 auto;
         justify-content: flex-end;
         align-items: center;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) .nav-announce {
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        overflow: hidden !important;
+        clip: rect(0, 0, 0, 0) !important;
+        white-space: nowrap !important;
+        border: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) #focusModeBtn,
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) #logoutBtn {
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
+      @media (min-width: 1366px) {
+        html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) .app-topbar-context {
+          flex-wrap: nowrap;
+          align-items: center;
+        }
+        html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) .app-topbar-meta {
+          flex-wrap: nowrap;
+          justify-content: flex-end;
+          gap: 8px 10px;
+        }
+        html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) .app-topbar .aviat-context-bar {
+          flex-wrap: nowrap;
+          flex: 0 1 auto;
+          min-width: 0;
+        }
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .app-topbar .aviat-context-bar {
         margin: 0;
