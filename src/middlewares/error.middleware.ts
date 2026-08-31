@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
 import { HttpError } from "../shared/http-error.js";
+import { safeErrorLog } from "../shared/safe-log.js";
 import { OperationalResetError, isProductionResetGuard } from "../scripts/operational-reset/lib.js";
 
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
@@ -14,7 +15,7 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
       res.status(404).json({ message: "Not found" });
       return;
     }
-    console.error("[lab-reset]", err.code, err.message);
+    console.error("[lab-reset]", err.code, safeErrorLog(err).message);
     res.status(400).json({ message: err.message });
     return;
   }
@@ -27,5 +28,6 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return;
   }
 
+  console.error("[unhandled]", safeErrorLog(err));
   res.status(500).json({ message: "Error interno del servidor" });
 }
