@@ -69,8 +69,8 @@ const setCubeSrc = sliceFunction(js, "setOutboundInventoryFromCube");
 const applyStockSrc = sliceFunction(js, "applyStockSuggestionToOps");
 const renderSkuSrc = sliceFunction(js, "renderSkuContext");
 
-test("cache-buster dashboard.js?v=92", () => {
-  assert.match(html, /dashboard\.js\?v=92/);
+test("cache-buster dashboard.js?v=93", () => {
+  assert.match(html, /dashboard\.js\?v=93/);
 });
 
 test("1-2 detalle de traslado muestra Cantidad numérica y Tipo separado", () => {
@@ -159,6 +159,6 @@ test("predictor atrasado no puede restaurar SKU viejo", () => {
 test("9-10 reubicación serializada y cache-buster no regresan", () => {
   assert.match(js, /function applyRelocateBalanceSelection\(/);
   assert.match(js, /relocateSelectedSerialIds/);
-  assert.match(html, /dashboard\.js\?v=92/);
+  assert.match(html, /dashboard\.js\?v=93/);
   assert.match(js, /serialControlled|lotControlled|layerId/);
 });

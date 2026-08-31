@@ -20,7 +20,8 @@ export const createMovementSchema = z
     unitPriceUsd: z.coerce.number().nonnegative().optional(),
     assignmentType: z.enum(["PROJECT", "FREE_TO_SALE"]).optional(),
     projectId: z.string().min(1).nullable().optional(),
-    clientId: z.string().min(1).nullable().optional()
+    clientId: z.string().min(1).nullable().optional(),
+    serialIds: z.array(z.string().min(1).max(120)).max(1_000).optional()
   })
   .superRefine((data, ctx) => {
     if (data.type === "ADJUST_SET") {
@@ -29,6 +30,12 @@ export const createMovementSchema = z
       }
     } else if (data.quantity <= 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Entrada y salida requieren cantidad mayor a 0." });
+    }
+    if ((data.serialIds?.length || 0) > 0 && data.type !== "OUT") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "serialIds solo aplica a salidas."
+      });
     }
     if (data.type === "IN") {
       if (data.assignmentType !== "PROJECT" && data.assignmentType !== "FREE_TO_SALE") {
