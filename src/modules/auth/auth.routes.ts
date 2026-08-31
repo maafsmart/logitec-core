@@ -5,6 +5,7 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole, signAccessToken } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
 import { isClientScopedRole } from "../clients/client-scope.js";
+import { findClientForSelect, serializeOperationalClient } from "../clients/client-picker-query.js";
 import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
 import {
   publicUserJson,
@@ -179,10 +180,7 @@ authRouter.patch("/me", requireAuth, async (req, res) => {
 
 authRouter.post("/select-client", requireAuth, requireRole(["ADMIN"]), async (req, res) => {
   const { clientId } = selectClientSchema.parse(req.body);
-  const client = await prisma.client.findUnique({
-    where: { id: clientId },
-    select: { ...clientPublicSelect, _count: { select: { projects: true } } }
-  });
+  const client = await findClientForSelect(prisma as never, clientId);
   if (!client || isForbiddenInventoryProjectRecord({ code: client.code, name: client.name })) {
     throw new HttpError(403, "El cliente seleccionado no existe o está inactivo.", "CLIENT_CONTEXT_INVALID");
   }
@@ -195,17 +193,14 @@ authRouter.post("/select-client", requireAuth, requireRole(["ADMIN"]), async (re
     email: req.auth!.email,
     operationalClientId: client.id
   });
+  const operationalClient = serializeOperationalClient(client);
   res.json({
     accessToken,
-    client,
-    operationalClient: {
-      id: client.id,
-      code: client.code,
-      name: client.name,
-      tradeName: client.tradeName,
-      legalName: client.legalName,
-      active: client.active
-    }
+    client: {
+      ...operationalClient,
+      ...(client._count ? { _count: client._count } : {})
+    },
+    operationalClient
   });
 });
 

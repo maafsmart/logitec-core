@@ -4,6 +4,7 @@ import { prisma } from "../../db/prisma.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { HttpError } from "../../shared/http-error.js";
 import { isClientScopedRole } from "./client-scope.js";
+import { findClientsForPicker } from "./client-picker-query.js";
 import { createClientRecord, setClientActive, updateClientRecord } from "../master-data/master-data.service.js";
 import { isForbiddenInventoryProjectRecord } from "../inventory/inventory-project-rules.js";
 
@@ -59,20 +60,6 @@ const clientFieldsSelect = {
   updatedAt: true
 } as const;
 
-// Keep the operational client picker on the same stable columns used by auth.
-// Optional master-data fields are enriched later via GET /:id; if production is
-// temporarily behind on an additive migration, the ADMIN can still select AVIAT.
-const clientListSelect = {
-  id: true,
-  code: true,
-  name: true,
-  legalName: true,
-  tradeName: true,
-  active: true,
-  createdAt: true,
-  updatedAt: true
-} as const;
-
 const projectClientSelect = {
   id: true,
   code: true,
@@ -93,14 +80,10 @@ const projectClientSelect = {
 clientsRouter.use(requireAuth);
 
 clientsRouter.get("/", async (req, res) => {
-  const clients = await prisma.client.findMany({
+  const clients = await findClientsForPicker(prisma as never, {
     where: req.auth!.role === "ADMIN" ? {} : { id: req.auth!.clientId || "" },
     orderBy: [{ active: "desc" }, { name: "asc" }],
-    take: 200,
-    select: {
-      ...clientListSelect,
-      _count: { select: { projects: true } }
-    }
+    take: 200
   });
   res.json(clients.filter((row) => !isForbiddenInventoryProjectRecord({ code: row.code, name: row.name })));
 });
