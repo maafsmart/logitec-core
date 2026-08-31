@@ -1088,6 +1088,32 @@ test("HTTP avatarUrl ADMIN/create/me; inválidas y XSS rechazadas; sin hash ni e
   assert.equal((escalate.json as { code?: string }).code, "SELF_ESCALATION_FORBIDDEN");
 });
 
+test("HTTP SUPERVISOR/OPERATOR/CLIENT no editan ficha oficial por /me ni por /users/:id", async () => {
+  const fields = [
+    { fullName: "Nombre Hack" },
+    { avatarUrl: "https://cdn.example.com/hack.png" },
+    { jobTitle: "Cargo Hack" },
+    { phone: "5551112222" },
+    { address: "Calle Hack" }
+  ];
+  for (const user of [users.supervisor, users.operator, users.client]) {
+    lastUserUpdate = {};
+    const token = tokenFor(user);
+    for (const body of fields) {
+      const res = await request("/api/auth/me", { method: "PATCH", token, body });
+      assert.equal(res.status, 403, `${user.role} PATCH /me ${Object.keys(body)[0]}`);
+      assert.equal((res.json as { code?: string }).code, "SELF_PROFILE_READONLY");
+    }
+    const own = await request(`/api/users/${user.id}`, {
+      method: "PATCH",
+      token,
+      body: { fullName: "Hack" }
+    });
+    assert.equal(own.status, 403, `${user.role} PATCH /users/:id`);
+    assert.equal(lastUserUpdate.data, undefined);
+  }
+});
+
 test("CSP permite imágenes HTTPS y no relaja script-src ni object-src", async () => {
   const response = await fetch(`${baseUrl}/health`);
   const csp = response.headers.get("content-security-policy") || "";

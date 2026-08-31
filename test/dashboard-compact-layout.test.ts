@@ -78,6 +78,9 @@ test("no se eliminaron IDs operativos", () => {
 });
 
 test("contexto AVIAT permanece en el DOM", () => {
+  assert.match(html, /client-active-cluster/);
+  assert.match(html, /id="changeClientBtn"/);
+  assert.match(html, /Cliente activo:/);
   assert.match(html, /data-aviat-primary-label/);
   assert.match(html, /data-aviat-project-label/);
   assert.match(html, /data-aviat-assignment-label/);
@@ -98,8 +101,8 @@ test("densidad inicial es compact y hay migración versionada", () => {
   assert.match(html, /data-grid-density="compact"/);
 });
 
-test("dashboard.js usa v=87", () => {
-  assert.match(html, /dashboard\.js\?v=87/);
+test("dashboard.js usa v=88", () => {
+  assert.match(html, /dashboard\.js\?v=88/);
   assert.doesNotMatch(html, /dashboard\.js\?v=71/);
   assert.doesNotMatch(html, /dashboard\.js\?v=70/);
   assert.doesNotMatch(html, /dashboard\.js\?v=66/);

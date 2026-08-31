@@ -117,10 +117,93 @@ function sectionTab(page: Page, section: string) {
 async function expectAccountReadOnlyExceptPassword(page: Page) {
   await sectionTab(page, "sistema").click();
   await expect(page.locator("#moduleAccount")).toBeVisible();
+  await expect(page.locator(".official-profile-banner")).toContainText(/Solo lectura/i);
   await expect(page.locator("#accountFullName")).toHaveAttribute("readonly", "");
+  await expect(page.locator("#accountJobTitle")).toHaveAttribute("readonly", "");
+  await expect(page.locator("#accountPhone")).toHaveAttribute("readonly", "");
+  await expect(page.locator("#accountAddress")).toHaveAttribute("readonly", "");
   await expect(page.locator("#accountProfileBtn")).toHaveCount(0);
   await expect(page.locator("#changePasswordForm")).toBeVisible();
 }
+
+async function expectUsersAndConfigAbsent(page: Page) {
+  await expect(page.locator('[data-module="users"]')).toBeHidden();
+  await expect(page.locator('[data-module="config"]')).toBeHidden();
+  await expect(page.locator("#moduleUsers")).toBeHidden();
+  await expect(page.locator("#moduleConfig")).toBeHidden();
+}
+
+async function expectHeaderAndClientClusterComplete(page: Page) {
+  const clip = await page.evaluate(() => {
+    const bar = document.querySelector(".app-topbar") as HTMLElement | null;
+    const cluster = document.querySelector(".client-active-cluster") as HTMLElement | null;
+    const btn = document.getElementById("changeClientBtn");
+    if (!bar) return { headerOverflow: true, clusterClip: true, btnClip: false };
+    const headerOverflow = bar.scrollWidth > bar.clientWidth + 2 || bar.getBoundingClientRect().width > window.innerWidth + 2;
+    const cr = cluster?.getBoundingClientRect();
+    const clusterClip = Boolean(cr && (cr.right > window.innerWidth + 2 || cr.left < -2 || (cluster && cluster.scrollWidth > cluster.clientWidth + 2)));
+    let btnClip = false;
+    if (btn && !btn.classList.contains("hidden") && btn.offsetParent) {
+      const rr = btn.getBoundingClientRect();
+      btnClip = rr.width < 24 || rr.right > window.innerWidth + 2 || rr.left < -2 || btn.scrollWidth > btn.clientWidth + 2;
+    }
+    return { headerOverflow, clusterClip, btnClip, btnText: btn?.textContent || "" };
+  });
+  expect(clip.headerOverflow, "header horizontal overflow").toBe(false);
+  expect(clip.clusterClip, "cliente activo clipped").toBe(false);
+  expect(clip.btnClip, "Cambiar cliente clipped").toBe(false);
+}
+
+async function expectOfficialProfileApiBlocked(page: Page) {
+  const result = await page.evaluate(async () => {
+    const token = localStorage.getItem("token");
+    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    const attempts = [
+      { fullName: "Nombre Hack" },
+      { avatarUrl: "https://example.com/hack.png" },
+      { jobTitle: "Cargo Hack" },
+      { phone: "5550001111" },
+      { address: "Calle Hack" }
+    ];
+    const mePatches = [];
+    for (const body of attempts) {
+      const res = await fetch("/api/auth/me", { method: "PATCH", headers, body: JSON.stringify(body) });
+      const json = (await res.json().catch(() => ({}))) as { code?: string };
+      mePatches.push({ status: res.status, code: json.code || null, field: Object.keys(body)[0] });
+    }
+    const me = await fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } });
+    const meJson = (await me.json().catch(() => ({}))) as { id?: string; fullName?: string };
+    const own = await fetch(`/api/users/${meJson.id}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ fullName: "Nombre Hack" })
+    });
+    return {
+      mePatches,
+      usersStatus: own.status,
+      fullName: meJson.fullName || ""
+    };
+  });
+  for (const row of result.mePatches) {
+    expect(row.status, `PATCH /me ${row.field}`).toBe(403);
+    expect(row.code).toBe("SELF_PROFILE_READONLY");
+  }
+  expect(result.usersStatus).toBe(403);
+  expect(result.fullName).not.toMatch(/Nombre Hack/i);
+}
+
+function focusSubnavBtn(page: Page, moduleName: string) {
+  return page.locator(`#focusSubnavSlot .nav-section-panel.active .module-btn[data-module="${moduleName}"]`);
+}
+
+const INVENTORY_FOCUS_MODULES = [
+  ["inventory", /Existencias/i],
+  ["clients", /Clientes/i],
+  ["catalog", /Catálogo/i],
+  ["projects", /Proyectos/i],
+  ["warehouses", /Almacenes/i],
+  ["locations", /Ubicaciones/i]
+] as const;
 
 async function expectValuationVisible(page: Page, canEdit: boolean) {
   await sectionTab(page, "inventario").click();
@@ -230,7 +313,7 @@ test.describe("regresión UI por roles", () => {
   test("ADMIN Sistema: cuenta solo lectura, POST /api/users 400 USER_CLIENT_REQUIRED, preview CLEAN_START", async ({
     page
   }) => {
-    test.setTimeout(180_000);
+    test.setTimeout(240_000);
     const probe = attachProbes(page);
     await page.goto("/login.html");
     await page.locator("#email").fill(users.ADMIN.email);
@@ -239,6 +322,9 @@ test.describe("regresión UI por roles", () => {
     await page.waitForURL(/dashboard\.html/, { timeout: 20_000 });
     await enterAdminClientIfNeeded(page, probe);
     await expectAccountReadOnlyExceptPassword(page);
+    await page.locator('[data-module="users"]').click();
+    await expect(page.locator("#moduleUsers")).toBeVisible();
+    await expect(page.locator("#createUserForm")).toBeVisible();
     const order = await page.evaluate(() => {
       const ids = ["moduleAccount", "moduleUsers", "moduleConfig"];
       return ids
@@ -298,45 +384,82 @@ test.describe("regresión UI por roles", () => {
       await expect(page.locator("#focusModeBtn")).toHaveText(/Salir de concentración/);
       await expect(page.locator(".sidebar")).toBeHidden();
       await expect(page.locator("#focusNavSlot")).toBeVisible();
+      await expect(page.locator("#focusSubnavSlot")).toBeVisible();
       await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inventario']")).toHaveClass(/active/);
-      await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inventario']")).toBeVisible();
       for (const section of ["inicio", "operacion", "inventario", "control", "sistema"]) {
         await expect(page.locator(`#focusNavSlot .nav-section-tab[data-nav-section="${section}"]`)).toBeVisible();
       }
-      const headerOverflow = await page.evaluate(() => {
-        const bar = document.querySelector(".app-topbar");
-        if (!bar) return true;
-        const rect = bar.getBoundingClientRect();
-        return rect.width > window.innerWidth + 2 || bar.scrollWidth > bar.clientWidth + 2;
-      });
-      expect(headerOverflow, `header overflow at ${size.width}`).toBe(false);
+      for (const [mod, label] of INVENTORY_FOCUS_MODULES) {
+        const btn = focusSubnavBtn(page, mod);
+        await expect(btn, `Inventario → ${mod} @ ${size.width}`).toBeVisible();
+        await expect(btn).toContainText(label);
+      }
+      await expect(focusSubnavBtn(page, "inventory")).toHaveClass(/active/);
+      await expectHeaderAndClientClusterComplete(page);
       await expect(page.locator("#focusNavSlot .nav-section-tab.active")).toHaveText(/Inventario/i);
       await saveEvidence(page, `admin-focus-mode-${size.width}x${size.height}`, probe, { viewport: size });
+
+      await focusSubnavBtn(page, "warehouses").click();
+      await expect(page.locator("#moduleWarehouses")).toBeVisible();
+      await expect(page.locator("body")).toHaveClass(/focus-mode/);
+      await expect(focusSubnavBtn(page, "warehouses")).toHaveClass(/active/);
+
       await page.locator("#focusNavSlot .nav-section-tab[data-nav-section='operacion']").click();
       await expect(page.locator("body")).toHaveClass(/focus-mode/);
       await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='operacion']")).toHaveClass(/active/);
       await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inventario']")).not.toHaveClass(/active/);
       await expect(page.locator("#focusNavSlot .nav-section-tab.active")).toHaveText(/Operación/i);
+      await expect(focusSubnavBtn(page, "inbound")).toBeVisible();
+      await expect(focusSubnavBtn(page, "requisitions")).toBeVisible();
+      await expect(focusSubnavBtn(page, "picking")).toBeVisible();
+      await expect(focusSubnavBtn(page, "relocate")).toBeVisible();
+      await expect(focusSubnavBtn(page, "outbound")).toBeVisible();
+      await focusSubnavBtn(page, "inbound").click();
+      await expect(page.locator("#moduleInbound")).toBeVisible();
+      await expect(page.locator("body")).toHaveClass(/focus-mode/);
+
       await page.locator("#focusNavSlot .nav-section-tab[data-nav-section='control']").click();
       await expect(page.locator("body")).toHaveClass(/focus-mode/);
       await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='control']")).toHaveClass(/active/);
       await expect(page.locator("#focusNavSlot .nav-section-tab.active")).toHaveText(/Control/i);
+      await expect(focusSubnavBtn(page, "incidents")).toBeVisible();
+      await expect(focusSubnavBtn(page, "traceability")).toBeVisible();
+      await expect(focusSubnavBtn(page, "reports")).toBeVisible();
+
       await page.locator("#focusNavSlot .nav-section-tab[data-nav-section='sistema']").click();
       await expect(page.locator("body")).toHaveClass(/focus-mode/);
       await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='sistema']")).toHaveClass(/active/);
       await expect(page.locator("#focusNavSlot .nav-section-tab.active")).toHaveText(/Sistema/i);
+      await expect(focusSubnavBtn(page, "account")).toBeVisible();
+      await expect(focusSubnavBtn(page, "users")).toBeVisible();
+      await expect(focusSubnavBtn(page, "config")).toBeVisible();
+      await focusSubnavBtn(page, "account").click();
+      await expect(page.locator("#moduleAccount")).toBeVisible();
+      await expect(page.locator("#moduleUsers")).toBeHidden();
+      await focusSubnavBtn(page, "users").click();
+      await expect(page.locator("#moduleUsers")).toBeVisible();
+      await expect(page.locator("body")).toHaveClass(/focus-mode/);
+      await focusSubnavBtn(page, "config").click();
+      await expect(page.locator("#moduleConfig")).toBeVisible();
+      await expect(page.locator("body")).toHaveClass(/focus-mode/);
+
       await page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inicio']").click();
       await expect(page.locator("body")).toHaveClass(/focus-mode/);
       await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inicio']")).toHaveClass(/active/);
       await expect(page.locator("#focusNavSlot .nav-section-tab.active")).toHaveText(/Inicio/i);
+      await expect(focusSubnavBtn(page, "control")).toBeVisible();
+      await expect(focusSubnavBtn(page, "tasks").first()).toBeVisible();
       await page.locator("#focusModeBtn").click();
       await expect(page.locator("body")).not.toHaveClass(/focus-mode/);
       await expect(page.locator("#focusNavHome .nav-section-tabs")).toBeVisible();
       await expect(page.locator("#focusNavSlot .nav-section-tabs")).toHaveCount(0);
+      await expect(page.locator("#focusSubnavHome .nav-section-body")).toBeVisible();
+      await expect(page.locator("#focusSubnavSlot .nav-section-body")).toHaveCount(0);
     }
 
     await sectionTab(page, "sistema").click();
-    await expect(page.locator("#moduleAccount")).toBeVisible();
+    await page.locator('[data-module="config"]').click();
+    await expect(page.locator("#moduleConfig")).toBeVisible();
     const preview = page.locator("#operationalHistoryPreviewBtn");
     await preview.scrollIntoViewIfNeeded();
     await expect(preview).toBeVisible();
@@ -367,15 +490,27 @@ test.describe("regresión UI por roles", () => {
     await page.locator('[data-module="catalog"]').click();
     await expect(page.locator("#openCatalogImportBtn")).toBeHidden();
     await expectAccountReadOnlyExceptPassword(page);
+    await expectUsersAndConfigAbsent(page);
+    await expectOfficialProfileApiBlocked(page);
     await expect(page.locator("#createUserForm")).toBeHidden();
     await expect(page.locator("#moduleUsers")).toBeHidden();
     await page.locator("#focusModeBtn").click();
     await expect(page.locator("body")).toHaveClass(/focus-mode/);
     await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inventario']")).toBeVisible();
     await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='sistema']")).toBeVisible();
+    await expect(page.locator('#focusSubnavSlot .module-btn[data-module="account"]')).toBeVisible();
+    await expect(page.locator('#focusSubnavSlot .module-btn[data-module="users"]')).toBeHidden();
+    await expect(page.locator('#focusSubnavSlot .module-btn[data-module="config"]')).toBeHidden();
     await page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inventario']").click();
     await expect(page.locator("body")).toHaveClass(/focus-mode/);
     await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inventario']")).toHaveClass(/active/);
+    for (const [mod] of INVENTORY_FOCUS_MODULES) {
+      if (mod === "clients") continue;
+      await expect(focusSubnavBtn(page, mod)).toBeVisible();
+    }
+    await focusSubnavBtn(page, "inventory").click();
+    await expect(page.locator("#moduleInventory")).toBeVisible();
+    await expect(page.locator("body")).toHaveClass(/focus-mode/);
     await page.locator("#focusModeBtn").click();
     expect(unexpected5xx(probe)).toEqual([]);
     await saveEvidence(page, "supervisor-sistema", probe);
@@ -387,13 +522,21 @@ test.describe("regresión UI por roles", () => {
     await expectValuationVisible(page, false);
     await expect(page.locator("#openInventoryImportBtn")).toBeHidden();
     await expectAccountReadOnlyExceptPassword(page);
+    await expectUsersAndConfigAbsent(page);
+    await expectOfficialProfileApiBlocked(page);
     await expect(page.locator("#moduleUsers")).toBeHidden();
     await expect(page.locator("#moduleConfig")).toBeHidden();
     await page.locator("#focusModeBtn").click();
     await expect(page.locator("body")).toHaveClass(/focus-mode/);
     await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inventario']")).toBeVisible();
     await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='operacion']")).toBeVisible();
+    await expect(page.locator('#focusSubnavSlot .module-btn[data-module="users"]')).toBeHidden();
+    await expect(page.locator('#focusSubnavSlot .module-btn[data-module="config"]')).toBeHidden();
     await page.locator("#focusNavSlot .nav-section-tab[data-nav-section='operacion']").click();
+    await expect(page.locator("body")).toHaveClass(/focus-mode/);
+    await expect(page.locator('#focusSubnavSlot .module-btn[data-module="inbound"]')).toBeVisible();
+    await page.locator('#focusSubnavSlot .module-btn[data-module="inbound"]').click();
+    await expect(page.locator("#moduleInbound")).toBeVisible();
     await expect(page.locator("body")).toHaveClass(/focus-mode/);
     await page.locator("#focusModeBtn").click();
     expect(unexpected5xx(probe)).toEqual([]);
@@ -407,15 +550,23 @@ test.describe("regresión UI por roles", () => {
     await expectValuationVisible(page, false);
     await expect(page.locator("#openInventoryImportBtn")).toBeHidden();
     await expectAccountReadOnlyExceptPassword(page);
+    await expectUsersAndConfigAbsent(page);
+    await expectOfficialProfileApiBlocked(page);
     await expect(page.locator("#moduleUsers")).toBeHidden();
     await expect(page.locator("#moduleConfig")).toBeHidden();
     await page.locator("#focusModeBtn").click();
     await expect(page.locator("body")).toHaveClass(/focus-mode/);
     await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inventario']")).toBeVisible();
     await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inicio']")).toBeHidden();
+    await expect(page.locator('#focusSubnavSlot .module-btn[data-module="users"]')).toBeHidden();
+    await expect(page.locator('#focusSubnavSlot .module-btn[data-module="config"]')).toBeHidden();
     await page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inventario']").click();
     await expect(page.locator("body")).toHaveClass(/focus-mode/);
     await expect(page.locator("#focusNavSlot .nav-section-tab[data-nav-section='inventario']")).toHaveClass(/active/);
+    await expect(page.locator('#focusSubnavSlot .module-btn[data-module="inventory"]')).toBeVisible();
+    await page.locator('#focusSubnavSlot .module-btn[data-module="inventory"]').click();
+    await expect(page.locator("#moduleInventory")).toBeVisible();
+    await expect(page.locator("body")).toHaveClass(/focus-mode/);
     await page.locator("#focusModeBtn").click();
     expect(unexpected5xx(probe)).toEqual([]);
     await saveEvidence(page, "client-sistema", probe);

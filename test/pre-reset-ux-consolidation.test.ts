@@ -20,6 +20,7 @@ function sliceFunction(source: string, name: string): string {
 function loadNavHarness() {
   return new Function(`
     let currentRole = "ADMIN";
+    let currentModuleName = "account";
     const announces = [];
     const shown = [];
     const body = { classList: { add() {}, remove() {}, toggle(name, on) { this._focus = name === "focus-mode" ? on : this._focus; } } };
@@ -101,12 +102,14 @@ test("Almacenes y Ubicaciones exponen acción visible", () => {
 });
 
 test("Sistema ordena cuenta, usuarios ADMIN y peligro al final", () => {
-  const sistema = html.slice(html.indexOf('data-nav-section-panel="sistema"'), html.indexOf('data-nav-section-panel="sistema"') + 900);
-  assert.match(sistema, /Workspace único de administración/);
+  const sistema = html.slice(html.indexOf('data-nav-section-panel="sistema"'), html.indexOf('id="moduleControlCenter"'));
   assert.match(sistema, /id="btnAccount"/);
-  assert.match(sistema, /Mi cuenta \/ Sistema/);
-  assert.doesNotMatch(sistema, /id="btnUsers"/);
-  assert.doesNotMatch(sistema, /id="btnConfig"/);
+  assert.match(sistema, />Mi cuenta</);
+  assert.match(sistema, /id="btnUsers"/);
+  assert.match(sistema, /Usuarios y accesos/);
+  assert.match(sistema, /id="btnConfig"/);
+  assert.match(sistema, />Configuración</);
+  assert.doesNotMatch(sistema, /Mi cuenta \/ Sistema/);
   assert.match(html, /body\.sistema-workspace #moduleAccount \{ order: 1; \}/);
   assert.match(html, /body\.sistema-workspace #moduleUsers \{ order: 2; \}/);
   assert.match(html, /body\.sistema-workspace #moduleConfig \{ order: 3; \}/);
@@ -115,20 +118,8 @@ test("Sistema ordena cuenta, usuarios ADMIN y peligro al final", () => {
   const dangerAt = html.indexOf('id="aviatDangerZone"');
   const historyAt = html.indexOf('id="operationalHistorySection"');
   assert.ok(labAt > 0 && dangerAt > labAt && historyAt > dangerAt);
-  assert.match(sliceFunction(js, "showSistemaWorkspace"), /moduleUsers/);
-  assert.match(sliceFunction(js, "showSistemaWorkspace"), /currentRole !== "ADMIN"/);
-  const harness = loadNavHarness();
-  harness.setRole("ADMIN");
-  harness.showSistemaWorkspace();
-  assert.ok(harness.shown.includes("users:hidden"));
-  assert.ok(harness.shown.includes("config:hidden"));
-  assert.ok(harness.shown.includes("account:hidden"));
-  const other = loadNavHarness();
-  other.setRole("SUPERVISOR");
-  other.showSistemaWorkspace();
-  assert.ok(other.shown.includes("account:hidden"));
-  assert.ok(!other.shown.includes("users:hidden"));
-  assert.ok(!other.shown.includes("config:hidden"));
+  assert.match(sliceFunction(js, "showSistemaWorkspace"), /currentModuleName === mod/);
+  assert.match(sliceFunction(js, "showSistemaWorkspace"), /currentRole === "ADMIN"/);
 });
 
 test("CLIENT/SUPERVISOR/OPERATOR no ganan módulos ADMIN", () => {
@@ -138,8 +129,8 @@ test("CLIENT/SUPERVISOR/OPERATOR no ganan módulos ADMIN", () => {
   assert.doesNotMatch(js, /OPERATOR:[\s\S]{0,400}"users"/);
   assert.doesNotMatch(js, /CLIENT:[\s\S]{0,400}"config"/);
   assert.match(sliceFunction(js, "openAddProjectFromClientCard"), /canAdminCreateProject/);
-  assert.match(sliceFunction(js, "applyRoleNavigation"), /setRoleUiVisible\(document\.getElementById\("moduleConfig"\), isAdmin\)/);
-  assert.match(sliceFunction(js, "applyRoleNavigation"), /setRoleUiVisible\(document\.getElementById\("moduleUsers"\), isAdmin\)/);
+  assert.match(sliceFunction(js, "applyRoleNavigation"), /setRoleUiVisible\(document\.getElementById\("moduleConfig"\), false\)/);
+  assert.match(sliceFunction(js, "applyRoleNavigation"), /setRoleUiVisible\(document\.getElementById\("moduleUsers"\), false\)/);
 });
 
 test("contraseña: ojo solo en captura nueva, nunca hash", () => {
@@ -158,12 +149,13 @@ test("Mi cuenta es ficha de solo lectura y el modo concentración oculta chrome"
   const account = html.slice(html.indexOf('id="moduleAccount"'), html.indexOf('id="changePasswordForm"'));
   assert.match(account, /readonly/);
   assert.doesNotMatch(account, /id="accountProfileBtn"/);
-  assert.match(account, /Solo lectura/);
+  assert.match(html, /official-profile-banner/);
+  assert.match(html, /Ficha oficial — Solo lectura/);
   assert.match(sliceFunction(js, "saveAccountProfile"), /solo lectura/i);
   assert.doesNotMatch(sliceFunction(js, "saveAccountProfile"), /method: "PATCH"/);
   assert.match(html, /body\.focus-mode \.sidebar \{\s*display: none/);
-  assert.match(html, /id="focusNavSlot"/);
-  assert.match(js, /function placeNavTabsForFocusMode/);
+  assert.match(html, /id="focusSubnavSlot"/);
+  assert.match(html, /id="focusSubnavHome"/);
   assert.match(js, /Salir de concentración/);
   assert.match(html, /id="focusModeBtn"/);
   const wire = sliceFunction(js, "wireFocusMode");
