@@ -470,16 +470,143 @@ test("g) reubicación serializada, picking FIFO y salidas no serializadas siguen
   assert.match(html, /id="inboundAssignmentType"/);
   assert.match(html, /id="relocateSubmitBtn"/);
   assert.match(mutationSrc, /await assertNoSerialAmbiguity\(tx, layer.id\)/);
-  assert.match(html, /dashboard\.js\?v=93/);
+  assert.match(html, /dashboard\.js\?v=94/);
 });
 
-test("ruta de series por capa no lista otras capas y cache-buster v=93", () => {
+test("ruta de series por capa no lista otras capas y cache-buster v=94", () => {
   const start = routes.indexOf('inventoryRouter.get("/layers/:layerId/serials"');
   assert.ok(start >= 0);
   const chunk = routes.slice(start, start + 1200);
   assert.match(chunk, /inventoryLayerId: layerId/);
   assert.match(chunk, /clientSerialWhere\(req.auth!\)/);
   assert.match(chunk, /assertAccessibleLayer/);
-  assert.match(html, /dashboard\.js\?v=93/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=92/);
+  assert.match(html, /dashboard\.js\?v=94/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=93/);
+});
+
+test("h) FREE TO SALE no exige proyecto para habilitar submit; PROJECT sí", () => {
+  const syncSrc = sliceFunction(js, "syncOutboundSubmitEnabled");
+  const setCubeSrc = sliceFunction(js, "setOutboundInventoryFromCube");
+  const submitSrc = sliceFunction(js, "submitOperationalMovement");
+  const clearSrc = sliceFunction(js, "clearOutboundInventorySelection");
+  const projectReadySrc = sliceFunction(js, "outboundProjectReady");
+  const assignmentSrc = sliceFunction(js, "outboundSelectedAssignmentType");
+
+  assert.match(setCubeSrc, /dataset\.outboundAssignmentType/);
+  assert.match(setCubeSrc, /assignmentType === "FREE_TO_SALE"/);
+  assert.match(setCubeSrc, /projectSel\.value = ""/);
+  assert.doesNotMatch(setCubeSrc, /projectSel\.value = "[A-Z0-9_-]+"/);
+  assert.match(clearSrc, /clearOutboundAssignmentType/);
+  assert.match(syncSrc, /outboundProjectReady\(\)/);
+  assert.doesNotMatch(syncSrc, /Boolean\(customerCode\)/);
+  assert.match(submitSrc, /outboundProjectReady\(\)/);
+  assert.match(submitSrc, /Seleccione un proyecto/);
+  assert.match(projectReadySrc, /FREE_TO_SALE/);
+  assert.match(projectReadySrc, /outboundCustomer/);
+  assert.match(projectReadySrc, /SMART_OTHER/);
+
+  const SMART_OTHER = "__OTHER__";
+  const outboundProjectReady = new Function(
+    "document",
+    "SMART_OTHER",
+    `${assignmentSrc}\n${projectReadySrc}\nreturn outboundProjectReady;`
+  );
+
+  function projectReady({ assignmentType = "", customer = "" } = {}) {
+    const document = {
+      getElementById(id: string) {
+        if (id === "outboundInventoryId") {
+          return { dataset: { outboundAssignmentType: assignmentType }, value: "inv-1" };
+        }
+        if (id === "outboundCustomer") return { value: customer };
+        return null;
+      }
+    };
+    return outboundProjectReady(document, SMART_OTHER)();
+  }
+
+  assert.equal(projectReady({ assignmentType: "FREE_TO_SALE", customer: "" }), true);
+  assert.equal(projectReady({ assignmentType: "FREE_TO_SALE", customer: SMART_OTHER }), true);
+  assert.equal(projectReady({ assignmentType: "PROJECT", customer: "" }), false);
+  assert.equal(projectReady({ assignmentType: "PROJECT", customer: SMART_OTHER }), false);
+  assert.equal(projectReady({ assignmentType: "PROJECT", customer: "PROJ-1" }), true);
+  assert.equal(projectReady({ assignmentType: "", customer: "" }), false);
+  assert.equal(projectReady({ assignmentType: "", customer: "PROJ-1" }), true);
+});
+
+test("i) serials loading/error bloquean submit; ready 0 series no exige checklist", () => {
+  const loadSerialsSrc = sliceFunction(js, "loadOutboundSerialsForSelectedLayer");
+  const blockSrc = sliceFunction(js, "outboundSerialsBlockOutbound");
+  const bumpCubeSrc = sliceFunction(js, "bumpOutboundCubeLoadSeq");
+  const bumpLayerSrc = sliceFunction(js, "bumpOutboundLayerSerialSeq");
+  const selectedSrc = sliceFunction(js, "outboundSelectedSerialIds");
+  const requiredSrc = sliceFunction(js, "outboundSerialsRequired");
+  const syncSrc = sliceFunction(js, "syncOutboundSubmitEnabled");
+
+  assert.match(js, /outboundSerialsLoadState = "ready"/);
+  assert.match(loadSerialsSrc, /outboundSerialsLoadState = "loading"/);
+  assert.match(loadSerialsSrc, /Cargando series disponibles/);
+  assert.match(loadSerialsSrc, /outboundSerialsLoadState = "error"/);
+  assert.match(loadSerialsSrc, /outboundSerialsLoadState = "ready"/);
+  assert.match(bumpCubeSrc, /outboundSerialsLoadState = "loading"/);
+  assert.match(bumpLayerSrc, /outboundSerialsLoadState = "loading"/);
+  assert.match(blockSrc, /outboundSerialsLoadState === "loading"/);
+  assert.match(blockSrc, /outboundSerialsLoadState === "error"/);
+  assert.match(blockSrc, /outboundSerialsRequired/);
+  assert.match(blockSrc, /ids\.length !== qty/);
+  assert.match(syncSrc, /outboundSerialsBlockOutbound/);
+
+  const errorIdx = loadSerialsSrc.indexOf('outboundSerialsLoadState = "error"');
+  const errorSeqIdx = loadSerialsSrc.lastIndexOf("seq !== outboundLayerSerialSeq", errorIdx);
+  assert.ok(errorSeqIdx >= 0 && errorSeqIdx < errorIdx, "error state must follow seq guard");
+  const readyIdx = loadSerialsSrc.indexOf('outboundSerialsLoadState = "ready"');
+  const readySeqIdx = loadSerialsSrc.lastIndexOf("seq !== outboundLayerSerialSeq", readyIdx);
+  assert.ok(readySeqIdx >= 0 && readySeqIdx < readyIdx, "ready state must follow seq guard");
+
+  const outboundSerialsBlockOutbound = new Function(
+    "document",
+    "outboundSerialsLoadState",
+    `${selectedSrc}\n${requiredSrc}\n${blockSrc}\nreturn outboundSerialsBlockOutbound;`
+  );
+
+  function block({
+    state,
+    serialCount = 0,
+    checked = 0,
+    qty = "1"
+  }: {
+    state: "loading" | "error" | "ready";
+    serialCount?: number;
+    checked?: number;
+    qty?: string;
+  }) {
+    const boxes = Array.from({ length: serialCount }, (_, i) => ({
+      checked: i < checked,
+      dataset: { outboundSerialId: `ser-${i}` }
+    }));
+    const document = {
+      getElementById(id: string) {
+        if (id === "outboundSerialPicker") {
+          return {
+            querySelectorAll(selector: string) {
+              if (String(selector).includes(":checked")) return boxes.filter((row) => row.checked);
+              return boxes;
+            }
+          };
+        }
+        if (id === "outboundQty") return { value: qty };
+        return null;
+      }
+    };
+    return outboundSerialsBlockOutbound(document, state)();
+  }
+
+  assert.equal(block({ state: "loading", serialCount: 0, qty: "2" }), true);
+  assert.equal(block({ state: "error", serialCount: 0, qty: "2" }), true);
+  assert.equal(block({ state: "ready", serialCount: 0, qty: "2" }), false);
+  assert.equal(block({ state: "ready", serialCount: 2, checked: 0, qty: "2" }), true);
+  assert.equal(block({ state: "ready", serialCount: 2, checked: 1, qty: "2" }), true);
+  assert.equal(block({ state: "ready", serialCount: 2, checked: 2, qty: "2" }), false);
+  assert.equal(block({ state: "loading", serialCount: 2, checked: 2, qty: "2" }), true);
+  assert.equal(block({ state: "error", serialCount: 2, checked: 2, qty: "2" }), true);
 });

@@ -1269,7 +1269,7 @@ test("33 separación visual Picking de requisición / Picking libre", () => {
 });
 
 test("34 cache-buster v78", () => {
-  assert.match(html, /dashboard\.js\?v=93/);
+  assert.match(html, /dashboard\.js\?v=94/);
   assert.doesNotMatch(html, /dashboard\.js\?v=77/);
 });
 

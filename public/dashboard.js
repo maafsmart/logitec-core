@@ -555,6 +555,8 @@ let operationalHistoryPreview = null;
 let outboundCubeSyncGuard = null;
 let outboundCubeLoadSeq = 0;
 let outboundLayerSerialSeq = 0;
+/** @type {"loading" | "error" | "ready"} */
+let outboundSerialsLoadState = "ready";
 let adminSelectedClientId = "";
 let movementsNextCursor = null;
 let movementsRows = [];
@@ -9332,12 +9334,25 @@ function clearSkuSelectionFields(prefix, input, { keepSkuText = false } = {}) {
 function bumpOutboundCubeLoadSeq() {
   outboundCubeLoadSeq += 1;
   outboundLayerSerialSeq += 1;
+  outboundSerialsLoadState = "loading";
   return outboundCubeLoadSeq;
 }
 
 function bumpOutboundLayerSerialSeq() {
   outboundLayerSerialSeq += 1;
+  outboundSerialsLoadState = "loading";
   return outboundLayerSerialSeq;
+}
+
+function resetOutboundSerialsPicker() {
+  const picker = document.getElementById("outboundSerialPicker");
+  if (picker) picker.innerHTML = "";
+  const field = document.getElementById("outboundSerialField");
+  if (field) {
+    field.classList.add("hidden");
+    field.hidden = true;
+  }
+  outboundSerialsLoadState = "ready";
 }
 
 function clearOutboundLayerAndSerials() {
@@ -9351,19 +9366,19 @@ function clearOutboundLayerAndSerials() {
     sel.value = "";
     sel.disabled = true;
   }
-  const picker = document.getElementById("outboundSerialPicker");
-  if (picker) picker.innerHTML = "";
-  const field = document.getElementById("outboundSerialField");
-  if (field) {
-    field.classList.add("hidden");
-    field.hidden = true;
-  }
+  resetOutboundSerialsPicker();
+}
+
+function clearOutboundAssignmentType() {
+  const inv = document.getElementById("outboundInventoryId");
+  if (inv?.dataset) delete inv.dataset.outboundAssignmentType;
 }
 
 function clearOutboundInventorySelection() {
   bumpOutboundCubeLoadSeq();
   const inv = document.getElementById("outboundInventoryId");
   if (inv) inv.value = "";
+  clearOutboundAssignmentType();
   const productId = document.getElementById("outboundProductId");
   if (productId) productId.value = "";
   clearOutboundLayerAndSerials();
@@ -9384,6 +9399,16 @@ function outboundHasExactInventorySelection() {
   return Boolean(inv) && outboundHasValidSkuSelection();
 }
 
+function outboundSelectedAssignmentType() {
+  return String(document.getElementById("outboundInventoryId")?.dataset?.outboundAssignmentType || "").trim();
+}
+
+function outboundProjectReady() {
+  if (outboundSelectedAssignmentType() === "FREE_TO_SALE") return true;
+  const customerCode = document.getElementById("outboundCustomer")?.value?.trim() || "";
+  return Boolean(customerCode) && customerCode !== SMART_OTHER;
+}
+
 function syncOutboundSubmitEnabled() {
   const btn = document.getElementById("outboundSubmitBtn");
   if (!btn) return;
@@ -9397,13 +9422,11 @@ function syncOutboundSubmitEnabled() {
     document.getElementById("outboundLocation")?.value?.trim() ||
     "";
   const status = document.getElementById("outboundStatus")?.value || "";
-  const customerCode = document.getElementById("outboundCustomer")?.value?.trim() || "";
   const layerId = String(document.getElementById("outboundLayerId")?.value || "").trim();
   const ready =
     outboundHasExactInventorySelection() &&
     Boolean(layerId) &&
-    Boolean(customerCode) &&
-    customerCode !== SMART_OTHER &&
+    outboundProjectReady() &&
     Boolean(warehouse) &&
     Boolean(location) &&
     Boolean(status) &&
@@ -9428,6 +9451,7 @@ function outboundSerialsRequired() {
 }
 
 function outboundSerialsBlockOutbound() {
+  if (outboundSerialsLoadState === "loading" || outboundSerialsLoadState === "error") return true;
   if (!outboundSerialsRequired()) return false;
   const qty = Number(document.getElementById("outboundQty")?.value);
   const ids = outboundSelectedSerialIds();
@@ -9454,13 +9478,7 @@ function setOutboundLayerSelection(layer) {
   if (layerId) void loadOutboundSerialsForSelectedLayer(layerId);
   else {
     bumpOutboundLayerSerialSeq();
-    const picker = document.getElementById("outboundSerialPicker");
-    if (picker) picker.innerHTML = "";
-    const field = document.getElementById("outboundSerialField");
-    if (field) {
-      field.classList.add("hidden");
-      field.hidden = true;
-    }
+    resetOutboundSerialsPicker();
   }
   syncOutboundSubmitEnabled();
 }
@@ -9478,13 +9496,7 @@ function onOutboundLayerSelectChange() {
   }
   if (layerId) void loadOutboundSerialsForSelectedLayer(layerId);
   else {
-    const picker = document.getElementById("outboundSerialPicker");
-    if (picker) picker.innerHTML = "";
-    const field = document.getElementById("outboundSerialField");
-    if (field) {
-      field.classList.add("hidden");
-      field.hidden = true;
-    }
+    resetOutboundSerialsPicker();
   }
   syncOutboundSubmitEnabled();
 }
@@ -9560,6 +9572,7 @@ async function loadOutboundSerialsForSelectedLayer(layerId) {
   field.classList.remove("hidden");
   field.hidden = false;
   picker.innerHTML = '<p class="price-new-help">Cargando series disponibles…</p>';
+  outboundSerialsLoadState = "loading";
   syncOutboundSubmitEnabled();
   const serials = [];
   try {
@@ -9584,6 +9597,7 @@ async function loadOutboundSerialsForSelectedLayer(layerId) {
     if (seq !== outboundLayerSerialSeq || cubeSeq !== outboundCubeLoadSeq) return;
     picker.innerHTML =
       '<p class="ops-message error">No se pudieron cargar las series. Vuelve a seleccionar el lote.</p>';
+    outboundSerialsLoadState = "error";
     syncOutboundSubmitEnabled();
     return;
   }
@@ -9595,6 +9609,7 @@ async function loadOutboundSerialsForSelectedLayer(layerId) {
     field.classList.add("hidden");
     field.hidden = true;
     picker.innerHTML = "";
+    outboundSerialsLoadState = "ready";
     syncOutboundSubmitEnabled();
     return;
   }
@@ -9625,6 +9640,7 @@ async function loadOutboundSerialsForSelectedLayer(layerId) {
       syncOutboundSubmitEnabled();
     });
   });
+  outboundSerialsLoadState = "ready";
   syncOutboundSubmitEnabled();
 }
 
@@ -9655,7 +9671,10 @@ function setOutboundInventoryFromCube(row) {
       });
     }
     const inv = document.getElementById("outboundInventoryId");
-    if (inv) inv.value = row.inventoryId;
+    if (inv) {
+      inv.value = row.inventoryId;
+      inv.dataset.outboundAssignmentType = String(row.assignmentType || "").trim();
+    }
   } finally {
     if (outboundCubeSyncGuard === syncing) outboundCubeSyncGuard = null;
   }
@@ -10794,7 +10813,7 @@ async function submitOperationalMovement(kind) {
       syncInboundSubmitEnabled();
       return;
     }
-  } else if (!customerCode) {
+  } else if (!outboundProjectReady()) {
     setOpsMessage(msgId, "Seleccione un proyecto.", false);
     return;
   }
@@ -12557,6 +12576,7 @@ function wireOperationalForms() {
         bumpOutboundCubeLoadSeq();
         const inv = document.getElementById("outboundInventoryId");
         if (inv) inv.value = "";
+        clearOutboundAssignmentType();
         clearOutboundLayerAndSerials();
       }
       syncOutboundSubmitEnabled();
