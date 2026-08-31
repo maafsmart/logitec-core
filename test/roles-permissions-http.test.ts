@@ -721,6 +721,11 @@ test("SELECT/CLEAR CLIENT: solo ADMIN", async () => {
   }
 });
 
+test("Mi cuenta PATCH es solo lectura para no-ADMIN", () => {
+  assert.match(authRoutes, /SELF_PROFILE_READONLY/);
+  assert.match(authRoutes, /authRouter\.patch\("\/me"/);
+});
+
 test("UI ADMIN: importación, precio, reset y administración visibles", () => {
   assert.match(applyRoleFn, /catalogImportSection\.classList\.toggle\("hidden", !isAdmin\)/);
   assert.match(applyRoleFn, /openInvBtn\.style\.display = isAdmin \? "inline-block" : "none"/);
@@ -785,6 +790,6 @@ test("UI CLIENT: formularios de escritura ocultos del DOM visual", () => {
   assert.match(html, /incidents-form-panel[\s\S]{0,80}js-write-operational/);
   assert.match(applyRoleFn, /setRoleUiVisible\(document\.getElementById\("reqCreatePanel"\), canOperate\)/);
   assert.match(applyRoleFn, /setRoleUiVisible\(document\.querySelector\("\.incidents-form-panel"\), canOperate\)/);
-  assert.match(applyRoleFn, /setRoleUiVisible\(document\.getElementById\("moduleConfig"\), isAdmin\)/);
-  assert.match(applyRoleFn, /setRoleUiVisible\(document\.getElementById\("moduleUsers"\), isAdmin\)/);
+  assert.match(applyRoleFn, /setRoleUiVisible\(document\.getElementById\("moduleConfig"\), false\)/);
+  assert.match(applyRoleFn, /setRoleUiVisible\(document\.getElementById\("moduleUsers"\), false\)/);
 });

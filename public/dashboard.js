@@ -1300,17 +1300,17 @@ function isSistemaWorkspaceModule(mod) {
 }
 
 function showSistemaWorkspace() {
-  const account = document.getElementById("moduleAccount");
-  if (account) {
-    account.classList.remove("hidden");
-    account.style.display = "";
-  }
-  if (currentRole !== "ADMIN") return;
-  ["moduleUsers", "moduleConfig"].forEach((id) => {
-    const el = document.getElementById(id);
+  const panes = {
+    account: document.getElementById("moduleAccount"),
+    users: document.getElementById("moduleUsers"),
+    config: document.getElementById("moduleConfig")
+  };
+  Object.entries(panes).forEach(([mod, el]) => {
     if (!el) return;
-    el.classList.remove("hidden");
-    el.style.display = "";
+    const allowed = mod === "account" || currentRole === "ADMIN";
+    const show = allowed && currentModuleName === mod;
+    el.classList.toggle("hidden", !show);
+    el.style.display = show ? "" : "none";
   });
 }
 
@@ -6180,15 +6180,55 @@ function syncFocusModeButton() {
   btn.textContent = on ? "Salir de concentración" : "Modo concentración";
 }
 
+function placeNavNode(node, home, slot, on) {
+  if (!node || !home || !slot) return;
+  if (on) {
+    slot.appendChild(node);
+    slot.hidden = false;
+  } else if (node.parentElement !== home) {
+    home.appendChild(node);
+    slot.hidden = true;
+  } else {
+    slot.hidden = true;
+  }
+}
+
+function placeNavTabsForFocusMode(on) {
+  placeNavNode(
+    document.querySelector(".nav-section-tabs"),
+    document.getElementById("focusNavHome"),
+    document.getElementById("focusNavSlot"),
+    on
+  );
+  placeNavNode(
+    document.querySelector(".nav-section-body"),
+    document.getElementById("focusSubnavHome"),
+    document.getElementById("focusSubnavSlot"),
+    on
+  );
+}
+
+function syncTopbarOffset() {
+  const bar = document.querySelector(".app-topbar");
+  if (!bar) return;
+  const height = Math.ceil(bar.getBoundingClientRect().height);
+  document.documentElement.style.setProperty("--logitec-topbar-height", `${height}px`);
+}
+
 function applyFocusMode(on) {
   document.body.classList.toggle("focus-mode", Boolean(on));
+  placeNavTabsForFocusMode(Boolean(on));
   syncFocusModeButton();
+  requestAnimationFrame(syncTopbarOffset);
+  if (!on) announceNav("");
 }
 
 function wireFocusMode() {
   const btn = document.getElementById("focusModeBtn");
   if (!btn || btn.dataset.wired === "1") return;
   btn.dataset.wired = "1";
+  window.addEventListener("resize", syncTopbarOffset);
+  syncTopbarOffset();
   btn.addEventListener("click", () => {
     const active = document.body.classList.contains("focus-mode") || isDocumentFullscreen();
     if (active) {
@@ -6197,7 +6237,7 @@ function wireFocusMode() {
       return;
     }
     applyFocusMode(true);
-    announceNav("Modo concentración: navegación oculta para más espacio. Pulsa «Salir de concentración» o Esc.");
+    announceNav("Concentración activa. Usa las áreas y sus funciones en la barra superior.");
     if (!canUseFullscreenApi()) {
       announceNav("Modo concentración activo (compacto). Este navegador no permite pantalla completa web.");
       return;
@@ -11804,8 +11844,9 @@ function applyRoleNavigation(role) {
     panel.dataset.roleHidden = anyVisible ? "0" : "1";
     const sectionId = panel.getAttribute("data-nav-section-panel");
     if (anyVisible && !firstVisibleSection) firstVisibleSection = sectionId;
-    const tab = document.querySelector(`.nav-section-tab[data-nav-section="${sectionId}"]`);
-    if (tab) tab.style.display = anyVisible ? "" : "none";
+    document.querySelectorAll(`.nav-section-tab[data-nav-section="${sectionId}"]`).forEach((tab) => {
+      tab.style.display = anyVisible ? "" : "none";
+    });
     if (!anyVisible) {
       panel.classList.remove("active");
       panel.style.display = "none";
@@ -11941,8 +11982,10 @@ function applyRoleNavigation(role) {
 
   setRoleUiVisible(document.querySelector(".incidents-form-panel"), canOperate);
   setRoleUiVisible(document.getElementById("reqCreatePanel"), canOperate);
-  setRoleUiVisible(document.getElementById("moduleConfig"), isAdmin);
-  setRoleUiVisible(document.getElementById("moduleUsers"), isAdmin);
+  if (!isAdmin) {
+    setRoleUiVisible(document.getElementById("moduleConfig"), false);
+    setRoleUiVisible(document.getElementById("moduleUsers"), false);
+  }
   setRoleUiVisible(document.getElementById("moduleClients"), isAdmin);
   setRoleUiVisible(clientContextGate, isAdmin);
 

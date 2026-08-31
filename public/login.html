@@ -68,12 +68,19 @@
       button:disabled { opacity: 0.7; cursor: wait; }
       .remember-row {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 12px;
         margin: 0 0 16px;
         color: var(--muted);
         font-size: 0.9rem;
+      }
+      .remember-options {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+        min-width: 0;
       }
       .remember-row label {
         display: flex;
@@ -101,18 +108,24 @@
     <main class="card">
       <h1>Portal Logitec</h1>
       <p>Inicia sesion para acceder al panel operativo.</p>
-      <form id="loginForm">
+      <form id="loginForm" method="post" action="/api/auth/login" autocomplete="on">
         <label for="email">Email</label>
-        <input id="email" name="email" type="email" autocomplete="email" required />
+        <input id="email" name="email" type="email" autocomplete="username" required />
 
         <label for="password">Contrasena</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required />
 
         <div class="remember-row">
-          <label for="rememberEmail">
-            <input id="rememberEmail" type="checkbox" />
-            Recordar correo
-          </label>
+          <div class="remember-options">
+            <label for="rememberEmail">
+              <input id="rememberEmail" type="checkbox" />
+              Recordar correo
+            </label>
+            <label for="rememberPassword" id="rememberPasswordRow" hidden>
+              <input id="rememberPassword" type="checkbox" />
+              Recordar contraseña en este navegador
+            </label>
+          </div>
           <button type="button" id="clearRememberedEmailBtn">Usar otra cuenta</button>
         </div>
 
@@ -121,6 +134,6 @@
       </form>
     </main>
 
-    <script src="/login.js?v=3"></script>
+    <script src="/login.js?v=4"></script>
   </body>
 </html>

@@ -7,6 +7,7 @@
     <title>LOGITEC CORE WMS</title>
     <style>
       :root {
+        --logitec-topbar-height: 57px;
         --bg: #e8ecf1;
         --panel: #f4f6f8;
         --panel-solid: #ffffff;
@@ -102,16 +103,131 @@
       body.focus-mode .cc-tagline,
       body.focus-mode .module-btn-desc,
       body.focus-mode .app-datetime,
-      body.focus-mode .environment-badge,
-      body.focus-mode .aviat-context-bar span:not(:first-child) {
+      body.focus-mode .aviat-context-bar > span {
         display: none !important;
+      }
+      .client-active-cluster {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 1 auto;
+        max-width: 100%;
+        white-space: nowrap;
+        overflow: visible;
+      }
+      .client-active-cluster span,
+      .client-active-cluster #changeClientBtn {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        overflow: visible;
+        text-overflow: clip;
+      }
+      .app-topbar-context {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px 14px;
+        flex-wrap: wrap;
+        width: 100%;
+        min-width: 0;
+      }
+      .focus-nav-slot,
+      .focus-subnav-slot {
+        display: none;
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .app-topbar,
       body.focus-mode .app-topbar {
-        padding: 6px 12px;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        padding: 6px 12px 8px;
         max-height: none;
         height: auto;
+        overflow: visible;
+        flex-wrap: nowrap;
+        row-gap: 6px;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .app-topbar .aviat-context-bar,
+      body.focus-mode .app-topbar .aviat-context-bar {
+        max-width: none;
+        overflow: visible;
+        flex: 0 1 auto;
+        flex-wrap: nowrap;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .app-topbar-meta,
+      body.focus-mode .app-topbar-meta {
+        flex: 1 1 auto;
+        min-width: 0;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .focus-nav-slot:not([hidden]),
+      body.focus-mode .focus-nav-slot:not([hidden]) {
+        display: flex;
+        width: 100%;
+        min-width: 0;
+        align-items: center;
+        justify-content: stretch;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .focus-nav-slot .nav-section-tabs,
+      body.focus-mode .focus-nav-slot .nav-section-tabs {
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        padding: 2px;
+        min-height: 34px;
+        max-height: none;
+        flex-wrap: wrap;
+        overflow: visible;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .focus-nav-slot .nav-section-tab,
+      body.focus-mode .focus-nav-slot .nav-section-tab {
+        min-width: 0;
+        flex: 1 1 88px;
+        padding: 6px 8px;
+        font-size: 0.78rem;
+        min-height: 32px;
+        white-space: nowrap;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .focus-subnav-slot:not([hidden]),
+      body.focus-mode .focus-subnav-slot:not([hidden]) {
+        display: block;
+        width: 100%;
+        min-width: 0;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .focus-subnav-slot .nav-section-body,
+      body.focus-mode .focus-subnav-slot .nav-section-body {
+        min-height: 0;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .focus-subnav-slot .nav-section-panel.active,
+      body.focus-mode .focus-subnav-slot .nav-section-panel.active {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        align-items: center;
+        overflow: visible;
+        max-height: none;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .focus-subnav-slot .module-btn.active,
+      body.focus-mode .focus-subnav-slot .module-btn.active {
+        box-shadow: inset 0 -2px 0 var(--accent), var(--shadow-sm);
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .focus-subnav-slot .module-btn,
+      body.focus-mode .focus-subnav-slot .module-btn {
+        min-width: 0;
+        width: auto;
+        min-height: 32px;
+        padding: 4px 10px;
+        flex-direction: row;
+        align-items: center;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .nav-announce,
+      body.focus-mode .nav-announce {
+        position: absolute;
+        width: 1px;
+        height: 1px;
         overflow: hidden;
+        clip: rect(0, 0, 0, 0);
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .sidebar,
       body.focus-mode .sidebar {
@@ -229,7 +345,7 @@
         padding: 14px 22px 16px;
         background: var(--panel-solid);
         position: sticky;
-        top: 57px;
+        top: var(--logitec-topbar-height, 57px);
         z-index: 80;
         height: auto;
         overflow: visible;
@@ -3168,12 +3284,13 @@
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .app-topbar {
         min-height: 48px;
-        max-height: 52px;
-        height: 52px;
+        max-height: none;
+        height: auto;
         padding: 4px 14px;
-        gap: 10px;
-        flex-wrap: nowrap;
-        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: stretch;
+        flex-direction: column;
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .app-brand h1 {
         font-size: 1rem;
@@ -3194,21 +3311,53 @@
         border: 0 !important;
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .app-topbar-meta {
-        flex-wrap: nowrap;
-        gap: 10px;
+        flex-wrap: wrap;
+        gap: 8px 10px;
         min-width: 0;
         flex: 1 1 auto;
         justify-content: flex-end;
         align-items: center;
       }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) .nav-announce {
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        overflow: hidden !important;
+        clip: rect(0, 0, 0, 0) !important;
+        white-space: nowrap !important;
+        border: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) #focusModeBtn,
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) #logoutBtn {
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
+      @media (min-width: 1366px) {
+        html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) .app-topbar-context {
+          flex-wrap: nowrap;
+          align-items: center;
+        }
+        html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) .app-topbar-meta {
+          flex-wrap: nowrap;
+          justify-content: flex-end;
+          gap: 8px 10px;
+        }
+        html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) .app-topbar .aviat-context-bar {
+          flex-wrap: nowrap;
+          flex: 0 1 auto;
+          min-width: 0;
+        }
+      }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .app-topbar .aviat-context-bar {
         margin: 0;
         padding: 2px 8px;
         gap: 8px 10px;
-        flex-wrap: nowrap;
-        white-space: nowrap;
-        overflow: hidden;
-        max-width: 46%;
+        flex-wrap: wrap;
+        white-space: normal;
+        overflow: visible;
+        max-width: none;
         min-height: 0;
         font-size: 0.75rem;
         line-height: 1.2;
@@ -3243,7 +3392,7 @@
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .sidebar {
         padding: 4px 12px 6px;
-        top: 52px;
+        top: var(--logitec-topbar-height, 52px);
         box-shadow: 0 1px 6px rgba(15, 76, 129, 0.05);
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .nav-shell {
@@ -3271,10 +3420,9 @@
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .nav-section-panel {
         position: relative;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         gap: 6px;
-        overflow-x: auto;
-        overflow-y: hidden;
+        overflow: visible;
         padding-bottom: 2px;
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .module-btn {
@@ -3312,6 +3460,20 @@
         min-height: 44px;
         border-radius: 10px;
         overflow: hidden;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact #moduleAccount .module-header-band,
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact #moduleUsers .module-header-band,
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact #moduleConfig .module-header-band {
+        max-height: none;
+        flex-wrap: wrap;
+        overflow: visible;
+        min-height: 0;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact .module-header-band .official-profile-banner {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: unset;
+        flex: 1 1 100%;
       }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .module-header-band h3,
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .cc-hero .cc-title {
@@ -3433,6 +3595,9 @@
           height: auto;
           max-height: 88px;
           min-height: 48px;
+        }
+        html[data-ui-version="compact-workspace-v1"] body.workspace-compact.focus-mode .app-topbar {
+          max-height: none;
         }
         html[data-ui-version="compact-workspace-v1"] body.workspace-compact .nav-section-tab,
         html[data-ui-version="compact-workspace-v1"] body.workspace-compact .module-btn,
@@ -4054,14 +4219,17 @@
     </div>
     <div class="app-shell">
       <header class="app-topbar">
+        <div class="app-topbar-context">
         <div class="app-brand">
           <h1>LOGITEC CORE WMS</h1>
           <p>Control operativo de almacén</p>
         </div>
         <div class="app-topbar-meta">
           <div class="aviat-context-bar">
-            <span>Cliente activo: <strong data-aviat-primary-label>—</strong></span>
-            <button type="button" id="changeClientBtn" class="btn-secondary btn-compact hidden">Cambiar cliente</button>
+            <div class="client-active-cluster">
+              <span>Cliente activo: <strong data-aviat-primary-label>—</strong></span>
+              <button type="button" id="changeClientBtn" class="btn-secondary btn-compact hidden">Cambiar cliente</button>
+            </div>
             <span>Proyecto: <strong data-aviat-project-label>Todos los proyectos</strong></span>
             <span>Asignación: <strong data-aviat-assignment-label>Todas</strong></span>
           </div>
@@ -4075,6 +4243,9 @@
           <button type="button" id="logoutBtn" class="btn-secondary btn-compact">Cerrar sesión</button>
           <p id="navAnnounce" class="nav-announce" aria-live="polite"></p>
         </div>
+        </div>
+        <div id="focusNavSlot" class="focus-nav-slot" hidden></div>
+        <div id="focusSubnavSlot" class="focus-subnav-slot" hidden></div>
         <p id="mustChangePasswordBanner" class="must-change-banner hidden" role="status">
           Debes establecer una contraseña nueva antes de operar. La temporal se muestra una sola vez y no se puede recuperar.
         </p>
@@ -4082,6 +4253,7 @@
       <div class="app-body">
         <aside class="sidebar" aria-label="Navegación principal">
           <div class="nav-shell">
+            <div id="focusNavHome">
             <div class="nav-section-tabs" role="tablist" aria-label="Áreas del sistema">
               <button type="button" class="nav-section-tab active" data-nav-section="inicio" role="tab" aria-selected="true">Inicio</button>
               <button type="button" class="nav-section-tab" data-nav-section="operacion" role="tab" aria-selected="false">Operación</button>
@@ -4089,6 +4261,8 @@
               <button type="button" class="nav-section-tab" data-nav-section="control" role="tab" aria-selected="false">Control</button>
               <button type="button" class="nav-section-tab" data-nav-section="sistema" role="tab" aria-selected="false">Sistema</button>
             </div>
+            </div>
+            <div id="focusSubnavHome">
             <div class="nav-section-body">
               <div class="nav-section-panel active" data-nav-section-panel="inicio" data-nav-group="inicio">
                 <p class="nav-section-hint">Resumen del día, pendientes y accesos críticos</p>
@@ -4179,12 +4353,21 @@
                 </button>
               </div>
               <div class="nav-section-panel" data-nav-section-panel="sistema" data-nav-group="sistema">
-                <p class="nav-section-hint">Workspace único de administración. Una sola pantalla: usuarios, cuenta y configuración según tu rol.</p>
+                <p class="nav-section-hint">Cuenta, accesos y configuración según tu rol</p>
                 <button class="module-btn nav-primary" data-module="account" id="btnAccount" type="button">
-                  <span class="module-btn-label">Mi cuenta / Sistema</span>
-                  <span class="module-btn-desc">Cuenta, usuarios ADMIN y configuración; zona de peligro al final</span>
+                  <span class="module-btn-label">Mi cuenta</span>
+                  <span class="module-btn-desc">Ficha oficial de solo lectura y cambio de tu contraseña</span>
+                </button>
+                <button class="module-btn" data-module="users" id="btnUsers" type="button">
+                  <span class="module-btn-label">Usuarios y accesos</span>
+                  <span class="module-btn-desc">Alta, ficha oficial, roles y restablecimiento de contraseña</span>
+                </button>
+                <button class="module-btn" data-module="config" id="btnConfig" type="button">
+                  <span class="module-btn-label">Configuración</span>
+                  <span class="module-btn-desc">Herramientas administrativas y zona de peligro</span>
                 </button>
               </div>
+            </div>
             </div>
           </div>
         </aside>
@@ -4357,8 +4540,8 @@
           </div>
           <div id="moduleUsers" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Usuarios</h3>
-              <p class="module-lead">Accesos y roles del equipo operativo (solo administración).</p>
+              <h3>Usuarios y accesos</h3>
+              <p class="module-lead">Administración de fichas oficiales, roles y accesos. Solo ADMIN.</p>
             </div>
             <p id="usersMessage" class="filter-hint" style="margin:0 0 8px">Cargando usuarios...</p>
             <div class="card-panel compact-module users-form-panel">
@@ -4790,8 +4973,8 @@
           </div>
           <div id="moduleAccount" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Mi cuenta / Seguridad</h3>
-              <p class="module-lead">Ficha oficial de solo lectura. Aquí solo puedes ver tus datos y cambiar tu contraseña. Un ADMIN edita nombre, foto, contacto y permisos desde Usuarios.</p>
+              <h3>Mi cuenta</h3>
+              <p class="module-lead official-profile-banner">Ficha oficial — Solo lectura. Los datos oficiales son administrados por un ADMIN.</p>
             </div>
             <div class="card-panel compact-module">
               <h4 class="secondary-panel-title">Mi ficha</h4>
@@ -4854,6 +5037,7 @@
               </form>
             </div>
             <div class="card-panel compact-module">
+            <h4 class="secondary-panel-title">Cambiar contraseña</h4>
             <form id="changePasswordForm" class="form-compact">
               <div class="form-grid">
                 <div class="field">
@@ -6018,8 +6202,8 @@
           </div>
           <div id="moduleConfig" class="module-pane hidden">
             <div class="module-screen-header module-header-band">
-              <h3>Configuración operativa</h3>
-              <p class="module-lead">Workspace Sistema: primero tu cuenta, luego usuarios (ADMIN), después configuración. Laboratorio DEV/QA y zona de peligro quedan al final.</p>
+              <h3>Configuración</h3>
+              <p class="module-lead">Herramientas administrativas. Las acciones peligrosas quedan al final, separadas de tu ficha personal.</p>
             </div>
             <div class="card-panel hidden" aria-hidden="true">
               <button type="button" class="btn-secondary btn-compact hidden" data-goto-module="users" data-nav-section="sistema" id="configUsersBtn" tabindex="-1">Usuarios</button>
@@ -6334,6 +6518,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=86"></script>
+    <script src="/dashboard.js?v=88"></script>
   </body>
 </html>

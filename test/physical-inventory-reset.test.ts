@@ -450,7 +450,7 @@ test("la zona de peligro está en Sistema y el importador único en Existencias"
   assert.match(js, /physicalInventoryResetConfirmBtn\.addEventListener\("click", \(\) => void runPhysicalInventoryReset\(\)\)/);
   assert.match(js, /refreshInventoryAfterPhysicalPurge/);
   assert.match(js, /bumpClientContextEpoch/);
-  assert.match(html, /dashboard\.js\?v=86/);
+  assert.match(html, /dashboard\.js\?v=88/);
 });
 
 test("elimina el inventario operativo de AVIAT y conserva catálogos y el otro cliente", async () => {
