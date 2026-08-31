@@ -8701,8 +8701,88 @@ function relocateSelectedBalance() {
   };
 }
 
+function relocateSelectedSerialIds() {
+  const picker = document.getElementById("relocateSerialPicker");
+  if (!picker) return [];
+  return Array.from(
+    picker.querySelectorAll('input[type="checkbox"][data-relocate-serial-id]:checked')
+  )
+    .map((input) => String(input.dataset.relocateSerialId || "").trim())
+    .filter(Boolean);
+}
+
 function relocateSerialsBlockRelocate() {
-  return relocateSelectedBalance().serialCount > 0;
+  const selected = relocateSelectedBalance();
+  if (selected.serialCount <= 0) return false;
+  const qty = parseRelocateQty();
+  return !qty.ok || !Number.isInteger(qty.value) || relocateSelectedSerialIds().length !== qty.value;
+}
+
+async function loadRelocateSerialOptions(item, panel) {
+  const picker = panel?.querySelector("#relocateSerialPicker");
+  if (!picker) return;
+  picker.innerHTML = '<p class="price-new-help">Cargando números de serie disponibles…</p>';
+  const serials = [];
+  try {
+    for (const layer of Array.isArray(item.layers) ? item.layers : []) {
+      if (!layer?.id) continue;
+      let cursor = "";
+      do {
+        const params = new URLSearchParams({ layerId: layer.id, limit: "100" });
+        if (cursor) params.set("cursor", cursor);
+        const response = await authenticatedFetch(
+          `/api/inventory/products/${encodeURIComponent(item.productId)}/serials?${params.toString()}`
+        );
+        if (!response?.ok) throw new Error("SERIAL_LOAD_FAILED");
+        const payload = await response.json();
+        const rows = Array.isArray(payload?.items) ? payload.items : [];
+        serials.push(...rows);
+        cursor = payload?.nextCursor ? String(payload.nextCursor) : "";
+        if (serials.length >= 1_000) cursor = "";
+      } while (cursor);
+      if (serials.length >= 1_000) break;
+    }
+  } catch (_error) {
+    picker.innerHTML =
+      '<p class="ops-message error">No se pudieron cargar las series. Vuelve a seleccionar el saldo.</p>';
+    syncRelocateSubmitEnabled();
+    return;
+  }
+
+  const unique = [...new Map(serials.map((serial) => [serial.id, serial])).values()];
+  if (!unique.length) {
+    picker.innerHTML =
+      '<p class="ops-message error">El saldo indica series, pero no se encontraron series disponibles.</p>';
+    syncRelocateSubmitEnabled();
+    return;
+  }
+  picker.innerHTML =
+    '<div class="sku-selected-card-title">Selecciona los números de serie a reubicar</div>' +
+    '<p class="price-new-help">Marca las series exactas. La cantidad se ajusta automáticamente.</p>' +
+    `<div class="relocate-serial-list">${unique
+      .map(
+        (serial) =>
+          `<label class="inline-check"><input type="checkbox" data-relocate-serial-id="${escCell(
+            serial.id
+          )}" /> <strong>${escCell(serial.serialNumber || "Sin serie")}</strong>${
+            serial.imei ? ` · IMEI ${escCell(serial.imei)}` : ""
+          }</label>`
+      )
+      .join("")}</div>` +
+    '<p id="relocateSerialCountHint" class="price-new-help">Seleccionadas: 0</p>';
+
+  picker.querySelectorAll('input[data-relocate-serial-id]').forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const ids = relocateSelectedSerialIds();
+      const qtyEl = document.getElementById("relocateQty");
+      if (qtyEl) qtyEl.value = ids.length ? String(ids.length) : "";
+      const hint = document.getElementById("relocateSerialCountHint");
+      if (hint) hint.textContent = `Seleccionadas: ${ids.length}`;
+      setOpsMessage("relocateMessage", "", true);
+      syncRelocateSubmitEnabled();
+    });
+  });
+  syncRelocateSubmitEnabled();
 }
 
 function relocateFormIsComplete() {
@@ -8716,6 +8796,7 @@ function relocateFormIsComplete() {
   if (qty.empty || !qty.ok) return false;
   const available = relocateAvailableQtyNumber();
   if (available == null || qty.value > available) return false;
+  if (relocateSerialsBlockRelocate()) return false;
   return true;
 }
 
@@ -8760,6 +8841,11 @@ function buildRelocateSelectedCardHtml(item) {
       <div><dt>Capas</dt><dd>${escCell(layerLabel)}</dd></div>
     </dl>
     ${buildRelocateLayerDetailHtml(item)}
+    ${
+      Number(item.serialCount || 0) > 0
+        ? '<div id="relocateSerialPicker" class="card-panel"><p class="price-new-help">Cargando números de serie disponibles…</p></div>'
+        : ""
+    }
     <button type="button" class="btn-secondary btn-compact sku-change-btn">Cambiar saldo/SKU</button>`;
 }
 
@@ -8789,6 +8875,9 @@ function renderRelocateSelectedCard(item) {
     detail.hidden = open;
     ev.currentTarget.textContent = open ? "Ver detalle" : "Ocultar detalle";
   });
+  if (Number(item.serialCount || 0) > 0) {
+    void loadRelocateSerialOptions(item, panel);
+  }
 }
 
 function hideRelocateSelectedCard() {
@@ -10449,6 +10538,7 @@ async function submitRelocate() {
   const notesExtra = document.getElementById("relocateNotes")?.value?.trim();
   const inventoryId = document.getElementById("relocateInventoryId")?.value?.trim() || "";
   const selected = relocateSelectedBalance();
+  const serialIds = relocateSelectedSerialIds();
   const qty = parseRelocateQty();
 
   if (!warehouse || !stockStatus || !fromLoc) {
@@ -10480,6 +10570,15 @@ async function submitRelocate() {
     setOpsMessage(msgId, "La cantidad no puede superar la disponible no reservada.", false);
     return;
   }
+  if (relocateSerialsBlockRelocate()) {
+    setOpsMessage(
+      msgId,
+      "Selecciona exactamente un número de serie por cada pieza que vas a reubicar.",
+      false
+    );
+    syncRelocateSubmitEnabled();
+    return;
+  }
 
   const confirmMsg = buildRelocateConfirmMessage({
     qty: qty.raw || qty.value,
@@ -10499,21 +10598,12 @@ async function submitRelocate() {
     syncRelocateSubmitEnabled();
     return;
   }
-  if (selected.serialCount > 0) {
-    setOpsMessage(
-      msgId,
-      "El saldo contiene series; requiere selección explícita de seriales. Esta reubicación no puede continuar.",
-      false
-    );
-    syncRelocateSubmitEnabled();
-    return;
-  }
-
   if (btn) btn.disabled = true;
   try {
     const body = {
       inventoryId,
       allocationMode: "FIFO",
+      ...(serialIds.length ? { serialIds } : {}),
       destinationLocation: toLoc,
       quantity: qty.value,
       reference: referenceRaw || `RELOC-${Date.now()}`,

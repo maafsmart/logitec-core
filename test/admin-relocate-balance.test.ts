@@ -462,6 +462,7 @@ function loadRelocateUi(document: unknown) {
     sliceFunction(js, "parseRelocateQty"),
     sliceFunction(js, "relocateAvailableQtyNumber"),
     sliceFunction(js, "relocateSelectedBalance"),
+    sliceFunction(js, "relocateSelectedSerialIds"),
     sliceFunction(js, "relocateSerialsBlockRelocate"),
     sliceFunction(js, "relocateFormIsComplete"),
     sliceFunction(js, "syncRelocateSubmitEnabled"),
@@ -753,14 +754,19 @@ test("19 comportamiento seguro con seriales", async () => {
       assert.equal(error.code, "SERIAL_SELECTION_REQUIRED");
     }
   );
-  assert.match(js, /El saldo contiene series; requiere selección explícita de seriales/);
+  assert.match(js, /Selecciona los números de serie a reubicar/);
+  assert.match(js, /Selecciona exactamente un número de serie por cada pieza/);
   const serialDom = makeRelocateDom({ serialCount: "2" });
   const serialUi = loadRelocateUi(serialDom.document);
   assert.equal(serialUi.relocateSerialsBlockRelocate(), true);
-  assert.equal(serialUi.relocateFormIsComplete(), true);
+  assert.equal(serialUi.relocateFormIsComplete(), false);
   const submitSrc = sliceFunction(js, "submitRelocate");
-  assert.ok(submitSrc.indexOf("window.confirm") < submitSrc.indexOf("selected.serialCount > 0"));
-  assert.ok(submitSrc.indexOf("selected.serialCount > 0") < submitSrc.indexOf('authenticatedFetch("/api/inventory/relocate"'));
+  assert.ok(submitSrc.indexOf("relocateSerialsBlockRelocate") < submitSrc.indexOf("window.confirm"));
+  assert.ok(submitSrc.indexOf("serialIds") < submitSrc.indexOf('authenticatedFetch("/api/inventory/relocate"'));
+  assert.match(routes, /serialIds: z\.array/);
+  assert.match(routes, /serialIds: body\.serialIds/);
+  assert.match(mutationSrc, /SERIAL_COUNT_MISMATCH/);
+  assert.match(mutationSrc, /inventorySerial\.updateMany/);
 });
 
 test("20 no modifica recepción v67, valuación v65, importación ni navegación", () => {
