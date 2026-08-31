@@ -487,7 +487,7 @@ test("la zona de peligro está en Sistema y el importador único en Existencias"
   assert.match(js, /Reset bloqueado/);
   assert.doesNotMatch(js, /resolverlo automáticamente/);
   assert.doesNotMatch(js, /productProjectsPurged/);
-  assert.match(html, /dashboard\.js\?v=90/);
+  assert.match(html, /dashboard\.js\?v=91/);
 });
 
 test("elimina el inventario operativo de AVIAT y conserva catálogos y el otro cliente", async () => {

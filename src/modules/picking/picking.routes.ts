@@ -33,6 +33,7 @@ const scanSchema = z.object({
   /** Línea exacta de inventario cuando el operador elige un candidato */
   inventoryId: z.string().min(1).optional(),
   layerId: z.string().min(1).optional(),
+  layerSelectionMode: z.enum(["FIFO", "MANUAL"]).optional(),
   reservationId: z.string().min(1).optional(),
   requisitionLineId: z.string().min(1).optional(),
   allocationMode: z.string().max(20).optional(),
@@ -167,6 +168,7 @@ pickingRouter.post("/scan", async (req, res) => {
       quantity: qtyRaw,
       inventoryId: inventoryIdOpt,
       layerId: layerIdOpt,
+      layerSelectionMode: layerSelectionModeOpt,
       reservationId: reservationIdOpt,
       requisitionLineId: requisitionLineIdOpt,
       allocationMode: allocationModeOpt,
@@ -183,6 +185,7 @@ pickingRouter.post("/scan", async (req, res) => {
     const projectCode = (projectInput || customerInput)?.trim() || null;
     const inventoryId = inventoryIdOpt?.trim() || null;
     const layerId = layerIdOpt?.trim() || null;
+    const layerSelectionMode = layerSelectionModeOpt || null;
     const reservationId = reservationIdOpt?.trim() || null;
     const requisitionLineId = requisitionLineIdOpt?.trim() || null;
     const allocationMode = allocationModeOpt?.trim() || null;
@@ -544,7 +547,9 @@ pickingRouter.post("/scan", async (req, res) => {
         layerId: layerId ?? undefined,
         qty: pickQty,
         reference: "PICK_SCAN",
-        notes: `Picking scan ${normalizedCode} · status ${stock.status}`,
+        notes:
+          `Picking scan ${normalizedCode} · status ${stock.status}` +
+          (layerSelectionMode === "MANUAL" ? " · Selección manual distinta de FIFO recomendado" : ""),
         taskId,
         userId: req.auth!.userId,
         scannedCode: normalizedCode,

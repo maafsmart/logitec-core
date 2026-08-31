@@ -52,24 +52,56 @@ function activityMetadata(input: LogActivityInput, extra: Record<string, Prisma.
   return { ...base, ...extra };
 }
 
-function layerCandidate(layer: {
+export type FifoLayerShape = {
   id: string;
   lotNumber: string | null;
   qty: Prisma.Decimal;
   reservedQty: Prisma.Decimal;
   receivedAt: Date | null;
+  createdAt: Date;
   unitPriceMxn: Prisma.Decimal | null;
   unitPriceUsd: Prisma.Decimal | null;
-}) {
+  sourceReference: string | null;
+};
+
+export function compareFifoLayers(
+  a: { id: string; receivedAt: Date | null; createdAt: Date },
+  b: { id: string; receivedAt: Date | null; createdAt: Date }
+) {
+  const aReceived = a.receivedAt ? a.receivedAt.getTime() : Number.POSITIVE_INFINITY;
+  const bReceived = b.receivedAt ? b.receivedAt.getTime() : Number.POSITIVE_INFINITY;
+  if (aReceived !== bReceived) return aReceived - bReceived;
+  const aCreated = a.createdAt.getTime();
+  const bCreated = b.createdAt.getTime();
+  if (aCreated !== bCreated) return aCreated - bCreated;
+  return a.id.localeCompare(b.id);
+}
+
+export function fifoAvailableLayers<T extends FifoLayerShape>(layers: T[]) {
+  return layers
+    .map((layer) => ({ layer, availableQty: relocateUnreserved(layer.qty, layer.reservedQty) }))
+    .filter(({ availableQty }) => availableQty.greaterThan(0))
+    .sort((a, b) => compareFifoLayers(a.layer, b.layer));
+}
+
+export function toFifoLayerCandidate(layer: FifoLayerShape, availableQty: Prisma.Decimal, fifoRecommended: boolean) {
   return {
     layerId: layer.id,
     lotNumber: layer.lotNumber,
     qty: layer.qty.toString(),
     reservedQty: layer.reservedQty.toString(),
+    availableQty: availableQty.toString(),
     receivedAt: layer.receivedAt,
+    createdAt: layer.createdAt,
+    sourceReference: layer.sourceReference ?? null,
     unitPriceMxn: layer.unitPriceMxn?.toString() ?? null,
-    unitPriceUsd: layer.unitPriceUsd?.toString() ?? null
+    unitPriceUsd: layer.unitPriceUsd?.toString() ?? null,
+    fifoRecommended
   };
+}
+
+function layerCandidate(layer: FifoLayerShape, availableQty: Prisma.Decimal, fifoRecommended: boolean) {
+  return toFifoLayerCandidate(layer, availableQty, fifoRecommended);
 }
 
 export async function lockInventory(tx: Prisma.TransactionClient, inventoryId: string) {
@@ -150,30 +182,11 @@ function relocateUnreserved(qty: Prisma.Decimal, reservedQty: Prisma.Decimal) {
   return available.lessThan(0) ? new Prisma.Decimal(0) : available;
 }
 
-function compareRelocateFifoLayers(
-  a: { id: string; receivedAt: Date | null; createdAt: Date },
-  b: { id: string; receivedAt: Date | null; createdAt: Date }
-) {
-  const aReceived = a.receivedAt ? a.receivedAt.getTime() : Number.POSITIVE_INFINITY;
-  const bReceived = b.receivedAt ? b.receivedAt.getTime() : Number.POSITIVE_INFINITY;
-  if (aReceived !== bReceived) return aReceived - bReceived;
-  const aCreated = a.createdAt.getTime();
-  const bCreated = b.createdAt.getTime();
-  if (aCreated !== bCreated) return aCreated - bCreated;
-  return a.id.localeCompare(b.id);
-}
+type RelocateFifoLayer = FifoLayerShape;
 
-type RelocateFifoLayer = {
-  id: string;
-  qty: Prisma.Decimal;
-  reservedQty: Prisma.Decimal;
-  lotNumber: string | null;
-  receivedAt: Date | null;
-  createdAt: Date;
-  unitPriceMxn: Prisma.Decimal | null;
-  unitPriceUsd: Prisma.Decimal | null;
-  sourceReference: string | null;
-};
+function compareRelocateFifoLayers(a: FifoLayerShape, b: FifoLayerShape) {
+  return compareFifoLayers(a, b);
+}
 
 export function planRelocateFifoAllocation(layers: RelocateFifoLayer[], requested: Prisma.Decimal) {
   const allocations: Array<{ layer: RelocateFifoLayer; qty: Prisma.Decimal }> = [];
@@ -206,23 +219,37 @@ async function selectLayer(
     where: {
       inventoryId,
       ...(requirePositive ? { qty: { gt: new Prisma.Decimal(0) } } : {})
-    },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+    }
   });
-  if (!layers.length) throw new InventoryMutationError("NO_LAYER_STOCK", "La línea no tiene capas con saldo.");
-  if (layerId) {
-    const layer = layers.find((item) => item.id === layerId);
-    if (!layer) throw new InventoryMutationError("LAYER_NOT_AVAILABLE", "La capa indicada no tiene saldo disponible.");
-    return layer;
-  }
-  if (layers.length !== 1) {
+  const available = requirePositive ? fifoAvailableLayers(layers) : layers.map((layer) => ({
+    layer,
+    availableQty: layer.qty
+  }));
+  if (!available.length) {
     throw new InventoryMutationError(
-      "AMBIGUOUS_LAYER",
-      "La línea tiene varias capas con saldo. Selecciona capa o lote explícitamente.",
-      { layers: layers.map(layerCandidate) }
+      "NO_LAYER_STOCK",
+      requirePositive
+        ? "La línea no tiene existencias disponibles (qty − reservado)."
+        : "La línea no tiene entradas con saldo."
     );
   }
-  return layers[0]!;
+  if (layerId) {
+    const match = available.find((item) => item.layer.id === layerId);
+    if (!match) {
+      throw new InventoryMutationError("LAYER_NOT_AVAILABLE", "La entrada indicada no tiene saldo disponible.");
+    }
+    return match.layer;
+  }
+  if (available.length !== 1) {
+    throw new InventoryMutationError(
+      "AMBIGUOUS_LAYER",
+      "Hay varias entradas con saldo disponible. Elige lote u origen de existencia explícitamente.",
+      {
+        layers: available.map(({ layer, availableQty }, index) => layerCandidate(layer, availableQty, index === 0))
+      }
+    );
+  }
+  return available[0]!.layer;
 }
 
 export async function decrementLayerAndParent(
@@ -673,7 +700,11 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
       throw new InventoryMutationError(
         "AMBIGUOUS_LAYER",
         "El ajuste requiere layerId cuando existen varias capas.",
-        { layers: allLayers.filter((l) => l.qty.greaterThan(0)).map(layerCandidate) }
+        {
+          layers: fifoAvailableLayers(allLayers.filter((l) => l.qty.greaterThan(0))).map(({ layer, availableQty }, index) =>
+            layerCandidate(layer, availableQty, index === 0)
+          )
+        }
       );
     }
     const target = input.qty;

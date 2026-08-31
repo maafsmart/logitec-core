@@ -37,7 +37,7 @@ import {
 } from "./inventory-layer-price.service.js";
 import { splitUnpricedInventoryLayerPrice } from "./inventory-layer-price-split.service.js";
 import { valueAndAssignUnpricedLayer } from "./inventory-layer-value-and-assign.service.js";
-import { InventoryMutationError, mutateInventory } from "./inventory-mutation.service.js";
+import { InventoryMutationError, fifoAvailableLayers, mutateInventory, toFifoLayerCandidate } from "./inventory-mutation.service.js";
 import {
   assertCanTransferAssignment,
   transferAssignment
@@ -224,17 +224,17 @@ inventoryRouter.get("/stock/:inventoryId/layers", requireRole(["ADMIN", "OPERATO
   const inventoryId = z.string().min(1).parse(req.params.inventoryId);
   const inventory = await prisma.inventory.findFirst({
     where: { AND: [{ id: inventoryId }, clientInventoryWhere(req.auth!)] },
-    include: { layers: { orderBy: { createdAt: "asc" } } }
+    include: { layers: true }
   });
   if (!inventory) throw new HttpError(404, "Línea de inventario no encontrada.");
   const exposeEconomic = canExposeEconomicValuation(req.auth!.role);
-  res.json(
-    inventory.layers.map((layer) => {
-      if (exposeEconomic) return layer;
-      const { unitPriceMxn: _mxn, unitPriceUsd: _usd, ...rest } = layer;
-      return rest;
-    })
-  );
+  const fifoLayers = fifoAvailableLayers(inventory.layers).map(({ layer, availableQty }, index) => {
+    const candidate = toFifoLayerCandidate(layer, availableQty, index === 0);
+    if (exposeEconomic) return { ...layer, ...candidate };
+    const { unitPriceMxn: _mxn, unitPriceUsd: _usd, ...rest } = layer;
+    return { ...rest, ...candidate };
+  });
+  res.json(fifoLayers);
 });
 
 inventoryRouter.get("/products/:productId/layers", requireRole(["ADMIN", "OPERATOR", "SUPERVISOR", "CLIENT"]), async (req, res) => {
