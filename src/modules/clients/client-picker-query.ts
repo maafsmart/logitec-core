@@ -34,13 +34,34 @@ export type ClientPickerDb = {
     findMany: (args: Record<string, unknown>) => Promise<unknown[]>;
     findUnique: (args: Record<string, unknown>) => Promise<unknown>;
   };
+  $queryRaw?: (query: Prisma.Sql, ...values: unknown[]) => Promise<unknown>;
 };
 
+function isAuthBoundaryError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const value = error as { statusCode?: unknown; status?: unknown; code?: unknown; name?: unknown };
+  const status = value.statusCode ?? value.status;
+  if (status === 401 || status === 403) return true;
+  const code = typeof value.code === "string" ? value.code : "";
+  if (
+    code === "UNAUTHORIZED" ||
+    code === "FORBIDDEN" ||
+    code === "PASSWORD_CHANGE_REQUIRED" ||
+    code === "USER_CLIENT_REQUIRED" ||
+    code === "CLIENT_CONTEXT_INVALID"
+  ) {
+    return true;
+  }
+  const name = typeof value.name === "string" ? value.name : "";
+  return name === "JsonWebTokenError" || name === "TokenExpiredError" || name === "NotBeforeError";
+}
+
+/** Schema lag: P2021/P2022 by `error.code`, without requiring Prisma instanceof. */
 export function isMissingSchemaObjectError(error: unknown): boolean {
-  return (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    (error.code === "P2021" || error.code === "P2022")
-  );
+  if (isAuthBoundaryError(error)) return false;
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: unknown }).code;
+  return code === "P2021" || code === "P2022";
 }
 
 function asPickerRow(row: unknown): ClientPickerRow | null {
@@ -62,6 +83,47 @@ function asPickerRow(row: unknown): ClientPickerRow | null {
   };
 }
 
+function clampTake(take: number): number {
+  const n = Number(take);
+  if (!Number.isFinite(n)) return 200;
+  return Math.min(200, Math.max(1, Math.trunc(n)));
+}
+
+function exactWhereId(where: Record<string, unknown>): string | undefined {
+  if (!where || !Object.prototype.hasOwnProperty.call(where, "id")) return undefined;
+  return typeof where.id === "string" ? where.id : "";
+}
+
+async function queryLegacyClientRows(
+  db: ClientPickerDb,
+  args: { id?: string; take: number }
+): Promise<unknown[]> {
+  if (typeof db.$queryRaw !== "function") {
+    throw new Error("LEGACY_CLIENT_SQL_UNAVAILABLE");
+  }
+  const limit = clampTake(args.take);
+  const rows =
+    args.id !== undefined
+      ? await db.$queryRaw(
+          Prisma.sql`
+            SELECT "id", "name", "active", "createdAt", "updatedAt"
+            FROM "Client"
+            WHERE "id" = ${args.id}
+            ORDER BY "active" DESC, "name" ASC
+            LIMIT ${limit}
+          `
+        )
+      : await db.$queryRaw(
+          Prisma.sql`
+            SELECT "id", "name", "active", "createdAt", "updatedAt"
+            FROM "Client"
+            ORDER BY "active" DESC, "name" ASC
+            LIMIT ${limit}
+          `
+        );
+  return Array.isArray(rows) ? rows : [];
+}
+
 async function withSchemaFallback<T>(load: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
   try {
     return await load();
@@ -71,10 +133,30 @@ async function withSchemaFallback<T>(load: () => Promise<T>, fallback: () => Pro
   }
 }
 
+async function withPrismaThenLegacySql<T>(
+  prismaLoad: () => Promise<T>,
+  legacyLoad: () => Promise<T>
+): Promise<T> {
+  try {
+    return await prismaLoad();
+  } catch (error) {
+    if (!isMissingSchemaObjectError(error)) throw error;
+    try {
+      return await legacyLoad();
+    } catch (legacyError) {
+      if (legacyError instanceof Error && legacyError.message === "LEGACY_CLIENT_SQL_UNAVAILABLE") {
+        throw error;
+      }
+      throw legacyError;
+    }
+  }
+}
+
 export async function findClientsForPicker(
   db: ClientPickerDb,
   args: { where: Record<string, unknown>; orderBy: unknown; take: number }
 ): Promise<ClientPickerRow[]> {
+  const scopedId = exactWhereId(args.where);
   const rows = await withSchemaFallback(
     () =>
       db.client.findMany({
@@ -92,16 +174,27 @@ export async function findClientsForPicker(
             select: clientPickerIdentitySelect
           }),
         () =>
-          db.client.findMany({
-            ...args,
-            select: clientPickerBaseSelect
-          })
+          withPrismaThenLegacySql(
+            () =>
+              db.client.findMany({
+                ...args,
+                select: clientPickerBaseSelect
+              }),
+            async () => {
+              if (scopedId !== undefined && scopedId === "") return [];
+              return queryLegacyClientRows(db, {
+                id: scopedId,
+                take: args.take
+              });
+            }
+          )
       )
   );
   return (Array.isArray(rows) ? rows : []).map(asPickerRow).filter((row): row is ClientPickerRow => Boolean(row));
 }
 
 export async function findClientForSelect(db: ClientPickerDb, id: string): Promise<ClientPickerRow | null> {
+  if (typeof id !== "string" || id.length === 0) return null;
   const row = await withSchemaFallback(
     () =>
       db.client.findUnique({
@@ -119,10 +212,17 @@ export async function findClientForSelect(db: ClientPickerDb, id: string): Promi
             select: clientPickerIdentitySelect
           }),
         () =>
-          db.client.findUnique({
-            where: { id },
-            select: clientPickerBaseSelect
-          })
+          withPrismaThenLegacySql(
+            () =>
+              db.client.findUnique({
+                where: { id },
+                select: clientPickerBaseSelect
+              }),
+            async () => {
+              const rows = await queryLegacyClientRows(db, { id, take: 1 });
+              return rows[0] ?? null;
+            }
+          )
       )
   );
   return asPickerRow(row);
