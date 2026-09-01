@@ -41,7 +41,7 @@
             <label>Modelo<input id="deviceModel" placeholder="Modelo del equipo" /></label>
             <label>Sistema operativo / versión<input id="deviceOs" placeholder="Android 14, Windows…" /></label>
             <label>Tipo de lector
-              <select id="readerType"><option>Integrado</option><option>Bluetooth</option><option>USB</option><option>Emulación teclado</option><option>Desconocido</option></select>
+              <select id="readerType"><option>Integrado</option><option>Cámara</option><option>Bluetooth</option><option>USB</option><option>Emulación teclado</option><option>Desconocido</option></select>
             </label>
             <label>Total disponible<input id="deviceTotal" type="number" min="0" inputmode="numeric" /></label>
             <label>Simultáneos previstos<input id="deviceConcurrent" type="number" min="0" inputmode="numeric" /></label>
@@ -71,7 +71,11 @@
         <section class="panel scan-panel">
           <div class="section-title">
             <div><span>3</span><h2>Barrido diagnóstico</h2></div>
-            <p>El lector debe emular teclado y terminar con Enter.</p>
+            <p>Elige el origen de lectura; ambos usan el mismo clasificador e historial.</p>
+          </div>
+          <div class="mode-switch" role="tablist" aria-label="Modo de captura">
+            <button id="handheldModeBtn" class="mode-button active" type="button" role="tab" aria-selected="true" aria-controls="handheldCapture">Handheld / PDA</button>
+            <button id="cameraModeBtn" class="mode-button" type="button" role="tab" aria-selected="false" aria-controls="cameraCapture">Cámara de celular</button>
           </div>
           <div class="scan-context">
             <label>Zona física<input id="physicalZone" required placeholder="AN20 / andén norte" /></label>
@@ -82,12 +86,27 @@
               <select id="expectedType"><option value="SKU">SKU</option><option value="UBICACION">Ubicación</option><option value="LOTE">Lote</option><option value="SERIE_IMEI">Serie / IMEI</option><option value="OTRO">Otro</option></select>
             </label>
             <label>Forma de captura
-              <select id="captureMethod"><option>Scanner como teclado</option><option>Pegado manual</option><option>Otro</option></select>
+              <select id="captureMethod"><option>Scanner como teclado</option><option>Cámara de celular</option><option>Pegado manual</option><option>Otro</option></select>
             </label>
+          </div>
+          <div id="handheldCapture" class="capture-surface" role="tabpanel" aria-labelledby="handheldModeBtn">
+            <p class="mode-help">Enfoca el campo y barre con un lector que emule teclado y termine con Enter. También puedes pegar o escribir un valor.</p>
+          </div>
+          <div id="cameraCapture" class="capture-surface camera-capture" role="tabpanel" aria-labelledby="cameraModeBtn" hidden>
+            <div class="camera-frame">
+              <video id="cameraVideo" muted playsinline aria-label="Vista previa de cámara"></video>
+              <div class="camera-guide" aria-hidden="true"></div>
+            </div>
+            <p id="cameraStatus" class="camera-status" role="status">La cámara está apagada. El navegador pedirá permiso únicamente al presionar “Iniciar cámara”.</p>
+            <div class="scan-actions">
+              <button id="startCameraBtn" class="button primary" type="button">Iniciar cámara</button>
+              <button id="stopCameraBtn" class="button secondary" type="button" disabled>Detener cámara</button>
+              <button id="cameraFallbackBtn" class="button secondary" type="button">Usar captura manual / PDA</button>
+            </div>
           </div>
           <label class="scan-label" for="scanInput">Código leído</label>
           <input id="scanInput" class="scan-input" autocomplete="off" autocapitalize="off" spellcheck="false"
-            placeholder="Enfoca aquí y barre; Enter procesa" />
+            placeholder="Barre, escribe o usa la cámara; Enter procesa" />
           <div class="scan-actions">
             <button id="scanBtn" class="button primary" type="button">Procesar lectura</button>
             <button id="notReadBtn" class="button danger" type="button">Registrar no leído</button>
@@ -99,7 +118,7 @@
           <div id="liveResult" class="live-result idle" aria-live="polite">
             <strong>Listo para barrer</strong><span>La lectura aparecerá aquí inmediatamente.</span>
           </div>
-          <p class="camera-note"><strong>Cámara del teléfono:</strong> no habilitada en esta fase. BarcodeDetector no ofrece compatibilidad uniforme en navegadores de PDA/iPhone; se prioriza el modo teclado robusto y sin dependencias pesadas.</p>
+          <p class="camera-note"><strong>Compatibilidad:</strong> Chrome Android/Samsung Internet usan detección nativa cuando está disponible. Safari iPhone y navegadores sin BarcodeDetector usan ZXing-WASM local. Cámara requiere HTTPS o localhost; si se deniega el permiso o falla la detección, usa el campo manual/lector teclado.</p>
         </section>
 
         <section class="panel">

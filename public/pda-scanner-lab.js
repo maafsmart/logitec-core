@@ -4,6 +4,14 @@ const byId = (id) => document.getElementById(id);
 const field = (id) => String(byId(id)?.value || "").trim();
 const scanInput = byId("scanInput");
 const liveResult = byId("liveResult");
+const cameraVideo = byId("cameraVideo");
+let captureMode = "handheld";
+let cameraStream = null;
+let cameraTimer = null;
+let cameraDetector = null;
+let cameraDetectorKind = "";
+let cameraDetectionBusy = false;
+let barcodePolyfillPromise = null;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -157,10 +165,10 @@ function validateRequired() {
   return true;
 }
 
-async function processScan() {
+async function processScan(rawCode) {
   if (!validateRequired()) return;
-  const code = field("scanInput");
-  if (!code) {
+  const code = rawCode === undefined ? String(scanInput.value || "") : String(rawCode);
+  if (!code.trim()) {
     liveResult.className = "live-result error";
     liveResult.innerHTML = "<strong>Sin código</strong><span>Barre un código o usa “Registrar no leído”.</span>";
     scanInput.focus();
@@ -190,6 +198,158 @@ async function processScan() {
   } finally {
     byId("scanBtn").disabled = false;
     scanInput.focus();
+  }
+}
+
+function setCameraStatus(message, tone = "") {
+  const status = byId("cameraStatus");
+  status.textContent = message;
+  status.className = `camera-status${tone ? ` ${tone}` : ""}`;
+}
+
+function stopCamera(message = "Cámara detenida.") {
+  if (cameraTimer) window.clearTimeout(cameraTimer);
+  cameraTimer = null;
+  cameraDetectionBusy = false;
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((track) => track.stop());
+  }
+  cameraStream = null;
+  cameraVideo.pause();
+  cameraVideo.srcObject = null;
+  byId("startCameraBtn").disabled = false;
+  byId("stopCameraBtn").disabled = true;
+  setCameraStatus(message);
+}
+
+function setCaptureMode(mode) {
+  captureMode = mode === "camera" ? "camera" : "handheld";
+  const camera = captureMode === "camera";
+  byId("handheldModeBtn").classList.toggle("active", !camera);
+  byId("handheldModeBtn").setAttribute("aria-selected", String(!camera));
+  byId("cameraModeBtn").classList.toggle("active", camera);
+  byId("cameraModeBtn").setAttribute("aria-selected", String(camera));
+  byId("handheldCapture").hidden = camera;
+  byId("cameraCapture").hidden = !camera;
+  if (camera) {
+    byId("deviceType").value = "Teléfono";
+    byId("readerType").value = "Cámara";
+    byId("captureMethod").value = "Cámara de celular";
+  } else {
+    if (cameraStream) stopCamera("Cámara detenida; captura manual disponible.");
+    if (field("captureMethod") === "Cámara de celular") {
+      byId("captureMethod").value = "Scanner como teclado";
+    }
+    scanInput.focus();
+  }
+}
+
+function loadBarcodeDetectorPolyfill() {
+  if (window.BarcodeDetector) return Promise.resolve();
+  if (barcodePolyfillPromise) return barcodePolyfillPromise;
+  barcodePolyfillPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "/vendor/barcode-detector/3.2.2/polyfill.js";
+    script.dataset.barcodeDetectorPolyfill = "true";
+    script.onload = resolve;
+    script.onerror = () => {
+      script.remove();
+      barcodePolyfillPromise = null;
+      reject(new Error("No se pudo cargar el decodificador local."));
+    };
+    document.head.appendChild(script);
+  });
+  return barcodePolyfillPromise;
+}
+
+async function createCameraDetector() {
+  if (window.BarcodeDetector) {
+    cameraDetectorKind = "nativo";
+    return new window.BarcodeDetector();
+  }
+  await loadBarcodeDetectorPolyfill();
+  const prepare = window.BarcodeDetectionAPI?.prepareZXingModule;
+  if (typeof prepare === "function") {
+    await prepare({
+      overrides: {
+        locateFile(path, prefix) {
+          return path.endsWith(".wasm")
+            ? "/vendor/zxing-wasm/3.1.3/zxing_reader.wasm"
+            : `${prefix}${path}`;
+        }
+      }
+    });
+  }
+  if (!window.BarcodeDetector) throw new Error("El decodificador de códigos no está disponible.");
+  cameraDetectorKind = "ZXing-WASM";
+  return new window.BarcodeDetector();
+}
+
+function scheduleCameraDetection() {
+  if (!cameraStream) return;
+  cameraTimer = window.setTimeout(() => void detectCameraFrame(), 160);
+}
+
+async function detectCameraFrame() {
+  if (!cameraStream || cameraDetectionBusy) return;
+  if (cameraVideo.readyState < 2) {
+    scheduleCameraDetection();
+    return;
+  }
+  cameraDetectionBusy = true;
+  try {
+    const detections = await cameraDetector.detect(cameraVideo);
+    const rawValue = String(detections?.[0]?.rawValue ?? "");
+    if (rawValue) {
+      scanInput.value = rawValue;
+      stopCamera(`Código detectado con ${cameraDetectorKind}. Clasificando…`);
+      await processScan(rawValue);
+      return;
+    }
+  } catch (error) {
+    if (!cameraStream) return;
+    setCameraStatus(`Buscando código… ${error?.message || "ajusta distancia e iluminación"}`);
+  } finally {
+    cameraDetectionBusy = false;
+  }
+  scheduleCameraDetection();
+}
+
+async function startCamera() {
+  if (!window.isSecureContext && window.location.hostname !== "localhost") {
+    setCameraStatus("La cámara requiere HTTPS. Usa captura manual/lector teclado.", "error");
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setCameraStatus("Este navegador no ofrece acceso a cámara. Usa captura manual/lector teclado.", "error");
+    return;
+  }
+  byId("startCameraBtn").disabled = true;
+  setCameraStatus("Solicitando permiso explícito de cámara…");
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    });
+    cameraVideo.srcObject = cameraStream;
+    await cameraVideo.play();
+    cameraDetector = cameraDetector || await createCameraDetector();
+    byId("stopCameraBtn").disabled = false;
+    setCameraStatus(`Cámara activa · detector ${cameraDetectorKind}. Centra un código de barras o QR.`, "ok");
+    scheduleCameraDetection();
+  } catch (error) {
+    stopCamera("Cámara no disponible.");
+    const denied = error?.name === "NotAllowedError";
+    setCameraStatus(
+      denied
+        ? "Permiso de cámara denegado. Habilítalo en el navegador o usa captura manual/lector teclado."
+        : `No se pudo iniciar la cámara: ${error?.message || "error desconocido"}. Usa captura manual/lector teclado.`,
+      "error"
+    );
   }
 }
 
@@ -276,6 +436,11 @@ scanInput.addEventListener("keydown", (event) => {
   void processScan();
 });
 byId("scanBtn").addEventListener("click", () => void processScan());
+byId("handheldModeBtn").addEventListener("click", () => setCaptureMode("handheld"));
+byId("cameraModeBtn").addEventListener("click", () => setCaptureMode("camera"));
+byId("startCameraBtn").addEventListener("click", () => void startCamera());
+byId("stopCameraBtn").addEventListener("click", () => stopCamera());
+byId("cameraFallbackBtn").addEventListener("click", () => setCaptureMode("handheld"));
 byId("notReadBtn").addEventListener("click", registerNotRead);
 byId("repeatBtn").addEventListener("click", () => { scanInput.value = ""; scanInput.focus(); });
 byId("copyBtn").addEventListener("click", () => void copySummary());
@@ -287,6 +452,12 @@ byId("clearBtn").addEventListener("click", () => {
     liveResult.className = "live-result idle";
     liveResult.innerHTML = "<strong>Sesión limpia</strong><span>No se modificó inventario.</span>";
   }
+});
+window.addEventListener("pagehide", () => {
+  if (cameraStream) stopCamera();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && cameraStream) stopCamera("Cámara detenida al ocultar la pestaña.");
 });
 
 void initialize();

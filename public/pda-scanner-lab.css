@@ -95,6 +95,66 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--blue);
 }
 .span-2 { grid-column: span 2; }
+.mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #eef2f5;
+}
+.mode-button {
+  min-height: 46px;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--navy);
+  cursor: pointer;
+  font-weight: 800;
+}
+.mode-button.active {
+  border-color: var(--blue);
+  background: #fff;
+  box-shadow: 0 1px 5px #122a4022;
+}
+.capture-surface { margin-top: 14px; }
+.mode-help { margin: 0; color: var(--muted); font-size: .88rem; }
+.camera-capture {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f5f7f9;
+}
+.camera-frame {
+  position: relative;
+  width: min(100%, 680px);
+  min-height: 220px;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #08131d;
+}
+#cameraVideo {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  max-height: 58vh;
+  object-fit: cover;
+}
+.camera-guide {
+  position: absolute;
+  inset: 25% 12%;
+  border: 3px solid #6ee7b7;
+  border-radius: 9px;
+  box-shadow: 0 0 0 999px #0004;
+  pointer-events: none;
+}
+.camera-status { margin: 10px 0 0; color: var(--muted); font-size: .86rem; line-height: 1.4; }
+.camera-status.ok { color: var(--ok); }
+.camera-status.error { color: var(--danger); }
 .scan-label { margin-top: 18px; }
 .scan-input {
   min-height: 76px;
@@ -147,6 +207,7 @@ th { background: #eef2f5; color: #344252; white-space: nowrap; }
   .topbar { position: static; align-items: flex-start; padding: 12px 14px; }
   main { padding: 10px; }
   .form-grid, .scan-context { grid-template-columns: 1fr; }
+  .mode-switch { grid-template-columns: 1fr; }
   .span-2 { grid-column: auto; }
   .section-title, .history-head { align-items: flex-start; flex-direction: column; }
   .section-title p { line-height: 1.35; }

@@ -27,6 +27,14 @@ export const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, "../public");
+const barcodeDetectorPolyfill = path.resolve(
+  __dirname,
+  "../node_modules/barcode-detector/dist/iife/polyfill.js"
+);
+const barcodeDetectorWasm = path.resolve(
+  __dirname,
+  "../node_modules/zxing-wasm/dist/reader/zxing_reader.wasm"
+);
 
 app.use(
   helmet({
@@ -66,6 +74,14 @@ app.use("/api/catalog", catalogRouter);
 app.use("/api/traceability", traceabilityRouter);
 app.use("/api/tasks", tasksRouter);
 app.use("/api/incidents", incidentsRouter);
+app.get("/vendor/barcode-detector/3.2.2/polyfill.js", (_req, res) => {
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.sendFile(barcodeDetectorPolyfill);
+});
+app.get("/vendor/zxing-wasm/3.1.3/zxing_reader.wasm", (_req, res) => {
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.type("application/wasm").sendFile(barcodeDetectorWasm);
+});
 app.use(express.static("public"));
 
 app.get(/^\/(?!api|health).*/, (_req, res) => {

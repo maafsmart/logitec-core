@@ -14,6 +14,8 @@ const service = readFileSync(
 );
 const html = readFileSync(new URL("../public/pda-scanner-lab.html", import.meta.url), "utf8");
 const js = readFileSync(new URL("../public/pda-scanner-lab.js", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
+const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 function reader(overrides: Partial<ScannerDiagnosticReader> = {}) {
   const calls: Array<{ operation: string; code: string; clientId: string }> = [];
@@ -135,23 +137,56 @@ test("endpoint diagnóstico es GET, ADMIN, con cliente operativo y sin escritura
   assert.doesNotMatch(locationLookup, /inventories/);
 });
 
-test("pantalla aislada cubre teclado Enter, sesión, red manual y cámara documentada", () => {
+test("pantalla aislada comparte captura, sesión, red manual e historial entre ambos modos", () => {
   for (const id of [
     "testId", "deviceType", "deviceBrand", "deviceModel", "deviceOs", "readerType",
     "deviceTotal", "deviceConcurrent", "deviceMonth", "deviceYearEnd", "physicalZone",
     "distance", "expectedType", "captureMethod", "scanInput", "networkProvider",
     "networkZone", "networkPing", "networkDown", "networkUp", "networkStability",
-    "networkReference", "historyBody", "copyBtn", "exportBtn"
+    "networkReference", "historyBody", "copyBtn", "exportBtn", "handheldModeBtn",
+    "cameraModeBtn", "cameraCapture", "cameraVideo", "startCameraBtn", "cameraFallbackBtn"
   ]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
+  assert.equal((html.match(/id="scanInput"/g) || []).length, 1);
+  assert.equal((html.match(/id="historyBody"/g) || []).length, 1);
   assert.match(js, /event\.key !== "Enter"/);
   assert.match(js, /\/api\/admin\/pda-scanner-diagnostic\/classify\?code=/);
   assert.match(js, /const history = \[\]/);
   assert.match(js, /navigator\.clipboard\.writeText/);
   assert.match(js, /text\/csv/);
   assert.doesNotMatch(js, /speedtest|ookla|telmex/i);
-  assert.doesNotMatch(js, /BarcodeDetector|getUserMedia|mediaDevices/);
-  assert.match(html, /BarcodeDetector no ofrece compatibilidad uniforme/);
   assert.match(html, /No crea entradas[\s\S]*salidas[\s\S]*movimientos[\s\S]*reservas/);
+});
+
+test("cámara solicita permiso solo por acción explícita y conserva fallback manual", () => {
+  const start = js.slice(js.indexOf("async function startCamera()"), js.indexOf("function registerNotRead()"));
+  assert.match(start, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(js, /startCameraBtn"\)\.addEventListener\("click", \(\) => void startCamera\(\)\)/);
+  assert.match(js, /cameraFallbackBtn"\)\.addEventListener\("click", \(\) => setCaptureMode\("handheld"\)\)/);
+  assert.match(js, /Permiso de cámara denegado[\s\S]*captura manual\/lector teclado/);
+  assert.ok(js.indexOf("navigator.mediaDevices.getUserMedia") > js.indexOf("async function startCamera()"));
+  assert.doesNotMatch(js.slice(0, js.indexOf("async function startCamera()")), /getUserMedia\(/);
+});
+
+test("cámara usa detector nativo o ZXing-WASM local sin CDN", () => {
+  assert.equal(packageJson.dependencies["barcode-detector"], "^3.2.2");
+  assert.match(js, /if \(window\.BarcodeDetector\)[\s\S]*cameraDetectorKind = "nativo"/);
+  assert.match(js, /\/vendor\/barcode-detector\/3\.2\.2\/polyfill\.js/);
+  assert.match(js, /\/vendor\/zxing-wasm\/3\.1\.3\/zxing_reader\.wasm/);
+  assert.doesNotMatch(js, /cdn\.jsdelivr|unpkg|https:\/\/.*barcode/i);
+  assert.match(appSource, /node_modules\/barcode-detector\/dist\/iife\/polyfill\.js/);
+  assert.match(appSource, /node_modules\/zxing-wasm\/dist\/reader\/zxing_reader\.wasm/);
+  assert.match(appSource, /\/vendor\/barcode-detector\/3\.2\.2\/polyfill\.js/);
+  assert.match(appSource, /\/vendor\/zxing-wasm\/3\.1\.3\/zxing_reader\.wasm/);
+  assert.match(appSource, /res\.type\("application\/wasm"\)\.sendFile/);
+});
+
+test("valor detectado pasa sin transformación al clasificador y la cámara libera recursos", () => {
+  assert.match(js, /const rawValue = String\(detections\?\.\[0\]\?\.rawValue \?\? ""\)/);
+  assert.match(js, /scanInput\.value = rawValue;\s*stopCamera\([\s\S]*await processScan\(rawValue\)/);
+  assert.match(js, /encodeURIComponent\(code\)/);
+  assert.match(js, /cameraStream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
+  assert.match(js, /pagehide/);
+  assert.match(js, /visibilitychange/);
 });
