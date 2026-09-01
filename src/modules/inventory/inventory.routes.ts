@@ -847,7 +847,11 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
   }
   const stockStatus = await assertActiveInventoryStatus(body.status || "AVAILABLE");
   const qtyIn = dec(body.quantity);
-  const product = await prisma.product.findFirst({ where: { sku: body.sku.trim(), active: true } });
+  const product = await prisma.product.findFirst({
+    where: {
+      AND: [{ sku: body.sku.trim(), active: true }, clientProductWhere(req.auth!)]
+    }
+  });
   if (!product) throw new HttpError(404, `Producto no encontrado o inactivo: ${body.sku}`);
 
   let inventoryId = body.inventoryId;

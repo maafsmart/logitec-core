@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { createMovementSchema } from "../src/modules/inventory/inventory-movement.schema.js";
 import { InventoryMutationError } from "../src/modules/inventory/inventory-errors.js";
 import { mutateInventoryInTransaction } from "../src/modules/inventory/inventory-mutation.service.js";
+import { clientProductWhere, operationalClientId } from "../src/modules/clients/client-scope.js";
 
 const html = readFileSync(new URL("../public/dashboard.html", import.meta.url), "utf8");
 const js = readFileSync(new URL("../public/dashboard.js", import.meta.url), "utf8");
@@ -74,6 +75,7 @@ function createInboundTx(opts?: {
   serialControlled?: boolean;
   existingSerials?: SerialRow[];
   failOnSerialCreate?: number;
+  seedInventory?: { qty: string; layerQty?: string; lotNumber?: string | null };
 }) {
   const location = { id: "loc-1", code: "AN1-B", warehouse: "TULTITLAN24" };
   const product = {
@@ -123,6 +125,35 @@ function createInboundTx(opts?: {
     nextId: 1,
     serialCreates: 0
   };
+
+  if (opts?.seedInventory) {
+    const invId = `inv-${state.nextId++}`;
+    state.inventories.push({
+      id: invId,
+      productId: product.id,
+      locationId: location.id,
+      status: "AVAILABLE",
+      qty: d(opts.seedInventory.qty),
+      reservedQty: d(0),
+      assignmentType: "FREE_TO_SALE",
+      assignmentKey: "FREE_TO_SALE:client-aviat",
+      projectId: null,
+      clientId: "client-aviat"
+    });
+    state.layers.push({
+      id: `layer-${state.nextId++}`,
+      inventoryId: invId,
+      qty: d(opts.seedInventory.layerQty ?? opts.seedInventory.qty),
+      reservedQty: d(0),
+      lotNumber: opts.seedInventory.lotNumber ?? "LOTE-SEED",
+      receivedAt: new Date("2026-01-01T00:00:00Z"),
+      unitPriceMxn: null,
+      unitPriceUsd: null,
+      sourceReference: null,
+      sourceType: null,
+      createdAt: new Date("2026-01-01T00:00:00Z")
+    });
+  }
 
   function hydrateInventory(row: (typeof state.inventories)[0]) {
     return { ...row, location, product };
@@ -299,6 +330,142 @@ function createInboundTx(opts?: {
   };
 
   return { tx, state, product, location };
+}
+
+type InboundFakeState = ReturnType<typeof createInboundTx>["state"];
+
+function cloneInboundFakeState(state: InboundFakeState): InboundFakeState {
+  return {
+    inventories: state.inventories.map((row) => ({
+      ...row,
+      qty: d(row.qty),
+      reservedQty: d(row.reservedQty)
+    })),
+    layers: state.layers.map((row) => ({
+      ...row,
+      qty: d(row.qty),
+      reservedQty: d(row.reservedQty),
+      unitPriceMxn: row.unitPriceMxn == null ? null : d(row.unitPriceMxn),
+      unitPriceUsd: row.unitPriceUsd == null ? null : d(row.unitPriceUsd),
+      receivedAt: row.receivedAt ? new Date(row.receivedAt) : null,
+      createdAt: new Date(row.createdAt)
+    })),
+    serials: state.serials.map((row) => ({ ...row })),
+    movements: state.movements.map((row) => ({ ...row })),
+    activities: state.activities.map((row) => ({ ...row })),
+    nextId: state.nextId,
+    serialCreates: state.serialCreates
+  };
+}
+
+function restoreInboundFakeState(state: InboundFakeState, snapshot: InboundFakeState) {
+  state.inventories.splice(0, state.inventories.length, ...cloneInboundFakeState(snapshot).inventories);
+  state.layers.splice(0, state.layers.length, ...cloneInboundFakeState(snapshot).layers);
+  state.serials.splice(0, state.serials.length, ...snapshot.serials.map((row) => ({ ...row })));
+  state.movements.splice(0, state.movements.length);
+  state.activities.splice(0, state.activities.length);
+  state.nextId = snapshot.nextId;
+}
+
+async function withFakeTransactionRollback<T>(state: InboundFakeState, fn: () => Promise<T>): Promise<T> {
+  const snapshot = cloneInboundFakeState(state);
+  try {
+    return await fn();
+  } catch (error) {
+    restoreInboundFakeState(state, snapshot);
+    throw error;
+  }
+}
+
+function clientIdFromProductWhere(where: unknown): string | undefined {
+  if (!where || typeof where !== "object") return undefined;
+  const record = where as Record<string, unknown>;
+  if (Array.isArray(record.AND)) {
+    for (const part of record.AND) {
+      const found = clientIdFromProductWhere(part);
+      if (found) return found;
+    }
+  }
+  if (Array.isArray(record.OR)) {
+    for (const clause of record.OR) {
+      if (!clause || typeof clause !== "object") continue;
+      const inv = (clause as { inventories?: { some?: { clientId?: string } } }).inventories;
+      if (inv?.some?.clientId) return inv.some.clientId;
+      const pp = (clause as { productProjects?: { some?: { project?: { clientId?: string } } } }).productProjects;
+      if (pp?.some?.project?.clientId) return pp.some.project.clientId;
+    }
+  }
+  return undefined;
+}
+
+function skuFromProductWhere(where: unknown): string | undefined {
+  if (!where || typeof where !== "object") return undefined;
+  const record = where as Record<string, unknown>;
+  if (typeof record.sku === "string") return record.sku;
+  if (Array.isArray(record.OR)) {
+    for (const clause of record.OR) {
+      if (!clause || typeof clause !== "object") continue;
+      const sku = (clause as { sku?: string }).sku;
+      if (typeof sku === "string") return sku;
+    }
+  }
+  if (Array.isArray(record.AND)) {
+    for (const part of record.AND) {
+      const found = skuFromProductWhere(part);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+function productAccessibleToClient(
+  product: {
+    inventories: Array<{ clientId: string }>;
+    productProjects: Array<{ active?: boolean; project?: { clientId?: string } }>;
+  },
+  clientId: string
+) {
+  return (
+    product.inventories.some((row) => row.clientId === clientId) ||
+    product.productProjects.some((row) => row.active !== false && row.project?.clientId === clientId)
+  );
+}
+
+function findMovementProduct(where: unknown) {
+  const sku = skuFromProductWhere(where)?.trim();
+  const clientId = clientIdFromProductWhere(where);
+  const activePart = (where as { AND?: Array<{ active?: boolean }> })?.AND?.find((part) => part.active === true);
+  const requireActive = Boolean(activePart);
+  const catalog = [
+    {
+      id: "prod-aviat",
+      sku: "SKU-AVIAT-ONLY",
+      active: true,
+      serialControlled: false,
+      inventories: [{ clientId: "client-aviat" }],
+      productProjects: [] as Array<{ active?: boolean; project?: { clientId?: string } }>
+    },
+    {
+      id: "prod-c2",
+      sku: "SKU-C2-ONLY",
+      active: true,
+      serialControlled: false,
+      inventories: [{ clientId: "client-other" }],
+      productProjects: []
+    },
+    {
+      id: "prod-serial-c2",
+      sku: "SKU-SERIAL-C2-ONLY",
+      active: true,
+      serialControlled: true,
+      inventories: [{ clientId: "client-other" }],
+      productProjects: []
+    }
+  ];
+  const product = catalog.find((row) => row.sku === sku && (!requireActive || row.active));
+  if (!product) return null;
+  if (clientId && !productAccessibleToClient(product, clientId)) return null;
+  return product;
 }
 
 async function receiveIn(
@@ -551,4 +718,90 @@ test("error al crear serie no deja movimiento; validación ocurre antes de incre
   assert.equal(existing.state.layers.length, 0);
   assert.equal(existing.state.movements.length, 0);
   assert.match(mutationSrc, /prisma\.\$transaction\(\(tx\) => mutateInventoryInTransaction/);
+});
+
+test("POST movements resuelve producto con clientProductWhere", () => {
+  const postBlock = routes.slice(routes.indexOf('inventoryRouter.post("/movements"'));
+  const untilMutate = postBlock.slice(0, postBlock.indexOf("mutateInventory"));
+  assert.match(untilMutate, /clientProductWhere\(req\.auth!\)/);
+  assert.match(untilMutate, /AND:\s*\[\s*\{\s*sku:\s*body\.sku\.trim\(\),\s*active:\s*true\s*\}/);
+  assert.doesNotMatch(untilMutate, /findFirst\(\{\s*where:\s*\{\s*sku:\s*body\.sku\.trim\(\),\s*active:\s*true\s*\}\s*\}\)/);
+});
+
+test("AVIAT no puede resolver producto accesible solo a otro cliente para IN normal o serializado", () => {
+  const aviatAuth = { role: "SUPERVISOR" as const, clientId: "client-aviat" };
+  const aviatClientId = operationalClientId(aviatAuth);
+  const where = {
+    AND: [{ sku: "SKU-C2-ONLY", active: true }, clientProductWhere(aviatAuth)]
+  };
+  assert.equal(findMovementProduct(where), null);
+  const serialWhere = {
+    AND: [{ sku: "SKU-SERIAL-C2-ONLY", active: true }, clientProductWhere(aviatAuth)]
+  };
+  assert.equal(findMovementProduct(serialWhere), null);
+  const allowed = findMovementProduct({
+    AND: [{ sku: "SKU-AVIAT-ONLY", active: true }, clientProductWhere(aviatAuth)]
+  });
+  assert.equal(allowed?.id, "prod-aviat");
+  assert.equal(productAccessibleToClient(allowed!, aviatClientId), true);
+});
+
+test("rollback atómico si falla crear una serie tras iniciar entrada serializada", async () => {
+  const world = createInboundTx({ serialControlled: true, failOnSerialCreate: 2 });
+  await withFakeTransactionRollback(world.state, () =>
+    receiveIn(world.tx, {
+      qty: "2",
+      serials: [
+        { serialNumber: "SN-ROLL-1" },
+        { serialNumber: "SN-ROLL-2" }
+      ]
+    })
+  ).then(
+    () => {
+      throw new Error("expected serial create failure");
+    },
+    (error) => {
+      assert.match(String((error as Error).message), /SERIAL_CREATE_FAILED/);
+    }
+  );
+  assert.equal(world.state.inventories.length, 0);
+  assert.equal(world.state.layers.length, 0);
+  assert.equal(world.state.serials.length, 0);
+  assert.equal(world.state.movements.length, 0);
+  assert.equal(world.state.activities.length, 0);
+});
+
+test("rollback atómico conserva inventario y layer existentes si falla una serie intermedia", async () => {
+  const world = createInboundTx({
+    serialControlled: true,
+    failOnSerialCreate: 2,
+    seedInventory: { qty: "3", layerQty: "3", lotNumber: "LOTE-SEED" }
+  });
+  const beforeQty = String(world.state.inventories[0]?.qty);
+  const beforeLayerQty = String(world.state.layers[0]?.qty);
+  const layerCountBefore = world.state.layers.length;
+  await withFakeTransactionRollback(world.state, () =>
+    receiveIn(world.tx, {
+      qty: "2",
+      lotNumber: "LOTE-SEED",
+      serials: [
+        { serialNumber: "SN-KEEP-1" },
+        { serialNumber: "SN-KEEP-2" }
+      ]
+    })
+  ).then(
+    () => {
+      throw new Error("expected serial create failure");
+    },
+    (error) => {
+      assert.match(String((error as Error).message), /SERIAL_CREATE_FAILED/);
+    }
+  );
+  assert.equal(world.state.inventories.length, 1);
+  assert.equal(String(world.state.inventories[0]?.qty), beforeQty);
+  assert.equal(world.state.layers.length, layerCountBefore);
+  assert.equal(String(world.state.layers[0]?.qty), beforeLayerQty);
+  assert.equal(world.state.serials.length, 0);
+  assert.equal(world.state.movements.length, 0);
+  assert.equal(world.state.activities.length, 0);
 });
