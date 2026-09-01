@@ -322,7 +322,7 @@ test("rutas de detalle, exportaciones y UI no autorizan por product.customer", (
   assert.match(inventorySrc, /assertAccessibleMovement/);
   assert.match(exportsSrc, /scopedInventoryWhere/);
   assert.match(exportsSrc, /scopedMovementWhere/);
-  assert.match(html, /dashboard\.js\?v=96/);
+  assert.match(html, /dashboard\.js\?v=97/);
   assert.match(js, /owningClientDisplayName/);
   assert.doesNotMatch(js, /Inventario de \$\{PRIMARY_CLIENT_AVIAT_NAME\}/);
 });

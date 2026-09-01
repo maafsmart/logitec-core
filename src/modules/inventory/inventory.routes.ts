@@ -912,6 +912,7 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
       inventoryId,
       layerId: body.layerId,
       serialIds: body.type === "OUT" ? body.serialIds : undefined,
+      serials: body.type === "IN" ? body.serials : undefined,
       qty: qtyIn,
       reference: body.reference?.trim() || null,
       notes: body.notes?.trim() || null,
@@ -939,7 +940,14 @@ inventoryRouter.post("/movements", requireRole(["ADMIN", "SUPERVISOR", "OPERATOR
         "AMBIGUOUS_LAYER",
         "INSUFFICIENT_STOCK",
         "SERIAL_SELECTION_REQUIRED",
-        "SERIAL_CONCURRENT_CHANGE"
+        "SERIAL_CONCURRENT_CHANGE",
+        "SERIAL_EXISTS",
+        "IMEI_EXISTS",
+        "SERIAL_DUPLICATE",
+        "IMEI_DUPLICATE",
+        "SERIAL_COUNT_MISMATCH",
+        "SERIAL_QTY_NOT_INTEGER",
+        "SERIALS_NOT_ALLOWED"
       ].includes(error.code)
         ? 409
         : 400;

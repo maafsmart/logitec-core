@@ -203,6 +203,7 @@ export async function searchSkuProducts(
       name: product.name,
       description: product.description,
       unit: product.unit,
+      serialControlled: product.serialControlled,
       customer: null,
       productProjects: links,
       availableQty: stock ? stock.available.toString() : "0",

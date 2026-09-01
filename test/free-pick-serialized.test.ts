@@ -282,9 +282,9 @@ async function pickQty(
   });
 }
 
-test("UI picking libre muestra checklist/escaneo de series y cache-buster v=96", () => {
+test("UI picking libre muestra checklist/escaneo de series y cache-buster v=97", () => {
   assert.match(html, /id="pickSerialOptions"/);
-  assert.match(html, /dashboard\.js\?v=96/);
+  assert.match(html, /dashboard\.js\?v=97/);
   assert.match(html, /Si la capa tiene series/);
   assert.match(sliceFunction(js, "loadPickSerialOptions"), /\/api\/inventory\/layers\/\$\{encodeURIComponent\(normalizedLayerId\)\}\/serials/);
   assert.match(sliceFunction(js, "loadPickSerialOptions"), /Escanear serie o IMEI/);
