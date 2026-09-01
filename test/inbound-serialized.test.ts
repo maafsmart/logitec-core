@@ -570,10 +570,19 @@ test("schema IN acepta serials y rechaza serialIds; OUT no acepta serials", () =
   assert.match(schemaPrisma, /@@unique\(\[clientId, imei\]\)/);
   assert.doesNotMatch(schemaPrisma, /imei\s+String\?\s+@unique/);
   assert.doesNotMatch(schemaPrisma, /@@unique\(\[productId, serialNumber\]\)/);
-  assert.match(migrationTenantUnique, /DROP INDEX IF EXISTS "InventorySerial_productId_serialNumber_key"/);
-  assert.match(migrationTenantUnique, /DROP INDEX IF EXISTS "InventorySerial_imei_key"/);
   assert.match(migrationTenantUnique, /InventorySerial_clientId_productId_serialNumber_key/);
   assert.match(migrationTenantUnique, /InventorySerial_clientId_imei_key/);
+  assert.match(migrationTenantUnique, /DROP INDEX IF EXISTS "InventorySerial_productId_serialNumber_key"/);
+  assert.match(migrationTenantUnique, /DROP INDEX IF EXISTS "InventorySerial_imei_key"/);
+  const createSerialIdx = migrationTenantUnique.indexOf("InventorySerial_clientId_productId_serialNumber_key");
+  const createImeiIdx = migrationTenantUnique.indexOf("InventorySerial_clientId_imei_key");
+  const dropSerialIdx = migrationTenantUnique.indexOf('DROP INDEX IF EXISTS "InventorySerial_productId_serialNumber_key"');
+  const dropImeiIdx = migrationTenantUnique.indexOf('DROP INDEX IF EXISTS "InventorySerial_imei_key"');
+  assert.ok(createSerialIdx >= 0 && createImeiIdx >= 0 && dropSerialIdx >= 0 && dropImeiIdx >= 0);
+  assert.ok(
+    Math.max(createSerialIdx, createImeiIdx) < Math.min(dropSerialIdx, dropImeiIdx),
+    "both CREATE UNIQUE indexes must appear before both DROP INDEX statements"
+  );
   assert.doesNotMatch(migrationTenantUnique, /\bUPDATE\b/i);
   assert.doesNotMatch(migrationTenantUnique, /\bDELETE\b/i);
   assert.doesNotMatch(migrationTenantUnique, /\bTRUNCATE\b/i);
