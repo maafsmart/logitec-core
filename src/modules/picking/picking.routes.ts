@@ -247,10 +247,17 @@ pickingRouter.post("/scan", async (req, res) => {
       });
       return;
     }
-    if (serialIds.length && allocationMode !== "FIFO") {
+    if (serialIds.length && allocationMode && allocationMode !== "FIFO") {
       res.status(409).json({
         code: "SERIAL_IDS_REQUIRE_FIFO",
-        message: "Las series solo se pueden indicar en picking FIFO."
+        message: "Las series en picking reservado solo se pueden indicar con allocationMode FIFO."
+      });
+      return;
+    }
+    if (serialIds.length && !allocationMode && !layerId) {
+      res.status(409).json({
+        code: "LAYER_REQUIRED_FOR_SERIALS",
+        message: "Indica la capa y selecciona las series exactas de esa capa."
       });
       return;
     }
@@ -545,6 +552,7 @@ pickingRouter.post("/scan", async (req, res) => {
         productId: product.id,
         inventoryId: stock.id,
         layerId: layerId ?? undefined,
+        serialIds: serialIds.length ? serialIds : undefined,
         qty: pickQty,
         reference: "PICK_SCAN",
         notes:

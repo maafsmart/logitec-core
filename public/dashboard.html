@@ -1538,6 +1538,19 @@
         opacity: 0.65;
         cursor: not-allowed;
       }
+      .pick-serial-options .pick-serial-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: 220px;
+        overflow: auto;
+        margin: 8px 0;
+      }
+      .pick-serial-options .inline-check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
       .scan-result-box {
         min-height: 52px;
         padding: 12px 14px;
@@ -5182,9 +5195,11 @@
                 El sistema descuenta solo la línea exacta de inventario no reservado (proyecto, ubicación y estatus).
                 Si el SKU está en varias líneas, debes seleccionarlas: no se descuenta al azar.
                 Primero puede escanearse el código; si hay ambigüedad, elige ubicación/estatus y vuelve a confirmar.
+                Si la capa tiene series, debes seleccionar o escanear exactamente esa cantidad de seriales/IMEI de esa capa; no se elige serie al azar.
               </p>
               <div id="pickCandidates" class="hidden" style="margin:8px 0 12px"></div>
               <div id="pickLayerOptions" class="hidden pick-layer-options" style="margin:8px 0 12px"></div>
+              <div id="pickSerialOptions" class="hidden pick-serial-options" style="margin:8px 0 12px"></div>
               <p id="scanHint" class="inline-error"></p>
               <button id="scanBtn" class="btn-scan" type="submit">Confirmar surtido / escaneo</button>
             </form>
@@ -6558,6 +6573,6 @@
       </div>
     </div>
 
-    <script src="/dashboard.js?v=95"></script>
+    <script src="/dashboard.js?v=96"></script>
   </body>
 </html>
