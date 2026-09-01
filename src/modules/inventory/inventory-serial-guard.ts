@@ -6,7 +6,7 @@ export async function assertNoSerialAmbiguity(tx: Prisma.TransactionClient, laye
   if (serialCount > 0) {
     throw new InventoryMutationError(
       "SERIAL_SELECTION_REQUIRED",
-      "La capa contiene series; requiere selección explícita de seriales."
+      "La capa contiene series; requiere selección explícita de seriales. Selecciona o escanea las series de esta capa; el botón Confirmar se habilita al completar la selección."
     );
   }
 }

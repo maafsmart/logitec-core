@@ -492,7 +492,7 @@ async function consumeSerializedOutbound(
     const movement = await tx.inventoryMovement.create({
       data: {
         productId: input.productId,
-        type: "OUTBOUND",
+        type: input.type === "PICK" ? "PICK" : "OUTBOUND",
         movementType: "OUT",
         stockStatus: inventory.status,
         qty: new Prisma.Decimal(1),
@@ -1070,12 +1070,12 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
     throw new InventoryMutationError("STATUS_NOT_PICKABLE", "El estado de inventario no permite surtir.");
   }
 
-  if (input.type === "OUT") {
-    const outboundSerialIds = (Array.isArray(input.serialIds) ? input.serialIds : [])
+  if (input.type === "OUT" || input.type === "PICK") {
+    const exactSerialIds = (Array.isArray(input.serialIds) ? input.serialIds : [])
       .map((id) => String(id || "").trim())
       .filter(Boolean);
-    if (outboundSerialIds.length) {
-      return consumeSerializedOutbound(tx, input, inventory, outboundSerialIds);
+    if (exactSerialIds.length) {
+      return consumeSerializedOutbound(tx, input, inventory, exactSerialIds);
     }
   }
 

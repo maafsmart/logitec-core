@@ -47,10 +47,13 @@ test("GET eligible-serials está en el router de picking con roles existentes", 
   assert.doesNotMatch(sliceFunction(serviceSrc, "getEligiblePickSerials"), /\.(create|update|delete|updateMany)\(/);
 });
 
-test("POST /api/picking/scan acepta serialIds solo con FIFO", () => {
+test("POST /api/picking/scan acepta serialIds en FIFO reservado y en picking libre", () => {
   assert.match(routes, /serialIds: z\.array/);
   assert.match(routes, /serialIds\.length && reservationId/);
+  assert.match(routes, /serialIds.length && allocationMode && allocationMode !== "FIFO"/);
   assert.match(routes, /SERIAL_IDS_REQUIRE_FIFO/);
+  assert.match(routes, /serialIds.length \? serialIds : undefined/);
+  assert.match(routes, /LAYER_REQUIRED_FOR_SERIALS/);
   assert.match(routes, /serialIds/);
 });
 
@@ -78,8 +81,8 @@ test("no hay migración ni cambio de schema Prisma", () => {
   assert.match(schema, /inventorySerialId String\?/);
 });
 
-test("cache-buster dashboard.js?v=95", () => {
-  assert.match(html, /dashboard\.js\?v=95/);
+test("cache-buster dashboard.js?v=96", () => {
+  assert.match(html, /dashboard\.js\?v=96/);
   assert.doesNotMatch(html, /dashboard\.js\?v=94/);
   assert.doesNotMatch(html, /dashboard\.js\?v=85/);
   assert.doesNotMatch(html, /dashboard\.js\?v=78/);

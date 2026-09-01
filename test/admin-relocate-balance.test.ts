@@ -533,8 +533,8 @@ function makeRelocateDom(opts?: Record<string, string>) {
   };
 }
 
-test("dashboard.js usa cache-buster v=95 para reubicación", () => {
-  assert.match(html, /dashboard\.js\?v=95/);
+test("dashboard.js usa cache-buster v=96 para reubicación", () => {
+  assert.match(html, /dashboard\.js\?v=96/);
   assert.doesNotMatch(html, /dashboard\.js\?v=70/);
 });
 

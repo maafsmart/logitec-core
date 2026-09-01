@@ -564,6 +564,9 @@ let outboundCubeLoadSeq = 0;
 let outboundLayerSerialSeq = 0;
 /** @type {"loading" | "error" | "ready"} */
 let outboundSerialsLoadState = "ready";
+let pickSerialLoadSeq = 0;
+/** @type {"idle" | "loading" | "error" | "ready"} */
+let pickSerialsLoadState = "idle";
 let adminSelectedClientId = "";
 let movementsNextCursor = null;
 let movementsRows = [];
@@ -4532,6 +4535,7 @@ function clearPickCandidates() {
   delete box.dataset.layerId;
   delete box.dataset.layerSelectionMode;
   clearPickLayerOptions();
+  clearPickSerialOptions();
 }
 
 function clearPickLayerOptions() {
@@ -4542,6 +4546,196 @@ function clearPickLayerOptions() {
   delete box.dataset.layerId;
   delete box.dataset.layerSelectionMode;
   delete box.dataset.fifoRecommendedLayerId;
+}
+
+function currentPickLayerId() {
+  const layerBox = document.getElementById("pickLayerOptions");
+  const invBox = document.getElementById("pickCandidates");
+  return String(layerBox?.dataset?.layerId || invBox?.dataset?.layerId || "").trim();
+}
+
+function pickRequestedQty() {
+  const qtyRaw = document.getElementById("pickQty")?.value;
+  const qty = qtyRaw === "" || qtyRaw == null ? 1 : Number(qtyRaw);
+  return qty;
+}
+
+function clearPickSerialOptions() {
+  pickSerialLoadSeq += 1;
+  pickSerialsLoadState = "idle";
+  const box = document.getElementById("pickSerialOptions");
+  if (box) {
+    box.innerHTML = "";
+    box.classList.add("hidden");
+    delete box.dataset.layerId;
+    delete box.dataset.serialRequired;
+  }
+  syncFreePickConfirmEnabled();
+}
+
+function pickSelectedSerialIds() {
+  const picker = document.getElementById("pickSerialOptions");
+  if (!picker) return [];
+  return Array.from(picker.querySelectorAll('input[type="checkbox"][data-pick-serial-id]:checked'))
+    .map((input) => String(input.dataset.pickSerialId || "").trim())
+    .filter(Boolean);
+}
+
+function pickSerialsRequired() {
+  const box = document.getElementById("pickSerialOptions");
+  return box?.dataset?.serialRequired === "1";
+}
+
+function pickSerialsBlockConfirm() {
+  if (pickSerialsLoadState === "loading" || pickSerialsLoadState === "error") return true;
+  if (!pickSerialsRequired()) return false;
+  const qty = pickRequestedQty();
+  if (!Number.isInteger(qty) || !(qty > 0)) return true;
+  const ids = pickSelectedSerialIds();
+  return ids.length !== qty || new Set(ids).size !== ids.length;
+}
+
+function syncFreePickConfirmEnabled() {
+  if (!scanBtn) return;
+  scanBtn.disabled = pickSerialsBlockConfirm();
+}
+
+function updatePickSerialCountHint() {
+  const hint = document.getElementById("pickSerialCountHint");
+  const qty = pickRequestedQty();
+  const ids = pickSelectedSerialIds();
+  const needed = Number.isInteger(qty) && qty > 0 ? qty : "—";
+  if (hint) hint.textContent = `Seleccionadas: ${ids.length} de ${needed}`;
+  syncFreePickConfirmEnabled();
+}
+
+function applyPickSerialScan(raw) {
+  const token = String(raw || "").trim();
+  if (!token) return { ok: false, message: "Indica una serie o IMEI." };
+  const box = document.getElementById("pickSerialOptions");
+  const inputs = Array.from(box?.querySelectorAll('input[type="checkbox"][data-pick-serial-id]') || []);
+  const upper = token.toUpperCase();
+  const match = inputs.find((input) => {
+    const sn = String(input.dataset.pickSerialNumber || "").toUpperCase();
+    const imei = String(input.dataset.pickSerialImei || "").toUpperCase();
+    return sn === upper || (imei && imei === upper);
+  });
+  if (!match) return { ok: false, message: "La serie o IMEI no pertenece a esta capa." };
+  if (match.checked) return { ok: false, message: "La serie ya está seleccionada." };
+  const qty = pickRequestedQty();
+  const selected = pickSelectedSerialIds();
+  if (Number.isInteger(qty) && qty > 0 && selected.length >= qty) {
+    return { ok: false, message: `Ya seleccionaste las ${qty} series requeridas.` };
+  }
+  match.checked = true;
+  updatePickSerialCountHint();
+  return { ok: true };
+}
+
+function wirePickSerialPicker(box) {
+  box.querySelectorAll("input[data-pick-serial-id]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const qty = pickRequestedQty();
+      const ids = pickSelectedSerialIds();
+      if (checkbox.checked && Number.isInteger(qty) && qty > 0 && ids.length > qty) {
+        checkbox.checked = false;
+        setScanResult(`Selecciona exactamente ${qty} series de esta capa.`, "error");
+      }
+      updatePickSerialCountHint();
+    });
+  });
+  const scan = box.querySelector("#pickSerialScan");
+  if (scan && scan.dataset.wired !== "1") {
+    scan.dataset.wired = "1";
+    scan.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      const result = applyPickSerialScan(scan.value);
+      if (!result.ok) {
+        setScanResult(result.message, "error");
+        return;
+      }
+      scan.value = "";
+      setScanResult("Serie agregada. Completa la selección para confirmar.", "ok");
+    });
+  }
+}
+
+async function loadPickSerialOptions(layerId) {
+  const box = document.getElementById("pickSerialOptions");
+  if (!box) return;
+  const normalizedLayerId = String(layerId || "").trim();
+  if (!normalizedLayerId) {
+    clearPickSerialOptions();
+    return;
+  }
+  const seq = ++pickSerialLoadSeq;
+  pickSerialsLoadState = "loading";
+  box.dataset.layerId = normalizedLayerId;
+  delete box.dataset.serialRequired;
+  box.classList.remove("hidden");
+  box.innerHTML = '<p class="price-new-help">Cargando series disponibles de esta capa…</p>';
+  syncFreePickConfirmEnabled();
+  const serials = [];
+  try {
+    let cursor = "";
+    do {
+      const params = new URLSearchParams({ limit: "100" });
+      if (cursor) params.set("cursor", cursor);
+      const response = await authenticatedFetch(
+        `/api/inventory/layers/${encodeURIComponent(normalizedLayerId)}/serials?${params.toString()}`
+      );
+      if (seq !== pickSerialLoadSeq || currentPickLayerId() !== normalizedLayerId) return;
+      if (!response?.ok) throw new Error("SERIAL_LOAD_FAILED");
+      const payload = await response.json();
+      const rows = Array.isArray(payload?.items) ? payload.items : [];
+      serials.push(...rows);
+      cursor = payload?.nextCursor ? String(payload.nextCursor) : "";
+      if (serials.length >= 1_000) cursor = "";
+    } while (cursor);
+  } catch (_error) {
+    if (seq !== pickSerialLoadSeq) return;
+    pickSerialsLoadState = "error";
+    box.dataset.serialRequired = "1";
+    box.classList.remove("hidden");
+    box.innerHTML =
+      '<p class="ops-message error">No se pudieron cargar las series de esta capa. Vuelve a seleccionarla para intentar de nuevo.</p>';
+    syncFreePickConfirmEnabled();
+    return;
+  }
+  if (seq !== pickSerialLoadSeq || currentPickLayerId() !== normalizedLayerId) return;
+  const unique = [...new Map(serials.map((serial) => [serial.id, serial])).values()];
+  if (!unique.length) {
+    pickSerialsLoadState = "ready";
+    delete box.dataset.serialRequired;
+    box.innerHTML = "";
+    box.classList.add("hidden");
+    syncFreePickConfirmEnabled();
+    return;
+  }
+  pickSerialsLoadState = "ready";
+  box.dataset.serialRequired = "1";
+  box.classList.remove("hidden");
+  box.innerHTML =
+    '<div class="sku-selected-card-title">Selecciona o escanea los seriales/IMEI de esta capa</div>' +
+    '<p class="price-new-help">Marca exactamente la cantidad a surtir. No se elige serie al azar ni de otra capa.</p>' +
+    '<div class="field"><label for="pickSerialScan">Escanear serie o IMEI</label>' +
+    '<input id="pickSerialScan" type="text" autocomplete="off" placeholder="Serie o IMEI" /></div>' +
+    `<div class="pick-serial-list">${unique
+      .map(
+        (serial) =>
+          `<label class="inline-check"><input type="checkbox" data-pick-serial-id="${escCell(
+            serial.id
+          )}" data-pick-serial-number="${escCell(serial.serialNumber || "")}" data-pick-serial-imei="${escCell(
+            serial.imei || ""
+          )}" /> <strong>${escCell(serial.serialNumber || "Sin serie")}</strong>${
+            serial.imei ? ` · IMEI ${escCell(serial.imei)}` : ""
+          }</label>`
+      )
+      .join("")}</div>` +
+    '<p id="pickSerialCountHint" class="price-new-help">Seleccionadas: 0</p>';
+  wirePickSerialPicker(box);
+  updatePickSerialCountHint();
 }
 
 function formatPickLayerEntryDate(layer) {
@@ -4559,6 +4753,7 @@ function renderPickLayerOptions(layers, { inventoryId } = {}) {
   });
   if (!list.length) {
     clearPickLayerOptions();
+    clearPickSerialOptions();
     return;
   }
   const recommended = list.find((layer) => layer.fifoRecommended) || list[0];
@@ -4608,14 +4803,18 @@ function renderPickLayerOptions(layers, { inventoryId } = {}) {
       const id = btn.getAttribute("data-pick-layer") || "";
       box.dataset.layerId = id;
       box.dataset.layerSelectionMode = btn.getAttribute("data-fifo-rec") === "1" ? "FIFO" : "MANUAL";
+      void loadPickSerialOptions(id);
       setScanResult("Entrada de existencia seleccionada. Confirma de nuevo el surtido.", "ok");
     });
   });
+  if (recommendedId) void loadPickSerialOptions(recommendedId);
+  else clearPickSerialOptions();
 }
 
 async function prefetchPickLayersForInventory(inventoryId) {
   if (!inventoryId) {
     clearPickLayerOptions();
+    clearPickSerialOptions();
     return;
   }
   try {
@@ -4627,16 +4826,21 @@ async function prefetchPickLayersForInventory(inventoryId) {
     } else if (Array.isArray(layers) && layers.length === 1) {
       const invBox = document.getElementById("pickCandidates");
       const only = layers[0];
+      const layerId = only.layerId || only.id || "";
       if (invBox) {
-        invBox.dataset.layerId = only.layerId || only.id || "";
+        invBox.dataset.layerId = layerId;
         invBox.dataset.layerSelectionMode = "FIFO";
       }
       clearPickLayerOptions();
+      if (layerId) void loadPickSerialOptions(layerId);
+      else clearPickSerialOptions();
     } else {
       clearPickLayerOptions();
+      clearPickSerialOptions();
     }
   } catch (_error) {
     clearPickLayerOptions();
+    clearPickSerialOptions();
   }
 }
 
@@ -4777,6 +4981,8 @@ function buildPickScanPayload(code) {
   if (inventoryId) body.inventoryId = inventoryId;
   if (layerId) body.layerId = layerId;
   if (layerSelectionMode) body.layerSelectionMode = layerSelectionMode;
+  const serialIds = pickSelectedSerialIds();
+  if (serialIds.length) body.serialIds = serialIds.slice();
   return body;
 }
 
@@ -13364,7 +13570,7 @@ async function scanCode(event) {
     scanHint.textContent = "Escanea o escribe un SKU / código de barras.";
     setScanResult("Ingresa un código para surtir.", "error");
     resetPickingFlow();
-    if (scanBtn) scanBtn.disabled = false;
+    syncFreePickConfirmEnabled();
     return;
   }
 
@@ -13374,7 +13580,27 @@ async function scanCode(event) {
     scanHint.textContent = "La cantidad a surtir debe ser mayor a 0.";
     setScanResult("Cantidad inválida.", "error");
     resetPickingFlow();
-    if (scanBtn) scanBtn.disabled = false;
+    syncFreePickConfirmEnabled();
+    return;
+  }
+
+  if (pickSerialsBlockConfirm()) {
+    const needed = Number.isInteger(qty) && qty > 0 ? qty : null;
+    if (pickSerialsLoadState === "loading") {
+      scanHint.textContent = "Espera a que carguen las series de esta capa.";
+      setScanResult("Cargando series… el botón Confirmar se habilita al completar la selección.", "error");
+    } else if (pickSerialsLoadState === "error") {
+      scanHint.textContent = "No se pudieron cargar las series. Vuelve a seleccionar la capa.";
+      setScanResult("Sin checklist de series. Vuelve a elegir la capa para mostrarlas.", "error");
+    } else if (!needed) {
+      scanHint.textContent = "La cantidad serializada debe ser un entero.";
+      setScanResult("Cantidad inválida para picking serializado.", "error");
+    } else {
+      scanHint.textContent = `Selecciona o escanea exactamente ${needed} seriales/IMEI de esta capa. El botón Confirmar se habilita al completar la selección.`;
+      setScanResult(`Series incompletas — elige exactamente ${needed} de esta capa. No se envió el surtido.`, "error");
+    }
+    resetPickingFlow();
+    syncFreePickConfirmEnabled();
     return;
   }
 
@@ -13427,6 +13653,21 @@ async function scanCode(event) {
         resetPickingFlow();
         return;
       }
+      if (payload.code === "SERIAL_SELECTION_REQUIRED") {
+        setPickingFlowState("stock");
+        const layerId = currentPickLayerId();
+        if (layerId) void loadPickSerialOptions(layerId);
+        const needed = Number.isInteger(qty) && qty > 0 ? qty : "N";
+        scanHint.textContent =
+          payload.message ||
+          `Esta capa tiene series. Selecciona o escanea exactamente ${needed} seriales/IMEI de esta capa. El botón Confirmar se habilita al completar la selección.`;
+        setScanResult(
+          `Series requeridas — ${payload.product?.sku || code}: elige exactamente las series de esta capa. No se descontó inventario.`,
+          "error"
+        );
+        resetPickingFlow();
+        return;
+      }
       clearPickCandidates();
       const candHint = payload.candidate
         ? ` Disponible en ${payload.candidate.location} / ${formatInventoryStatus(payload.candidate.status)}: ${payload.candidate.qty}.`
@@ -13455,6 +13696,7 @@ async function scanCode(event) {
       delete candBox.dataset.layerSelectionMode;
     }
     clearPickLayerOptions();
+    clearPickSerialOptions();
 
     const product = payload.product;
     setPickingFlowState("stock");
@@ -13476,7 +13718,7 @@ async function scanCode(event) {
     setScanResult("Error de red en surtido.", "error");
     resetPickingFlow();
   } finally {
-    if (scanBtn) scanBtn.disabled = false;
+    syncFreePickConfirmEnabled();
   }
 }
 
@@ -15501,6 +15743,12 @@ masterModal()?.addEventListener("click", (event) => {
 changePasswordForm.addEventListener("submit", changePassword);
 createProductForm.addEventListener("submit", createProduct);
 scanForm.addEventListener("submit", scanCode);
+document.getElementById("pickQty")?.addEventListener("input", () => {
+  updatePickSerialCountHint();
+});
+document.getElementById("pickQty")?.addEventListener("change", () => {
+  updatePickSerialCountHint();
+});
 catalogPreviewBtn.addEventListener("click", () => runCatalogImport("preview"));
 catalogApplyBtn.addEventListener("click", () => runCatalogImport("apply"));
 if (catalogImportFile) {
