@@ -260,8 +260,8 @@ function reqTableFns() {
   };
 }
 
-test("cache-buster dashboard.js?v=95 para consistencia visual de requisiciones", () => {
-  assert.match(html, /dashboard\.js\?v=95/);
+test("cache-buster dashboard.js?v=96 para consistencia visual de requisiciones", () => {
+  assert.match(html, /dashboard\.js\?v=96/);
   assert.doesNotMatch(html, /dashboard\.js\?v=78/);
 });
 

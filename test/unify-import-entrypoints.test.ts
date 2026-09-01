@@ -124,7 +124,7 @@ test("el modal legado y su wiring fueron eliminados", () => {
 });
 
 test("la vista económica y el asistente único en Existencias se conservan", () => {
-  assert.match(html, /dashboard\.js\?v=95/);
+  assert.match(html, /dashboard\.js\?v=96/);
   assert.match(html, /id="sumStockTotal"/);
   assert.match(html, /id="sumStockCubes"/);
   assert.match(html, /js-economic-card/);
