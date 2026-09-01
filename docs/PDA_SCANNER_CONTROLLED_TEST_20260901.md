@@ -121,3 +121,11 @@ Implementar el laboratorio en esta rama y reportar:
 7. Cualquier decisión que requiera a Rodrigo antes de continuar.
 
 No merge, no deploy, no producción.
+
+## Implementación de fase diagnóstica
+
+- Ruta: `/pda-scanner-lab.html`, accesible únicamente con sesión `ADMIN` y un cliente operativo seleccionado.
+- El historial vive solo en memoria de la pestaña y puede copiarse o exportarse a CSV; no se crea ningún `ScanEvent` ni otro registro de base de datos.
+- El endpoint `GET /api/admin/pda-scanner-diagnostic/classify` realiza consultas exactas y aisladas por cliente para SKU/barcode, ubicación con inventario visible, lote y serie/IMEI.
+- El speed test sigue siendo externo y su resultado se captura manualmente.
+- Cámara fuera de esta fase: `BarcodeDetector` no tiene compatibilidad uniforme entre navegadores Android/iOS y una solución robusta requeriría una dependencia de decodificación adicional. El flujo soportado para piso es scanner con emulación de teclado y terminación Enter.

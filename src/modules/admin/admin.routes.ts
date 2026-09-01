@@ -7,6 +7,7 @@ import {
   executeOperationalHistoryCleanup,
   previewOperationalHistoryCleanup
 } from "./operational-history.service.js";
+import { classifyScannerCode } from "./pda-scanner-diagnostic.service.js";
 
 const adminRouter = Router();
 
@@ -44,6 +45,21 @@ adminRouter.get(
       clientId: req.auth!.operationalClientId!
     });
     res.json(preview);
+  }
+);
+
+adminRouter.get(
+  "/pda-scanner-diagnostic/classify",
+  requireAuth,
+  requireRole(["ADMIN"]),
+  requireOperationalClient,
+  async (req, res) => {
+    const query = z.object({
+      code: z.string().trim().min(1).max(240)
+    }).parse(req.query);
+    const result = await classifyScannerCode(query.code, req.auth!.operationalClientId!);
+    res.setHeader("Cache-Control", "no-store");
+    res.json(result);
   }
 );
 
