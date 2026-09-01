@@ -126,6 +126,7 @@ No merge, no deploy, no producción.
 
 - Ruta: `/pda-scanner-lab.html`, accesible únicamente con sesión `ADMIN` y un cliente operativo seleccionado.
 - El historial vive solo en memoria de la pestaña y puede copiarse o exportarse a CSV; no se crea ningún `ScanEvent` ni otro registro de base de datos.
-- El endpoint `GET /api/admin/pda-scanner-diagnostic/classify` realiza consultas exactas y aisladas por cliente para SKU/barcode, ubicación con inventario visible, lote y serie/IMEI.
+- El endpoint `GET /api/admin/pda-scanner-diagnostic/classify` realiza consultas exactas; SKU/barcode, lote y serie/IMEI permanecen aislados por cliente.
+- Las ubicaciones son maestro global por almacén (no tienen `clientId`): para ADMIN se reconocen por código exacto y estado activo aunque estén vacías, igual que en el listado vigente de ubicaciones. El diagnóstico solo devuelve código y almacén.
 - El speed test sigue siendo externo y su resultado se captura manualmente.
 - Cámara fuera de esta fase: `BarcodeDetector` no tiene compatibilidad uniforme entre navegadores Android/iOS y una solución robusta requeriría una dependencia de decodificación adicional. El flujo soportado para piso es scanner con emulación de teclado y terminación Enter.

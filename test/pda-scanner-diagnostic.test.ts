@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   classifyScannerCode,
+  scannerLocationWhere,
   type ScannerDiagnosticReader
 } from "../src/modules/admin/pda-scanner-diagnostic.service.js";
 
@@ -74,6 +75,31 @@ test("marca AMBIGUO cuando el mismo valor coincide con entidades distintas", asy
   assert.deepEqual(result.matches.map((match) => match.type), ["UBICACION", "LOTE"]);
 });
 
+test("reconoce ubicación maestra activa aunque todavía no tenga inventario", async () => {
+  const inventoryRows: unknown[] = [];
+  const mock = reader({
+    findLocations: async (code, clientId) => {
+      assert.equal(code, "vacia-a1");
+      assert.equal(clientId, "client-aviat");
+      assert.equal(inventoryRows.length, 0, "la ubicación de prueba debe estar vacía");
+      return [{ code: "VACIA-A1", warehouse: "TULTITLAN24" }];
+    }
+  });
+
+  const result = await classifyScannerCode("vacia-a1", "client-aviat", mock.diagnosticReader);
+
+  assert.equal(result.classification, "UBICACION");
+  assert.deepEqual(result.matches, [{
+    type: "UBICACION",
+    label: "VACIA-A1",
+    detail: "Almacén TULTITLAN24"
+  }]);
+  assert.deepEqual(scannerLocationWhere("vacia-a1"), {
+    code: { equals: "vacia-a1", mode: "insensitive" },
+    active: true
+  });
+});
+
 test("clasifica serie/IMEI y conserva el contexto de producto y ubicación", async () => {
   const mock = reader({
     findSerials: async () => [{
@@ -101,6 +127,12 @@ test("endpoint diagnóstico es GET, ADMIN, con cliente operativo y sin escritura
   assert.doesNotMatch(route, /\.create|\.update|\.delete|mutateInventory|ScanEvent/i);
   assert.match(service, /\.findMany\(/);
   assert.doesNotMatch(service, /\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/);
+  const locationLookup = service.slice(
+    service.indexOf("findLocations(code, _clientId)"),
+    service.indexOf("findLots(code, clientId)")
+  );
+  assert.match(locationLookup, /where: scannerLocationWhere\(code\)/);
+  assert.doesNotMatch(locationLookup, /inventories/);
 });
 
 test("pantalla aislada cubre teclado Enter, sesión, red manual y cámara documentada", () => {

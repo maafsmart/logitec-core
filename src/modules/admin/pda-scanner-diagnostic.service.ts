@@ -37,6 +37,18 @@ const exactInsensitive = (value: string): Prisma.StringFilter => ({
   mode: "insensitive"
 });
 
+/**
+ * Location is global warehouse-scoped master data (it has no clientId).
+ * ADMIN location listings already expose active empty locations, so diagnostic
+ * classification mirrors that visibility while returning only code/warehouse.
+ */
+export function scannerLocationWhere(code: string): Prisma.LocationWhereInput {
+  return {
+    code: exactInsensitive(code),
+    active: true
+  };
+}
+
 export const prismaScannerDiagnosticReader: ScannerDiagnosticReader = {
   findProducts(code, clientId) {
     return prisma.product.findMany({
@@ -56,12 +68,9 @@ export const prismaScannerDiagnosticReader: ScannerDiagnosticReader = {
       take: 10
     });
   },
-  findLocations(code, clientId) {
+  findLocations(code, _clientId) {
     return prisma.location.findMany({
-      where: {
-        code: exactInsensitive(code),
-        inventories: { some: { clientId } }
-      },
+      where: scannerLocationWhere(code),
       select: { code: true, warehouse: true },
       orderBy: [{ warehouse: "asc" }, { code: "asc" }],
       take: 10
