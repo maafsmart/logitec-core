@@ -417,7 +417,7 @@ model InventorySerial {
   productId        String
   inventoryLayerId String?
   serialNumber     String
-  imei             String?         @unique
+  imei             String?
   receivedAt       DateTime?
   clientId         String
   createdAt        DateTime        @default(now())
@@ -427,7 +427,8 @@ model InventorySerial {
   client           Client          @relation(fields: [clientId], references: [id], onDelete: Restrict)
   movements        InventoryMovement[]
 
-  @@unique([productId, serialNumber])
+  @@unique([clientId, productId, serialNumber])
+  @@unique([clientId, imei])
   @@index([inventoryLayerId])
   @@index([clientId])
 }

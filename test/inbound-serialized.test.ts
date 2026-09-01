@@ -19,9 +19,47 @@ const schemaSrc = readFileSync(
   "utf8"
 );
 const schemaPrisma = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
+const migrationTenantUnique = readFileSync(
+  new URL("../prisma/migrations/20260901120400_inventory_serial_tenant_unique/migration.sql", import.meta.url),
+  "utf8"
+);
 
 function d(n: string | number) {
   return new Prisma.Decimal(n);
+}
+
+function prismaUniqueViolation(target: string[]) {
+  return new Prisma.PrismaClientKnownRequestError("Unique constraint failed on the fields", {
+    code: "P2002",
+    clientVersion: "test",
+    meta: { target }
+  });
+}
+
+function assertTenantSerialUnique(
+  serials: SerialRow[],
+  row: { clientId: string; productId: string; serialNumber: string; imei: string | null }
+) {
+  const serialDup = serials.some(
+    (existing) =>
+      existing.clientId === row.clientId &&
+      existing.productId === row.productId &&
+      existing.serialNumber.toUpperCase() === row.serialNumber.toUpperCase()
+  );
+  if (serialDup) {
+    throw prismaUniqueViolation(["clientId", "productId", "serialNumber"]);
+  }
+  if (row.imei) {
+    const imeiDup = serials.some(
+      (existing) =>
+        existing.clientId === row.clientId &&
+        Boolean(existing.imei) &&
+        existing.imei!.toUpperCase() === row.imei!.toUpperCase()
+    );
+    if (imeiDup) {
+      throw prismaUniqueViolation(["clientId", "imei"]);
+    }
+  }
 }
 
 function sliceFunction(source: string, name: string): string {
@@ -281,6 +319,7 @@ function createInboundTx(opts?: {
           serialNumber: String(data.serialNumber),
           imei: (data.imei as string | null) ?? null
         };
+        assertTenantSerialUnique(state.serials, created);
         state.serials.push(created);
         return { ...created, receivedAt: data.receivedAt ?? null };
       }
@@ -527,6 +566,17 @@ test("schema IN acepta serials y rechaza serialIds; OUT no acepta serials", () =
   assert.match(routes, /serials: body.type === "IN" \? body.serials : undefined/);
   assert.doesNotMatch(routes, /serialIds: body.type === "IN"/);
   assert.match(schemaPrisma, /model InventorySerial/);
+  assert.match(schemaPrisma, /@@unique\(\[clientId, productId, serialNumber\]\)/);
+  assert.match(schemaPrisma, /@@unique\(\[clientId, imei\]\)/);
+  assert.doesNotMatch(schemaPrisma, /imei\s+String\?\s+@unique/);
+  assert.doesNotMatch(schemaPrisma, /@@unique\(\[productId, serialNumber\]\)/);
+  assert.match(migrationTenantUnique, /DROP INDEX IF EXISTS "InventorySerial_productId_serialNumber_key"/);
+  assert.match(migrationTenantUnique, /DROP INDEX IF EXISTS "InventorySerial_imei_key"/);
+  assert.match(migrationTenantUnique, /InventorySerial_clientId_productId_serialNumber_key/);
+  assert.match(migrationTenantUnique, /InventorySerial_clientId_imei_key/);
+  assert.doesNotMatch(migrationTenantUnique, /\bUPDATE\b/i);
+  assert.doesNotMatch(migrationTenantUnique, /\bDELETE\b/i);
+  assert.doesNotMatch(migrationTenantUnique, /\bTRUNCATE\b/i);
 });
 
 test("UI muestra Series / IMEI, bloquea Registrar y usa Lote / Entrada", () => {
@@ -685,11 +735,159 @@ test("aislamiento: serie de otro cliente no se consulta y no bloquea", async () 
       }
     ]
   });
-  await receiveIn(world.tx, { qty: "1", serials: [{ serialNumber: "SN-SHARED" }] });
+  await receiveIn(world.tx, { qty: "1", serials: [{ serialNumber: "SN-SHARED", imei: "IMEI-AVIAT" }] });
   assert.equal(world.state.serials.filter((serial) => serial.clientId === "client-aviat").length, 1);
   assert.equal(world.state.serials.filter((serial) => serial.clientId === "client-other").length, 1);
   assert.match(mutationSrc, /clientId, productId, OR: serialOr/);
+  assert.match(mutationSrc, /where: \{ clientId, OR: imeiOr \}/);
   assert.doesNotMatch(sliceFunction(mutationSrc, "assertInboundSerialsAvailable"), /clientId:\s*\{/);
+});
+
+test("unicidad tenant-scoped: misma serie/producto en otro cliente permitida; mismo cliente rechazada", async () => {
+  const crossClient = createInboundTx({
+    serialControlled: true,
+    existingSerials: [
+      {
+        id: "ser-other",
+        productId: "prod-1",
+        clientId: "client-other",
+        inventoryLayerId: "layer-other",
+        serialNumber: "SN-TENANT",
+        imei: null
+      }
+    ]
+  });
+  await receiveIn(crossClient.tx, { qty: "1", serials: [{ serialNumber: "SN-TENANT" }] });
+  assert.equal(crossClient.state.serials.filter((serial) => serial.clientId === "client-aviat").length, 1);
+
+  const sameClient = createInboundTx({
+    serialControlled: true,
+    existingSerials: [
+      {
+        id: "ser-aviat",
+        productId: "prod-1",
+        clientId: "client-aviat",
+        inventoryLayerId: "layer-aviat",
+        serialNumber: "SN-DUP",
+        imei: null
+      }
+    ]
+  });
+  await receiveIn(sameClient.tx, { qty: "1", serials: [{ serialNumber: "SN-DUP" }] }).then(
+    () => {
+      throw new Error("should reject duplicate serial same tenant");
+    },
+    (error) => {
+      assert.ok(error instanceof InventoryMutationError);
+      assert.equal(error.code, "SERIAL_EXISTS");
+    }
+  );
+  assert.equal(sameClient.state.inventories.length, 0);
+  assert.equal(sameClient.state.movements.length, 0);
+});
+
+test("unicidad tenant-scoped IMEI: otro cliente permitido; mismo cliente rechazado; NULL IMEI permitido", async () => {
+  const crossClient = createInboundTx({
+    serialControlled: true,
+    existingSerials: [
+      {
+        id: "ser-other-imei",
+        productId: "prod-1",
+        clientId: "client-other",
+        inventoryLayerId: "layer-other",
+        serialNumber: "SN-OTHER",
+        imei: "IMEI-SHARED"
+      }
+    ]
+  });
+  await receiveIn(crossClient.tx, {
+    qty: "1",
+    serials: [{ serialNumber: "SN-AVIAT", imei: "IMEI-SHARED" }]
+  });
+  assert.equal(
+    crossClient.state.serials.filter((serial) => serial.clientId === "client-aviat" && serial.imei === "IMEI-SHARED")
+      .length,
+    1
+  );
+
+  const sameClientImei = createInboundTx({
+    serialControlled: true,
+    existingSerials: [
+      {
+        id: "ser-aviat-imei",
+        productId: "prod-1",
+        clientId: "client-aviat",
+        inventoryLayerId: "layer-a",
+        serialNumber: "SN-A",
+        imei: "IMEI-DUP"
+      }
+    ]
+  });
+  await receiveIn(sameClientImei.tx, {
+    qty: "1",
+    serials: [{ serialNumber: "SN-B", imei: "IMEI-DUP" }]
+  }).then(
+    () => {
+      throw new Error("should reject duplicate imei same tenant");
+    },
+    (error) => {
+      assert.ok(error instanceof InventoryMutationError);
+      assert.equal(error.code, "IMEI_EXISTS");
+    }
+  );
+
+  const nullImei = createInboundTx({ serialControlled: true });
+  await receiveIn(nullImei.tx, {
+    qty: "2",
+    serials: [{ serialNumber: "SN-N1" }, { serialNumber: "SN-N2" }]
+  });
+  assert.equal(nullImei.state.serials.filter((serial) => serial.imei == null).length, 2);
+});
+
+test("P2002 compuesto tenant-scoped se mapea sin filtrar otro tenant", async () => {
+  const world = createInboundTx({ serialControlled: true });
+  const create = world.tx.inventorySerial.create.bind(world.tx.inventorySerial);
+  await create({
+    data: {
+      productId: "prod-1",
+      clientId: "client-aviat",
+      inventoryLayerId: "layer-1",
+      serialNumber: "SN-P2002",
+      imei: "IMEI-P2002"
+    }
+  });
+  await create({
+    data: {
+      productId: "prod-1",
+      clientId: "client-aviat",
+      inventoryLayerId: "layer-1",
+      serialNumber: "SN-P2002-B",
+      imei: "IMEI-P2002"
+    }
+  }).then(
+    () => {
+      throw new Error("expected imei P2002");
+    },
+    (error) => {
+      assert.ok(error instanceof Prisma.PrismaClientKnownRequestError);
+      assert.equal(error.code, "P2002");
+      const target = Array.isArray(error.meta?.target) ? error.meta!.target!.map(String) : [];
+      assert.deepEqual(target, ["clientId", "imei"]);
+    }
+  );
+  await create({
+    data: {
+      productId: "prod-1",
+      clientId: "client-other",
+      inventoryLayerId: "layer-2",
+      serialNumber: "SN-P2002",
+      imei: "IMEI-P2002"
+    }
+  });
+  assert.equal(world.state.serials.filter((serial) => serial.serialNumber === "SN-P2002").length, 2);
+  assert.match(sliceFunction(mutationSrc, "finishSerializedInbound"), /error\.code === "P2002"/);
+  assert.match(sliceFunction(mutationSrc, "finishSerializedInbound"), /SERIAL_EXISTS/);
+  assert.match(sliceFunction(mutationSrc, "finishSerializedInbound"), /IMEI_EXISTS/);
 });
 
 test("error al crear serie no deja movimiento; validación ocurre antes de incrementar si ya existe", async () => {
