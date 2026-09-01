@@ -122,8 +122,29 @@
         </section>
 
         <section class="panel">
+          <div class="section-title">
+            <div><span>4</span><h2>Código de prueba · Code 128</h2></div>
+            <p>Generación local de solo lectura; no crea ni modifica SKU o inventario.</p>
+          </div>
+          <div class="barcode-generator">
+            <label>Texto o SKU real conocido
+              <input id="barcodeSampleInput" maxlength="120" placeholder="037-579419-002" />
+            </label>
+            <button id="generateBarcodeBtn" class="button secondary" type="button">Generar Code 128</button>
+          </div>
+          <div class="scan-actions">
+            <button id="useLastScanBtn" class="button secondary" type="button">Usar último código leído</button>
+            <button id="downloadBarcodeBtn" class="button secondary" type="button" hidden>Descargar PNG</button>
+          </div>
+          <p id="barcodeGeneratorStatus" class="barcode-generator-status" role="status">Muestra el código en otra pantalla o imprímelo; el generador se carga solo al usarlo.</p>
+          <div id="barcodePreview" class="barcode-preview" hidden>
+            <img id="barcodeImage" alt="Código de barras Code 128 generado" />
+          </div>
+        </section>
+
+        <section class="panel">
           <div class="history-head">
-            <div class="section-title"><div><span>4</span><h2>Resumen de sesión</h2></div></div>
+            <div class="section-title"><div><span>5</span><h2>Resumen de sesión</h2></div></div>
             <div class="scan-actions">
               <button id="copyBtn" class="button secondary" type="button">Copiar resumen</button>
               <button id="exportBtn" class="button secondary" type="button">Exportar CSV</button>
@@ -133,13 +154,13 @@
           <div id="sessionStats" class="stats">0 lecturas</div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Hora</th><th>Prueba / zona</th><th>Código</th><th>Clasificación</th><th>Resultado</th><th>Latencia</th><th>Red</th></tr></thead>
-              <tbody id="historyBody"><tr><td colspan="7" class="empty">Sin lecturas en esta sesión.</td></tr></tbody>
+              <thead><tr><th>Hora</th><th>Prueba / zona</th><th>Código</th><th>Clasificación</th><th>Resultado</th><th>Hasta detección</th><th>Clasificación API</th><th>Red</th></tr></thead>
+              <tbody id="historyBody"><tr><td colspan="8" class="empty">Sin lecturas en esta sesión.</td></tr></tbody>
             </table>
           </div>
         </section>
       </div>
     </main>
-    <script src="/pda-scanner-lab.js?v=2"></script>
+    <script src="/pda-scanner-lab.js?v=3"></script>
   </body>
 </html>

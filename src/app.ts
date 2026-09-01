@@ -35,6 +35,14 @@ const barcodeDetectorWasm = path.resolve(
   __dirname,
   "../node_modules/zxing-wasm/dist/reader/zxing_reader.wasm"
 );
+const barcodeWriterScript = path.resolve(
+  __dirname,
+  "../node_modules/zxing-wasm/dist/iife/writer/index.js"
+);
+const barcodeWriterWasm = path.resolve(
+  __dirname,
+  "../node_modules/zxing-wasm/dist/writer/zxing_writer.wasm"
+);
 
 app.use(
   helmet({
@@ -81,6 +89,14 @@ app.get("/vendor/barcode-detector/3.2.2/polyfill.js", (_req, res) => {
 app.get("/vendor/zxing-wasm/3.1.3/zxing_reader.wasm", (_req, res) => {
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   res.type("application/wasm").sendFile(barcodeDetectorWasm);
+});
+app.get("/vendor/zxing-wasm/3.1.3/writer.js", (_req, res) => {
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.sendFile(barcodeWriterScript);
+});
+app.get("/vendor/zxing-wasm/3.1.3/zxing_writer.wasm", (_req, res) => {
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.type("application/wasm").sendFile(barcodeWriterWasm);
 });
 app.use(express.static("public"));
 

@@ -14,6 +14,7 @@ const service = readFileSync(
 );
 const html = readFileSync(new URL("../public/pda-scanner-lab.html", import.meta.url), "utf8");
 const js = readFileSync(new URL("../public/pda-scanner-lab.js", import.meta.url), "utf8");
+const css = readFileSync(new URL("../public/pda-scanner-lab.css", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -189,9 +190,51 @@ test("el laboratorio reenvía el login con next allowlisted al propio laboratori
 
 test("valor detectado pasa sin transformación al clasificador y la cámara libera recursos", () => {
   assert.match(js, /const rawValue = String\(detections\?\.\[0\]\?\.rawValue \?\? ""\)/);
-  assert.match(js, /scanInput\.value = rawValue;\s*stopCamera\([\s\S]*await processScan\(rawValue\)/);
+  assert.match(js, /scanInput\.value = rawValue;\s*stopCamera\([\s\S]*await processScan\(rawValue, \{ detectionMs \}\)/);
   assert.match(js, /encodeURIComponent\(code\)/);
   assert.match(js, /cameraStream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
   assert.match(js, /pagehide/);
   assert.match(js, /visibilitychange/);
+});
+
+test("guía de cámara es amplia y no oscurece el video", () => {
+  const guide = css.slice(css.indexOf(".camera-guide {"), css.indexOf(".camera-status"));
+  assert.match(guide, /inset:\s*14% 5%/);
+  assert.match(guide, /border:\s*3px solid/);
+  assert.doesNotMatch(guide, /box-shadow|#0004|999px/);
+});
+
+test("separa tiempo hasta detección de latencia de clasificación API", () => {
+  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("async function startCamera()"));
+  const process = js.slice(js.indexOf("async function processScan("), js.indexOf("function setCameraStatus("));
+  const start = js.slice(js.indexOf("async function startCamera()"), js.indexOf("function setBarcodeGeneratorStatus("));
+  assert.match(start, /cameraStartedAt = performance\.now\(\)/);
+  assert.ok(start.indexOf("cameraStartedAt = performance.now()") < start.indexOf("scheduleCameraDetection()"));
+  assert.match(detect, /performance\.now\(\) - cameraStartedAt/);
+  assert.match(process, /classificationStartedAt = performance\.now\(\)/);
+  assert.match(process, /performance\.now\(\) - classificationStartedAt/);
+  assert.match(html, /Hasta detección/);
+  assert.match(html, /Clasificación API/);
+  assert.match(js, /tiempo_deteccion_ms/);
+  assert.match(js, /latencia_clasificacion_ms/);
+  assert.doesNotMatch(js, /\blatencyMs\b/);
+});
+
+test("generador Code 128 es local, bajo demanda y no toca API ni base de datos", () => {
+  for (const id of [
+    "barcodeSampleInput", "generateBarcodeBtn", "useLastScanBtn",
+    "downloadBarcodeBtn", "barcodeGeneratorStatus", "barcodePreview", "barcodeImage"
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  const generator = js.slice(js.indexOf("function loadBarcodeWriter()"), js.indexOf("function registerNotRead()"));
+  assert.match(generator, /\/vendor\/zxing-wasm\/3\.1\.3\/writer\.js/);
+  assert.match(generator, /\/vendor\/zxing-wasm\/3\.1\.3\/zxing_writer\.wasm/);
+  assert.match(generator, /writer\.writeBarcode\(value, \{\s*format: "Code128"/);
+  assert.match(generator, /blobToDataUrl\(output\.image\)/);
+  assert.doesNotMatch(generator, /api\(|fetch\(|\/api\//);
+  assert.match(appSource, /node_modules\/zxing-wasm\/dist\/iife\/writer\/index\.js/);
+  assert.match(appSource, /node_modules\/zxing-wasm\/dist\/writer\/zxing_writer\.wasm/);
+  assert.match(appSource, /\/vendor\/zxing-wasm\/3\.1\.3\/writer\.js/);
+  assert.match(appSource, /\/vendor\/zxing-wasm\/3\.1\.3\/zxing_writer\.wasm/);
 });

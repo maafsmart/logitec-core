@@ -146,15 +146,41 @@ input:focus, select:focus, textarea:focus {
 }
 .camera-guide {
   position: absolute;
-  inset: 25% 12%;
+  inset: 14% 5%;
   border: 3px solid #6ee7b7;
   border-radius: 9px;
-  box-shadow: 0 0 0 999px #0004;
   pointer-events: none;
 }
 .camera-status { margin: 10px 0 0; color: var(--muted); font-size: .86rem; line-height: 1.4; }
 .camera-status.ok { color: var(--ok); }
 .camera-status.error { color: var(--danger); }
+.barcode-generator {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.barcode-preview {
+  display: grid;
+  place-items: center;
+  min-height: 150px;
+  margin-top: 14px;
+  padding: 16px;
+  overflow-x: auto;
+  border: 1px dashed #9cabb8;
+  border-radius: 9px;
+  background: #fff;
+}
+.barcode-preview img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  image-rendering: crisp-edges;
+}
+.barcode-preview[hidden] { display: none; }
+.barcode-generator-status { margin: 10px 0 0; color: var(--muted); font-size: .86rem; }
+.barcode-generator-status.ok { color: var(--ok); }
+.barcode-generator-status.error { color: var(--danger); }
 .scan-label { margin-top: 18px; }
 .scan-input {
   min-height: 76px;
@@ -208,6 +234,7 @@ th { background: #eef2f5; color: #344252; white-space: nowrap; }
   main { padding: 10px; }
   .form-grid, .scan-context { grid-template-columns: 1fr; }
   .mode-switch { grid-template-columns: 1fr; }
+  .barcode-generator { grid-template-columns: 1fr; }
   .span-2 { grid-column: auto; }
   .section-title, .history-head { align-items: flex-start; flex-direction: column; }
   .section-title p { line-height: 1.35; }
