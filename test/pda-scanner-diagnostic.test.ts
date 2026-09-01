@@ -182,6 +182,11 @@ test("cámara usa detector nativo o ZXing-WASM local sin CDN", () => {
   assert.match(appSource, /res\.type\("application\/wasm"\)\.sendFile/);
 });
 
+test("el laboratorio reenvía el login con next allowlisted al propio laboratorio", () => {
+  assert.match(js, /href="\/login\.html\?next=\/pda-scanner-lab\.html"/);
+  assert.equal((js.match(/href="\/login\.html(?:\?[^"]*)?"/g) || []).join(""), 'href="/login.html?next=/pda-scanner-lab.html"');
+});
+
 test("valor detectado pasa sin transformación al clasificador y la cámara libera recursos", () => {
   assert.match(js, /const rawValue = String\(detections\?\.\[0\]\?\.rawValue \?\? ""\)/);
   assert.match(js, /scanInput\.value = rawValue;\s*stopCamera\([\s\S]*await processScan\(rawValue\)/);

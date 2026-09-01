@@ -65,6 +65,25 @@ function clearStoredNavRouteAfterLogin() {
   }
 }
 
+function resolvePostLoginPath(search) {
+  const fallback = "/dashboard.html";
+  const allowed = new Set(["/pda-scanner-lab.html"]);
+  try {
+    const raw = String(new URLSearchParams(String(search || "")).get("next") || "").trim();
+    if (!raw) return fallback;
+    let candidate = raw;
+    try {
+      candidate = decodeURIComponent(raw).trim();
+    } catch (_error) {
+      return fallback;
+    }
+    if (!allowed.has(candidate)) return fallback;
+    return candidate;
+  } catch (_error) {
+    return fallback;
+  }
+}
+
 function canOfferBrowserPasswordSave() {
   return Boolean(
     window.isSecureContext &&
@@ -135,7 +154,7 @@ form.addEventListener("submit", async (event) => {
 
     clearStoredNavRouteAfterLogin();
     localStorage.setItem("token", token);
-    window.location.href = "/dashboard.html";
+    window.location.href = resolvePostLoginPath(window.location.search);
   } catch (_error) {
     errorMessage.textContent = "Error de red. Intenta nuevamente.";
     submitBtn.disabled = false;

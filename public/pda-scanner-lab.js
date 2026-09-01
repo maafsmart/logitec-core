@@ -409,7 +409,7 @@ async function initialize() {
   const gate = byId("accessGate");
   if (!token) {
     gate.className = "access-gate error";
-    gate.innerHTML = 'Inicia sesión como ADMIN en el <a href="/login.html">login</a>.';
+    gate.innerHTML = 'Inicia sesión como ADMIN en el <a href="/login.html?next=/pda-scanner-lab.html">login</a>.';
     return;
   }
   try {
