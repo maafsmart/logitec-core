@@ -10,7 +10,7 @@ import {
   sameAssignmentFields,
   type InventoryAssignment
 } from "./inventory-assignment.js";
-import { assertNoSerialAmbiguity } from "./inventory-serial-guard.js";
+import { assertNoSerialAmbiguity, resolveEffectiveSerialControlled } from "./inventory-serial-guard.js";
 
 export { InventoryMutationError } from "./inventory-errors.js";
 
@@ -768,7 +768,13 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
     });
     if (!product) throw new InventoryMutationError("PRODUCT_NOT_FOUND", "Producto no encontrado.");
     const inboundSerials = normalizeInboundSerials(input.serials);
-    if (product.serialControlled) {
+    const assignment = await resolveInboundAssignment(tx, product, {
+      assignmentType: input.assignmentType,
+      projectId: input.projectId,
+      clientId: input.clientId
+    });
+    const effectiveSerialControlled = await resolveEffectiveSerialControlled(tx, product, assignment.clientId);
+    if (effectiveSerialControlled) {
       assertInboundSerialPayload(input.qty, inboundSerials);
     } else if (inboundSerials.length) {
       throw new InventoryMutationError(
@@ -776,11 +782,6 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
         "Este producto no está controlado por serie; no se pueden indicar series."
       );
     }
-    const assignment = await resolveInboundAssignment(tx, product, {
-      assignmentType: input.assignmentType,
-      projectId: input.projectId,
-      clientId: input.clientId
-    });
     if (inboundSerials.length) {
       await assertInboundSerialsAvailable(tx, assignment.clientId, input.productId, inboundSerials);
     }

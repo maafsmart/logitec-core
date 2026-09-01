@@ -236,6 +236,10 @@ function createInboundTx(opts?: { existing?: boolean; existingPrice?: string | n
         return created;
       }
     },
+    inventorySerial: {
+      findFirst: async () => null,
+      findMany: async () => []
+    },
     inventoryMovement: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
         const created = { id: `mov-${state.nextId++}`, ...data };
@@ -339,7 +343,7 @@ test("la UI de recepción tiene precio opcional, valor y ayuda", () => {
   assert.match(html, /#inboundSubmitBtn:disabled/);
   assert.match(html, /background:\s*#94a3b8/);
   assert.match(html, /cursor:\s*not-allowed/);
-  assert.match(html, /dashboard\.js\?v=97/);
+  assert.match(html, /dashboard\.js\?v=98/);
 });
 
 test("vacío, null y espacios son null; 0 explícito no se convierte desde vacío", () => {

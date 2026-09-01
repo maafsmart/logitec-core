@@ -554,10 +554,10 @@ after(async () => {
   restorePrisma();
 });
 
-test("UI ADMIN exige selector y cache-buster v=97 con epoch", () => {
+test("UI ADMIN exige selector y cache-buster v=98 con epoch", () => {
   assert.match(html, /id="clientContextGate"/);
   assert.match(html, /Seleccionar cliente/);
-  assert.match(html, /dashboard\.js\?v=97/);
+  assert.match(html, /dashboard\.js\?v=98/);
   assert.match(js, /clientContextEpoch/);
   assert.match(js, /clearOperationalClientState/);
   assert.match(js, /CLIENT_CONTEXT_REQUIRED/);

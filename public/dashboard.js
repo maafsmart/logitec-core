@@ -8743,6 +8743,13 @@ function inboundSerialsRequired() {
   return Boolean(inboundSerialControlled);
 }
 
+function inboundEffectiveSerialControlled(context) {
+  if (!context?.product) return false;
+  if (context.product.serialControlled === true) return true;
+  const serializedQty = Number(context.serializedQty);
+  return Number.isFinite(serializedQty) && serializedQty > 0;
+}
+
 function inboundCapturedSerials() {
   return Array.isArray(inboundSerialRows) ? inboundSerialRows.slice() : [];
 }
@@ -10518,7 +10525,9 @@ function wireProductTypeahead(cfg) {
         item.product?.customer?.client?.id || item.context?.client?.id || item.product?.customer?.clientId || "";
       if (inboundAssignmentTypeValue() === "PROJECT") fillInboundProjectSelect();
       setInboundSerialControlled(
-        Boolean(item.product?.serialControlled || item.context?.product?.serialControlled)
+        item.context
+          ? inboundEffectiveSerialControlled(item.context)
+          : Boolean(item.product?.serialControlled || item.context?.product?.serialControlled)
       );
       syncInboundSubmitEnabled();
     }
@@ -10538,7 +10547,7 @@ function wireProductTypeahead(cfg) {
       if (prefix === "inbound") {
         syncInboundSubmitEnabled();
         if (context?.product) {
-          setInboundSerialControlled(Boolean(context.product.serialControlled));
+          setInboundSerialControlled(inboundEffectiveSerialControlled(context));
         }
       }
     });
@@ -11198,9 +11207,6 @@ async function submitOperationalMovement(kind) {
   if (!product) {
     setOpsMessage(msgId, "SKU inexistente en catálogo.", false);
     return;
-  }
-  if (kind === "in" && product.serialControlled) {
-    setInboundSerialControlled(true);
   }
   if (kind === "in" && inboundSerialsBlockInbound()) {
     setOpsMessage(
