@@ -21,7 +21,16 @@ export const createMovementSchema = z
     assignmentType: z.enum(["PROJECT", "FREE_TO_SALE"]).optional(),
     projectId: z.string().min(1).nullable().optional(),
     clientId: z.string().min(1).nullable().optional(),
-    serialIds: z.array(z.string().min(1).max(120)).max(1_000).optional()
+    serialIds: z.array(z.string().min(1).max(120)).max(1_000).optional(),
+    serials: z
+      .array(
+        z.object({
+          serialNumber: z.string().trim().min(1).max(120),
+          imei: z.string().trim().max(120).optional().nullable()
+        })
+      )
+      .max(1_000)
+      .optional()
   })
   .superRefine((data, ctx) => {
     if (data.type === "ADJUST_SET") {
@@ -36,6 +45,25 @@ export const createMovementSchema = z
         code: z.ZodIssueCode.custom,
         message: "serialIds solo aplica a salidas."
       });
+    }
+    if ((data.serials?.length || 0) > 0 && data.type !== "IN") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "serials solo aplica a entradas."
+      });
+    }
+    if (data.type === "IN" && (data.serials?.length || 0) > 0) {
+      if (!Number.isInteger(data.quantity)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "La cantidad serializada debe ser un entero."
+        });
+      } else if (data.serials!.length !== data.quantity) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "El número de series debe coincidir con la cantidad."
+        });
+      }
     }
     if (data.type === "IN") {
       if (data.assignmentType !== "PROJECT" && data.assignmentType !== "FREE_TO_SALE") {

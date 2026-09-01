@@ -28,6 +28,7 @@ export type InventoryMutationInput = {
   layerId?: string;
   allocationMode?: RelocateAllocationMode;
   serialIds?: string[];
+  serials?: Array<{ serialNumber: string; imei?: string | null }>;
   qty: Prisma.Decimal;
   reference?: string | null;
   notes?: string | null;
@@ -570,6 +571,185 @@ async function consumeSerializedOutbound(
   };
 }
 
+function normalizeInboundSerials(
+  raw: InventoryMutationInput["serials"]
+): Array<{ serialNumber: string; imei: string | null }> {
+  return (Array.isArray(raw) ? raw : [])
+    .map((row) => ({
+      serialNumber: String(row?.serialNumber || "").trim(),
+      imei: String(row?.imei || "").trim() || null
+    }))
+    .filter((row) => row.serialNumber);
+}
+
+function assertInboundSerialPayload(
+  qty: Prisma.Decimal,
+  serials: Array<{ serialNumber: string; imei: string | null }>
+) {
+  if (!qty.isInteger()) {
+    throw new InventoryMutationError("SERIAL_QTY_NOT_INTEGER", "La cantidad serializada debe ser un entero.");
+  }
+  if (serials.length !== Number(qty)) {
+    throw new InventoryMutationError(
+      "SERIAL_COUNT_MISMATCH",
+      "El número de series debe coincidir con la cantidad a recibir."
+    );
+  }
+  const serialKeys = serials.map((row) => row.serialNumber.toUpperCase());
+  if (new Set(serialKeys).size !== serialKeys.length) {
+    throw new InventoryMutationError("SERIAL_DUPLICATE", "Hay series duplicadas en la captura.");
+  }
+  const imeiKeys = serials.map((row) => row.imei?.toUpperCase()).filter((value): value is string => Boolean(value));
+  if (new Set(imeiKeys).size !== imeiKeys.length) {
+    throw new InventoryMutationError("IMEI_DUPLICATE", "Hay IMEI duplicados en la captura.");
+  }
+}
+
+async function assertInboundSerialsAvailable(
+  tx: Prisma.TransactionClient,
+  clientId: string,
+  productId: string,
+  serials: Array<{ serialNumber: string; imei: string | null }>
+) {
+  const serialOr =
+    serials.length > 0
+      ? serials.map((row) => ({ serialNumber: { equals: row.serialNumber, mode: "insensitive" as const } }))
+      : [];
+  const existingSerials = serialOr.length
+    ? await tx.inventorySerial.findMany({
+        where: { clientId, productId, OR: serialOr },
+        select: { serialNumber: true }
+      })
+    : [];
+  if (existingSerials.length) {
+    throw new InventoryMutationError(
+      "SERIAL_EXISTS",
+      "Una o más series ya existen para este cliente y producto."
+    );
+  }
+
+  const imeiOr = serials
+    .map((row) => row.imei)
+    .filter((value): value is string => Boolean(value))
+    .map((imei) => ({ imei: { equals: imei, mode: "insensitive" as const } }));
+  const existingImeis = imeiOr.length
+    ? await tx.inventorySerial.findMany({
+        where: { clientId, OR: imeiOr },
+        select: { imei: true }
+      })
+    : [];
+  if (existingImeis.length) {
+    throw new InventoryMutationError("IMEI_EXISTS", "Uno o más IMEI ya existen para este cliente.");
+  }
+}
+
+async function finishSerializedInbound(
+  tx: Prisma.TransactionClient,
+  input: InventoryMutationInput,
+  inventory: LockedInventory,
+  assignment: InventoryAssignment,
+  layer: { id: string; receivedAt: Date | null },
+  before: Prisma.Decimal,
+  afterInventory: { id: string; qty: Prisma.Decimal },
+  serials: Array<{ serialNumber: string; imei: string | null }>
+) {
+  const receivedAt = layer.receivedAt ?? new Date();
+  const ordered = [...serials].sort((a, b) => a.serialNumber.localeCompare(b.serialNumber, "es"));
+  let runningBefore = before;
+  let firstMovement: { id: string } | null = null;
+  const serialAudit: Prisma.InputJsonValue[] = [];
+
+  for (const row of ordered) {
+    let serial;
+    try {
+      serial = await tx.inventorySerial.create({
+        data: {
+          productId: input.productId,
+          inventoryLayerId: layer.id,
+          serialNumber: row.serialNumber,
+          imei: row.imei,
+          receivedAt,
+          clientId: assignment.clientId
+        }
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const target = Array.isArray(error.meta?.target) ? error.meta.target.map(String) : [];
+        if (target.some((field) => field.toLowerCase().includes("imei"))) {
+          throw new InventoryMutationError("IMEI_EXISTS", "Uno o más IMEI ya existen para este cliente.");
+        }
+        throw new InventoryMutationError(
+          "SERIAL_EXISTS",
+          "Una o más series ya existen para este cliente y producto."
+        );
+      }
+      throw error;
+    }
+    const afterEach = runningBefore.plus(1);
+    const movement = await tx.inventoryMovement.create({
+      data: {
+        productId: input.productId,
+        type: "INBOUND",
+        movementType: "IN",
+        stockStatus: inventory.status,
+        qty: new Prisma.Decimal(1),
+        warehouse: inventory.location.warehouse,
+        toLocationId: inventory.locationId,
+        inventoryLayerId: layer.id,
+        inventorySerialId: serial.id,
+        quantityBefore: runningBefore,
+        quantityAfter: afterEach,
+        reference: input.reference ?? null,
+        notes: input.notes ?? null,
+        userId: input.userId,
+        taskId: input.taskId ?? null,
+        ...inboundAssignmentFields(assignment)
+      }
+    });
+    if (!firstMovement) firstMovement = movement;
+    runningBefore = afterEach;
+    serialAudit.push({
+      serialId: serial.id,
+      serialNumber: serial.serialNumber,
+      imei: serial.imei,
+      layerId: layer.id,
+      movementId: movement.id
+    });
+  }
+
+  if (!firstMovement) {
+    throw new InventoryMutationError("SERIAL_COUNT_MISMATCH", "No se encontraron series válidas para recibir.");
+  }
+
+  await logActivity(
+    {
+      ...input.activity,
+      productId: input.productId,
+      customerId: inventory.projectId,
+      clientId: assignment.clientId,
+      warehouse: inventory.location.warehouse,
+      location: inventory.location.code,
+      qty: input.qty,
+      metadata: activityMetadata(input.activity, {
+        inventoryId: inventory.id,
+        layerId: layer.id,
+        serials: serialAudit,
+        movementId: firstMovement.id
+      })
+    },
+    tx
+  );
+
+  return {
+    inventory: afterInventory,
+    layer,
+    movement: firstMovement,
+    before,
+    after: afterInventory.qty,
+    scanEvent: null
+  };
+}
+
 async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutationInput) {
   const status = input.status ?? "AVAILABLE";
 
@@ -579,14 +759,31 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
     }
     const product = await tx.product.findUnique({
       where: { id: input.productId },
-      select: { id: true, customerId: true, customer: { select: { id: true, clientId: true } } }
+      select: {
+        id: true,
+        serialControlled: true,
+        customerId: true,
+        customer: { select: { id: true, clientId: true } }
+      }
     });
     if (!product) throw new InventoryMutationError("PRODUCT_NOT_FOUND", "Producto no encontrado.");
+    const inboundSerials = normalizeInboundSerials(input.serials);
+    if (product.serialControlled) {
+      assertInboundSerialPayload(input.qty, inboundSerials);
+    } else if (inboundSerials.length) {
+      throw new InventoryMutationError(
+        "SERIALS_NOT_ALLOWED",
+        "Este producto no está controlado por serie; no se pueden indicar series."
+      );
+    }
     const assignment = await resolveInboundAssignment(tx, product, {
       assignmentType: input.assignmentType,
       projectId: input.projectId,
       clientId: input.clientId
     });
+    if (inboundSerials.length) {
+      await assertInboundSerialsAvailable(tx, assignment.clientId, input.productId, inboundSerials);
+    }
     const inventory = await ensureInventory(tx, input.productId, input.locationId, status, assignment);
     if (inventory.productId !== input.productId) {
       throw new InventoryMutationError("INVENTORY_PRODUCT_MISMATCH", "La línea no corresponde al producto.");
@@ -594,6 +791,18 @@ async function runMutation(tx: Prisma.TransactionClient, input: InventoryMutatio
     const before = inventory.qty;
     const layer = await selectOrCreateInboundLayer(tx, inventory.id, input);
     const updatedParent = await incrementParent(tx, inventory.id, input.qty);
+    if (inboundSerials.length) {
+      return finishSerializedInbound(
+        tx,
+        input,
+        inventory,
+        assignment,
+        layer,
+        before,
+        updatedParent,
+        inboundSerials
+      );
+    }
     const movement = await tx.inventoryMovement.create({
       data: {
         productId: input.productId,

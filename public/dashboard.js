@@ -564,6 +564,9 @@ let outboundCubeLoadSeq = 0;
 let outboundLayerSerialSeq = 0;
 /** @type {"loading" | "error" | "ready"} */
 let outboundSerialsLoadState = "ready";
+/** @type {Array<{ serialNumber: string, imei: string | null }>} */
+let inboundSerialRows = [];
+let inboundSerialControlled = false;
 let pickSerialLoadSeq = 0;
 /** @type {"idle" | "loading" | "error" | "ready"} */
 let pickSerialsLoadState = "idle";
@@ -8732,7 +8735,118 @@ function inboundFormIsComplete() {
     const normalized = String(priceRaw).trim().replace(",", ".");
     if (!/^\d+(\.\d{1,4})?$/.test(normalized)) return false;
   }
+  if (typeof inboundSerialsBlockInbound === "function" && inboundSerialsBlockInbound()) return false;
   return true;
+}
+
+function inboundSerialsRequired() {
+  return Boolean(inboundSerialControlled);
+}
+
+function inboundCapturedSerials() {
+  return Array.isArray(inboundSerialRows) ? inboundSerialRows.slice() : [];
+}
+
+function inboundSerialsBlockInbound() {
+  if (!inboundSerialsRequired()) return false;
+  const qty = Number(document.getElementById("inboundQty")?.value);
+  if (!Number.isInteger(qty) || !(qty > 0)) return true;
+  const rows = inboundCapturedSerials();
+  return rows.length !== qty;
+}
+
+function clearInboundSerialCapture() {
+  inboundSerialRows = [];
+  const numberEl = document.getElementById("inboundSerialNumber");
+  const imeiEl = document.getElementById("inboundSerialImei");
+  if (numberEl) numberEl.value = "";
+  if (imeiEl) imeiEl.value = "";
+  renderInboundSerialList();
+}
+
+function setInboundSerialControlled(enabled) {
+  inboundSerialControlled = Boolean(enabled);
+  const field = document.getElementById("inboundSerialField");
+  if (field) {
+    field.classList.toggle("hidden", !inboundSerialControlled);
+    field.hidden = !inboundSerialControlled;
+  }
+  if (!inboundSerialControlled) clearInboundSerialCapture();
+  else renderInboundSerialList();
+  syncInboundSubmitEnabled();
+}
+
+function inboundSerialCountHintText() {
+  const qtyRaw = document.getElementById("inboundQty")?.value;
+  const qty = Number(qtyRaw);
+  const needed = Number.isInteger(qty) && qty > 0 ? qty : "—";
+  return `${inboundCapturedSerials().length} / ${needed}`;
+}
+
+function renderInboundSerialList() {
+  const list = document.getElementById("inboundSerialList");
+  const hint = document.getElementById("inboundSerialCountHint");
+  if (hint) hint.textContent = inboundSerialCountHintText();
+  if (!list) return;
+  list.innerHTML = inboundCapturedSerials()
+    .map(
+      (row, idx) =>
+        `<li><span><strong>${escCell(row.serialNumber)}</strong>${
+          row.imei ? ` · IMEI ${escCell(row.imei)}` : ""
+        }</span><button type="button" class="btn-secondary btn-compact" data-remove-inbound-serial="${idx}">Quitar</button></li>`
+    )
+    .join("");
+  list.querySelectorAll("[data-remove-inbound-serial]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.getAttribute("data-remove-inbound-serial"));
+      if (!Number.isInteger(idx)) return;
+      inboundSerialRows = inboundCapturedSerials().filter((_, i) => i !== idx);
+      renderInboundSerialList();
+      syncInboundSubmitEnabled();
+    });
+  });
+  syncInboundSubmitEnabled();
+}
+
+function addInboundSerialFromInputs() {
+  const numberEl = document.getElementById("inboundSerialNumber");
+  const imeiEl = document.getElementById("inboundSerialImei");
+  const serialNumber = String(numberEl?.value || "").trim();
+  const imei = String(imeiEl?.value || "").trim() || null;
+  if (!serialNumber) {
+    setOpsMessage("inboundMessage", "Indica la serie.", false);
+    return false;
+  }
+  const qty = Number(document.getElementById("inboundQty")?.value);
+  if (!Number.isInteger(qty) || !(qty > 0)) {
+    setOpsMessage("inboundMessage", "La cantidad serializada debe ser un entero.", false);
+    return false;
+  }
+  const current = inboundCapturedSerials();
+  if (current.length >= qty) {
+    setOpsMessage("inboundMessage", `Ya capturaste las ${qty} series requeridas.`, false);
+    return false;
+  }
+  if (current.some((row) => row.serialNumber.toUpperCase() === serialNumber.toUpperCase())) {
+    setOpsMessage("inboundMessage", "Esa serie ya está en la captura.", false);
+    return false;
+  }
+  if (imei && current.some((row) => row.imei && row.imei.toUpperCase() === imei.toUpperCase())) {
+    setOpsMessage("inboundMessage", "Ese IMEI ya está en la captura.", false);
+    return false;
+  }
+  inboundSerialRows = [...current, { serialNumber, imei }];
+  if (numberEl) numberEl.value = "";
+  if (imeiEl) imeiEl.value = "";
+  setOpsMessage("inboundMessage", "", true);
+  renderInboundSerialList();
+  numberEl?.focus();
+  return true;
+}
+
+function inboundPiezasLabel(qty) {
+  const label = formatInboundQtyLabel(qty);
+  return label === "1" ? "1 pieza" : `${label} piezas`;
 }
 
 function parseInboundUnitPriceMxn() {
@@ -8816,7 +8930,8 @@ function inboundProjectConfirmLabel() {
 }
 
 function buildInboundConfirmMessage(input) {
-  const qty = formatInboundQtyLabel(input.qty);
+  const qty =
+    typeof inboundPiezasLabel === "function" ? inboundPiezasLabel(input.qty) : `${formatInboundQtyLabel(input.qty)} piezas`;
   const sku = input.sku;
   const product = input.productName ? ` (${input.productName})` : "";
   const location = input.location;
@@ -8827,12 +8942,12 @@ function buildInboundConfirmMessage(input) {
       ? `al proyecto ${input.projectLabel || input.projectId}`
       : "como Free to Sale";
   if (input.priceEmpty) {
-    return `Se registrará la entrada de ${qty} piezas del SKU ${sku}${product} ${assignment}, almacén ${warehouse}, ubicación ${location}, ${lote}, sin precio asignado. Podrá valuarse posteriormente desde Existencias. ¿Deseas continuar?`;
+    return `Se registrará la entrada de ${qty} del SKU ${sku}${product} ${assignment}, almacén ${warehouse}, ubicación ${location}, ${lote}, sin precio asignado. Podrá valuarse posteriormente desde Existencias. ¿Deseas continuar?`;
   }
   const unit = formatLayerPriceMxnExact(input.priceValue) || formatMxn(input.priceValue);
   const total = multiplyInboundQtyPrice(input.qty, input.priceValue);
   const totalLabel = total ? formatMxn(total) : "Pendiente";
-  return `Se registrará la entrada de ${qty} piezas del SKU ${sku}${product} ${assignment}, almacén ${warehouse}, ubicación ${location}, ${lote}, con precio unitario de ${unit} MXN y valor total de ${totalLabel} MXN. ¿Deseas continuar?`;
+  return `Se registrará la entrada de ${qty} del SKU ${sku}${product} ${assignment}, almacén ${warehouse}, ubicación ${location}, ${lote}, con precio unitario de ${unit} MXN y valor total de ${totalLabel} MXN. ¿Deseas continuar?`;
 }
 
 function syncInboundSubmitEnabled() {
@@ -9516,6 +9631,7 @@ function clearSkuSelectionFields(prefix, input, { keepSkuText = false } = {}) {
     if (hid) hid.value = "";
     const assignment = String(document.getElementById("inboundAssignmentType")?.value || "").trim();
     if (assignment === "PROJECT" && typeof fillInboundProjectSelect === "function") fillInboundProjectSelect();
+    if (typeof setInboundSerialControlled === "function") setInboundSerialControlled(false);
     if (typeof syncInboundSubmitEnabled === "function") syncInboundSubmitEnabled();
   }
   if (prefix === "relocate") {
@@ -10401,6 +10517,9 @@ function wireProductTypeahead(cfg) {
       input.dataset.skuClientId =
         item.product?.customer?.client?.id || item.context?.client?.id || item.product?.customer?.clientId || "";
       if (inboundAssignmentTypeValue() === "PROJECT") fillInboundProjectSelect();
+      setInboundSerialControlled(
+        Boolean(item.product?.serialControlled || item.context?.product?.serialControlled)
+      );
       syncInboundSubmitEnabled();
     }
     const selectedId = item.productId || "";
@@ -10416,6 +10535,12 @@ function wireProductTypeahead(cfg) {
       if (context) renderSkuContext(listEl, context);
       cfg.onSelect({ ...item, context });
       if (prefix === "outbound") syncOutboundSubmitEnabled();
+      if (prefix === "inbound") {
+        syncInboundSubmitEnabled();
+        if (context?.product) {
+          setInboundSerialControlled(Boolean(context.product.serialControlled));
+        }
+      }
     });
   };
 
@@ -11074,6 +11199,18 @@ async function submitOperationalMovement(kind) {
     setOpsMessage(msgId, "SKU inexistente en catálogo.", false);
     return;
   }
+  if (kind === "in" && product.serialControlled) {
+    setInboundSerialControlled(true);
+  }
+  if (kind === "in" && inboundSerialsBlockInbound()) {
+    setOpsMessage(
+      msgId,
+      "Captura exactamente una serie por cada pieza. El botón Registrar entrada se habilita al completar la selección.",
+      false
+    );
+    syncInboundSubmitEnabled();
+    return;
+  }
   if (kind !== "in" && customerCode) {
     /* El propietario operativo lo decide el cubo, no product.customer. */
   }
@@ -11170,6 +11307,12 @@ async function submitOperationalMovement(kind) {
       if (!price.empty && price.value != null && (typeof canEditEconomicValuation !== "function" || canEditEconomicValuation())) {
         payload.unitPriceMxn = price.value;
       }
+      if (inboundSerialsRequired()) {
+        payload.serials = inboundCapturedSerials().map((row) => ({
+          serialNumber: row.serialNumber,
+          ...(row.imei ? { imei: row.imei } : {})
+        }));
+      }
     }
     const response = await authenticatedFetch("/api/inventory/movements", {
       method: "POST",
@@ -11189,6 +11332,7 @@ async function submitOperationalMovement(kind) {
       const priceEl = document.getElementById("inboundUnitPriceMxn");
       if (priceEl) priceEl.value = "";
       updateInboundEntryValue();
+      clearInboundSerialCapture();
     } else {
       clearOutboundInventorySelection();
       const skuEl = document.getElementById("outboundSku");
@@ -12670,6 +12814,7 @@ function wireOperationalForms() {
       if (!inboundHasSystemSkuSelection()) {
         const inp = document.getElementById("inboundProduct");
         if (inp) inp.value = "";
+        setInboundSerialControlled(false);
       }
     });
   }
@@ -12699,8 +12844,14 @@ function wireOperationalForms() {
     const el = document.getElementById(id);
     if (!el || el.dataset.inboundReadyWired === "1") return;
     el.dataset.inboundReadyWired = "1";
-    el.addEventListener("input", () => syncInboundSubmitEnabled());
-    el.addEventListener("change", () => syncInboundSubmitEnabled());
+    el.addEventListener("input", () => {
+      if (typeof renderInboundSerialList === "function") renderInboundSerialList();
+      syncInboundSubmitEnabled();
+    });
+    el.addEventListener("change", () => {
+      if (typeof renderInboundSerialList === "function") renderInboundSerialList();
+      syncInboundSubmitEnabled();
+    });
   });
 
   const inBtn = document.getElementById("inboundSubmitBtn");
@@ -12708,6 +12859,23 @@ function wireOperationalForms() {
     inBtn.dataset.opsWired = "1";
     inBtn.addEventListener("click", () => void submitOperationalMovement("in"));
   }
+  const inboundSerialAdd = document.getElementById("inboundSerialAddBtn");
+  if (inboundSerialAdd && inboundSerialAdd.dataset.opsWired !== "1") {
+    inboundSerialAdd.dataset.opsWired = "1";
+    inboundSerialAdd.addEventListener("click", () => {
+      addInboundSerialFromInputs();
+    });
+  }
+  ["inboundSerialNumber", "inboundSerialImei"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.inboundSerialWired === "1") return;
+    el.dataset.inboundSerialWired = "1";
+    el.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      addInboundSerialFromInputs();
+    });
+  });
   syncInboundSubmitEnabled();
   [
     "relocateWarehouse",

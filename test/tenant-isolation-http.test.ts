@@ -202,7 +202,53 @@ const projects = [
   { id: "proj-att", code: "ATT", name: "AT&T", clientId: AVIAT.id, active: true },
   { id: "proj-c2", code: "P2A", name: "Proyecto 2A", clientId: CLIENT2.id, active: true }
 ];
+const products = [
+  {
+    id: "prod-1",
+    sku: "SKU-SHARED-1",
+    barcode: null,
+    name: "Radio",
+    warehouse: "WH-A",
+    active: true,
+    serialControlled: false,
+    customerId: "proj-att",
+    customer: { id: "proj-att", code: "ATT", name: "AT&T" },
+    inventories: [{ clientId: AVIAT.id }, { clientId: CLIENT2.id }],
+    productProjects: [] as Array<{ active?: boolean; project?: { clientId?: string } }>
+  },
+  {
+    id: "prod-c2-only",
+    sku: "SKU-C2-ONLY",
+    barcode: null,
+    name: "Antena exclusiva",
+    warehouse: "WH-B",
+    active: true,
+    serialControlled: false,
+    customerId: "proj-c2",
+    customer: { id: "proj-c2", code: "P2A", name: "Proyecto 2A" },
+    inventories: [{ clientId: CLIENT2.id }],
+    productProjects: []
+  },
+  {
+    id: "prod-serial-c2-only",
+    sku: "SKU-SERIAL-C2-ONLY",
+    barcode: null,
+    name: "Radio serial C2",
+    warehouse: "WH-B",
+    active: true,
+    serialControlled: true,
+    customerId: "proj-c2",
+    customer: { id: "proj-c2", code: "P2A", name: "Proyecto 2A" },
+    inventories: [{ clientId: CLIENT2.id }],
+    productProjects: []
+  }
+];
 const clients = [AVIAT, CLIENT2, INACTIVE];
+let transactionCalls = 0;
+let inventoryCreates = 0;
+let layerCreates = 0;
+let serialCreates = 0;
+let movementCreates = 0;
 
 function clientIdFromWhere(where: unknown): string | undefined {
   if (!where || typeof where !== "object") return undefined;
@@ -217,7 +263,66 @@ function clientIdFromWhere(where: unknown): string | undefined {
   if (record.inventory && typeof record.inventory === "object") {
     return clientIdFromWhere(record.inventory);
   }
+  if (record.inventories && typeof record.inventories === "object") {
+    const inv = record.inventories as { some?: { clientId?: string } };
+    return inv.some?.clientId;
+  }
+  if (record.productProjects && typeof record.productProjects === "object") {
+    const pp = record.productProjects as { some?: { project?: { clientId?: string } } };
+    return pp.some?.project?.clientId;
+  }
   return undefined;
+}
+
+function skuFromProductWhere(where: unknown): string | undefined {
+  if (!where || typeof where !== "object") return undefined;
+  const record = where as Record<string, unknown>;
+  if (typeof record.sku === "string") return record.sku;
+  if (Array.isArray(record.OR)) {
+    for (const clause of record.OR) {
+      if (!clause || typeof clause !== "object") continue;
+      const sku = (clause as { sku?: string }).sku;
+      if (typeof sku === "string") return sku;
+    }
+  }
+  if (Array.isArray(record.AND)) {
+    for (const part of record.AND) {
+      const found = skuFromProductWhere(part);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+function clientIdFromProductWhere(where: unknown): string | undefined {
+  if (!where || typeof where !== "object") return undefined;
+  const record = where as Record<string, unknown>;
+  if (Array.isArray(record.AND)) {
+    for (const part of record.AND) {
+      const found = clientIdFromProductWhere(part);
+      if (found) return found;
+    }
+  }
+  if (Array.isArray(record.OR)) {
+    for (const clause of record.OR) {
+      if (!clause || typeof clause !== "object") continue;
+      const inv = (clause as { inventories?: { some?: { clientId?: string } } }).inventories;
+      if (inv?.some?.clientId) return inv.some.clientId;
+      const pp = (clause as { productProjects?: { some?: { project?: { clientId?: string } } } }).productProjects;
+      if (pp?.some?.project?.clientId) return pp.some.project.clientId;
+    }
+  }
+  return undefined;
+}
+
+function productAccessibleToClient(
+  product: (typeof products)[number],
+  clientId: string
+) {
+  return (
+    product.inventories.some((row) => row.clientId === clientId) ||
+    product.productProjects.some((row) => row.active !== false && row.project?.clientId === clientId)
+  );
 }
 
 const originals: Array<{ model: string; method: string; fn: unknown }> = [];
@@ -230,6 +335,10 @@ function stub(model: string, method: string, fn: (...args: never[]) => unknown) 
 
 function restorePrisma() {
   for (const item of originals.splice(0)) {
+    if (item.model === "__root__") {
+      (prisma as unknown as Record<string, unknown>)[item.method] = item.fn;
+      continue;
+    }
     (prisma as unknown as Record<string, Record<string, unknown>>)[item.model][item.method] = item.fn as never;
   }
 }
@@ -273,6 +382,13 @@ async function request(
 }
 
 before(async () => {
+  const prismaRoot = prisma as unknown as { $transaction: (...args: unknown[]) => Promise<unknown> };
+  const origTransaction = prismaRoot.$transaction.bind(prismaRoot);
+  originals.push({ model: "__root__", method: "$transaction", fn: origTransaction });
+  prismaRoot.$transaction = async (...args: unknown[]) => {
+    transactionCalls += 1;
+    return origTransaction(...args);
+  };
   stub("user", "findUnique", async ({ where, include, select }: { where: { id?: string; email?: string }; include?: unknown; select?: unknown }) => {
     const user = Object.values(users).find((row) => row.id === where.id || row.email === where.email) || null;
     if (!user) return null;
@@ -350,14 +466,56 @@ before(async () => {
       return true;
     });
   });
-  stub("product", "findFirst", async ({ where }: { where: { sku?: string; active?: boolean; OR?: Array<{ sku?: string; barcode?: string }> } }) => {
-    const sku = where.sku || where.OR?.find((part) => part.sku)?.sku;
-    if (sku && sku.toUpperCase() === "SKU-SHARED-1") {
-      return { id: "prod-1", sku: "SKU-SHARED-1", barcode: null, name: "Radio", warehouse: "WH-A", customerId: "proj-att", customer: { id: "proj-att", code: "ATT", name: "AT&T" } };
+  stub("product", "findFirst", async ({ where }: { where: Record<string, unknown> }) => {
+    const sku = skuFromProductWhere(where)?.trim();
+    const clientId = clientIdFromProductWhere(where);
+    const requireActive = Array.isArray(where.AND)
+      ? where.AND.some((part) => part && typeof part === "object" && (part as { active?: boolean }).active === true)
+      : where.active === true;
+    const product = products.find((row) => row.sku === sku && (!requireActive || row.active));
+    if (!product) return null;
+    if (clientId && !productAccessibleToClient(product, clientId)) return null;
+    return {
+      id: product.id,
+      sku: product.sku,
+      barcode: product.barcode,
+      name: product.name,
+      warehouse: product.warehouse,
+      serialControlled: product.serialControlled,
+      customerId: product.customerId,
+      customer: product.customer
+    };
+  });
+  stub("product", "findMany", async () => []);
+  stub("location", "findFirst", async ({ where }: { where: { code?: string; warehouse?: string } }) => {
+    const code = where.code?.toUpperCase();
+    if (!code) return null;
+    if (code === "AN1-A") {
+      return { id: "loc-1", code: "AN1-A", warehouse: where.warehouse?.toUpperCase() || "WH-A" };
     }
     return null;
   });
-  stub("product", "findMany", async () => []);
+  stub("location", "findMany", async ({ where }: { where: { code?: string }; take?: number }) => {
+    const code = where.code?.toUpperCase();
+    if (code !== "AN1-A") return [];
+    return [{ id: "loc-1", code: "AN1-A", warehouse: "WH-A" }];
+  });
+  stub("inventory", "create", async () => {
+    inventoryCreates += 1;
+    throw new Error("inventory create blocked in tenant isolation test");
+  });
+  stub("inventoryLayer", "create", async () => {
+    layerCreates += 1;
+    throw new Error("layer create blocked in tenant isolation test");
+  });
+  stub("inventorySerial", "create", async () => {
+    serialCreates += 1;
+    throw new Error("serial create blocked in tenant isolation test");
+  });
+  stub("inventoryMovement", "create", async () => {
+    movementCreates += 1;
+    throw new Error("movement create blocked in tenant isolation test");
+  });
   stub("importBatch", "findFirst", async ({ where }: { where?: { id?: string; clientId?: string } }) =>
     importBatches.find((row) =>
       (!where?.id || row.id === where.id) &&
@@ -396,10 +554,10 @@ after(async () => {
   restorePrisma();
 });
 
-test("UI ADMIN exige selector y cache-buster v=96 con epoch", () => {
+test("UI ADMIN exige selector y cache-buster v=97 con epoch", () => {
   assert.match(html, /id="clientContextGate"/);
   assert.match(html, /Seleccionar cliente/);
-  assert.match(html, /dashboard\.js\?v=96/);
+  assert.match(html, /dashboard\.js\?v=97/);
   assert.match(js, /clientContextEpoch/);
   assert.match(js, /clearOperationalClientState/);
   assert.match(js, /CLIENT_CONTEXT_REQUIRED/);
@@ -602,4 +760,50 @@ test("HTTP ADMIN en AVIAT no puede leer ni mutar ImportBatch de otro cliente por
       rows: []
     }
   ]);
+});
+
+test("HTTP AVIAT no puede registrar IN de producto ajeno (normal y serializado)", async () => {
+  const token = tokenFor(users.supervisor);
+  const txBefore = transactionCalls;
+  const invBefore = inventoryCreates;
+  const layerBefore = layerCreates;
+  const serialBefore = serialCreates;
+  const movementBefore = movementCreates;
+  const inboundNormal = await request("/api/inventory/movements", {
+    method: "POST",
+    token,
+    body: {
+      sku: "SKU-C2-ONLY",
+      type: "IN",
+      quantity: 1,
+      location: "AN1-A",
+      assignmentType: "FREE_TO_SALE",
+      clientId: AVIAT.id
+    }
+  });
+  const inboundSerial = await request("/api/inventory/movements", {
+    method: "POST",
+    token,
+    body: {
+      sku: "SKU-SERIAL-C2-ONLY",
+      type: "IN",
+      quantity: 1,
+      location: "AN1-A",
+      assignmentType: "FREE_TO_SALE",
+      clientId: AVIAT.id,
+      serials: [{ serialNumber: "SN-FORBIDDEN", imei: "IMEI-FORBIDDEN" }]
+    }
+  });
+  assert.equal(inboundNormal.status, 404);
+  assert.equal(inboundSerial.status, 404);
+  assert.match(String((inboundNormal.json as { message?: string })?.message || ""), /Producto no encontrado o inactivo/i);
+  assert.doesNotMatch(inboundNormal.text, /Antena exclusiva/);
+  assert.doesNotMatch(inboundNormal.text, /Cliente 2/);
+  assert.doesNotMatch(inboundSerial.text, /Radio serial C2/);
+  assert.doesNotMatch(inboundSerial.text, /client-2/);
+  assert.equal(transactionCalls, txBefore);
+  assert.equal(inventoryCreates, invBefore);
+  assert.equal(layerCreates, layerBefore);
+  assert.equal(serialCreates, serialBefore);
+  assert.equal(movementCreates, movementBefore);
 });
