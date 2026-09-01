@@ -533,20 +533,68 @@ function makeRelocateDom(opts?: Record<string, string>) {
   };
 }
 
-test("dashboard.js usa cache-buster v=95 para reubicación", () => {
-  assert.match(html, /dashboard\.js\?v=95/);
-  assert.doesNotMatch(html, /dashboard\.js\?v=70/);
+test("dashboard.js usa cache-buster v=96 para reubicación", () => {
+  assert.match(html, /dashboard\.js\?v=96/);
+  assert.doesNotMatch(html, /dashboard\.js\?v=95/);
 });
 
-test("1 SKU nace desactivado sin origen", () => {
+test("1 SKU nace habilitado sin origen", () => {
   const pane = relocateHtml();
   assert.match(pane, /id="relocateSku"/);
-  assert.match(pane, /Selecciona almacén, estatus y ubicación origen/);
-  assert.match(js, /function relocateOriginContextReady\(/);
-  assert.match(js, /input\.disabled = !ready/);
+  const skuInput = pane.slice(pane.indexOf('id="relocateSku"'), pane.indexOf('id="relocateSkuSuggestions"'));
+  assert.doesNotMatch(skuInput, /disabled/);
+  assert.match(pane, /Escribe o pega SKU \/ código de barras/);
+  assert.match(pane, /id="relocateSkuHint"/);
+  assert.match(pane, /Selecciona almacén, estatus y ubicación origen para buscar saldos de este SKU/);
+  const skuEnabled = sliceFunction(js, "syncRelocateSkuEnabled");
+  assert.match(skuEnabled, /input\.disabled = false/);
+  assert.doesNotMatch(skuEnabled, /input\.disabled = !ready/);
   const dom = makeRelocateDom({ warehouse: "", status: "", from: "", inventoryId: "" });
   const fns = loadRelocateUi(dom.document);
   assert.equal(fns.relocateOriginContextReady(), false);
+});
+
+test("1b escribir SKU antes de origen conserva texto y no selecciona saldo", () => {
+  const invalidate = sliceFunction(js, "invalidateRelocateContextFromFilters");
+  assert.match(invalidate, /keepSkuText: true/);
+  assert.doesNotMatch(invalidate, /keepSkuText: false/);
+  const search = sliceFunction(js, "searchRelocateBalanceSuggestions");
+  assert.match(search, /if \(!relocateOriginContextReady\(\)\) return \[\]/);
+  const refresh = sliceFunction(js, "wireRelocateBalanceTypeahead");
+  assert.match(refresh, /if \(!relocateOriginContextReady\(\)\) \{\s*close\(\);\s*return;/);
+  assert.doesNotMatch(refresh, /applyRelocateBalanceSelection\(state\.items/);
+  const submit = sliceFunction(js, "submitRelocate");
+  assert.match(submit, /if \(!inventoryId\)/);
+  assert.match(submit, /No se reubica por texto de SKU/);
+});
+
+test("1c al completar origen se dispara el predictor con el texto ya escrito", () => {
+  const invalidate = sliceFunction(js, "invalidateRelocateContextFromFilters");
+  assert.match(invalidate, /maybeRefreshRelocateSkuPredictor\(\)/);
+  const maybe = sliceFunction(js, "maybeRefreshRelocateSkuPredictor");
+  assert.match(maybe, /if \(!relocateOriginContextReady\(\)\) return/);
+  assert.match(maybe, /if \(!input\.value\.trim\(\)\) return/);
+  assert.match(maybe, /void relocateTypeaheadRefresh\(\)/);
+  assert.match(maybe, /skuSelectedId/);
+  assert.match(sliceFunction(js, "wireRelocateBalanceTypeahead"), /relocateTypeaheadRefresh = refresh/);
+  assert.match(js, /\/api\/inventory\/relocate-balances\?/);
+  assert.match(sliceFunction(js, "searchRelocateBalanceSuggestions"), /warehouse: relocateWarehouseValue\(\)/);
+  assert.match(sliceFunction(js, "searchRelocateBalanceSuggestions"), /location: relocateFromValue\(\)/);
+  assert.match(sliceFunction(js, "searchRelocateBalanceSuggestions"), /status: relocateStatusValue\(\)/);
+});
+
+test("1d submit sigue bloqueado sin inventoryId, origen, destino o cantidad", () => {
+  assert.equal(loadRelocateUi(makeRelocateDom({ warehouse: "", inventoryId: "inv-fts" }).document).relocateFormIsComplete(), false);
+  assert.equal(loadRelocateUi(makeRelocateDom({ status: "", inventoryId: "inv-fts" }).document).relocateFormIsComplete(), false);
+  assert.equal(loadRelocateUi(makeRelocateDom({ from: "", inventoryId: "inv-fts" }).document).relocateFormIsComplete(), false);
+  assert.equal(loadRelocateUi(makeRelocateDom({ inventoryId: "" }).document).relocateFormIsComplete(), false);
+  assert.equal(loadRelocateUi(makeRelocateDom({ to: "" }).document).relocateFormIsComplete(), false);
+  assert.equal(loadRelocateUi(makeRelocateDom({ qty: "" }).document).relocateFormIsComplete(), false);
+  const complete = sliceFunction(js, "relocateFormIsComplete");
+  assert.match(complete, /relocateHasBalanceSelection/);
+  assert.match(complete, /relocateOriginContextReady/);
+  const btn = relocateHtml();
+  assert.match(btn, /id="relocateSubmitBtn"[^>]*disabled/);
 });
 
 test("2 predictor filtra por ubicación y estatus", () => {

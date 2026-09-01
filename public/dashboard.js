@@ -9077,17 +9077,48 @@ function updateRelocateAvailableHint() {
   hint.textContent = `Disponible para reubicar: ${qtyLabel}`;
 }
 
+const RELOCATE_SKU_PENDING_ORIGIN_HINT =
+  "Selecciona almacén, estatus y ubicación origen para buscar saldos de este SKU.";
+
+let relocateTypeaheadRefresh = async () => {};
+
+function syncRelocateSkuHint() {
+  const hint = document.getElementById("relocateSkuHint");
+  if (!hint) return;
+  const ready = relocateOriginContextReady();
+  if (ready) {
+    hint.textContent = "";
+    hint.hidden = true;
+    hint.classList.add("hidden");
+    return;
+  }
+  hint.textContent = RELOCATE_SKU_PENDING_ORIGIN_HINT;
+  hint.hidden = false;
+  hint.classList.remove("hidden");
+}
+
 function syncRelocateSkuEnabled() {
   const input = document.getElementById("relocateSku");
   if (!(input instanceof HTMLInputElement)) return;
+  input.disabled = false;
+  input.removeAttribute("disabled");
   const ready = relocateOriginContextReady();
-  input.disabled = !ready;
   input.placeholder = ready
     ? "Buscar SKU, código de barras o nombre…"
-    : "Selecciona almacén, estatus y ubicación origen";
+    : "Escribe o pega SKU / código de barras";
+  syncRelocateSkuHint();
   if (!ready) {
     hideProductTypeaheadList(document.getElementById("relocateSkuSuggestions"));
   }
+}
+
+function maybeRefreshRelocateSkuPredictor() {
+  const input = document.getElementById("relocateSku");
+  if (!(input instanceof HTMLInputElement)) return;
+  if (!relocateOriginContextReady()) return;
+  if (input.dataset.skuSelectedId && input.value.trim() === (input.dataset.skuSelectedCode || "")) return;
+  if (!input.value.trim()) return;
+  void relocateTypeaheadRefresh();
 }
 
 function syncRelocateSubmitEnabled() {
@@ -9107,11 +9138,12 @@ function syncRelocateFormState() {
 
 function invalidateRelocateContextFromFilters() {
   const input = document.getElementById("relocateSku");
-  clearRelocateBalanceFields(input, { keepSkuText: false });
+  clearRelocateBalanceFields(input, { keepSkuText: true });
   hideRelocateSelectedCard();
   hideProductTypeaheadList(document.getElementById("relocateSkuSuggestions"));
   syncRelocateLocationSelects();
   syncRelocateFormState();
+  maybeRefreshRelocateSkuPredictor();
 }
 
 function buildRelocateConfirmMessage(input) {
@@ -9205,7 +9237,7 @@ function wireRelocateBalanceTypeahead() {
   };
 
   const refresh = async () => {
-    if (!relocateOriginContextReady() || input.disabled) {
+    if (!relocateOriginContextReady()) {
       close();
       return;
     }
@@ -9229,8 +9261,9 @@ function wireRelocateBalanceTypeahead() {
     if (state.timer) clearTimeout(state.timer);
     state.timer = setTimeout(refresh, PRODUCT_TYPEAHEAD_DEBOUNCE_MS);
   });
+  relocateTypeaheadRefresh = refresh;
+
   input.addEventListener("focus", () => {
-    if (input.disabled) return;
     if (input.dataset.skuSelectedId && input.value.trim() === (input.dataset.skuSelectedCode || "")) {
       close();
       return;
