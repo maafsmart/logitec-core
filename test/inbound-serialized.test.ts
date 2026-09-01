@@ -23,6 +23,10 @@ const migrationTenantUnique = readFileSync(
   new URL("../prisma/migrations/20260901120400_inventory_serial_tenant_unique/migration.sql", import.meta.url),
   "utf8"
 );
+const guardSrc = readFileSync(
+  new URL("../src/modules/inventory/inventory-serial-guard.ts", import.meta.url),
+  "utf8"
+);
 
 function d(n: string | number) {
   return new Prisma.Decimal(n);
@@ -283,6 +287,18 @@ function createInboundTx(opts?: {
       }
     },
     inventorySerial: {
+      findFirst: async ({
+        where
+      }: {
+        where: { productId?: string; clientId?: string };
+      }) => {
+        const found = state.serials.find((serial) => {
+          if (where.clientId && serial.clientId !== where.clientId) return false;
+          if (where.productId && serial.productId !== where.productId) return false;
+          return true;
+        });
+        return found ? { id: found.id } : null;
+      },
       findMany: async ({
         where
       }: {
@@ -602,7 +618,10 @@ test("UI muestra Series / IMEI, bloquea Registrar y usa Lote / Entrada", () => {
   assert.match(sliceFunction(js, "inboundPiezasLabel"), /1 pieza/);
   assert.match(html, /Agregar pieza/);
   assert.match(mutationSrc, /prisma\.\$transaction/);
-  assert.match(html, /dashboard\.js\?v=97/);
+  assert.match(html, /dashboard\.js\?v=98/);
+  assert.match(sliceFunction(js, "inboundEffectiveSerialControlled"), /context\.product\.serialControlled === true/);
+  assert.match(sliceFunction(js, "inboundEffectiveSerialControlled"), /context\.serializedQty/);
+  assert.match(js, /setInboundSerialControlled\(inboundEffectiveSerialControlled\(context\)\)/);
 });
 
 test("entrada normal no serial no cambia el flujo", async () => {
@@ -1011,4 +1030,77 @@ test("rollback atómico conserva inventario y layer existentes si falla una seri
   assert.equal(world.state.serials.length, 0);
   assert.equal(world.state.movements.length, 0);
   assert.equal(world.state.activities.length, 0);
+});
+
+test("effectiveSerialControlled: serialControlled=true sigue exigiendo serials", async () => {
+  const world = createInboundTx({ serialControlled: true });
+  await receiveIn(world.tx, { qty: "1", serials: [{ serialNumber: "SN-FLAG" }] });
+  assert.equal(world.state.serials.length, 1);
+});
+
+test("effectiveSerialControlled: flag false + series del mismo cliente exige serials en IN", async () => {
+  const world = createInboundTx({
+    serialControlled: false,
+    existingSerials: [
+      {
+        id: "ser-existing",
+        productId: "prod-1",
+        clientId: "client-aviat",
+        inventoryLayerId: "layer-old",
+        serialNumber: "SN-LEGACY",
+        imei: null
+      }
+    ]
+  });
+  await receiveIn(world.tx, { qty: "1" }).then(
+    () => {
+      throw new Error("should require serials for effective serial control");
+    },
+    (error) => {
+      assert.ok(error instanceof InventoryMutationError);
+      assert.equal(error.code, "SERIAL_COUNT_MISMATCH");
+    }
+  );
+  await receiveIn(world.tx, { qty: "1", serials: [{ serialNumber: "SN-NEW-LEGACY" }] });
+  assert.equal(world.state.serials.filter((serial) => serial.clientId === "client-aviat").length, 2);
+  assert.match(mutationSrc, /resolveEffectiveSerialControlled/);
+  assert.match(guardSrc, /productId: product\.id, clientId/);
+  assert.match(mutationSrc, /const assignment = await resolveInboundAssignment/);
+  assert.ok(
+    mutationSrc.indexOf("resolveInboundAssignment") < mutationSrc.indexOf("resolveEffectiveSerialControlled")
+  );
+});
+
+test("effectiveSerialControlled: flag false + series solo de otro cliente NO activa serial ni filtra", async () => {
+  const world = createInboundTx({
+    serialControlled: false,
+    existingSerials: [
+      {
+        id: "ser-other-only",
+        productId: "prod-1",
+        clientId: "client-other",
+        inventoryLayerId: "layer-other",
+        serialNumber: "SN-OTHER-ONLY",
+        imei: "IMEI-OTHER-ONLY"
+      }
+    ]
+  });
+  const result = await receiveIn(world.tx, { qty: "1" });
+  assert.equal(String(result.after), "1");
+  assert.equal(world.state.serials.filter((serial) => serial.clientId === "client-other").length, 1);
+  assert.equal(world.state.serials.filter((serial) => serial.clientId === "client-aviat").length, 0);
+  assert.equal(world.state.movements.length, 1);
+  assert.equal(world.state.movements[0]?.inventorySerialId, undefined);
+});
+
+test("UI effectiveSerialControlled: serializedQty>0 o flag true activa bloque; cero y false no", () => {
+  const fnSrc = sliceFunction(js, "inboundEffectiveSerialControlled");
+  const effective = new Function(`${fnSrc}; return inboundEffectiveSerialControlled;`)() as (ctx: {
+    product: { serialControlled: boolean };
+    serializedQty?: string;
+  }) => boolean;
+  assert.equal(effective({ product: { serialControlled: true }, serializedQty: "0" }), true);
+  assert.equal(effective({ product: { serialControlled: false }, serializedQty: "6" }), true);
+  assert.equal(effective({ product: { serialControlled: false }, serializedQty: "0" }), false);
+  assert.equal(effective({ product: { serialControlled: false } }), false);
 });

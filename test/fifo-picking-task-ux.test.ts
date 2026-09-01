@@ -334,6 +334,6 @@ test("Reubicación sigue usando planRelocateFifoAllocation compartido", () => {
   assert.match(js, /allocationMode:\s*"FIFO"/);
 });
 
-test("Cache buster v=97 para dashboard.js", () => {
-  assert.match(html, /dashboard\.js\?v=97/);
+test("Cache buster v=98 para dashboard.js", () => {
+  assert.match(html, /dashboard\.js\?v=98/);
 });

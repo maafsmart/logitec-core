@@ -81,8 +81,8 @@ test("no hay migración ni cambio de schema Prisma", () => {
   assert.match(schema, /inventorySerialId String\?/);
 });
 
-test("cache-buster dashboard.js?v=97", () => {
-  assert.match(html, /dashboard\.js\?v=97/);
+test("cache-buster dashboard.js?v=98", () => {
+  assert.match(html, /dashboard\.js\?v=98/);
   assert.doesNotMatch(html, /dashboard\.js\?v=94/);
   assert.doesNotMatch(html, /dashboard\.js\?v=85/);
   assert.doesNotMatch(html, /dashboard\.js\?v=78/);
