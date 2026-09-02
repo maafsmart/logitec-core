@@ -29,6 +29,28 @@ let cameraStartedAt = null;
 let cameraCandidate = { value: "", count: 0, firstSeenAt: null };
 let activeMode = "HID";
 let idleTimer = null;
+let qaStepIndex = 0;
+let qaProgress = null;
+let lastAcknowledgedAttempt = null;
+let networkWasOffline = false;
+let backgroundLockObserved = false;
+const qaSteps = [
+  ["HARDWARE_IDENTIFIED", "Identifica el equipo", "Selecciona hardware y readerType."],
+  ["NO_ADMIN_LOGIN", "Confirma acceso seguro", "Esta pantalla nunca debe pedir usuario o contraseña ADMIN."],
+  ["VALID_READ", "Haz una lectura válida", "Escanea físicamente un código."],
+  ["REPEATED_READ", "Repite el mismo código", "Escanea otra vez exactamente el mismo código."],
+  ["NOT_FOUND_OR_NOT_READ", "Registra excepción", "Escanea un código no encontrado o pulsa No leído."],
+  ["IDEMPOTENT_RETRY", "Prueba retry", "Pulsa HECHO para reenviar el último attempt sin duplicarlo."],
+  ["HID_ENTER", "Prueba HID + Enter", "Con Honeywell/scanner, barre y confirma que termina con Enter."],
+  ["MANUAL_FALLBACK", "Prueba manual", "Escribe un código y pulsa Registrar intento."],
+  ["NETWORK_RECONNECT", "Prueba reconexión", "Desconecta Wi‑Fi/datos 10 s, crea un intento y reconecta."],
+  ["BACKGROUND_LOCK", "Manda a segundo plano", "Oculta la app y vuelve; debe aparecer bloqueada."],
+  ["RELOAD_CONTINUITY", "Recarga la página", "Haz reload y confirma que conserva la ronda sin ADMIN."],
+  ["SEALED_RECONCILED", "Sella la ronda", "Pulsa Pausar / sellar ronda."],
+  ["ZERO_PENDING_COMPLETE", "Confirma cobertura", "Debe mostrar cero pendientes y cobertura completa."],
+  ["SAFE_TO_RETURN", "Libera el dispositivo", "Pulsa Liberar dispositivo y espera confirmación."],
+  ["REVOKED_401", "Confirma revocación", "El sistema comprobará que el grant ya responde 401."]
+];
 const preexistingAdminAuth = (() => {
   try {
     return localStorage.getItem("token") !== null;
@@ -69,6 +91,58 @@ async function api(path, options = {}) {
     throw error;
   }
   return data;
+}
+
+async function recordQaStep(step, status, detail = "", extra = {}) {
+  if (!currentRun) return;
+  await api(`/api/pda/runs/${encodeURIComponent(currentRun.id)}/qa-progress/${step}`, {
+    method: "PUT",
+    body: { status, ...(detail ? { detail } : {}), ...extra }
+  });
+  await refreshQaProgress();
+}
+
+function renderQaStep() {
+  const [id, title, instruction] = qaSteps[qaStepIndex];
+  const step = qaProgress?.steps?.find((item) => item.id === id);
+  byId("qaStepCounter").textContent = `PASO ${qaStepIndex + 1} DE ${qaSteps.length}`;
+  byId("qaStepTitle").textContent = title;
+  byId("qaStepInstruction").textContent = instruction;
+  byId("qaHardwareFields").hidden = id !== "HARDWARE_IDENTIFIED";
+  byId("qaAutomaticStatus").className =
+    `sync-status ${(step?.status || "PENDING").toLowerCase()}`;
+  byId("qaAutomaticStatus").textContent =
+    `${step?.status || "PENDING"}${step?.detail ? ` · ${step.detail}` : ""}`;
+  byId("qaPrevBtn").disabled = qaStepIndex === 0;
+  byId("qaNextBtn").disabled = qaStepIndex >= qaSteps.length - 1;
+  byId("qaDoneBtn").hidden = !["HARDWARE_IDENTIFIED", "IDEMPOTENT_RETRY"].includes(id);
+  byId("qaNaBtn").hidden = id !== "HID_ENTER";
+  byId("qaDoneBtn").textContent =
+    id === "IDEMPOTENT_RETRY" ? "PROBAR RETRY" : "HECHO";
+}
+
+async function refreshQaProgress() {
+  if (!currentRun) return;
+  try {
+    qaProgress = await api(
+      `/api/pda/runs/${encodeURIComponent(currentRun.id)}/qa-progress`
+    );
+    renderQaStep();
+  } catch {
+    // La captura principal no depende de la visualización del asistente.
+  }
+}
+
+async function testIdempotentRetry() {
+  if (!lastAcknowledgedAttempt) {
+    throw new Error("Primero registra una lectura guardada en esta carga.");
+  }
+  const response = await api(
+    `/api/pda/runs/${encodeURIComponent(lastAcknowledgedAttempt.runId)}/readings`,
+    { method: "POST", body: lastAcknowledgedAttempt.payload }
+  );
+  if (!response.duplicate) throw new Error("El retry no fue reconocido como duplicado.");
+  await refreshQaProgress();
 }
 
 function openEvidenceDb() {
@@ -218,6 +292,7 @@ async function syncOutbox() {
           method: "POST",
           body: item.payload
         });
+        lastAcknowledgedAttempt = { runId: item.runId, payload: item.payload };
         await deleteQueued(item.idempotencyKey);
         savedCount += 1;
         showResult(response.reading);
@@ -229,6 +304,7 @@ async function syncOutbox() {
       }
     }
     await refreshCounters();
+    await refreshQaProgress();
   })();
   try {
     return await syncInProgress;
@@ -326,6 +402,7 @@ async function createRun() {
   byId("sealBtn").disabled = false;
   setDirtyMarker();
   await refreshCounters();
+  await refreshQaProgress();
 }
 
 async function restoreRun(run) {
@@ -347,6 +424,7 @@ async function restoreRun(run) {
   setDirtyMarker();
   await refreshCounters();
   await syncOutbox();
+  await recordQaStep("RELOAD_CONTINUITY", "PASS", "Ronda restaurada tras reload.");
 }
 
 async function sealRun() {
@@ -379,6 +457,7 @@ async function sealRun() {
   byId("sealBtn").disabled = true;
   byId("releaseStatus").textContent = "Ronda reconciliada; puede iniciar otra o liberar.";
   setDirtyMarker();
+  await refreshQaProgress();
   return true;
 }
 
@@ -519,6 +598,10 @@ async function resumeAfterLock() {
     byId("privacyLock").hidden = true;
     byId("labWorkspace").hidden = false;
     byId("scanInput").focus();
+    if (backgroundLockObserved) {
+      await recordQaStep("BACKGROUND_LOCK", "PASS", "Captura bloqueada y revalidada al volver.");
+      backgroundLockObserved = false;
+    }
     resetIdle();
   } catch (error) {
     byId("privacyLock").querySelector("p").textContent = error.message;
@@ -590,11 +673,14 @@ async function releaseDevice() {
     }
     lockPrivacy("Dispositivo liberado.");
     byId("resumeBtn").hidden = true;
-    const safe = (confirmed?.safeToReturn !== false) && status.safeToReturn && contextRejected &&
+    const safe = (confirmed?.safeToReturn !== false) && status.safeToReturn &&
+      contextRejected &&
       releaseState.localVerificationPassed;
     const finalSafe = safe && clearActiveGrantMarker();
     if (finalSafe) await deleteReleaseState(prepared.grantPublicId);
-    byId("privacyLock").querySelector("h2").textContent = finalSafe ? "SAFE_TO_RETURN" : "UNVERIFIABLE";
+    byId("privacyLock").querySelector("h2").textContent = finalSafe
+      ? "PRUEBA TERMINADA — PUEDES DEVOLVER EL EQUIPO"
+      : "NO DEVOLVER TODAVÍA / UNVERIFIABLE";
     byId("privacyLock").querySelector("p").textContent = finalSafe
       ? `Grant revocado y evidencia reconciliada. Recibo ${status.receiptId}.`
       : "Grant revocado, pero existe auth ADMIN previa o una superficie local no verificable.";
@@ -633,7 +719,9 @@ async function recoverCompletedRelease() {
         !preexistingAdminAuth &&
         clearActiveGrantMarker();
       if (safe) await deleteReleaseState(releaseState.grantPublicId);
-      byId("privacyLock").querySelector("h2").textContent = safe ? "SAFE_TO_RETURN" : "UNVERIFIABLE";
+      byId("privacyLock").querySelector("h2").textContent = safe
+        ? "PRUEBA TERMINADA — PUEDES DEVOLVER EL EQUIPO"
+        : "NO DEVOLVER TODAVÍA / UNVERIFIABLE";
       byId("privacyLock").querySelector("p").textContent = !safe
         ? "Grant revocado; la limpieza local completa no quedó demostrada."
         : `Grant revocado y confirmado. Recibo ${status.receiptId}.`;
@@ -698,6 +786,14 @@ async function initialize() {
       byId("releaseStatus").textContent =
         "Advertencia: se detectó autenticación LOGITEC previa; SAFE_TO_RETURN será UNVERIFIABLE.";
     }
+    await recordQaStep(
+      "NO_ADMIN_LOGIN",
+      preexistingAdminAuth ? "FAIL" : "PASS",
+      preexistingAdminAuth
+        ? "Se detectó autenticación LOGITEC previa."
+        : "Flujo PDA iniciado sin login ADMIN."
+    );
+    await refreshQaProgress();
     resetIdle();
   } catch (error) {
     if (error.status === 401) {
@@ -734,13 +830,66 @@ byId("sealBtn").addEventListener("click", () => void sealRun());
 byId("newRunBtn").addEventListener("click", () => void createRun());
 byId("releaseBtn").addEventListener("click", () => void releaseDevice());
 byId("resumeBtn").addEventListener("click", () => void resumeAfterLock());
-window.addEventListener("online", () => void syncOutbox());
+byId("qaDoneBtn").addEventListener("click", () => void (async () => {
+  const [step] = qaSteps[qaStepIndex];
+  try {
+    if (step === "IDEMPOTENT_RETRY") {
+      await testIdempotentRetry();
+      return;
+    }
+    if (step === "HARDWARE_IDENTIFIED") {
+      const readerType = field("qaReaderType");
+      if (!readerType) throw new Error("Describe el readerType.");
+      await recordQaStep(step, "PASS", "Hardware confirmado por operador.", {
+        hardwareClass: field("qaHardwareClass"),
+        readerType
+      });
+      return;
+    }
+    await recordQaStep(step, "PASS", "Confirmado por operador remoto.");
+  } catch (error) {
+    byId("qaAutomaticStatus").textContent = error.message;
+  }
+})());
+byId("qaFailBtn").addEventListener("click", () => {
+  const [step] = qaSteps[qaStepIndex];
+  void recordQaStep(step, "FAIL", "Fallo reportado por operador remoto.");
+});
+byId("qaNaBtn").addEventListener("click", () => {
+  const [step] = qaSteps[qaStepIndex];
+  void recordQaStep(step, "NOT_APPLICABLE", "No aplica a este hardware.");
+});
+byId("qaNextBtn").addEventListener("click", () => {
+  qaStepIndex = Math.min(qaSteps.length - 1, qaStepIndex + 1);
+  renderQaStep();
+});
+byId("qaPrevBtn").addEventListener("click", () => {
+  qaStepIndex = Math.max(0, qaStepIndex - 1);
+  renderQaStep();
+});
+window.addEventListener("offline", () => {
+  networkWasOffline = true;
+  byId("qaAutomaticStatus").textContent = "OFFLINE detectado; crea un intento y reconecta.";
+});
+window.addEventListener("online", () => {
+  void syncOutbox();
+  if (networkWasOffline) {
+    networkWasOffline = false;
+    void recordQaStep("NETWORK_RECONNECT", "PASS", "Offline y reconexión observados.");
+  }
+});
 window.addEventListener("pagehide", () => lockPrivacy("La pestaña se cerró u ocultó."));
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) lockPrivacy();
+  if (document.hidden) {
+    backgroundLockObserved = true;
+    lockPrivacy();
+  }
 });
 for (const eventName of ["pointerdown", "keydown", "touchstart"]) {
   document.addEventListener(eventName, resetIdle, { passive: true });
 }
+window.setInterval(() => {
+  if (currentRun && !document.hidden) void refreshQaProgress();
+}, 3000);
 
 void initialize();

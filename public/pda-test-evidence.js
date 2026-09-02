@@ -62,7 +62,7 @@ async function openSession(testId) {
   byId("detailTitle").textContent = session.testId;
   byId("detailSummary").textContent = `${sessionSummary(session)} · detección min/mediana/p95 ${metric(session.detectionMinMs)} / ${metric(session.detectionMedianMs)} / ${metric(session.detectionP95Ms)} · clasificación min/mediana/p95 ${metric(session.classificationMinMs)} / ${metric(session.classificationMedianMs)} / ${metric(session.classificationP95Ms)}`;
   byId("runsSummary").textContent = (session.runs || []).length
-    ? `Runs: ${session.runs.map((run) => `${run.publicId} · ${run.status} · seq ${run.lastAcceptedSeq}${run.sealedThroughSeq === null ? "" : `/${run.sealedThroughSeq}`}`).join(" | ")}`
+    ? `Runs: ${session.runs.map((run) => `${run.publicId} · ${run.status} · recibidas ${run.receivedCount}${run.sealedAtSeq === null ? "" : `/${run.sealedAtSeq}`}`).join(" | ")}`
     : "Sin runs.";
   byId("readingsBody").innerHTML = session.readings.length
     ? session.readings.map((reading) => `<tr>
@@ -77,7 +77,46 @@ async function openSession(testId) {
       </tr>`).join("")
     : '<tr><td colspan="8" class="empty">Sin lecturas.</td></tr>';
   byId("detailPanel").hidden = false;
+  await loadRemoteQaProgress();
   byId("detailPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+const qaStepLabels = {
+  HARDWARE_IDENTIFIED: "Hardware identificado",
+  NO_ADMIN_LOGIN: "Sin login ADMIN",
+  VALID_READ: "Lectura física válida",
+  REPEATED_READ: "Repetición intencional",
+  NOT_FOUND_OR_NOT_READ: "No encontrado / No leído",
+  IDEMPOTENT_RETRY: "Retry idempotente",
+  HID_ENTER: "HID + Enter",
+  MANUAL_FALLBACK: "Fallback manual",
+  NETWORK_RECONNECT: "Pérdida y reconexión",
+  BACKGROUND_LOCK: "Bloqueo en background",
+  RELOAD_CONTINUITY: "Continuidad tras reload",
+  SEALED_RECONCILED: "Seal y reconcile",
+  ZERO_PENDING_COMPLETE: "Cobertura completa",
+  SAFE_TO_RETURN: "Devolución segura",
+  REVOKED_401: "Grant rechazado con 401"
+};
+
+async function loadRemoteQaProgress() {
+  if (!selectedSessionId) return;
+  try {
+    const progress = await (await api(
+      `/api/admin/pda-test-sessions/${encodeURIComponent(selectedSessionId)}/remote-qa`
+    )).json();
+    byId("remoteQaProgress").innerHTML = progress.runs.length
+      ? progress.runs.map((run) => `<article class="qa-run-card">
+          <strong>${escapeHtml(run.runPublicId)} · ${escapeHtml(run.verdict)}</strong>
+          <span>${escapeHtml(run.hardwareClass || "Hardware pendiente")} · ${escapeHtml(run.readerType || "readerType pendiente")}</span>
+          <span>${escapeHtml(`${run.readingCount} evidencias · recibidas ${run.receivedCount}${run.sealedAtSeq === null ? "" : `/${run.sealedAtSeq}`}`)}</span>
+          <span>${run.lastEvidence ? `Última: ${escapeHtml(run.lastEvidence.result)} · ${escapeHtml(run.lastEvidence.captureMode)} · ${escapeHtml(new Date(run.lastEvidence.observedAt).toLocaleTimeString("es-MX"))}` : "Sin evidencia todavía"}</span>
+          <div class="qa-step-grid">${run.steps.map((step) => `<span class="qa-step qa-${step.status.toLowerCase()}">${escapeHtml(qaStepLabels[step.id] || step.id)}: ${escapeHtml(step.status)}</span>`).join("")}</div>
+        </article>`).join("")
+      : "Sin ronda remota.";
+  } catch (error) {
+    byId("remoteQaProgress").textContent = `Progreso no disponible: ${error.message}`;
+  }
 }
 
 async function downloadServerExport(format) {
@@ -178,6 +217,8 @@ async function createPairing() {
     );
     const pairing = await response.json();
     byId("manualPairingCode").value = pairing.manualCode;
+    byId("remoteInviteUrl").value =
+      `${window.location.origin}/pda-pair.html#p=${encodeURIComponent(pairing.qrPayload)}`;
     const writer = await loadBarcodeWriter();
     const output = await writer.writeBarcode(pairing.qrPayload, {
       format: "QRCode",
@@ -227,6 +268,10 @@ byId("refreshBtn").addEventListener("click", () => void loadSessions());
 byId("createSessionBtn").addEventListener("click", () => void createSession());
 byId("finalizeOpenBtn").addEventListener("click", () => void finalizeOpenSession());
 byId("pairBtn").addEventListener("click", () => void createPairing());
+byId("refreshQaBtn").addEventListener("click", () => void loadRemoteQaProgress());
 byId("csvBtn").addEventListener("click", () => void downloadServerExport("csv"));
 byId("jsonBtn").addEventListener("click", () => void downloadServerExport("json"));
+window.setInterval(() => {
+  if (selectedSessionId && !document.hidden) void loadRemoteQaProgress();
+}, 5000);
 void initialize();

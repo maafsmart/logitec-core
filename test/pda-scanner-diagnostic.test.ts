@@ -204,7 +204,8 @@ test("SAFE_TO_RETURN exige reconcile, limpieza, revocación y 401 posterior", ()
   assert.match(labJs, /releaseState\.grantPublicId !== expectedGrantPublicId/);
   assert.match(labJs, /clearActiveGrantMarker\(\)/);
   assert.match(labJs, /contextRejected = error\.status === 401/);
-  assert.match(labJs, /safe \? "SAFE_TO_RETURN" : "UNVERIFIABLE"/);
+  assert.match(labJs, /PRUEBA TERMINADA — PUEDES DEVOLVER EL EQUIPO/);
+  assert.match(labJs, /NO DEVOLVER TODAVÍA \/ UNVERIFIABLE/);
   assert.match(labJs, /preexistingAdminAuth/);
 });
 
@@ -239,4 +240,33 @@ test("ADMIN conserva creación, pairing, takeover, cierre y export server-side",
   assert.match(adminHtml, /id="pairBtn"/);
   assert.match(adminJs, /format: "QRCode"/);
   assert.match(adminJs, /crypto\.randomUUID\(\)/);
+});
+
+test("invitación remota consume fragmento one-shot y publica progreso sin secretos", () => {
+  assert.match(pairJs, /const oneClickInvitation = consumeFragment\(\)/);
+  assert.match(pairJs, /if \(oneClickInvitation\) void exchange\(\)/);
+  assert.ok(
+    pairJs.indexOf("history.replaceState") < pairJs.indexOf("if (oneClickInvitation) void exchange()")
+  );
+  assert.match(adminHtml, /id="remoteInviteUrl"/);
+  assert.match(adminJs, /\/pda-pair\.html#p=\$\{encodeURIComponent\(pairing\.qrPayload\)\}/);
+  assert.doesNotMatch(adminJs, /navigator\.clipboard/);
+});
+
+test("asistente remoto expone 15 pasos y progreso ADMIN tenant-bound", () => {
+  assert.equal((labJs.match(/^\s*\["[A-Z0-9_]+",/gm) || []).length, 15);
+  for (const id of [
+    "qaWizard", "qaStepCounter", "qaStepTitle", "qaStepInstruction",
+    "qaDoneBtn", "qaFailBtn", "qaNaBtn", "qaNextBtn"
+  ]) assert.match(labHtml, new RegExp(`id="${id}"`));
+  assert.match(adminRoutes, /\/pda-test-sessions\/:sessionId\/remote-qa/);
+  assert.match(adminRoutes, /getPdaSessionQaProgress\(req\.auth!\.operationalClientId!, sessionId\)/);
+  assert.match(pdaRoutes, /PDA_QA_SERVER_EVIDENCE_REQUIRED/);
+  assert.match(pdaRoutes, /!clientPassSteps\.has\(params\.step\)/);
+  assert.match(pdaAuth, /markRevokedGrantReuse\(grant\.id\)/);
+  assert.match(pdaAuth, /Bearer PDA revocado presentado y rechazado con 401/);
+  assert.doesNotMatch(pdaRoutes, /verify-revoked/);
+  assert.match(adminHtml, /id="remoteQaProgress"/);
+  assert.match(adminJs, /window\.setInterval/);
+  assert.equal((adminHtml.match(/id="createSessionBtn"/g) || []).length, 1);
 });

@@ -19,6 +19,30 @@
         <section class="stats pda-counters" aria-live="polite">
           <span id="totalCount">0 intentos</span><span id="savedCount">0 guardados</span><span id="pendingCount">0 pendientes</span>
         </section>
+        <section id="qaWizard" class="panel qa-wizard" aria-live="polite">
+          <p id="qaStepCounter" class="eyebrow">PASO 1 DE 15</p>
+          <h2 id="qaStepTitle">Identifica el equipo</h2>
+          <p id="qaStepInstruction">Selecciona el hardware y el lector que estás probando.</p>
+          <div id="qaHardwareFields" class="form-grid">
+            <label>Clase de hardware
+              <select id="qaHardwareClass">
+                <option value="MOTOROLA_CAMERA">Motorola / cámara</option>
+                <option value="HONEYWELL_INTEGRATED">Honeywell integrado</option>
+                <option value="GENERIC_PDA">PDA genérico</option>
+                <option value="EXTERNAL_SCANNER">Scanner externo</option>
+              </select>
+            </label>
+            <label>Reader type<input id="qaReaderType" maxlength="120" placeholder="HID integrado, USB, Bluetooth…" /></label>
+          </div>
+          <div id="qaAutomaticStatus" class="sync-status pending">Pendiente</div>
+          <div class="scan-actions qa-actions">
+            <button id="qaPrevBtn" class="button secondary" type="button">ANTERIOR</button>
+            <button id="qaDoneBtn" class="button primary" type="button">HECHO</button>
+            <button id="qaFailBtn" class="button danger" type="button">FALLÓ</button>
+            <button id="qaNaBtn" class="button secondary" type="button">NO APLICA</button>
+            <button id="qaNextBtn" class="button secondary" type="button">SIGUIENTE</button>
+          </div>
+        </section>
         <section class="panel scan-panel">
           <div class="scan-context">
             <label>Zona física<input id="physicalZone" required maxlength="160" placeholder="AN20 / andén norte" /></label>

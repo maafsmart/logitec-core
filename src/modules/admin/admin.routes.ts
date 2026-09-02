@@ -25,6 +25,7 @@ import {
   revokePdaGrant
 } from "../pda/pda-auth.service.js";
 import { forceTakeover } from "../pda/pda-run.service.js";
+import { getPdaSessionQaProgress } from "../pda/pda-remote-qa.service.js";
 
 const adminRouter = Router();
 const pdaScannerLabApiGate = createPdaScannerLabGate(
@@ -197,6 +198,19 @@ adminRouter.post(
     const sessionId = z.string().trim().min(1).parse(req.params.sessionId);
     res.setHeader("Cache-Control", "no-store");
     res.json(await finalizePdaTestSession(req.auth!.operationalClientId!, sessionId));
+  }
+);
+
+adminRouter.get(
+  "/pda-test-sessions/:sessionId/remote-qa",
+  pdaScannerLabApiGate,
+  requireAuth,
+  requireRole(["ADMIN"]),
+  requireOperationalClient,
+  async (req, res) => {
+    const sessionId = z.string().trim().min(1).parse(req.params.sessionId);
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await getPdaSessionQaProgress(req.auth!.operationalClientId!, sessionId));
   }
 );
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
+const expectLegacyFixture = process.env.PDA_QA_EXPECT_LEGACY_FIXTURE === "true";
 const prefix = `PDAQA${Date.now()}`;
 const clientA = "qa-client-aviat";
 const clientB = "qa-client-beta";
@@ -111,7 +112,7 @@ async function reconcile(grant: any, run: any, sealedAtSeq: number) {
 async function release(grant: any, run: any) {
   const nonce = `${prefix}-RELEASE-${run.id}-00000000000000000000`;
   await services.preparePdaRelease(grant, nonce);
-  return services.confirmPdaRelease(
+  const result = await services.confirmPdaRelease(
     { ...grant, status: "DRAIN_ONLY" },
     {
       releaseNonce: nonce,
@@ -120,6 +121,7 @@ async function release(grant: any, run: any) {
       noDownloadsConfirmed: true
     }
   );
+  return { ...result, releaseNonce: nonce };
 }
 
 before(async () => {
@@ -134,8 +136,41 @@ before(async () => {
   services = {
     ...(await import("../src/modules/pda/pda-auth.service.js")),
     ...(await import("../src/modules/pda/pda-run.service.js")),
+    ...(await import("../src/modules/pda/pda-remote-qa.service.js")),
     ...(await import("../src/modules/admin/pda-test-evidence.service.js"))
   };
+  await prisma.client.upsert({
+    where: { id: clientA },
+    update: {},
+    create: { id: clientA, name: "QA AVIAT SYNTHETIC", code: "AVIAT", active: true }
+  });
+  await prisma.client.upsert({
+    where: { id: clientB },
+    update: {},
+    create: { id: clientB, name: "QA BETA SYNTHETIC", code: "QABETA", active: true }
+  });
+  await prisma.user.upsert({
+    where: { id: adminA },
+    update: {},
+    create: {
+      id: adminA,
+      email: "qa-admin-a@example.invalid",
+      passwordHash: "synthetic-not-login",
+      fullName: "QA Admin A",
+      role: "ADMIN"
+    }
+  });
+  await prisma.user.upsert({
+    where: { id: adminB },
+    update: {},
+    create: {
+      id: adminB,
+      email: "qa-admin-b@example.invalid",
+      passwordHash: "synthetic-not-login",
+      fullName: "QA Admin B",
+      role: "ADMIN"
+    }
+  });
   operationalBefore = await operationalSnapshot();
 });
 
@@ -154,7 +189,9 @@ test("PostgreSQL QA disponible", () => {
 });
 
 test("migración conserva legacy, tenant y constraints/índices", {
-  skip: databaseUrl ? false : "TEST_DB_UNAVAILABLE"
+  skip: !databaseUrl
+    ? "TEST_DB_UNAVAILABLE"
+    : expectLegacyFixture ? false : "LEGACY_FIXTURE_NOT_REQUESTED"
 }, async () => {
   const sessions = await prisma.pdaTestSession.findMany({
     where: { id: { in: ["qa-legacy-session-a", "qa-legacy-session-b"] } },
@@ -455,6 +492,11 @@ test("cierre vs POST retrasado cierra resumen sin aceptar escritura tardía", {
   );
   await reconcile(fixture.grant, run, 1);
   await release(fixture.grant, run);
+  await expectCode(
+    services.authenticatePdaGrant(fixture.token),
+    "PDA_GRANT_REVOKED",
+    401
+  );
   const race = await Promise.allSettled([
     services.finalizePdaTestSession(clientB, session.id),
     services.recordPdaRunReading(
@@ -471,4 +513,137 @@ test("cierre vs POST retrasado cierra resumen sin aceptar escritura tardía", {
   });
   assert.equal(closed.status, "CLOSED");
   assert.equal(closed.totalReadings, 1);
+});
+
+test("asistente remoto persiste y deriva los 15 pasos por run", {
+  skip: databaseUrl ? false : "TEST_DB_UNAVAILABLE"
+}, async () => {
+  const session = await newSession(clientA, adminA, "REMOTE");
+  const fixture = await newGrant(clientA, adminA, session.id);
+  const run = (await services.createPdaRun(fixture.grant, `${prefix}-REMOTE-RUN`)).run;
+  await services.recordPdaQaStep({
+    grant: fixture.grant,
+    runId: run.id,
+    step: "HARDWARE_IDENTIFIED",
+    status: "PASS",
+    source: "HUMAN",
+    detail: "Honeywell físico remoto",
+    hardwareClass: "HONEYWELL_INTEGRATED",
+    readerType: "HID integrado"
+  });
+  for (const step of [
+    "NO_ADMIN_LOGIN",
+    "NETWORK_RECONNECT",
+    "BACKGROUND_LOCK",
+    "RELOAD_CONTINUITY"
+  ]) {
+    await services.recordPdaQaStep({
+      grant: fixture.grant,
+      runId: run.id,
+      step,
+      status: "PASS",
+      source: "BROWSER"
+    });
+  }
+  const firstInput = reading(run, 1, "REMOTE-SAME");
+  await services.recordPdaRunReading(
+    fixture.grant, run.id, firstInput, diagnosticReader
+  );
+  await services.recordPdaRunReading(
+    fixture.grant, run.id, firstInput, diagnosticReader
+  );
+  await services.recordPdaQaStep({
+    grant: fixture.grant,
+    runId: run.id,
+    step: "IDEMPOTENT_RETRY",
+    status: "PASS",
+    source: "SERVER"
+  });
+  await services.recordPdaRunReading(
+    fixture.grant, run.id, reading(run, 2, "REMOTE-SAME"), diagnosticReader
+  );
+  await services.recordPdaRunReading(
+    fixture.grant,
+    run.id,
+    { ...reading(run, 3, ""), rawCode: null, captureMode: "NO_LEIDO" },
+    diagnosticReader
+  );
+  await services.recordPdaRunReading(
+    fixture.grant,
+    run.id,
+    { ...reading(run, 4, "REMOTE-MANUAL"), captureMode: "MANUAL" },
+    diagnosticReader
+  );
+  await reconcile(fixture.grant, run, 4);
+  await release(fixture.grant, run);
+  await prisma.pdaLabGrant.update({
+    where: { id: fixture.grant.id },
+    data: { expiresAt: new Date(Date.now() - 1000) }
+  });
+  await expectCode(
+    services.authenticatePdaGrant(fixture.token),
+    "PDA_GRANT_REVOKED",
+    401
+  );
+  const versionAfterFirst401 = (await prisma.pdaCaptureRun.findUniqueOrThrow({
+    where: { id: run.id }
+  })).version;
+  await expectCode(
+    services.authenticatePdaGrant(fixture.token),
+    "PDA_GRANT_REVOKED",
+    401
+  );
+  assert.equal(
+    (await prisma.pdaCaptureRun.findUniqueOrThrow({ where: { id: run.id } })).version,
+    versionAfterFirst401
+  );
+  const progress = await services.getPdaSessionQaProgress(clientA, session.id);
+  assert.equal(progress.runs.length, 1);
+  assert.equal(progress.runs[0].hardwareClass, "HONEYWELL_INTEGRATED");
+  assert.equal(progress.runs[0].readerType, "HID integrado");
+  assert.equal(progress.runs[0].verdict, "PASS");
+  assert.ok(progress.runs[0].steps.every((step: any) => step.status === "PASS"));
+});
+
+test("checkpoint FAIL de autenticación previa no puede volver a PASS", {
+  skip: databaseUrl ? false : "TEST_DB_UNAVAILABLE"
+}, async () => {
+  const session = await newSession(clientA, adminA, "STICKY");
+  const fixture = await newGrant(clientA, adminA, session.id);
+  const run = (await services.createPdaRun(fixture.grant, `${prefix}-STICKY-RUN`)).run;
+  await services.recordPdaQaStep({
+    grant: fixture.grant,
+    runId: run.id,
+    step: "NO_ADMIN_LOGIN",
+    status: "FAIL",
+    source: "BROWSER"
+  });
+  await services.recordPdaQaStep({
+    grant: fixture.grant,
+    runId: run.id,
+    step: "VALID_READ",
+    status: "FAIL",
+    source: "HUMAN"
+  });
+  await services.recordPdaRunReading(
+    fixture.grant, run.id, reading(run, 1, "STICKY-VALID"), diagnosticReader
+  );
+  const attemptedOverwrite = await services.recordPdaQaStep({
+    grant: fixture.grant,
+    runId: run.id,
+    step: "NO_ADMIN_LOGIN",
+    status: "PASS",
+    source: "BROWSER"
+  });
+  assert.equal(attemptedOverwrite.status, "FAIL");
+  const progress = await services.getPdaQaProgress(fixture.grant, run.id);
+  assert.equal(
+    progress.steps.find((step: any) => step.id === "NO_ADMIN_LOGIN")?.status,
+    "FAIL"
+  );
+  assert.equal(
+    progress.steps.find((step: any) => step.id === "VALID_READ")?.status,
+    "FAIL"
+  );
+  assert.equal(progress.verdict, "FAIL");
 });

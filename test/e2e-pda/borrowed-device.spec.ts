@@ -6,6 +6,7 @@ test("PDA repite código, bloquea superficie y confirma devolución", async ({ p
   const readings: Array<{ clientSeq: number; attemptId: string; result: string; createdAt: string }> = [];
   let released = false;
   let runCreated = false;
+  const qaStepState = new Map<string, string>();
   const run = {
     id: "run-browser-id",
     publicId: "RUN-BROWSER",
@@ -57,6 +58,34 @@ test("PDA repite código, bloquea superficie y confirma devolución", async ({ p
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ ...run, readings })
+      });
+      return;
+    }
+    if (path === `/api/pda/runs/${run.id}/qa-progress` && request.method() === "GET") {
+      const ids = [
+        "HARDWARE_IDENTIFIED", "NO_ADMIN_LOGIN", "VALID_READ", "REPEATED_READ",
+        "NOT_FOUND_OR_NOT_READ", "IDEMPOTENT_RETRY", "HID_ENTER", "MANUAL_FALLBACK",
+        "NETWORK_RECONNECT", "BACKGROUND_LOCK", "RELOAD_CONTINUITY", "SEALED_RECONCILED",
+        "ZERO_PENDING_COMPLETE", "SAFE_TO_RETURN", "REVOKED_401"
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          runId: run.id,
+          verdict: "PENDING",
+          steps: ids.map((id) => ({ id, status: qaStepState.get(id) || "PENDING" }))
+        })
+      });
+      return;
+    }
+    if (path.includes(`/api/pda/runs/${run.id}/qa-progress/`) && request.method() === "PUT") {
+      const step = path.split("/").at(-1) || "";
+      qaStepState.set(step, String(body.status));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ status: body.status })
       });
       return;
     }
@@ -161,7 +190,7 @@ test("PDA repite código, bloquea superficie y confirma devolución", async ({ p
   await expect(page.locator("#labWorkspace")).toBeVisible();
 
   await page.locator("#releaseBtn").click();
-  await expect(page.locator("#privacyLock h2")).toHaveText("SAFE_TO_RETURN");
+  await expect(page.locator("#privacyLock h2")).toHaveText("PRUEBA TERMINADA — PUEDES DEVOLVER EL EQUIPO");
   expect(released).toBe(true);
 });
 
@@ -183,10 +212,8 @@ test("pairing limpia URL y no persiste secreto ni bearer", async ({ page }) => {
   await page.route("**/pda-scanner-lab.html", (route) =>
     route.fulfill({ status: 200, contentType: "text/html", body: "<p>paired</p>" })
   );
-  await page.goto("/pda-pair.html?secret=must-disappear#ignored");
-  await expect(page).toHaveURL(/\/pda-pair\.html$/);
-  await page.locator("#pairingCode").fill(`PAIR-browser-test.${"A".repeat(26)}`);
-  await page.locator("#exchangeBtn").click();
+  const invitation = `PAIR-browser-test.${"A".repeat(26)}`;
+  await page.goto(`/pda-pair.html?secret=must-disappear#p=${encodeURIComponent(invitation)}`);
   await expect(page).toHaveURL(/\/pda-scanner-lab\.html$/);
   expect(exchanged).toEqual({
     pairingId: "PAIR-browser-test",

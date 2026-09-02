@@ -31,7 +31,9 @@ const original = {
   grantCreate: prisma.pdaLabGrant.create,
   grantFindUnique: prisma.pdaLabGrant.findUnique,
   grantUpdate: prisma.pdaLabGrant.update,
-  grantUpdateMany: prisma.pdaLabGrant.updateMany
+  grantUpdateMany: prisma.pdaLabGrant.updateMany,
+  runFindMany: prisma.pdaCaptureRun.findMany,
+  runUpdate: prisma.pdaCaptureRun.update
 };
 
 let pairing: any;
@@ -89,6 +91,8 @@ before(() => {
     grant = { ...grant, ...data };
     return { count: 1 };
   };
+  (prisma.pdaCaptureRun as any).findMany = async () => [];
+  (prisma.pdaCaptureRun as any).update = async () => ({});
 });
 
 after(async () => {
@@ -102,6 +106,8 @@ after(async () => {
   (prisma.pdaLabGrant as any).findUnique = original.grantFindUnique;
   (prisma.pdaLabGrant as any).update = original.grantUpdate;
   (prisma.pdaLabGrant as any).updateMany = original.grantUpdateMany;
+  (prisma.pdaCaptureRun as any).findMany = original.runFindMany;
+  (prisma.pdaCaptureRun as any).update = original.runUpdate;
   await prisma.$disconnect();
 });
 
@@ -175,6 +181,15 @@ test("grant revocado y revocación cross-tenant fallan", async () => {
     () => authenticatePdaGrant(token),
     (error: any) => error.code === "PDA_GRANT_REVOKED"
   );
+  (prisma.pdaCaptureRun as any).findMany = async () => {
+    throw new Error("QA audit unavailable");
+  };
+  await assert.rejects(
+    () => authenticatePdaGrant(token),
+    (error: any) =>
+      error.code === "PDA_REVOCATION_AUDIT_FAILED" && error.statusCode === 503
+  );
+  (prisma.pdaCaptureRun as any).findMany = async () => [];
 });
 
 test("cinco secretos incorrectos persisten y bloquean el pairing", async () => {

@@ -27,6 +27,11 @@ import {
   recordPdaRunReading,
   sealPdaRun
 } from "./pda-run.service.js";
+import {
+  getPdaQaProgress,
+  PDA_QA_STEPS,
+  recordPdaQaStep
+} from "./pda-remote-qa.service.js";
 
 const pdaRouter = Router();
 const gate = createPdaScannerLabGate(isPdaScannerLabEnabled(env.ENABLE_PDA_SCANNER_LAB));
@@ -130,7 +135,66 @@ pdaRouter.post("/runs/:runId/readings", async (req, res) => {
   const runId = z.string().trim().min(1).parse(req.params.runId);
   const body = readingSchema.parse(req.body);
   const result = await recordPdaRunReading(req.pdaGrant!, runId, body);
+  if (result.duplicate) {
+    void recordPdaQaStep({
+      grant: req.pdaGrant!,
+      runId,
+      step: "IDEMPOTENT_RETRY",
+      status: "PASS",
+      source: "SERVER",
+      detail: "Retry confirmado sin crear otra lectura."
+    }).catch(() => {});
+  }
   res.status(result.duplicate ? 200 : 201).json(result);
+});
+
+pdaRouter.get("/runs/:runId/qa-progress", async (req, res) => {
+  const runId = z.string().trim().min(1).parse(req.params.runId);
+  res.json(await getPdaQaProgress(req.pdaGrant!, runId));
+});
+
+pdaRouter.put("/runs/:runId/qa-progress/:step", async (req, res) => {
+  const params = z.object({
+    runId: z.string().trim().min(1),
+    step: z.enum(PDA_QA_STEPS)
+  }).parse(req.params);
+  const body = z.object({
+    status: z.enum(["PASS", "FAIL", "NOT_APPLICABLE"]),
+    detail: z.string().trim().max(240).optional(),
+    hardwareClass: z.enum(["MOTOROLA_CAMERA", "HONEYWELL_INTEGRATED", "GENERIC_PDA", "EXTERNAL_SCANNER"]).optional(),
+    readerType: z.string().trim().max(120).optional()
+  }).parse(req.body);
+  const clientPassSteps = new Set([
+    "HARDWARE_IDENTIFIED",
+    "NO_ADMIN_LOGIN",
+    "NETWORK_RECONNECT",
+    "BACKGROUND_LOCK",
+    "RELOAD_CONTINUITY"
+  ]);
+  if (body.status === "PASS" && !clientPassSteps.has(params.step)) {
+    res.status(409).json({
+      message: "Este paso solo puede aprobarse con evidencia server-side.",
+      code: "PDA_QA_SERVER_EVIDENCE_REQUIRED"
+    });
+    return;
+  }
+  if (body.status === "NOT_APPLICABLE" && params.step !== "HID_ENTER") {
+    res.status(409).json({
+      message: "Este paso es obligatorio para la prueba remota.",
+      code: "PDA_QA_STEP_REQUIRED"
+    });
+    return;
+  }
+  res.json(await recordPdaQaStep({
+    grant: req.pdaGrant!,
+    runId: params.runId,
+    step: params.step,
+    status: body.status,
+    source: "HUMAN",
+    detail: body.detail,
+    hardwareClass: body.hardwareClass,
+    readerType: body.readerType
+  }));
 });
 
 pdaRouter.post("/runs/:runId/seal", async (req, res) => {

@@ -32,21 +32,6 @@
         </section>
         <section class="panel">
           <div class="history-head">
-            <div>
-              <p class="eyebrow evidence-eyebrow">ESTACIÓN ADMIN CONFIABLE</p>
-              <h2>Preparar dispositivo prestado</h2>
-            </div>
-            <button id="createSessionBtn" class="button primary" type="button">Crear sesión y pairing</button>
-          </div>
-          <div id="pairingOutput" class="final-summary" hidden>
-            <strong id="pairingTestId"></strong>
-            <p>En el PDA abre manualmente <strong>/pda-pair.html</strong>. El secreto es one-shot y vence en 5 minutos.</p>
-            <label>ID de pairing<input id="pairingChallengeId" readonly /></label>
-            <label>Secreto<input id="pairingSecret" readonly /></label>
-          </div>
-        </section>
-        <section class="panel">
-          <div class="history-head">
             <div class="section-title"><div><span>1</span><h2>Sesiones guardadas</h2></div></div>
             <button id="refreshBtn" class="button secondary" type="button">Actualizar</button>
           </div>
@@ -75,7 +60,17 @@
             <strong>Pairing one-shot · vence en 5 minutos</strong>
             <div id="pairingQr" class="barcode-preview"></div>
             <label>Fallback manual<textarea id="manualPairingCode" rows="2" readonly></textarea></label>
-            <p>Abra <strong>/pda-pair.html</strong> en el dispositivo prestado. No introduzca credenciales ADMIN.</p>
+            <label>Invitación remota one-click
+              <textarea id="remoteInviteUrl" rows="3" readonly></textarea>
+            </label>
+            <p>Envíe solo esta invitación al operador. Es one-shot, vence en cinco minutos y no contiene credenciales ADMIN.</p>
+          </section>
+          <section class="remote-qa-admin" aria-live="polite">
+            <div class="history-head">
+              <strong>Progreso QA remoto</strong>
+              <button id="refreshQaBtn" class="button secondary" type="button">Actualizar progreso</button>
+            </div>
+            <div id="remoteQaProgress" class="remote-qa-progress">Sin ronda remota.</div>
           </section>
           <div class="table-wrap">
             <table>

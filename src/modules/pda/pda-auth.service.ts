@@ -247,6 +247,47 @@ export type PdaGrantContext = {
   expiresAt: Date;
 };
 
+async function markRevokedGrantReuse(grantId: string) {
+  await prisma.$transaction(async (tx) => {
+    const runs = await tx.pdaCaptureRun.findMany({
+      where: { grantId },
+      select: { id: true, deviceMetadata: true }
+    });
+    for (const run of runs) {
+      const root = run.deviceMetadata && typeof run.deviceMetadata === "object" &&
+        !Array.isArray(run.deviceMetadata)
+        ? { ...(run.deviceMetadata as Record<string, unknown>) }
+        : {};
+      const current = root.remotePhysicalQa && typeof root.remotePhysicalQa === "object" &&
+        !Array.isArray(root.remotePhysicalQa)
+        ? { ...(root.remotePhysicalQa as Record<string, unknown>) }
+        : {};
+      const steps = current.steps && typeof current.steps === "object" &&
+        !Array.isArray(current.steps)
+        ? { ...(current.steps as Record<string, unknown>) }
+        : {};
+      const previous = steps.REVOKED_401 as { status?: string } | undefined;
+      if (previous?.status === "PASS" || previous?.status === "FAIL") continue;
+      steps.REVOKED_401 = {
+        status: "PASS",
+        source: "SERVER",
+        recordedAt: new Date().toISOString(),
+        detail: "Bearer PDA revocado presentado y rechazado con 401."
+      };
+      await tx.pdaCaptureRun.update({
+        where: { id: run.id },
+        data: {
+          deviceMetadata: {
+            ...root,
+            remotePhysicalQa: { ...current, steps }
+          } as Prisma.InputJsonValue,
+          version: { increment: 1 }
+        }
+      });
+    }
+  });
+}
+
 export async function authenticatePdaGrant(token: string): Promise<PdaGrantContext> {
   const now = new Date();
   const grant = await prisma.pdaLabGrant.findUnique({
@@ -264,6 +305,18 @@ export async function authenticatePdaGrant(token: string): Promise<PdaGrantConte
   });
   if (!grant || grant.scope !== PDA_SCOPE) {
     throw new HttpError(401, "Capacidad PDA inválida.", "PDA_GRANT_INVALID");
+  }
+  if (grant.status === PdaGrantStatus.REVOKED) {
+    try {
+      await markRevokedGrantReuse(grant.id);
+    } catch {
+      throw new HttpError(
+        503,
+        "Grant revocado; auditoría de rechazo no persistida.",
+        "PDA_REVOCATION_AUDIT_FAILED"
+      );
+    }
+    throw new HttpError(401, "Capacidad PDA revocada.", "PDA_GRANT_REVOKED");
   }
   if (grant.expiresAt <= now) {
     if (grant.status !== PdaGrantStatus.EXPIRED) {

@@ -8,13 +8,15 @@ let busy = false;
 function consumeFragment() {
   const fragment = window.location.hash.slice(1);
   history.replaceState(null, "", "/pda-pair.html");
-  if (!fragment) return;
+  if (!fragment) return false;
   const value = fragment.startsWith("p=") ? fragment.slice(2) : fragment;
   try {
     byId("pairingCode").value = decodeURIComponent(value);
   } catch {
     byId("pairingCode").value = "";
+    return false;
   }
+  return true;
 }
 
 function parsePairingCode(raw) {
@@ -138,7 +140,7 @@ async function startCamera() {
   }
 }
 
-consumeFragment();
+const oneClickInvitation = consumeFragment();
 try {
   byId("preexistingWarning").hidden = localStorage.getItem("token") === null;
 } catch {
@@ -148,3 +150,4 @@ byId("exchangeBtn").addEventListener("click", () => void exchange());
 byId("cameraBtn").addEventListener("click", () => void startCamera());
 byId("stopCameraBtn").addEventListener("click", stopCamera);
 window.addEventListener("pagehide", stopCamera);
+if (oneClickInvitation) void exchange();
