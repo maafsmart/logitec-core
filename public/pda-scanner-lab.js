@@ -11,8 +11,11 @@ let cameraTimer = null;
 let cameraDetector = null;
 let cameraDetectorKind = "";
 let cameraDetectionBusy = false;
+let cameraDetectionArmed = false;
 let barcodePolyfillPromise = null;
 let cameraStartedAt = null;
+let detectedFrameUrl = "";
+let detectedFrameGeneration = 0;
 let barcodeWriterPromise = null;
 let generatedBarcodeDataUrl = "";
 
@@ -217,10 +220,47 @@ function setCameraStatus(message, tone = "") {
   status.className = `camera-status${tone ? ` ${tone}` : ""}`;
 }
 
+function clearDetectedFrame() {
+  detectedFrameGeneration += 1;
+  if (detectedFrameUrl) URL.revokeObjectURL(detectedFrameUrl);
+  detectedFrameUrl = "";
+  byId("detectedFrameImage").removeAttribute("src");
+  byId("detectedFrameEvidence").hidden = true;
+}
+
+function snapshotCameraFrame() {
+  const width = cameraVideo.videoWidth;
+  const height = cameraVideo.videoHeight;
+  if (!width || !height) return null;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.drawImage(cameraVideo, 0, 0, width, height);
+  return canvas;
+}
+
+async function showDetectedFrame(canvas, rawValue) {
+  clearDetectedFrame();
+  const captureGeneration = detectedFrameGeneration;
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
+  if (!blob || captureGeneration !== detectedFrameGeneration) return false;
+
+  detectedFrameUrl = URL.createObjectURL(blob);
+  byId("detectedFrameImage").src = detectedFrameUrl;
+  byId("detectedFrameCaption").textContent =
+    `Frame capturado al detectar “${rawValue}”. Solo memoria de esta pestaña; no se carga ni se guarda.`;
+  byId("detectedFrameEvidence").hidden = false;
+  return true;
+}
+
 function stopCamera(message = "Cámara detenida.") {
   if (cameraTimer) window.clearTimeout(cameraTimer);
   cameraTimer = null;
   cameraDetectionBusy = false;
+  cameraDetectionArmed = false;
   if (cameraStream) {
     cameraStream.getTracks().forEach((track) => track.stop());
   }
@@ -229,6 +269,7 @@ function stopCamera(message = "Cámara detenida.") {
   cameraVideo.pause();
   cameraVideo.srcObject = null;
   byId("startCameraBtn").disabled = false;
+  byId("armCameraBtn").disabled = true;
   byId("stopCameraBtn").disabled = true;
   setCameraStatus(message);
 }
@@ -297,27 +338,40 @@ async function createCameraDetector() {
 }
 
 function scheduleCameraDetection() {
-  if (!cameraStream) return;
+  if (!cameraStream || !cameraDetectionArmed) return;
   cameraTimer = window.setTimeout(() => void detectCameraFrame(), 160);
 }
 
 async function detectCameraFrame() {
-  if (!cameraStream || cameraDetectionBusy) return;
+  if (!cameraStream || !cameraDetectionArmed || cameraDetectionBusy) return;
   if (cameraVideo.readyState < 2) {
     scheduleCameraDetection();
     return;
   }
   cameraDetectionBusy = true;
   try {
-    const detections = await cameraDetector.detect(cameraVideo);
+    const cameraFrame = snapshotCameraFrame();
+    if (!cameraFrame) {
+      scheduleCameraDetection();
+      return;
+    }
+    const detections = await cameraDetector.detect(cameraFrame);
+    if (!cameraStream || !cameraDetectionArmed) return;
     const rawValue = String(detections?.[0]?.rawValue ?? "");
     if (rawValue) {
       const detectionMs = Number.isFinite(cameraStartedAt)
         ? Math.max(0, Math.round(performance.now() - cameraStartedAt))
         : null;
+      cameraDetectionArmed = false;
+      cameraStartedAt = null;
       scanInput.value = rawValue;
-      stopCamera(`Código detectado con ${cameraDetectorKind}. Clasificando…`);
+      setCameraStatus(`Código detectado con ${cameraDetectorKind}. Clasificando…`, "ok");
+      await showDetectedFrame(cameraFrame, rawValue).catch(() => false);
       await processScan(rawValue, { detectionMs });
+      if (cameraStream) {
+        byId("armCameraBtn").disabled = false;
+        setCameraStatus(`Cámara lista para enfocar · detector ${cameraDetectorKind}.`, "ok");
+      }
       return;
     }
   } catch (error) {
@@ -326,6 +380,15 @@ async function detectCameraFrame() {
   } finally {
     cameraDetectionBusy = false;
   }
+  scheduleCameraDetection();
+}
+
+function armCameraDetection() {
+  if (!cameraStream || cameraDetectionArmed) return;
+  cameraDetectionArmed = true;
+  cameraStartedAt = performance.now();
+  byId("armCameraBtn").disabled = true;
+  setCameraStatus(`Lectura armada · detector ${cameraDetectorKind}. Buscando código…`, "armed");
   scheduleCameraDetection();
 }
 
@@ -339,7 +402,8 @@ async function startCamera() {
     return;
   }
   byId("startCameraBtn").disabled = true;
-  setCameraStatus("Solicitando permiso explícito de cámara…");
+  byId("armCameraBtn").disabled = true;
+  setCameraStatus("Preparando cámara · solicitando permiso explícito…");
   try {
     cameraStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
@@ -352,10 +416,9 @@ async function startCamera() {
     cameraVideo.srcObject = cameraStream;
     await cameraVideo.play();
     cameraDetector = cameraDetector || await createCameraDetector();
+    byId("armCameraBtn").disabled = false;
     byId("stopCameraBtn").disabled = false;
-    cameraStartedAt = performance.now();
-    setCameraStatus(`Cámara activa · detector ${cameraDetectorKind}. Centra un código de barras o QR.`, "ok");
-    scheduleCameraDetection();
+    setCameraStatus(`Cámara lista para enfocar · detector ${cameraDetectorKind}.`, "ok");
   } catch (error) {
     stopCamera("Cámara no disponible.");
     const denied = error?.name === "NotAllowedError";
@@ -557,8 +620,10 @@ byId("scanBtn").addEventListener("click", () => void processScan());
 byId("handheldModeBtn").addEventListener("click", () => setCaptureMode("handheld"));
 byId("cameraModeBtn").addEventListener("click", () => setCaptureMode("camera"));
 byId("startCameraBtn").addEventListener("click", () => void startCamera());
+byId("armCameraBtn").addEventListener("click", armCameraDetection);
 byId("stopCameraBtn").addEventListener("click", () => stopCamera());
 byId("cameraFallbackBtn").addEventListener("click", () => setCaptureMode("handheld"));
+byId("discardDetectedFrameBtn").addEventListener("click", clearDetectedFrame);
 byId("generateBarcodeBtn").addEventListener("click", () => void generateTestBarcode());
 byId("useLastScanBtn").addEventListener("click", useLastScannedCode);
 byId("downloadBarcodeBtn").addEventListener("click", downloadTestBarcode);
@@ -569,6 +634,7 @@ byId("exportBtn").addEventListener("click", exportCsv);
 byId("clearBtn").addEventListener("click", () => {
   if (!history.length || window.confirm("¿Limpiar únicamente el historial temporal de esta pestaña?")) {
     history.splice(0);
+    clearDetectedFrame();
     renderHistory();
     liveResult.className = "live-result idle";
     liveResult.innerHTML = "<strong>Sesión limpia</strong><span>No se modificó inventario.</span>";
@@ -576,6 +642,7 @@ byId("clearBtn").addEventListener("click", () => {
 });
 window.addEventListener("pagehide", () => {
   if (cameraStream) stopCamera();
+  clearDetectedFrame();
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && cameraStream) stopCamera("Cámara detenida al ocultar la pestaña.");

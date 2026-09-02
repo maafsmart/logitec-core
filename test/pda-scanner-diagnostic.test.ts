@@ -199,7 +199,8 @@ test("pantalla aislada comparte captura, sesión, red manual e historial entre a
     "distance", "expectedType", "captureMethod", "scanInput", "networkProvider",
     "networkZone", "networkPing", "networkDown", "networkUp", "networkStability",
     "networkReference", "historyBody", "copyBtn", "exportBtn", "handheldModeBtn",
-    "cameraModeBtn", "cameraCapture", "cameraVideo", "startCameraBtn", "cameraFallbackBtn"
+    "cameraModeBtn", "cameraCapture", "cameraVideo", "startCameraBtn", "armCameraBtn", "cameraFallbackBtn",
+    "detectedFrameEvidence", "detectedFrameImage", "discardDetectedFrameBtn"
   ]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
@@ -242,9 +243,12 @@ test("el laboratorio reenvía el login con next allowlisted al propio laboratori
   assert.equal((js.match(/href="\/login\.html(?:\?[^"]*)?"/g) || []).join(""), 'href="/login.html?next=/pda-scanner-lab.html"');
 });
 
-test("valor detectado pasa sin transformación al clasificador y la cámara libera recursos", () => {
+test("valor detectado pasa sin transformación al clasificador y la cámara conserva el preview", () => {
+  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
   assert.match(js, /const rawValue = String\(detections\?\.\[0\]\?\.rawValue \?\? ""\)/);
-  assert.match(js, /scanInput\.value = rawValue;\s*stopCamera\([\s\S]*await processScan\(rawValue, \{ detectionMs \}\)/);
+  assert.match(detect, /scanInput\.value = rawValue;[\s\S]*await processScan\(rawValue, \{ detectionMs \}\)/);
+  assert.doesNotMatch(detect, /stopCamera\(/);
+  assert.match(detect, /Cámara lista para enfocar/);
   assert.match(js, /encodeURIComponent\(code\)/);
   assert.match(js, /cameraStream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
   assert.match(js, /pagehide/);
@@ -258,12 +262,29 @@ test("guía de cámara es amplia y no oscurece el video", () => {
   assert.doesNotMatch(guide, /box-shadow|#0004|999px/);
 });
 
-test("separa tiempo hasta detección de latencia de clasificación API", () => {
+test("preview no ejecuta detección antes de que el usuario arme la lectura", () => {
+  const schedule = js.slice(js.indexOf("function scheduleCameraDetection()"), js.indexOf("async function detectCameraFrame()"));
+  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
+  const arm = js.slice(js.indexOf("function armCameraDetection()"), js.indexOf("async function startCamera()"));
+  const start = js.slice(js.indexOf("async function startCamera()"), js.indexOf("function setBarcodeGeneratorStatus("));
+  assert.match(html, /id="armCameraBtn"[\s\S]*INICIAR LECTURA/);
+  assert.match(js, /armCameraBtn"\)\.addEventListener\("click", armCameraDetection\)/);
+  assert.match(schedule, /if \(!cameraStream \|\| !cameraDetectionArmed\) return/);
+  assert.match(detect, /if \(!cameraStream \|\| !cameraDetectionArmed \|\| cameraDetectionBusy\) return/);
+  assert.doesNotMatch(start, /cameraDetector\.detect|scheduleCameraDetection\(\)|cameraStartedAt = performance\.now\(\)/);
+  assert.match(start, /Cámara lista para enfocar/);
+  assert.match(arm, /cameraDetectionArmed = true/);
+  assert.match(arm, /scheduleCameraDetection\(\)/);
+});
+
+test("métrica de detección empieza al armar y excluye preparación y enfoque", () => {
   const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("async function startCamera()"));
   const process = js.slice(js.indexOf("async function processScan("), js.indexOf("function setCameraStatus("));
+  const arm = js.slice(js.indexOf("function armCameraDetection()"), js.indexOf("async function startCamera()"));
   const start = js.slice(js.indexOf("async function startCamera()"), js.indexOf("function setBarcodeGeneratorStatus("));
-  assert.match(start, /cameraStartedAt = performance\.now\(\)/);
-  assert.ok(start.indexOf("cameraStartedAt = performance.now()") < start.indexOf("scheduleCameraDetection()"));
+  assert.match(arm, /cameraStartedAt = performance\.now\(\)/);
+  assert.ok(arm.indexOf("cameraStartedAt = performance.now()") < arm.indexOf("scheduleCameraDetection()"));
+  assert.doesNotMatch(start, /cameraStartedAt = performance\.now\(\)/);
   assert.match(detect, /performance\.now\(\) - cameraStartedAt/);
   assert.match(process, /classificationStartedAt = performance\.now\(\)/);
   assert.match(process, /performance\.now\(\) - classificationStartedAt/);
@@ -272,6 +293,31 @@ test("separa tiempo hasta detección de latencia de clasificación API", () => {
   assert.match(js, /tiempo_deteccion_ms/);
   assert.match(js, /latencia_clasificacion_ms/);
   assert.doesNotMatch(js, /\blatencyMs\b/);
+});
+
+test("frame local se genera solo tras detectar, no se persiste ni se envía", () => {
+  const snapshot = js.slice(js.indexOf("function snapshotCameraFrame()"), js.indexOf("async function showDetectedFrame("));
+  const evidence = js.slice(js.indexOf("async function showDetectedFrame("), js.indexOf("function stopCamera("));
+  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
+  const start = js.slice(js.indexOf("async function startCamera()"), js.indexOf("function setBarcodeGeneratorStatus("));
+  const rawValueBranch = detect.slice(detect.indexOf("if (rawValue)"));
+  assert.match(snapshot, /context\.drawImage\(cameraVideo, 0, 0, width, height\)/);
+  assert.match(detect, /const cameraFrame = snapshotCameraFrame\(\)[\s\S]*cameraDetector\.detect\(cameraFrame\)/);
+  assert.match(evidence, /canvas\.toBlob\(resolve, "image\/jpeg", 0\.88\)/);
+  assert.match(evidence, /URL\.createObjectURL\(blob\)/);
+  assert.match(rawValueBranch, /showDetectedFrame\(cameraFrame, rawValue\)/);
+  assert.doesNotMatch(start, /showDetectedFrame\(/);
+  assert.doesNotMatch(evidence, /api\(|fetch\(|localStorage|sessionStorage|indexedDB/);
+});
+
+test("siguiente detección reemplaza la evidencia local y permite descartarla", () => {
+  const clear = js.slice(js.indexOf("function clearDetectedFrame()"), js.indexOf("function snapshotCameraFrame()"));
+  const evidence = js.slice(js.indexOf("async function showDetectedFrame("), js.indexOf("function stopCamera("));
+  assert.match(clear, /URL\.revokeObjectURL\(detectedFrameUrl\)/);
+  assert.match(clear, /detectedFrameEvidence"\)\.hidden = true/);
+  assert.ok(evidence.indexOf("clearDetectedFrame()") < evidence.indexOf("URL.createObjectURL(blob)"));
+  assert.match(js, /discardDetectedFrameBtn"\)\.addEventListener\("click", clearDetectedFrame\)/);
+  assert.match(js, /pagehide[\s\S]*clearDetectedFrame\(\)/);
 });
 
 test("generador Code 128 es local, bajo demanda y no toca API ni base de datos", () => {

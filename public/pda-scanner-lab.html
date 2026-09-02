@@ -97,9 +97,10 @@
               <video id="cameraVideo" muted playsinline aria-label="Vista previa de cámara"></video>
               <div class="camera-guide" aria-hidden="true"></div>
             </div>
-            <p id="cameraStatus" class="camera-status" role="status">La cámara está apagada. El navegador pedirá permiso únicamente al presionar “Iniciar cámara”.</p>
+            <p id="cameraStatus" class="camera-status" role="status">La cámara está apagada. Ábrela, encuadra y enfoca el código; la detección solo comienza al presionar “INICIAR LECTURA”.</p>
             <div class="scan-actions">
-              <button id="startCameraBtn" class="button primary" type="button">Iniciar cámara</button>
+              <button id="startCameraBtn" class="button primary" type="button">Abrir cámara</button>
+              <button id="armCameraBtn" class="button arm-reading" type="button" disabled>INICIAR LECTURA</button>
               <button id="stopCameraBtn" class="button secondary" type="button" disabled>Detener cámara</button>
               <button id="cameraFallbackBtn" class="button secondary" type="button">Usar captura manual / PDA</button>
             </div>
@@ -118,6 +119,14 @@
           <div id="liveResult" class="live-result idle" aria-live="polite">
             <strong>Listo para barrer</strong><span>La lectura aparecerá aquí inmediatamente.</span>
           </div>
+          <section id="detectedFrameEvidence" class="detected-frame-evidence" aria-live="polite" hidden>
+            <div class="detected-frame-head">
+              <strong>Evidencia visual local</strong>
+              <button id="discardDetectedFrameBtn" class="button secondary" type="button">Descartar evidencia</button>
+            </div>
+            <img id="detectedFrameImage" alt="Frame congelado al detectar el código" />
+            <p id="detectedFrameCaption">Se conserva únicamente en memoria de esta pestaña.</p>
+          </section>
           <p class="camera-note"><strong>Compatibilidad:</strong> Chrome Android/Samsung Internet usan detección nativa cuando está disponible. Safari iPhone y navegadores sin BarcodeDetector usan ZXing-WASM local. Cámara requiere HTTPS o localhost; si se deniega el permiso o falla la detección, usa el campo manual/lector teclado.</p>
         </section>
 
