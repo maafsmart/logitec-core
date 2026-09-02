@@ -238,8 +238,17 @@ test("ADMIN conserva creación, pairing, takeover, cierre y export server-side",
   ]) assert.match(adminRoutes, new RegExp(fragment.replaceAll("/", "\\/")));
   assert.match(adminRoutes, /requireOperationalClient/);
   assert.match(adminHtml, /id="pairBtn"/);
-  assert.match(adminJs, /format: "QRCode"/);
+  assert.match(adminJs, /qrImageDataUrl/);
   assert.match(adminJs, /crypto\.randomUUID\(\)/);
+  assert.doesNotMatch(adminJs, /zxing-wasm|ZXingWASM|writer\.js|prepareZXingModule/);
+  assert.match(adminRoutes, /renderPairingQrDataUrl/);
+});
+
+test("CSP habilita wasm-unsafe-eval para lector PDA y ADMIN evita writer WASM", () => {
+  assert.match(appSource, /"script-src": \["'self'", "'wasm-unsafe-eval'"\]/);
+  assert.doesNotMatch(appSource, /'unsafe-eval'/);
+  assert.match(appSource, /zxing_reader\.wasm/);
+  assert.doesNotMatch(appSource, /zxing_writer\.wasm|writer\.js/);
 });
 
 test("invitación remota consume fragmento one-shot y publica progreso sin secretos", () => {

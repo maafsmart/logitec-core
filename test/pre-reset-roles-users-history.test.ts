@@ -1114,13 +1114,15 @@ test("HTTP SUPERVISOR/OPERATOR/CLIENT no editan ficha oficial por /me ni por /us
   }
 });
 
-test("CSP permite imágenes HTTPS y no relaja script-src ni object-src", async () => {
+test("CSP permite imágenes HTTPS, wasm-unsafe-eval en script-src y no unsafe-eval", async () => {
   const response = await fetch(`${baseUrl}/health`);
   const csp = response.headers.get("content-security-policy") || "";
   assert.match(csp, /img-src[^;]*'self'/);
   assert.match(csp, /img-src[^;]*data:/);
   assert.match(csp, /img-src[^;]*https:/);
   assert.match(csp, /script-src[^;]*'self'/);
+  assert.match(csp, /script-src[^;]*'wasm-unsafe-eval'/);
+  assert.doesNotMatch(csp, /script-src[^;]*'unsafe-eval'/);
   assert.doesNotMatch(csp, /script-src[^;]*\*/);
   assert.match(csp, /object-src[^;]*'none'/);
   await response.arrayBuffer();

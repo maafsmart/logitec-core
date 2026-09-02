@@ -174,38 +174,6 @@ async function createSession() {
   }
 }
 
-function loadBarcodeWriter() {
-  if (window.ZXingWASM?.writeBarcode) return Promise.resolve(window.ZXingWASM);
-  return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "/vendor/zxing-wasm/3.1.3/writer.js";
-    script.onload = async () => {
-      const writer = window.ZXingWASM;
-      await writer.prepareZXingModule({
-        overrides: {
-          locateFile(path, prefix) {
-            return path.endsWith(".wasm")
-              ? "/vendor/zxing-wasm/3.1.3/zxing_writer.wasm"
-              : `${prefix}${path}`;
-          }
-        }
-      });
-      resolve(writer);
-    };
-    script.onerror = reject;
-    document.head.appendChild(script);
-  });
-}
-
-function blobToDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("No se pudo renderizar el QR."));
-    reader.readAsDataURL(blob);
-  });
-}
-
 async function createPairing() {
   if (!selectedSessionId) return;
   const button = byId("pairBtn");
@@ -219,16 +187,11 @@ async function createPairing() {
     byId("manualPairingCode").value = pairing.manualCode;
     byId("remoteInviteUrl").value =
       `${window.location.origin}/pda-pair.html#p=${encodeURIComponent(pairing.qrPayload)}`;
-    const writer = await loadBarcodeWriter();
-    const output = await writer.writeBarcode(pairing.qrPayload, {
-      format: "QRCode",
-      scale: 4,
-      addQuietZones: true
-    });
-    if (output.error || !output.image) throw new Error(output.error || "No se pudo crear QR.");
+    const qrSrc = pairing.qrImageDataUrl;
+    if (!qrSrc) throw new Error("El servidor no entregó la imagen QR.");
     const image = document.createElement("img");
     image.alt = "QR de pairing efímero";
-    image.src = await blobToDataUrl(output.image);
+    image.src = qrSrc;
     byId("pairingQr").replaceChildren(image);
     byId("pairingPanel").hidden = false;
   } catch (error) {

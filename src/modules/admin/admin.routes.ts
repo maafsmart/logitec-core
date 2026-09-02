@@ -13,6 +13,7 @@ import {
   createPdaScannerLabGate,
   isPdaScannerLabEnabled
 } from "./pda-scanner-lab.feature.js";
+import { renderPairingQrDataUrl } from "./pda-pairing-qr.js";
 import {
   createPdaTestSession,
   finalizePdaTestSession,
@@ -141,7 +142,10 @@ adminRouter.post(
       sessionId
     });
     res.setHeader("Cache-Control", "no-store");
-    res.status(201).json(result);
+    res.status(201).json({
+      ...result,
+      qrImageDataUrl: await renderPairingQrDataUrl(result.qrPayload)
+    });
   }
 );
 

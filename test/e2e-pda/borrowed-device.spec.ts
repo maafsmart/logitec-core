@@ -229,6 +229,127 @@ test("pairing limpia URL y no persiste secreto ni bearer", async ({ page }) => {
   expect(JSON.stringify(storage)).not.toContain("A".repeat(26));
 });
 
+test("ADMIN evidence abre sesión existente y emite pairing bajo CSP real sin WASM writer", async ({ page }) => {
+  const dialogs: string[] = [];
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  const wasmRequests: string[] = [];
+  const qrDataUrl =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2ZkAAAAASUVORK5CYII=";
+  const testId = "PDA-20260902-39399C1048F3873B149E3110";
+  const session = {
+    id: "session-motorola-existing",
+    testId,
+    status: "OPEN",
+    deviceType: "PDA prestado",
+    deviceBrand: null,
+    deviceModel: "moto g86 POWER",
+    totalReadings: 0,
+    okReadings: 0,
+    notFoundReadings: 0,
+    failedReadings: 0,
+    successRate: null,
+    detectionMinMs: null,
+    detectionMedianMs: null,
+    detectionP95Ms: null,
+    classificationMinMs: null,
+    classificationMedianMs: null,
+    classificationP95Ms: null,
+    startedAt: new Date().toISOString(),
+    finalizedAt: null,
+    createdAt: new Date().toISOString(),
+    runs: [],
+    readings: []
+  };
+
+  page.on("dialog", async (dialog) => {
+    dialogs.push(dialog.message());
+    await dialog.dismiss();
+  });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("request", (request) => {
+    const url = request.url();
+    if (/\/vendor\/zxing-wasm\/.*writer|zxing_writer\.wasm/.test(url)) {
+      wasmRequests.push(url);
+    }
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem("token", "qa-admin-token");
+  });
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      id: "admin",
+      role: "ADMIN",
+      email: "qa@example.invalid",
+      fullName: "QA Admin",
+      operationalClient: { id: "client-a", code: "AVIAT", name: "QA AVIAT" }
+    })
+  }));
+  await page.route("**/api/admin/pda-test-sessions**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path === "/api/admin/pda-test-sessions") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([session])
+      });
+      return;
+    }
+    if (request.method() === "GET" && path.endsWith("/remote-qa")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ session: { id: session.id, testId }, runs: [] })
+      });
+      return;
+    }
+    if (request.method() === "POST" && path.endsWith("/pairings")) {
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          manualCode: `PAIR-MOTO.${"A".repeat(26)}`,
+          qrPayload: `LOGITEC-PDA1:PAIR-MOTO.${"B".repeat(43)}`,
+          qrImageDataUrl: qrDataUrl
+        })
+      });
+      return;
+    }
+    if (request.method() === "GET" && path.endsWith(`/${testId}`)) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(session)
+      });
+      return;
+    }
+    await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+  });
+
+  const response = await page.goto("/pda-test-evidence.html");
+  const csp = response?.headers()["content-security-policy"] || "";
+  expect(csp).toMatch(/wasm-unsafe-eval/);
+  expect(csp).not.toMatch(/'unsafe-eval'/);
+  await expect(page.locator(".open-session")).toHaveCount(1);
+  await page.locator(".open-session").click();
+  await expect(page.locator("#detailTitle")).toHaveText(testId);
+  await expect(page.locator("#runsSummary")).toHaveText("Sin runs.");
+  await expect(page.locator("#pairBtn")).toBeVisible();
+  await page.locator("#pairBtn").click();
+  await expect(page.locator("#remoteInviteUrl")).toHaveValue(/\/pda-pair\.html#p=/);
+  await expect(page.locator("#pairingQr img")).toHaveAttribute("src", qrDataUrl);
+  expect(dialogs).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors.filter((line) => /Content Security Policy|WebAssembly|unsafe-eval/i.test(line))).toEqual([]);
+  expect(wasmRequests).toEqual([]);
+});
+
 test("ADMIN crea, abre y emite invitación sin alert ni nodo DOM ausente", async ({ page }) => {
   const dialogs: string[] = [];
   const pageErrors: string[] = [];
@@ -266,15 +387,6 @@ test("ADMIN crea, abre y emite invitación sin alert ni nodo DOM ausente", async
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.addInitScript(() => {
     localStorage.setItem("token", "qa-admin-token");
-    Object.defineProperty(window, "ZXingWASM", {
-      configurable: true,
-      value: {
-        prepareZXingModule: async () => {},
-        writeBarcode: async () => ({
-          image: new Blob(["qa-qr"], { type: "image/png" })
-        })
-      }
-    });
   });
   await page.route("**/api/auth/me", (route) => route.fulfill({
     status: 200,
@@ -321,7 +433,9 @@ test("ADMIN crea, abre y emite invitación sin alert ni nodo DOM ausente", async
         contentType: "application/json",
         body: JSON.stringify({
           manualCode: `PAIR-MOTO.${"A".repeat(26)}`,
-          qrPayload: `LOGITEC-PDA1:PAIR-MOTO.${"B".repeat(43)}`
+          qrPayload: `LOGITEC-PDA1:PAIR-MOTO.${"B".repeat(43)}`,
+          qrImageDataUrl:
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2ZkAAAAASUVORK5CYII="
         })
       });
       return;

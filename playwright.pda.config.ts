@@ -15,7 +15,17 @@ export default defineConfig({
     trace: "off"
   },
   webServer: {
-    command: `NODE_ENV=test DATABASE_ENVIRONMENT=qa DATABASE_URL=postgresql://local:local@127.0.0.1:5432/logitec_browser_test PRODUCTION_DATABASE_HOST=production.invalid JWT_SECRET=test-only-secret-at-least-12 PDA_TOKEN_PEPPER=test-only-pda-pepper-at-least-32-characters ENABLE_PDA_SCANNER_LAB=true PORT=${port} npx tsx src/server.ts`,
+    command: `npx tsx src/server.ts`,
+    env: {
+      NODE_ENV: "test",
+      DATABASE_ENVIRONMENT: "qa",
+      DATABASE_URL: "postgresql://local:local@127.0.0.1:5432/logitec_browser_test",
+      PRODUCTION_DATABASE_HOST: "production.invalid",
+      JWT_SECRET: "test-only-secret-at-least-12",
+      PDA_TOKEN_PEPPER: "test-only-pda-pepper-at-least-32-characters",
+      ENABLE_PDA_SCANNER_LAB: "true",
+      PORT: String(port)
+    },
     url: `${baseURL}/health`,
     reuseExistingServer: false,
     timeout: 30_000
