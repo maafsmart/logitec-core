@@ -295,6 +295,25 @@ test("métrica de detección empieza al armar y excluye preparación y enfoque",
   assert.doesNotMatch(js, /\blatencyMs\b/);
 });
 
+test("un OK suena y bloquea otra lectura hasta pulsar Repetir / enfocar", () => {
+  const process = js.slice(js.indexOf("async function processScan("), js.indexOf("function setCameraStatus("));
+  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
+  const repeatHandler = js.slice(
+    js.indexOf('byId("repeatBtn").addEventListener'),
+    js.indexOf('byId("copyBtn").addEventListener')
+  );
+  assert.match(js, /function playSuccessSound\(\)[\s\S]*createOscillator\(\)/);
+  assert.match(process, /entry\.result === "OK"[\s\S]*successfulScanLocked = true[\s\S]*playSuccessSound\(\)/);
+  assert.match(process, /if \(successfulScanLocked\) return null/);
+  assert.match(process, /scanBtn"\)\.disabled = successfulScanLocked/);
+  assert.match(detect, /armCameraBtn"\)\.disabled = entry\?\.result === "OK"/);
+  assert.match(detect, /OK confirmado · lectura detenida/);
+  assert.match(repeatHandler, /successfulScanLocked = false/);
+  assert.match(repeatHandler, /scanBtn"\)\.disabled = false/);
+  assert.match(repeatHandler, /armCameraBtn"\)\.disabled = false/);
+  assert.match(html, /pda-scanner-lab\.js\?v=4/);
+});
+
 test("frame local se genera solo tras detectar, no se persiste ni se envía", () => {
   const snapshot = js.slice(js.indexOf("function snapshotCameraFrame()"), js.indexOf("function showDetectedFrame("));
   const evidence = js.slice(js.indexOf("function showDetectedFrame("), js.indexOf("function stopCamera("));
