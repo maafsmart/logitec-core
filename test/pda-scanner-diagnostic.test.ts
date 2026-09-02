@@ -296,24 +296,26 @@ test("métrica de detección empieza al armar y excluye preparación y enfoque",
 });
 
 test("frame local se genera solo tras detectar, no se persiste ni se envía", () => {
-  const capture = js.slice(js.indexOf("async function captureDetectedFrame("), js.indexOf("function stopCamera("));
+  const snapshot = js.slice(js.indexOf("function snapshotCameraFrame()"), js.indexOf("async function showDetectedFrame("));
+  const evidence = js.slice(js.indexOf("async function showDetectedFrame("), js.indexOf("function stopCamera("));
   const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
   const start = js.slice(js.indexOf("async function startCamera()"), js.indexOf("function setBarcodeGeneratorStatus("));
   const rawValueBranch = detect.slice(detect.indexOf("if (rawValue)"));
-  assert.match(capture, /context\.drawImage\(cameraVideo, 0, 0, width, height\)/);
-  assert.match(capture, /canvas\.toBlob\(resolve, "image\/jpeg", 0\.88\)/);
-  assert.match(capture, /URL\.createObjectURL\(blob\)/);
-  assert.match(rawValueBranch, /captureDetectedFrame\(rawValue\)/);
-  assert.doesNotMatch(start, /captureDetectedFrame\(/);
-  assert.doesNotMatch(capture, /api\(|fetch\(|localStorage|sessionStorage|indexedDB/);
+  assert.match(snapshot, /context\.drawImage\(cameraVideo, 0, 0, width, height\)/);
+  assert.match(detect, /const cameraFrame = snapshotCameraFrame\(\)[\s\S]*cameraDetector\.detect\(cameraFrame\)/);
+  assert.match(evidence, /canvas\.toBlob\(resolve, "image\/jpeg", 0\.88\)/);
+  assert.match(evidence, /URL\.createObjectURL\(blob\)/);
+  assert.match(rawValueBranch, /showDetectedFrame\(cameraFrame, rawValue\)/);
+  assert.doesNotMatch(start, /showDetectedFrame\(/);
+  assert.doesNotMatch(evidence, /api\(|fetch\(|localStorage|sessionStorage|indexedDB/);
 });
 
 test("siguiente detección reemplaza la evidencia local y permite descartarla", () => {
-  const clear = js.slice(js.indexOf("function clearDetectedFrame()"), js.indexOf("async function captureDetectedFrame("));
-  const capture = js.slice(js.indexOf("async function captureDetectedFrame("), js.indexOf("function stopCamera("));
+  const clear = js.slice(js.indexOf("function clearDetectedFrame()"), js.indexOf("function snapshotCameraFrame()"));
+  const evidence = js.slice(js.indexOf("async function showDetectedFrame("), js.indexOf("function stopCamera("));
   assert.match(clear, /URL\.revokeObjectURL\(detectedFrameUrl\)/);
   assert.match(clear, /detectedFrameEvidence"\)\.hidden = true/);
-  assert.ok(capture.indexOf("clearDetectedFrame()") < capture.indexOf("URL.createObjectURL(blob)"));
+  assert.ok(evidence.indexOf("clearDetectedFrame()") < evidence.indexOf("URL.createObjectURL(blob)"));
   assert.match(js, /discardDetectedFrameBtn"\)\.addEventListener\("click", clearDetectedFrame\)/);
   assert.match(js, /pagehide[\s\S]*clearDetectedFrame\(\)/);
 });

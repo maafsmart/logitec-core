@@ -228,18 +228,21 @@ function clearDetectedFrame() {
   byId("detectedFrameEvidence").hidden = true;
 }
 
-async function captureDetectedFrame(rawValue) {
+function snapshotCameraFrame() {
   const width = cameraVideo.videoWidth;
   const height = cameraVideo.videoHeight;
-  if (!width || !height) return false;
+  if (!width || !height) return null;
 
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
-  if (!context) return false;
+  if (!context) return null;
   context.drawImage(cameraVideo, 0, 0, width, height);
+  return canvas;
+}
 
+async function showDetectedFrame(canvas, rawValue) {
   clearDetectedFrame();
   const captureGeneration = detectedFrameGeneration;
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
@@ -347,7 +350,12 @@ async function detectCameraFrame() {
   }
   cameraDetectionBusy = true;
   try {
-    const detections = await cameraDetector.detect(cameraVideo);
+    const cameraFrame = snapshotCameraFrame();
+    if (!cameraFrame) {
+      scheduleCameraDetection();
+      return;
+    }
+    const detections = await cameraDetector.detect(cameraFrame);
     if (!cameraStream || !cameraDetectionArmed) return;
     const rawValue = String(detections?.[0]?.rawValue ?? "");
     if (rawValue) {
@@ -358,7 +366,7 @@ async function detectCameraFrame() {
       cameraStartedAt = null;
       scanInput.value = rawValue;
       setCameraStatus(`Código detectado con ${cameraDetectorKind}. Clasificando…`, "ok");
-      await captureDetectedFrame(rawValue).catch(() => false);
+      await showDetectedFrame(cameraFrame, rawValue).catch(() => false);
       await processScan(rawValue, { detectionMs });
       if (cameraStream) {
         byId("armCameraBtn").disabled = false;
