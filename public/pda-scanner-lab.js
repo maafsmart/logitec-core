@@ -24,7 +24,8 @@ let scanProcessing = false;
 let successFeedbackPlayed = false;
 const scanSessionSeenCodes = new Set();
 const cameraStabilityFrames = 3;
-const cameraStabilityMs = 300;
+const cameraTimedStabilityFrames = 2;
+const cameraStabilityMs = 200;
 
 function normalizeScannerRawValue(rawValue) {
   const value = String(rawValue ?? "").trim();
@@ -40,7 +41,8 @@ function advanceCameraCandidate(state, rawValue, detectedAt) {
   const count = state.count + 1;
   const firstSeenAt = state.firstSeenAt ?? detectedAt;
   const stableValue =
-    count >= cameraStabilityFrames && detectedAt - firstSeenAt >= cameraStabilityMs
+    count >= cameraStabilityFrames ||
+    (count >= cameraTimedStabilityFrames && detectedAt - firstSeenAt >= cameraStabilityMs)
       ? value
       : "";
   return { value, count, firstSeenAt, stableValue };

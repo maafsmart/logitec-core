@@ -353,7 +353,8 @@ test("primer OK cierra atómicamente cámara, callbacks y entradas posteriores",
 test("normaliza solo ]C1 y estabiliza el SKU sin clasificar fragmentos intermedios", () => {
   const evaluate = new Function(`
     const cameraStabilityFrames = 3;
-    const cameraStabilityMs = 300;
+    const cameraTimedStabilityFrames = 2;
+    const cameraStabilityMs = 200;
     ${sourceFunction(js, "normalizeScannerRawValue")}
     ${sourceFunction(js, "advanceCameraCandidate")}
     return { normalizeScannerRawValue, advanceCameraCandidate };
@@ -381,6 +382,35 @@ test("normaliza solo ]C1 y estabiliza el SKU sin clasificar fragmentos intermedi
     return state.stableValue;
   });
   assert.deepEqual(stableValues, ["", "", "", "", "QMR-FR000000000389"]);
+});
+
+test("estabilización acepta 3 frames o 2 durante 200 ms, pero nunca un solo frame", () => {
+  const advance = new Function(`
+    const cameraStabilityFrames = 3;
+    const cameraTimedStabilityFrames = 2;
+    const cameraStabilityMs = 200;
+    ${sourceFunction(js, "normalizeScannerRawValue")}
+    ${sourceFunction(js, "advanceCameraCandidate")}
+    return advanceCameraCandidate;
+  `)() as (
+    state: { value: string; count: number; firstSeenAt: number | null; stableValue: string },
+    value: string,
+    at: number
+  ) => { value: string; count: number; firstSeenAt: number | null; stableValue: string };
+  const empty = { value: "", count: 0, firstSeenAt: null, stableValue: "" };
+
+  const oneFrame = advance(empty, "SKU-ESTABLE", 0);
+  assert.equal(oneFrame.stableValue, "");
+
+  const quickSecond = advance(oneFrame, "SKU-ESTABLE", 90);
+  assert.equal(quickSecond.stableValue, "");
+  const quickThird = advance(quickSecond, "SKU-ESTABLE", 150);
+  assert.equal(quickThird.stableValue, "SKU-ESTABLE");
+
+  const timedFirst = advance(empty, "SKU-TEMPORIZADO", 1000);
+  assert.equal(timedFirst.stableValue, "");
+  const timedSecond = advance(timedFirst, "SKU-TEMPORIZADO", 1200);
+  assert.equal(timedSecond.stableValue, "SKU-TEMPORIZADO");
 });
 
 test("deduplica cada código por sesión y el rearme explícito limpia el estado", () => {
