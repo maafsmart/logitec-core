@@ -14,8 +14,6 @@ let cameraDetectionBusy = false;
 let cameraDetectionArmed = false;
 let barcodePolyfillPromise = null;
 let cameraStartedAt = null;
-let detectedFrameUrl = "";
-let detectedFrameGeneration = 0;
 let barcodeWriterPromise = null;
 let generatedBarcodeDataUrl = "";
 
@@ -221,9 +219,6 @@ function setCameraStatus(message, tone = "") {
 }
 
 function clearDetectedFrame() {
-  detectedFrameGeneration += 1;
-  if (detectedFrameUrl) URL.revokeObjectURL(detectedFrameUrl);
-  detectedFrameUrl = "";
   byId("detectedFrameImage").removeAttribute("src");
   byId("detectedFrameEvidence").hidden = true;
 }
@@ -242,14 +237,11 @@ function snapshotCameraFrame() {
   return canvas;
 }
 
-async function showDetectedFrame(canvas, rawValue) {
+function showDetectedFrame(canvas, rawValue) {
   clearDetectedFrame();
-  const captureGeneration = detectedFrameGeneration;
-  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
-  if (!blob || captureGeneration !== detectedFrameGeneration) return false;
-
-  detectedFrameUrl = URL.createObjectURL(blob);
-  byId("detectedFrameImage").src = detectedFrameUrl;
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.88);
+  if (!dataUrl.startsWith("data:image/jpeg")) return false;
+  byId("detectedFrameImage").src = dataUrl;
   byId("detectedFrameCaption").textContent =
     `Frame capturado al detectar “${rawValue}”. Solo memoria de esta pestaña; no se carga ni se guarda.`;
   byId("detectedFrameEvidence").hidden = false;
