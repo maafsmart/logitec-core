@@ -54,6 +54,7 @@ const pdaScannerLabPageGate = createPdaScannerLabGate(
 
 app.use(
   helmet({
+    referrerPolicy: { policy: "no-referrer" },
     contentSecurityPolicy: {
       useDefaults: true,
       directives: {

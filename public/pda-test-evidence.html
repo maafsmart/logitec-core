@@ -32,6 +32,21 @@
         </section>
         <section class="panel">
           <div class="history-head">
+            <div>
+              <p class="eyebrow evidence-eyebrow">ESTACIÓN ADMIN CONFIABLE</p>
+              <h2>Preparar dispositivo prestado</h2>
+            </div>
+            <button id="createSessionBtn" class="button primary" type="button">Crear sesión y pairing</button>
+          </div>
+          <div id="pairingOutput" class="final-summary" hidden>
+            <strong id="pairingTestId"></strong>
+            <p>En el PDA abre manualmente <strong>/pda-pair.html</strong>. El secreto es one-shot y vence en 5 minutos.</p>
+            <label>ID de pairing<input id="pairingChallengeId" readonly /></label>
+            <label>Secreto<input id="pairingSecret" readonly /></label>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="history-head">
             <div class="section-title"><div><span>1</span><h2>Sesiones guardadas</h2></div></div>
             <button id="refreshBtn" class="button secondary" type="button">Actualizar</button>
           </div>

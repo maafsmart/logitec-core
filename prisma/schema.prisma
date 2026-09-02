@@ -733,6 +733,7 @@ model PdaTestReading {
   @@unique([runId, attemptId])
   @@unique([clientId, idempotencyKey])
   @@index([sessionId, observedAt])
+  @@index([runId, observedAt])
   @@index([clientId, observedAt])
   @@index([clientId, result, observedAt])
 }

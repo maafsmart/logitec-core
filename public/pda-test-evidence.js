@@ -61,6 +61,9 @@ async function openSession(testId) {
   byId("pairingPanel").hidden = true;
   byId("detailTitle").textContent = session.testId;
   byId("detailSummary").textContent = `${sessionSummary(session)} · detección min/mediana/p95 ${metric(session.detectionMinMs)} / ${metric(session.detectionMedianMs)} / ${metric(session.detectionP95Ms)} · clasificación min/mediana/p95 ${metric(session.classificationMinMs)} / ${metric(session.classificationMedianMs)} / ${metric(session.classificationP95Ms)}`;
+  byId("runsSummary").textContent = (session.runs || []).length
+    ? `Runs: ${session.runs.map((run) => `${run.publicId} · ${run.status} · seq ${run.lastAcceptedSeq}${run.sealedThroughSeq === null ? "" : `/${run.sealedThroughSeq}`}`).join(" | ")}`
+    : "Sin runs.";
   byId("readingsBody").innerHTML = session.readings.length
     ? session.readings.map((reading) => `<tr>
         <td>${escapeHtml(new Date(reading.observedAt).toLocaleString("es-MX"))}</td>

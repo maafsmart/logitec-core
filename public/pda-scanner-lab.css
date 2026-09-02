@@ -114,7 +114,7 @@ input:focus, select:focus, textarea:focus {
 .span-2 { grid-column: span 2; }
 .mode-switch {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   margin-bottom: 14px;
   padding: 5px;
@@ -323,7 +323,7 @@ th { background: #eef2f5; color: #344252; white-space: nowrap; }
 @media (max-width: 760px) {
   .topbar { position: static; align-items: flex-start; padding: 12px 14px; }
   main { padding: 10px; }
-  .form-grid, .scan-context { grid-template-columns: 1fr; }
+  .form-grid, .scan-context, .pda-context { grid-template-columns: 1fr; }
   .mode-switch { grid-template-columns: 1fr; }
   .barcode-generator { grid-template-columns: 1fr; }
   .span-2 { grid-column: auto; }

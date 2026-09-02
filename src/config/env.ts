@@ -37,6 +37,14 @@ const envSchema = z.object({
     },
     z.number().int().positive().default(3000)
   )
+}).superRefine((value, context) => {
+  if (value.NODE_ENV === "production" && !value.PDA_TOKEN_PEPPER) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["PDA_TOKEN_PEPPER"],
+      message: "PDA_TOKEN_PEPPER is required in production"
+    });
+  }
 });
 
 const parsed = envSchema.safeParse(process.env);

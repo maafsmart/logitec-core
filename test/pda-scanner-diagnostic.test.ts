@@ -12,10 +12,23 @@ import {
   normalizePdaRawCode,
   pdaOutcome
 } from "../src/modules/admin/pda-test-evidence.service.js";
+import {
+  digestPdaSecret,
+  pdaGrantFailure
+} from "../src/modules/pda/pda-auth.service.js";
+import {
+  fingerprintPdaAttempt,
+  missingPdaSequences,
+  pdaRunAcceptsAttempt,
+  type PdaAttemptInput
+} from "../src/modules/pda/pda-run.service.js";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const schema = read("../prisma/schema.prisma");
-const migration = read("../prisma/migrations/20260902102000_pda_borrowed_device_protocol/migration.sql");
+const migration = [
+  read("../prisma/migrations/20260902101500_pda_borrowed_device_protocol/migration.sql"),
+  read("../prisma/migrations/20260902103000_harden_pda_borrowed_device_protocol/migration.sql")
+].join("\n");
 const adminRoutes = read("../src/modules/admin/admin.routes.ts");
 const pdaRoutes = read("../src/modules/pda/pda.routes.ts");
 const pdaAuth = read("../src/modules/pda/pda-auth.service.ts");
@@ -94,7 +107,7 @@ test("schema congela tenant, run, secuencia, intento e idempotencia", () => {
 
 test("migración es incremental, conserva evidencia y no toca inventario", () => {
   assert.match(migration, /FINALIZED' THEN 'CLOSED'/);
-  assert.match(migration, /legacy-run-/);
+  assert.match(migration, /'legacy-' \|\| s\."id"/);
   assert.match(migration, /ROW_NUMBER\(\) OVER/);
   assert.match(migration, /PdaCaptureRun_one_active_per_session/);
   assert.match(migration, /WHERE "status" = 'ACTIVE'/);
