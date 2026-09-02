@@ -243,16 +243,41 @@ test("el laboratorio reenvía el login con next allowlisted al propio laboratori
   assert.equal((js.match(/href="\/login\.html(?:\?[^"]*)?"/g) || []).join(""), 'href="/login.html?next=/pda-scanner-lab.html"');
 });
 
-test("valor detectado pasa sin transformación al clasificador y la cámara conserva el preview", () => {
+test("detección válida captura feedback, clasifica con métrica y rearma sin cerrar preview", () => {
   const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
+  const detectedBranch = detect.slice(detect.indexOf("if (rawValue)"));
   assert.match(js, /const rawValue = String\(detections\?\.\[0\]\?\.rawValue \?\? ""\)/);
-  assert.match(detect, /scanInput\.value = rawValue;[\s\S]*await processScan\(rawValue, \{ detectionMs \}\)/);
+  assert.doesNotMatch(detectedBranch, /(?:await\s+)?showDetectedFrame\([^;]+\)\.catch\(/);
+  assert.match(
+    detectedBranch,
+    /playLocalDetectionFeedback\(\);\s*showDetectedFrame\(cameraFrame, rawValue\);\s*const entry = await processScan\(rawValue, \{ detectionMs \}\)/
+  );
+  assert.ok(
+    detectedBranch.indexOf("cameraDetectionArmed = true") >
+      detectedBranch.indexOf("await processScan(rawValue, { detectionMs })")
+  );
+  assert.match(detectedBranch, /cameraDetectionArmed = true;[\s\S]*scheduleCameraDetection\(\)/);
   assert.doesNotMatch(detect, /stopCamera\(/);
-  assert.match(detect, /Cámara lista para enfocar/);
+  assert.match(detect, /lectura rearmada automáticamente/);
   assert.match(js, /encodeURIComponent\(code\)/);
   assert.match(js, /cameraStream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
   assert.match(js, /pagehide/);
   assert.match(js, /visibilitychange/);
+});
+
+test("feedback local de detección es opcional, no bloqueante y sin recursos externos", () => {
+  const audio = js.slice(js.indexOf("function prepareDetectionAudio()"), js.indexOf("function stopCamera("));
+  const arm = js.slice(js.indexOf("function armCameraDetection()"), js.indexOf("async function startCamera()"));
+  assert.match(audio, /window\.AudioContext \|\| window\.webkitAudioContext/);
+  assert.match(audio, /resume\(\)\.catch\(\(\) => \{\}\)/);
+  assert.match(audio, /typeof navigator\.vibrate === "function"/);
+  assert.match(audio, /navigator\.vibrate\(80\)/);
+  assert.match(audio, /createBuffer\(1, frameCount, context\.sampleRate\)/);
+  assert.match(audio, /createBufferSource\(\)/);
+  assert.match(audio, /createBiquadFilter\(\)/);
+  assert.doesNotMatch(audio, /createOscillator\(/);
+  assert.match(arm, /prepareDetectionAudio\(\)/);
+  assert.doesNotMatch(audio, /await |fetch\(|api\(|localStorage|sessionStorage|indexedDB|new Audio\(/);
 });
 
 test("guía de cámara es amplia y no oscurece el video", () => {
@@ -295,23 +320,25 @@ test("métrica de detección empieza al armar y excluye preparación y enfoque",
   assert.doesNotMatch(js, /\blatencyMs\b/);
 });
 
-test("un OK suena y bloquea otra lectura hasta pulsar Repetir / enfocar", () => {
-  const process = js.slice(js.indexOf("async function processScan("), js.indexOf("function setCameraStatus("));
+test("un OK se rearma solo y bloquea el mismo rawValue hasta que salga del cuadro", () => {
   const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
-  const repeatHandler = js.slice(
-    js.indexOf('byId("repeatBtn").addEventListener'),
-    js.indexOf('byId("copyBtn").addEventListener')
+  const duplicateGuard = detect.slice(
+    detect.indexOf("if (rawValue === blockedCameraRawValue)"),
+    detect.indexOf("const detectionMs")
   );
-  assert.match(js, /function playSuccessSound\(\)[\s\S]*createOscillator\(\)/);
-  assert.match(process, /entry\.result === "OK"[\s\S]*successfulScanLocked = true[\s\S]*playSuccessSound\(\)/);
-  assert.match(process, /if \(successfulScanLocked\) return null/);
-  assert.match(process, /scanBtn"\)\.disabled = successfulScanLocked/);
-  assert.match(detect, /armCameraBtn"\)\.disabled = entry\?\.result === "OK"/);
-  assert.match(detect, /OK confirmado · lectura detenida/);
-  assert.match(repeatHandler, /successfulScanLocked = false/);
-  assert.match(repeatHandler, /scanBtn"\)\.disabled = false/);
-  assert.match(repeatHandler, /armCameraBtn"\)\.disabled = false/);
-  assert.match(html, /pda-scanner-lab\.js\?v=4/);
+  assert.match(js, /const duplicateCooldownMs = 1200/);
+  assert.match(js, /const duplicateReleaseFrames = 3/);
+  assert.match(detect, /!rawValue && blockedCameraRawValue && detectionNow >= blockedCameraUntil/);
+  assert.match(detect, /blockedCameraMissingFrames >= duplicateReleaseFrames[\s\S]*blockedCameraRawValue = ""/);
+  assert.match(duplicateGuard, /scheduleCameraDetection\(\);\s*return/);
+  assert.doesNotMatch(duplicateGuard, /processScan\(/);
+  assert.match(
+    detect,
+    /entry\?\.result === "OK"[\s\S]*blockedCameraRawValue = rawValue[\s\S]*blockedCameraUntil = performance\.now\(\) \+ duplicateCooldownMs/
+  );
+  assert.match(detect, /cameraDetectionArmed = true;[\s\S]*lectura rearmada automáticamente[\s\S]*scheduleCameraDetection\(\)/);
+  assert.doesNotMatch(js, /successfulScanLocked|repeatBtn|Repetir \/ enfocar/);
+  assert.match(html, /pda-scanner-lab\.js\?v=5/);
 });
 
 test("frame local se genera solo tras detectar, no se persiste ni se envía", () => {
