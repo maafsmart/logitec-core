@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response, Router } from "express";
 import { z } from "zod";
+import { env } from "../../config/env.js";
 import { requireAuth, requireRole } from "../../middlewares/auth.middleware.js";
 import { requireOperationalClient } from "../clients/client-scope.js";
 import { assertLabResetAvailable, executeLabReset, previewLabReset } from "./lab-reset.service.js";
@@ -8,8 +9,15 @@ import {
   previewOperationalHistoryCleanup
 } from "./operational-history.service.js";
 import { classifyScannerCode } from "./pda-scanner-diagnostic.service.js";
+import {
+  createPdaScannerLabGate,
+  isPdaScannerLabEnabled
+} from "./pda-scanner-lab.feature.js";
 
 const adminRouter = Router();
+const pdaScannerLabApiGate = createPdaScannerLabGate(
+  isPdaScannerLabEnabled(env.ENABLE_PDA_SCANNER_LAB)
+);
 
 const labResetSchema = z.object({
   confirmed: z.literal(true)
@@ -50,6 +58,7 @@ adminRouter.get(
 
 adminRouter.get(
   "/pda-scanner-diagnostic/classify",
+  pdaScannerLabApiGate,
   requireAuth,
   requireRole(["ADMIN"]),
   requireOperationalClient,

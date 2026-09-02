@@ -15,6 +15,10 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   PRODUCTION_DATABASE_HOST: z.string().trim().min(1).optional(),
   JWT_SECRET: z.string().min(12, "JWT_SECRET must have at least 12 characters"),
+  ENABLE_PDA_SCANNER_LAB: z.preprocess(
+    (value) => String(value ?? "false").trim().toLowerCase() === "true" ? "true" : "false",
+    z.enum(["true", "false"]).default("false")
+  ),
   ALLOW_TENANT_INVENTORY_RESET: z.preprocess(
     (value) => {
       const raw = String(value ?? "false").trim().toLowerCase();

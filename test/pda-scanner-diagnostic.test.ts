@@ -6,6 +6,10 @@ import {
   scannerLocationWhere,
   type ScannerDiagnosticReader
 } from "../src/modules/admin/pda-scanner-diagnostic.service.js";
+import {
+  createPdaScannerLabGate,
+  isPdaScannerLabEnabled
+} from "../src/modules/admin/pda-scanner-lab.feature.js";
 
 const routes = readFileSync(new URL("../src/modules/admin/admin.routes.ts", import.meta.url), "utf8");
 const service = readFileSync(
@@ -16,6 +20,11 @@ const html = readFileSync(new URL("../public/pda-scanner-lab.html", import.meta.
 const js = readFileSync(new URL("../public/pda-scanner-lab.js", import.meta.url), "utf8");
 const css = readFileSync(new URL("../public/pda-scanner-lab.css", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
+const envSource = readFileSync(new URL("../src/config/env.ts", import.meta.url), "utf8");
+const dashboardHtml = readFileSync(new URL("../public/dashboard.html", import.meta.url), "utf8");
+const loginJs = readFileSync(new URL("../public/login.js", import.meta.url), "utf8");
+const canonicalHostJs = readFileSync(new URL("../public/canonical-host.js", import.meta.url), "utf8");
+const envExample = readFileSync(new URL("../.env.example", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 function reader(overrides: Partial<ScannerDiagnosticReader> = {}) {
@@ -123,6 +132,8 @@ test("endpoint diagnóstico es GET, ADMIN, con cliente operativo y sin escritura
   const routeEnd = routes.indexOf("adminRouter.post(", routeStart);
   const route = routes.slice(routeStart, routeEnd);
   assert.ok(routeStart >= 0);
+  assert.match(route, /pdaScannerLabApiGate/);
+  assert.ok(route.indexOf("pdaScannerLabApiGate") < route.indexOf("requireAuth"));
   assert.match(route, /requireAuth/);
   assert.match(route, /requireRole\(\["ADMIN"\]\)/);
   assert.match(route, /requireOperationalClient/);
@@ -136,6 +147,49 @@ test("endpoint diagnóstico es GET, ADMIN, con cliente operativo y sin escritura
   );
   assert.match(locationLookup, /where: scannerLocationWhere\(code\)/);
   assert.doesNotMatch(locationLookup, /inventories/);
+});
+
+test("feature flag OFF bloquea con 404 y ON permite continuar", () => {
+  assert.equal(isPdaScannerLabEnabled("false"), false);
+  assert.equal(isPdaScannerLabEnabled("true"), true);
+
+  let statusCode = 0;
+  let responseBody = "";
+  let nextCalls = 0;
+  const response = {
+    status(code: number) {
+      statusCode = code;
+      return this;
+    },
+    send(body: string) {
+      responseBody = body;
+      return this;
+    }
+  };
+  createPdaScannerLabGate(false)({} as never, response as never, () => { nextCalls += 1; });
+  assert.equal(statusCode, 404);
+  assert.equal(responseBody, "Not Found");
+  assert.equal(nextCalls, 0);
+
+  createPdaScannerLabGate(true)({} as never, response as never, () => { nextCalls += 1; });
+  assert.equal(nextCalls, 1);
+});
+
+test("HTML y API usan flag default-OFF antes de exponer el laboratorio", () => {
+  assert.match(envSource, /ENABLE_PDA_SCANNER_LAB:[\s\S]*value \?\? "false"/);
+  assert.match(envExample, /ENABLE_PDA_SCANNER_LAB=false/);
+  const pageRoute = appSource.indexOf('app.get("/pda-scanner-lab.html", pdaScannerLabPageGate');
+  const staticMount = appSource.indexOf('app.use(express.static("public"))');
+  assert.ok(pageRoute >= 0 && pageRoute < staticMount);
+  assert.match(appSource, /isPdaScannerLabEnabled\(env\.ENABLE_PDA_SCANNER_LAB\)/);
+  assert.doesNotMatch(dashboardHtml, /pdaScannerLabCard|Abrir laboratorio aislado/);
+});
+
+test("login next funciona en el dominio canónico sin aceptar redirects externos", () => {
+  assert.match(loginJs, /new Set\(\["\/pda-scanner-lab\.html"\]\)/);
+  assert.match(loginJs, /window\.location\.href = resolvePostLoginPath\(window\.location\.search\)/);
+  assert.match(canonicalHostJs, /"https:\/\/" \+ WWW_HOST \+ pathname \+ search \+ hash/);
+  assert.doesNotMatch(loginJs, /https:\/\/www\.control\.logitec\.com\.mx\/pda-scanner-lab/);
 });
 
 test("pantalla aislada comparte captura, sesión, red manual e historial entre ambos modos", () => {

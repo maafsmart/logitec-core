@@ -7,6 +7,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { env } from "./config/env.js";
 import { adminRouter } from "./modules/admin/admin.routes.js";
+import {
+  createPdaScannerLabGate,
+  isPdaScannerLabEnabled
+} from "./modules/admin/pda-scanner-lab.feature.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { catalogRouter } from "./modules/catalog/catalog.routes.js";
 import { clientsRouter } from "./modules/clients/clients.routes.js";
@@ -42,6 +46,9 @@ const barcodeWriterScript = path.resolve(
 const barcodeWriterWasm = path.resolve(
   __dirname,
   "../node_modules/zxing-wasm/dist/writer/zxing_writer.wasm"
+);
+const pdaScannerLabPageGate = createPdaScannerLabGate(
+  isPdaScannerLabEnabled(env.ENABLE_PDA_SCANNER_LAB)
 );
 
 app.use(
@@ -97,6 +104,9 @@ app.get("/vendor/zxing-wasm/3.1.3/writer.js", (_req, res) => {
 app.get("/vendor/zxing-wasm/3.1.3/zxing_writer.wasm", (_req, res) => {
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   res.type("application/wasm").sendFile(barcodeWriterWasm);
+});
+app.get("/pda-scanner-lab.html", pdaScannerLabPageGate, (_req, res) => {
+  res.sendFile(path.join(publicDir, "pda-scanner-lab.html"));
 });
 app.use(express.static("public"));
 
