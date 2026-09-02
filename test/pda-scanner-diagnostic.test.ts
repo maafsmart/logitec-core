@@ -369,7 +369,7 @@ test("showDetectedFrame síncrona no usa .catch y detectionMs llega a processSca
 
 test("feedback local de detección no bloquea la lectura si el navegador no lo soporta", () => {
   const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
-  const feedback = js.slice(js.indexOf("function playDetectionFeedback()"), js.indexOf("function validateRequired()"));
+  const feedback = js.slice(js.indexOf("function ensureDetectionAudio()"), js.indexOf("function validateRequired()"));
   const arm = js.slice(js.indexOf("function armCameraDetection()"), js.indexOf("async function startCamera()"));
   const rawValueBranch = detect.slice(detect.indexOf("if (rawValue)"));
   assert.match(arm, /ensureDetectionAudio\(\)/);
