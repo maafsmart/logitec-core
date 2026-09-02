@@ -25,6 +25,7 @@ import { requisitionsRouter } from "./modules/requisitions/requisitions.routes.j
 import { tasksRouter } from "./modules/tasks/tasks.routes.js";
 import { traceabilityRouter } from "./modules/traceability/traceability.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
+import { pdaRouter } from "./modules/pda/pda.routes.js";
 import { errorHandler } from "./middlewares/error.middleware.js";
 
 export const app = express();
@@ -39,23 +40,17 @@ const barcodeDetectorWasm = path.resolve(
   __dirname,
   "../node_modules/zxing-wasm/dist/reader/zxing_reader.wasm"
 );
-const barcodeWriterScript = path.resolve(
-  __dirname,
-  "../node_modules/zxing-wasm/dist/iife/writer/index.js"
-);
-const barcodeWriterWasm = path.resolve(
-  __dirname,
-  "../node_modules/zxing-wasm/dist/writer/zxing_writer.wasm"
-);
 const pdaScannerLabPageGate = createPdaScannerLabGate(
   isPdaScannerLabEnabled(env.ENABLE_PDA_SCANNER_LAB)
 );
 
 app.use(
   helmet({
+    referrerPolicy: { policy: "no-referrer" },
     contentSecurityPolicy: {
       useDefaults: true,
       directives: {
+        "script-src": ["'self'", "'wasm-unsafe-eval'"],
         "img-src": ["'self'", "data:", "https:"]
       }
     }
@@ -74,6 +69,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/auth", authRouter);
+app.use("/api/pda", pdaRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/clients", clientsRouter);
 app.use("/api/warehouses", warehousesRouter);
@@ -97,16 +93,19 @@ app.get("/vendor/zxing-wasm/3.1.3/zxing_reader.wasm", (_req, res) => {
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   res.type("application/wasm").sendFile(barcodeDetectorWasm);
 });
-app.get("/vendor/zxing-wasm/3.1.3/writer.js", (_req, res) => {
-  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-  res.sendFile(barcodeWriterScript);
-});
-app.get("/vendor/zxing-wasm/3.1.3/zxing_writer.wasm", (_req, res) => {
-  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-  res.type("application/wasm").sendFile(barcodeWriterWasm);
-});
-app.get("/pda-scanner-lab.html", pdaScannerLabPageGate, (_req, res) => {
-  res.sendFile(path.join(publicDir, "pda-scanner-lab.html"));
+function sendPdaPage(fileName: string) {
+  return (_req: express.Request, res: express.Response) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.sendFile(path.join(publicDir, fileName));
+  };
+}
+
+app.get("/pda-pair.html", pdaScannerLabPageGate, sendPdaPage("pda-pair.html"));
+app.get("/pda-scanner-lab.html", pdaScannerLabPageGate, sendPdaPage("pda-scanner-lab.html"));
+app.get("/pda-test-evidence.html", pdaScannerLabPageGate, (_req, res) => {
+  res.sendFile(path.join(publicDir, "pda-test-evidence.html"));
 });
 app.use(express.static("public"));
 

@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "test": "tsx --test --test-concurrency=1 test/import-stabilization.test.ts test/dashboard-compact-layout.test.ts test/import-cancel.test.ts test/canonical-host.test.ts test/import-free-to-sale.test.ts test/import-missing-locations.test.ts test/physical-inventory-reset.test.ts test/inventory-valuation.test.ts test/unify-import-entrypoints.test.ts test/aviat-inventory-reset.test.ts test/fifo-picking-task-ux.test.ts test/import-batch-client-ownership.test.ts test/admin-export-movements-csv.test.ts test/admin-movement-before-after-display.test.ts test/preserve-active-route-after-refresh.test.ts test/admin-partial-layer-valuation.test.ts test/admin-value-and-assign-layer.test.ts test/admin-sku-selected-card.test.ts test/admin-inbound-assignment.test.ts test/admin-inventory-ops-nav.test.ts test/admin-inbound-optional-price.test.ts test/inbound-serialized.test.ts test/admin-relocate-balance.test.ts test/admin-requisition-fifo-reserve.test.ts test/admin-requisition-picking-fifo.test.ts test/admin-requisition-serialized-fifo-picking.test.ts test/free-pick-serialized.test.ts test/operational-project-selects.test.ts test/admin-requisition-cancel-release.test.ts test/aviat-client-project-boundaries.test.ts test/inventory-scope-selected-card-sync.test.ts test/admin-requisition-qa-ui-consistency.test.ts test/client-project-master-data-isolation.test.ts test/client-ownership-isolation.test.ts test/inventory-client-ownership-migration.test.ts test/staff-client-context-migration.test.ts test/tenant-isolation-http.test.ts test/roles-permissions-http.test.ts test/unified-sku-autocomplete.test.ts test/tenant-write-isolation.test.ts test/admin-client-entry-navigation.test.ts test/admin-client-picker-schema-lag.test.ts test/import-assistant-terminal-ux.test.ts test/pre-reset-ux-consolidation.test.ts test/pre-reset-roles-users-history.test.ts test/must-change-password-http.test.ts test/operational-history-advisory-lock-pg.test.ts test/e2e-safety.test.ts test/focus-mode-top-navigation.test.ts test/login-browser-password.test.ts test/ops-demo-three-quick-fixes.test.ts test/ops-outbound-layer-serials.test.ts test/pda-scanner-diagnostic.test.ts",
+    "test": "tsx --test --test-concurrency=1 test/import-stabilization.test.ts test/dashboard-compact-layout.test.ts test/import-cancel.test.ts test/canonical-host.test.ts test/import-free-to-sale.test.ts test/import-missing-locations.test.ts test/physical-inventory-reset.test.ts test/inventory-valuation.test.ts test/unify-import-entrypoints.test.ts test/aviat-inventory-reset.test.ts test/fifo-picking-task-ux.test.ts test/import-batch-client-ownership.test.ts test/admin-export-movements-csv.test.ts test/admin-movement-before-after-display.test.ts test/preserve-active-route-after-refresh.test.ts test/admin-partial-layer-valuation.test.ts test/admin-value-and-assign-layer.test.ts test/admin-sku-selected-card.test.ts test/admin-inbound-assignment.test.ts test/admin-inventory-ops-nav.test.ts test/admin-inbound-optional-price.test.ts test/inbound-serialized.test.ts test/admin-relocate-balance.test.ts test/admin-requisition-fifo-reserve.test.ts test/admin-requisition-picking-fifo.test.ts test/admin-requisition-serialized-fifo-picking.test.ts test/free-pick-serialized.test.ts test/operational-project-selects.test.ts test/admin-requisition-cancel-release.test.ts test/aviat-client-project-boundaries.test.ts test/inventory-scope-selected-card-sync.test.ts test/admin-requisition-qa-ui-consistency.test.ts test/client-project-master-data-isolation.test.ts test/client-ownership-isolation.test.ts test/inventory-client-ownership-migration.test.ts test/staff-client-context-migration.test.ts test/tenant-isolation-http.test.ts test/roles-permissions-http.test.ts test/unified-sku-autocomplete.test.ts test/tenant-write-isolation.test.ts test/admin-client-entry-navigation.test.ts test/admin-client-picker-schema-lag.test.ts test/import-assistant-terminal-ux.test.ts test/pre-reset-ux-consolidation.test.ts test/pre-reset-roles-users-history.test.ts test/must-change-password-http.test.ts test/operational-history-advisory-lock-pg.test.ts test/e2e-safety.test.ts test/focus-mode-top-navigation.test.ts test/login-browser-password.test.ts test/ops-demo-three-quick-fixes.test.ts test/ops-outbound-layer-serials.test.ts test/pda-scanner-diagnostic.test.ts test/pda-auth-http.test.ts test/pda-lifecycle-pg.test.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
@@ -15,6 +15,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "qa:e2e-users": "tsx scripts/ensure-qa-e2e-users.ts",
     "test:e2e": "npm run qa:e2e-users && playwright test",
+    "test:pda:pg": "tsx --test --test-concurrency=1 test/pda-lifecycle-pg.test.ts test/pda-postgres-qa.test.ts",
     "dev:operational-reset": "tsx src/scripts/operational-reset/index.ts"
   },
   "dependencies": {
@@ -29,10 +30,12 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "multer": "^2.2.0",
+    "qrcode": "^1.5.4",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
@@ -40,7 +43,7 @@
     "@types/morgan": "^1.9.9",
     "@types/multer": "^2.2.0",
     "@types/node": "^20.14.2",
-    "@playwright/test": "^1.55.0",
+    "@types/qrcode": "^1.5.6",
     "prisma": "^5.14.0",
     "tsx": "^4.15.7",
     "typescript": "^5.4.5"

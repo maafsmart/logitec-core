@@ -13,55 +13,98 @@ enum InventoryAssignmentType {
   LEGACY_UNASSIGNED
 }
 
+enum PdaSessionStatus {
+  OPEN
+  CLOSING
+  CLOSED
+  INCOMPLETE
+}
+
+enum PdaRunStatus {
+  ACTIVE
+  PAUSED
+  SEALED
+  DRAINING
+  RECONCILED
+  RELEASED
+  INCOMPLETE
+}
+
+enum PdaPairingStatus {
+  PENDING
+  CONSUMED
+  LOCKED
+  EXPIRED
+}
+
+enum PdaGrantStatus {
+  ACTIVE
+  DRAIN_ONLY
+  REVOKED
+  EXPIRED
+}
+
+enum PdaCaptureMode {
+  CAMERA
+  HID
+  MANUAL
+  NO_LEIDO
+}
+
 model User {
-  id                   String               @id @default(cuid())
-  email                String               @unique
-  passwordHash         String
-  fullName             String
-  role                 String
-  clientId             String?
-  isActive             Boolean              @default(true)
-  phone                String?
-  alternatePhone       String?
-  address              String?
-  city                 String?
-  state                String?
-  postalCode           String?
-  jobTitle             String?
-  notes                String?
-  avatarUrl            String?
-  mustChangePassword   Boolean              @default(false)
-  createdAt            DateTime             @default(now())
-  updatedAt            DateTime             @updatedAt
-  client               Client?              @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  comments             Comment[]
-  scanEvents           ScanEvent[]
-  inventoryMovements   InventoryMovement[]
-  activityLogs         ActivityLog[]
-  tasksAssigned        Task[]               @relation("TaskAssigned")
-  tasksCreated         Task[]               @relation("TaskCreated")
-  tasksApproved        Task[]               @relation("TaskApproved")
-  incidentsReported    Incident[]           @relation("IncidentReporter")
-  incidentsReviewed    Incident[]           @relation("IncidentReviewer")
-  requisitionsCreated  Requisition[]        @relation("RequisitionCreatedBy")
-  reservationsCreated  InventoryReservation[]
-  importBatches        ImportBatch[]
-  importRowAudits      ImportRowAudit[]
+  id                  String                 @id @default(cuid())
+  email               String                 @unique
+  passwordHash        String
+  fullName            String
+  role                String
+  clientId            String?
+  isActive            Boolean                @default(true)
+  phone               String?
+  alternatePhone      String?
+  address             String?
+  city                String?
+  state               String?
+  postalCode          String?
+  jobTitle            String?
+  notes               String?
+  avatarUrl           String?
+  mustChangePassword  Boolean                @default(false)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  client              Client?                @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  comments            Comment[]
+  scanEvents          ScanEvent[]
+  inventoryMovements  InventoryMovement[]
+  activityLogs        ActivityLog[]
+  tasksAssigned       Task[]                 @relation("TaskAssigned")
+  tasksCreated        Task[]                 @relation("TaskCreated")
+  tasksApproved       Task[]                 @relation("TaskApproved")
+  incidentsReported   Incident[]             @relation("IncidentReporter")
+  incidentsReviewed   Incident[]             @relation("IncidentReviewer")
+  requisitionsCreated Requisition[]          @relation("RequisitionCreatedBy")
+  reservationsCreated InventoryReservation[]
+  importBatches       ImportBatch[]
+  importRowAudits     ImportRowAudit[]
+  pdaTestSessions     PdaTestSession[]
+  pdaTestReadings     PdaTestReading[]
+  pdaPairingsCreated  PdaPairingChallenge[]
+  pdaGrantsCreated    PdaLabGrant[]
+  pdaCaptureRunsCreated PdaCaptureRun[]
 
   @@index([clientId])
 }
 
 model Comment {
-  id          String   @id @default(cuid())
-  body        String
-  entityType  String?
-  entityId    String?
-  userId      String
-  clientId    String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  createdBy   User     @relation(fields: [userId], references: [id])
-  client      Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  id         String   @id @default(cuid())
+  body       String
+  entityType String?
+  entityId   String?
+  userId     String
+  clientId   String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  createdBy  User     @relation(fields: [userId], references: [id])
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
   @@index([entityType, entityId])
   @@index([userId])
@@ -69,83 +112,83 @@ model Comment {
 }
 
 model Product {
-  id                  String               @id @default(cuid())
-  customerId          String?
-  sku                 String               @unique
-  barcode             String?              @unique
-  name                String
-  description         String?
-  unit                String               @default("EA")
-  serialControlled    Boolean              @default(false)
-  lotControlled       Boolean              @default(false)
-  warehouse           String               @default("TULTITLAN24")
-  active              Boolean              @default(true)
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  customer            Customer?            @relation(fields: [customerId], references: [id])
-  scanEvents          ScanEvent[]
-  inventoryStocks     InventoryStock[]     // legacy compatibility
-  inventoryMovements  InventoryMovement[]
-  inventories         Inventory[]
-  inventorySerials    InventorySerial[]
-  activityLogs        ActivityLog[]
-  incidents           Incident[]
-  requisitionLines    RequisitionLine[]
-  productProjects     ProductProject[]
+  id                 String              @id @default(cuid())
+  customerId         String?
+  sku                String              @unique
+  barcode            String?             @unique
+  name               String
+  description        String?
+  unit               String              @default("EA")
+  serialControlled   Boolean             @default(false)
+  lotControlled      Boolean             @default(false)
+  warehouse          String              @default("TULTITLAN24")
+  active             Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  customer           Customer?           @relation(fields: [customerId], references: [id])
+  scanEvents         ScanEvent[]
+  inventoryStocks    InventoryStock[] // legacy compatibility
+  inventoryMovements InventoryMovement[]
+  inventories        Inventory[]
+  inventorySerials   InventorySerial[]
+  activityLogs       ActivityLog[]
+  incidents          Incident[]
+  requisitionLines   RequisitionLine[]
+  productProjects    ProductProject[]
 
   @@index([customerId])
 }
 
 model InventoryStock {
-  id         String   @id @default(cuid())
-  productId  String
-  warehouse  String
-  quantity   Decimal  @default(0) @db.Decimal(18, 4)
-  updatedAt  DateTime @updatedAt
-  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id        String   @id @default(cuid())
+  productId String
+  warehouse String
+  quantity  Decimal  @default(0) @db.Decimal(18, 4)
+  updatedAt DateTime @updatedAt
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@unique([productId, warehouse])
   @@index([warehouse])
 }
 
 model InventoryMovement {
-  id              String   @id @default(cuid())
-  productId       String
-  type            String   @default("ADJUSTMENT")
-  warehouse       String?
-  qty             Decimal  @default(0) @db.Decimal(18, 4)
-  fromLocationId  String?
-  toLocationId    String?
-  stockStatus     String?
-  movementType    String
-  quantityBefore  Decimal  @db.Decimal(18, 4)
-  quantityAfter   Decimal  @db.Decimal(18, 4)
-  reference       String?
-  notes           String?
-  userId          String
-  taskId          String?
+  id                 String                   @id @default(cuid())
+  productId          String
+  type               String                   @default("ADJUSTMENT")
+  warehouse          String?
+  qty                Decimal                  @default(0) @db.Decimal(18, 4)
+  fromLocationId     String?
+  toLocationId       String?
+  stockStatus        String?
+  movementType       String
+  quantityBefore     Decimal                  @db.Decimal(18, 4)
+  quantityAfter      Decimal                  @db.Decimal(18, 4)
+  reference          String?
+  notes              String?
+  userId             String
+  taskId             String?
   inventorySerialId String?
-  inventoryLayerId String?
-  requisitionLineId String?
+  inventoryLayerId   String?
+  requisitionLineId  String?
   fromAssignmentType InventoryAssignmentType?
   fromProjectId      String?
   fromAssignmentKey  String?
   toAssignmentType   InventoryAssignmentType?
   toProjectId        String?
   toAssignmentKey    String?
-  clientId        String
-  createdAt       DateTime @default(now())
-  client          Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  product         Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
-  fromLocation    Location? @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
-  toLocation      Location? @relation("MovementTo", fields: [toLocationId], references: [id], onDelete: SetNull)
-  fromProject     Customer? @relation("MovementFromProject", fields: [fromProjectId], references: [id], onDelete: SetNull)
-  toProject       Customer? @relation("MovementToProject", fields: [toProjectId], references: [id], onDelete: SetNull)
-  user            User     @relation(fields: [userId], references: [id], onDelete: Restrict)
-  task            Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  inventorySerial InventorySerial? @relation(fields: [inventorySerialId], references: [id], onDelete: SetNull)
-  inventoryLayer  InventoryLayer?  @relation(fields: [inventoryLayerId], references: [id], onDelete: SetNull)
-  requisitionLine RequisitionLine? @relation(fields: [requisitionLineId], references: [id], onDelete: SetNull)
+  clientId           String
+  createdAt          DateTime                 @default(now())
+  client             Client                   @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  product            Product                  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  fromLocation       Location?                @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
+  toLocation         Location?                @relation("MovementTo", fields: [toLocationId], references: [id], onDelete: SetNull)
+  fromProject        Customer?                @relation("MovementFromProject", fields: [fromProjectId], references: [id], onDelete: SetNull)
+  toProject          Customer?                @relation("MovementToProject", fields: [toProjectId], references: [id], onDelete: SetNull)
+  user               User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  task               Task?                    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  inventorySerial    InventorySerial?         @relation(fields: [inventorySerialId], references: [id], onDelete: SetNull)
+  inventoryLayer     InventoryLayer?          @relation(fields: [inventoryLayerId], references: [id], onDelete: SetNull)
+  requisitionLine    RequisitionLine?         @relation(fields: [requisitionLineId], references: [id], onDelete: SetNull)
 
   @@index([productId, createdAt])
   @@index([userId])
@@ -185,75 +228,80 @@ model ScanEvent {
 }
 
 model Client {
-  id             String     @id @default(cuid())
+  id              String              @id @default(cuid())
   // Legacy display name retained for compatibility. New records derive it from
   // tradeName or legalName when a separate name is not supplied.
-  name           String
-  code           String     @unique
-  legalName      String?
-  tradeName      String?
-  rfc            String?
-  address        String?
-  city           String?
-  state          String?
-  postalCode     String?
-  phone          String?
-  alternatePhone String?
-  email          String?    @unique
-  primaryContact String?
-  contactTitle   String?
-  contactPhone   String?
-  contactEmail   String?
-  notes          String?
-  active         Boolean    @default(true)
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
-  projects       Customer[]
-  users          User[]
-  inventories    Inventory[]
-  movements      InventoryMovement[]
-  serials        InventorySerial[]
-  scanEvents     ScanEvent[]
-  activityLogs   ActivityLog[]
-  importBatches  ImportBatch[]
-  comments       Comment[]
-  tasks          Task[]
-  incidents      Incident[]
+  name            String
+  code            String              @unique
+  legalName       String?
+  tradeName       String?
+  rfc             String?
+  address         String?
+  city            String?
+  state           String?
+  postalCode      String?
+  phone           String?
+  alternatePhone  String?
+  email           String?             @unique
+  primaryContact  String?
+  contactTitle    String?
+  contactPhone    String?
+  contactEmail    String?
+  notes           String?
+  active          Boolean             @default(true)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  projects        Customer[]
+  users           User[]
+  inventories     Inventory[]
+  movements       InventoryMovement[]
+  serials         InventorySerial[]
+  scanEvents      ScanEvent[]
+  activityLogs    ActivityLog[]
+  importBatches   ImportBatch[]
+  comments        Comment[]
+  tasks           Task[]
+  incidents       Incident[]
+  pdaTestSessions PdaTestSession[]
+  pdaTestReadings PdaTestReading[]
+  pdaCaptureRuns  PdaCaptureRun[]
+  pdaPairings     PdaPairingChallenge[]
+  pdaLabGrants    PdaLabGrant[]
 }
 
 model Customer {
-  id             String    @id @default(cuid())
-  clientId       String
-  code           String    @unique
-  name           String
-  tradeName      String?
-  legalName      String?
-  rfc            String?
-  address        String?
-  phone          String?
-  email          String?
-  primaryContact String?
-  contactTitle   String?
-  contactPhone   String?
-  contactEmail   String?
-  notes          String?
-  active         Boolean   @default(true)
-  createdAt      DateTime  @default(now())
-  client         Client    @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  products       Product[]
-  activityLogs   ActivityLog[]
-  requisitions   Requisition[]
-  inventories    Inventory[] @relation("InventoryProject")
+  id              String              @id @default(cuid())
+  clientId        String
+  code            String              @unique
+  name            String
+  tradeName       String?
+  legalName       String?
+  rfc             String?
+  address         String?
+  phone           String?
+  email           String?
+  primaryContact  String?
+  contactTitle    String?
+  contactPhone    String?
+  contactEmail    String?
+  notes           String?
+  active          Boolean             @default(true)
+  createdAt       DateTime            @default(now())
+  client          Client              @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  products        Product[]
+  activityLogs    ActivityLog[]
+  requisitions    Requisition[]
+  inventories     Inventory[]         @relation("InventoryProject")
   productProjects ProductProject[]
-  movementsFrom  InventoryMovement[] @relation("MovementFromProject")
-  movementsTo    InventoryMovement[] @relation("MovementToProject")
+  movementsFrom   InventoryMovement[] @relation("MovementFromProject")
+  movementsTo     InventoryMovement[] @relation("MovementToProject")
 
   @@index([clientId])
 }
 
 model Warehouse {
-  id        String   @id @default(cuid())
-  code      String   @unique
+  id        String     @id @default(cuid())
+  code      String     @unique
   name      String
   address   String?
   manager   String?
@@ -261,9 +309,9 @@ model Warehouse {
   email     String?
   hours     String?
   notes     String?
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
   locations Location[] @relation("LocationWarehouse")
 }
 
@@ -281,7 +329,7 @@ model Location {
   active           Boolean             @default(true)
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
-  catalogWarehouse Warehouse            @relation("LocationWarehouse", fields: [warehouseId], references: [id], onDelete: Restrict)
+  catalogWarehouse Warehouse           @relation("LocationWarehouse", fields: [warehouseId], references: [id], onDelete: Restrict)
   inventories      Inventory[]
   movementsFrom    InventoryMovement[] @relation("MovementFrom")
   movementsTo      InventoryMovement[] @relation("MovementTo")
@@ -292,21 +340,21 @@ model Location {
 }
 
 model Inventory {
-  id             String                   @id @default(cuid())
+  id             String                  @id @default(cuid())
   productId      String
   locationId     String
-  qty            Decimal                  @default(0) @db.Decimal(18, 4)
-  reservedQty    Decimal                  @default(0) @db.Decimal(18, 4)
-  status         String                   @default("AVAILABLE")
+  qty            Decimal                 @default(0) @db.Decimal(18, 4)
+  reservedQty    Decimal                 @default(0) @db.Decimal(18, 4)
+  status         String                  @default("AVAILABLE")
   assignmentType InventoryAssignmentType
   projectId      String?
   assignmentKey  String
   clientId       String
-  updatedAt      DateTime                 @updatedAt
-  product        Product                  @relation(fields: [productId], references: [id], onDelete: Restrict)
-  location       Location                 @relation(fields: [locationId], references: [id], onDelete: Restrict)
-  project        Customer?                @relation("InventoryProject", fields: [projectId], references: [id], onDelete: Restrict)
-  client         Client                   @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  updatedAt      DateTime                @updatedAt
+  product        Product                 @relation(fields: [productId], references: [id], onDelete: Restrict)
+  location       Location                @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  project        Customer?               @relation("InventoryProject", fields: [projectId], references: [id], onDelete: Restrict)
+  client         Client                  @relation(fields: [clientId], references: [id], onDelete: Restrict)
   layers         InventoryLayer[]
   reservations   InventoryReservation[]
 
@@ -332,22 +380,22 @@ model ProductProject {
 }
 
 model InventoryLayer {
-  id             String    @id @default(cuid())
-  inventoryId    String
-  lotNumber      String?
-  qty            Decimal   @default(0) @db.Decimal(18, 4)
-  reservedQty    Decimal   @default(0) @db.Decimal(18, 4)
-  receivedAt     DateTime?
-  unitPriceMxn   Decimal?  @db.Decimal(18, 4)
-  unitPriceUsd   Decimal?  @db.Decimal(18, 4)
+  id              String                 @id @default(cuid())
+  inventoryId     String
+  lotNumber       String?
+  qty             Decimal                @default(0) @db.Decimal(18, 4)
+  reservedQty     Decimal                @default(0) @db.Decimal(18, 4)
+  receivedAt      DateTime?
+  unitPriceMxn    Decimal?               @db.Decimal(18, 4)
+  unitPriceUsd    Decimal?               @db.Decimal(18, 4)
   sourceReference String?
-  sourceType     String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  inventory      Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
-  serials        InventorySerial[]
-  movements      InventoryMovement[]
-  reservations   InventoryReservation[]
+  sourceType      String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  inventory       Inventory              @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  serials         InventorySerial[]
+  movements       InventoryMovement[]
+  reservations    InventoryReservation[]
 
   @@index([inventoryId])
   @@index([lotNumber])
@@ -413,18 +461,18 @@ model InventoryReservation {
 }
 
 model InventorySerial {
-  id               String          @id @default(cuid())
+  id               String              @id @default(cuid())
   productId        String
   inventoryLayerId String?
   serialNumber     String
   imei             String?
   receivedAt       DateTime?
   clientId         String
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  product          Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
-  inventoryLayer   InventoryLayer? @relation(fields: [inventoryLayerId], references: [id], onDelete: SetNull)
-  client           Client          @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  product          Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  inventoryLayer   InventoryLayer?     @relation(fields: [inventoryLayerId], references: [id], onDelete: SetNull)
+  client           Client              @relation(fields: [clientId], references: [id], onDelete: Restrict)
   movements        InventoryMovement[]
 
   @@unique([clientId, productId, serialNumber])
@@ -472,7 +520,7 @@ model ImportBatch {
 }
 
 model ImportRow {
-  id            String      @id @default(cuid())
+  id            String           @id @default(cuid())
   importBatchId String
   sourceRow     Int
   data          Json
@@ -481,11 +529,11 @@ model ImportRow {
   errors        Json?
   warnings      Json?
   action        String?
-  reviewState   String      @default("READY")
+  reviewState   String           @default("READY")
   ignoredAt     DateTime?
   ignoredById   String?
   validatedAt   DateTime?
-  importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  importBatch   ImportBatch      @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
   audits        ImportRowAudit[]
 
   @@unique([importBatchId, sourceRow])
@@ -512,27 +560,27 @@ model ImportRowAudit {
 }
 
 model ActivityLog {
-  id          String    @id @default(cuid())
-  type        String
-  subtype     String?
-  reference   String?
-  userId      String?
-  productId   String?
-  customerId  String?
-  warehouse   String?
-  location    String?
-  qty         Decimal?  @db.Decimal(18, 4)
-  result      String?
-  metadata    Json?
-  taskId      String?
-  clientId    String?
-  createdAt   DateTime  @default(now())
+  id         String   @id @default(cuid())
+  type       String
+  subtype    String?
+  reference  String?
+  userId     String?
+  productId  String?
+  customerId String?
+  warehouse  String?
+  location   String?
+  qty        Decimal? @db.Decimal(18, 4)
+  result     String?
+  metadata   Json?
+  taskId     String?
+  clientId   String?
+  createdAt  DateTime @default(now())
 
-  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
-  product     Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
-  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  task        Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  client      Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  user     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  product  Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  task     Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  client   Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([type, createdAt])
@@ -559,15 +607,15 @@ model Task {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  assignedTo    User?    @relation("TaskAssigned", fields: [assignedToId], references: [id], onDelete: SetNull)
-  createdBy     User?    @relation("TaskCreated", fields: [createdById], references: [id], onDelete: SetNull)
-  approvedBy    User?    @relation("TaskApproved", fields: [approvedById], references: [id], onDelete: SetNull)
-  requisition   Requisition? @relation(fields: [requisitionId], references: [id], onDelete: SetNull)
-  client        Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  assignedTo  User?        @relation("TaskAssigned", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy   User?        @relation("TaskCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  approvedBy  User?        @relation("TaskApproved", fields: [approvedById], references: [id], onDelete: SetNull)
+  requisition Requisition? @relation(fields: [requisitionId], references: [id], onDelete: SetNull)
+  client      Client       @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
-  activityLogs         ActivityLog[]
-  inventoryMovements   InventoryMovement[]
-  scanEvents           ScanEvent[]
+  activityLogs       ActivityLog[]
+  inventoryMovements InventoryMovement[]
+  scanEvents         ScanEvent[]
 
   @@index([status, createdAt])
   @@index([assignedToId])
@@ -577,26 +625,217 @@ model Task {
 }
 
 model Incident {
-  id            String    @id @default(cuid())
-  type          String
-  status        String
-  reportedById  String
-  reviewedById  String?
-  warehouse     String?
-  location      String?
-  productId     String?
-  clientId      String
-  notes         String
-  resolution    String?
-  createdAt     DateTime  @default(now())
-  resolvedAt    DateTime?
+  id           String    @id @default(cuid())
+  type         String
+  status       String
+  reportedById String
+  reviewedById String?
+  warehouse    String?
+  location     String?
+  productId    String?
+  clientId     String
+  notes        String
+  resolution   String?
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
 
-  reportedBy    User      @relation("IncidentReporter", fields: [reportedById], references: [id], onDelete: Restrict)
-  reviewedBy    User?     @relation("IncidentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
-  product       Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
-  client        Client    @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  reportedBy User     @relation("IncidentReporter", fields: [reportedById], references: [id], onDelete: Restrict)
+  reviewedBy User?    @relation("IncidentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  product    Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
   @@index([status, createdAt])
   @@index([reportedById])
   @@index([clientId])
+}
+
+model PdaTestSession {
+  id                     String           @id @default(cuid())
+  clientId               String
+  testId                 String
+  clientSessionKey       String
+  status                 PdaSessionStatus @default(OPEN)
+  version                Int              @default(0)
+  captureEpoch           Int              @default(0)
+  closingAt              DateTime?
+  incompleteRuns         Int              @default(0)
+  knownMissingAttempts   Int              @default(0)
+  deviceType             String?
+  deviceBrand            String?
+  deviceModel            String?
+  deviceOs               String?
+  readerType             String?
+  userAgent              String?
+  appVersion             String?
+  deviceMetadata         Json?
+  totalReadings          Int              @default(0)
+  okReadings             Int              @default(0)
+  notFoundReadings       Int              @default(0)
+  failedReadings         Int              @default(0)
+  successRate            Float?
+  detectionMinMs         Int?
+  detectionMedianMs      Int?
+  detectionP95Ms         Int?
+  classificationMinMs    Int?
+  classificationMedianMs Int?
+  classificationP95Ms    Int?
+  startedAt              DateTime         @default(now())
+  finalizedAt            DateTime?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  createdById            String
+  client                 Client           @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy              User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  readings               PdaTestReading[]
+  runs                   PdaCaptureRun[]
+  pairingChallenges      PdaPairingChallenge[]
+  grants                 PdaLabGrant[]
+
+  @@unique([clientId, clientSessionKey])
+  @@unique([clientId, testId])
+  @@unique([id, clientId])
+  @@index([clientId, createdAt])
+  @@index([clientId, status, createdAt])
+}
+
+model PdaTestReading {
+  id                 String         @id @default(cuid())
+  sessionId          String
+  clientId           String
+  runId               String
+  grantId             String?
+  clientSeq           Int
+  attemptId           String
+  idempotencyKey     String
+  requestFingerprint String
+  observedAt         DateTime
+  rawCode            String?
+  normalizedCode     String?
+  expectedType       String
+  classification     String
+  result             String
+  captureMode        PdaCaptureMode
+  captureMethod      String
+  physicalZone       String
+  distance           String?
+  detectionMs        Int?
+  classificationMs   Int?
+  notes              String?
+  networkMetadata    Json?
+  createdAt          DateTime       @default(now())
+  createdById        String
+  session            PdaTestSession @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
+  run                PdaCaptureRun  @relation(fields: [runId, sessionId, clientId], references: [id, sessionId, clientId], onDelete: Restrict)
+  grant              PdaLabGrant?   @relation(fields: [grantId, sessionId, clientId], references: [id, sessionId, clientId], onDelete: Restrict)
+  client             Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy          User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([runId, clientSeq])
+  @@unique([runId, attemptId])
+  @@unique([clientId, idempotencyKey])
+  @@index([sessionId, observedAt])
+  @@index([runId, observedAt])
+  @@index([clientId, observedAt])
+  @@index([clientId, result, observedAt])
+}
+
+model PdaCaptureRun {
+  id                        String         @id @default(cuid())
+  publicId                  String         @unique
+  clientId                  String
+  sessionId                 String
+  grantId                   String?
+  clientRunKey              String
+  epoch                     Int
+  version                   Int            @default(0)
+  status                    PdaRunStatus   @default(ACTIVE)
+  sealedAtSeq               Int?
+  receivedCount             Int            @default(0)
+  startedAt                 DateTime       @default(now())
+  sealedAt                  DateTime?
+  pausedAt                  DateTime?
+  releasedAt                DateTime?
+  incompleteAt              DateTime?
+  incompleteReason          String?
+  captureStoppedConfirmedAt DateTime?
+  localCleanupConfirmedAt   DateTime?
+  legacyImported            Boolean        @default(false)
+  deviceType               String?
+  deviceBrand              String?
+  deviceModel              String?
+  deviceOs                 String?
+  readerType               String?
+  userAgent                String?
+  deviceMetadata           Json?
+  reconciledAt             DateTime?
+  createdById              String?
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+  session                   PdaTestSession @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
+  grant                     PdaLabGrant?   @relation(fields: [grantId, sessionId, clientId], references: [id, sessionId, clientId], onDelete: Restrict)
+  client                    Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy                 User?          @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  readings                  PdaTestReading[]
+
+  @@unique([id, sessionId, clientId])
+  @@unique([clientId, sessionId, epoch])
+  @@unique([grantId, clientRunKey])
+  @@index([sessionId, status, startedAt])
+  @@index([clientId, createdAt])
+}
+
+model PdaPairingChallenge {
+  id                 String           @id @default(cuid())
+  publicId           String           @unique
+  clientId           String
+  sessionId          String
+  qrSecretDigest     String           @unique
+  manualSecretDigest String           @unique
+  status             PdaPairingStatus @default(PENDING)
+  failedAttempts     Int              @default(0)
+  maxAttempts        Int              @default(5)
+  expiresAt          DateTime
+  consumedAt         DateTime?
+  createdById        String
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  session            PdaTestSession   @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
+  client             Client           @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy          User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  grant              PdaLabGrant?
+
+  @@index([clientId, sessionId, status, expiresAt])
+}
+
+model PdaLabGrant {
+  id                     String         @id @default(cuid())
+  publicId               String         @unique
+  clientId               String
+  sessionId              String
+  pairingId              String         @unique
+  tokenDigest            String         @unique
+  scope                  String         @default("PDA_SESSION_CAPTURE_V1")
+  status                 PdaGrantStatus @default(ACTIVE)
+  expiresAt              DateTime
+  lastUsedAt             DateTime?
+  captureRevokedAt       DateTime?
+  revokedAt              DateTime?
+  revokeReason           String?
+  releaseNonceDigest     String?
+  releaseReceiptId       String?        @unique
+  releaseConfirmedAt     DateTime?
+  version                Int            @default(0)
+  createdById            String
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  session                PdaTestSession @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
+  pairing                PdaPairingChallenge @relation(fields: [pairingId], references: [id], onDelete: Restrict)
+  client                 Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy              User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  runs                   PdaCaptureRun[]
+  readings               PdaTestReading[]
+
+  @@unique([id, sessionId, clientId])
+  @@index([clientId, sessionId, status, expiresAt])
+  @@index([expiresAt])
 }

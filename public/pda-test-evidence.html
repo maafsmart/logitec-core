@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="/canonical-host.js?v=1"></script>
+    <title>Evidencias de Laboratorio PDA · LOGITEC</title>
+    <link rel="stylesheet" href="/pda-scanner-lab.css?v=2" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOGITEC CORE · ADMIN · EVIDENCIA SERVER-SIDE</p>
+        <h1>Sesiones de Laboratorio PDA</h1>
+        <p id="sessionContext">Validando acceso…</p>
+      </div>
+      <a class="button secondary" href="/dashboard.html">Volver al panel</a>
+    </header>
+    <main>
+      <section class="safety-banner">
+        Evidencia separada del inventario. Esta vista no crea movimientos, reservas ni scans operativos.
+      </section>
+      <div id="accessGate" class="access-gate" role="alert">Validando sesión ADMIN y cliente activo…</div>
+      <div id="evidenceWorkspace" hidden>
+        <section class="panel">
+          <div class="section-title"><div><span>1</span><h2>Nueva sesión</h2></div></div>
+          <div class="form-grid">
+            <label>Tipo de dispositivo<input id="newDeviceType" value="PDA prestado" maxlength="80" /></label>
+            <label>Modelo / alias<input id="newDeviceModel" maxlength="120" placeholder="Honeywell 01" /></label>
+          </div>
+          <button id="createSessionBtn" class="button primary" type="button">Crear sesión PDA</button>
+        </section>
+        <section class="panel">
+          <div class="history-head">
+            <div class="section-title"><div><span>1</span><h2>Sesiones guardadas</h2></div></div>
+            <button id="refreshBtn" class="button secondary" type="button">Actualizar</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Test ID</th><th>Inicio</th><th>Estado</th><th>Equipo</th><th>Resumen</th><th></th></tr></thead>
+              <tbody id="sessionsBody"><tr><td colspan="6" class="empty">Cargando…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+        <section id="detailPanel" class="panel" hidden>
+          <div class="history-head">
+            <div>
+              <p class="eyebrow evidence-eyebrow">DETALLE RECUPERABLE</p>
+              <h2 id="detailTitle">Sesión</h2>
+            </div>
+            <div class="scan-actions">
+              <button id="finalizeOpenBtn" class="button primary" type="button" hidden>Finalizar sesión abierta</button>
+              <button id="pairBtn" class="button primary" type="button" hidden>Emitir pairing</button>
+              <button id="csvBtn" class="button secondary" type="button">Descargar CSV del servidor</button>
+              <button id="jsonBtn" class="button secondary" type="button">Descargar JSON del servidor</button>
+            </div>
+          </div>
+          <div id="detailSummary" class="stats"></div>
+          <div id="runsSummary" class="stats">Sin runs.</div>
+          <section id="pairingPanel" class="final-summary" hidden>
+            <strong>Pairing one-shot · vence en 5 minutos</strong>
+            <div id="pairingQr" class="barcode-preview"></div>
+            <label>Fallback manual<textarea id="manualPairingCode" rows="2" readonly></textarea></label>
+            <label>Invitación remota one-click
+              <textarea id="remoteInviteUrl" rows="3" readonly></textarea>
+            </label>
+            <p>Envíe solo esta invitación al operador. Es one-shot, vence en cinco minutos y no contiene credenciales ADMIN.</p>
+          </section>
+          <section class="remote-qa-admin" aria-live="polite">
+            <div class="history-head">
+              <strong>Progreso QA remoto</strong>
+              <button id="refreshQaBtn" class="button secondary" type="button">Actualizar progreso</button>
+            </div>
+            <div id="remoteQaProgress" class="remote-qa-progress">Sin ronda remota.</div>
+          </section>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Fecha</th><th>Raw / normalizado</th><th>Zona / captura</th><th>Clasificación</th><th>Resultado</th><th>Detección</th><th>Clasificación</th><th>Notas / red</th></tr></thead>
+              <tbody id="readingsBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </main>
+    <script src="/pda-test-evidence.js?v=4"></script>
+  </body>
+</html>
