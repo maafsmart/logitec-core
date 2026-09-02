@@ -10,6 +10,10 @@ import {
   createPdaScannerLabGate,
   isPdaScannerLabEnabled
 } from "../src/modules/admin/pda-scanner-lab.feature.js";
+import {
+  calculatePdaSessionSummary,
+  pdaOutcome
+} from "../src/modules/admin/pda-test-evidence.service.js";
 
 const routes = readFileSync(new URL("../src/modules/admin/admin.routes.ts", import.meta.url), "utf8");
 const service = readFileSync(
@@ -26,6 +30,14 @@ const loginJs = readFileSync(new URL("../public/login.js", import.meta.url), "ut
 const canonicalHostJs = readFileSync(new URL("../public/canonical-host.js", import.meta.url), "utf8");
 const envExample = readFileSync(new URL("../.env.example", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const evidenceService = readFileSync(new URL("../src/modules/admin/pda-test-evidence.service.ts", import.meta.url), "utf8");
+const schema = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
+const migration = readFileSync(
+  new URL("../prisma/migrations/20260902065000_pda_test_evidence/migration.sql", import.meta.url),
+  "utf8"
+);
+const evidenceHtml = readFileSync(new URL("../public/pda-test-evidence.html", import.meta.url), "utf8");
+const evidenceJs = readFileSync(new URL("../public/pda-test-evidence.js", import.meta.url), "utf8");
 
 function sourceFunction(source: string, name: string) {
   const start = source.indexOf(`function ${name}(`);
@@ -206,13 +218,13 @@ test("login next funciona en el dominio canónico sin aceptar redirects externos
   assert.doesNotMatch(loginJs, /https:\/\/www\.control\.logitec\.com\.mx\/pda-scanner-lab/);
 });
 
-test("pantalla aislada comparte captura, sesión, red manual e historial entre ambos modos", () => {
+test("pantalla móvil persiste automáticamente sin exportar evidencia al dispositivo", () => {
   for (const id of [
     "testId", "deviceType", "deviceBrand", "deviceModel", "deviceOs", "readerType",
     "deviceTotal", "deviceConcurrent", "deviceMonth", "deviceYearEnd", "physicalZone",
     "distance", "expectedType", "captureMethod", "scanInput", "networkProvider",
     "networkZone", "networkPing", "networkDown", "networkUp", "networkStability",
-    "networkReference", "historyBody", "copyBtn", "exportBtn", "handheldModeBtn",
+    "networkReference", "historyBody", "syncStatus", "finalizeBtn", "clearLocalBtn", "handheldModeBtn",
     "cameraModeBtn", "cameraCapture", "cameraVideo", "startCameraBtn", "armCameraBtn", "cameraFallbackBtn",
     "detectedFrameEvidence", "detectedFrameImage", "discardDetectedFrameBtn"
   ]) {
@@ -221,10 +233,12 @@ test("pantalla aislada comparte captura, sesión, red manual e historial entre a
   assert.equal((html.match(/id="scanInput"/g) || []).length, 1);
   assert.equal((html.match(/id="historyBody"/g) || []).length, 1);
   assert.match(js, /event\.key !== "Enter"/);
-  assert.match(js, /\/api\/admin\/pda-scanner-diagnostic\/classify\?code=/);
+  assert.match(js, /\/api\/admin\/pda-test-sessions/);
   assert.match(js, /const history = \[\]/);
-  assert.match(js, /navigator\.clipboard\.writeText/);
-  assert.match(js, /text\/csv/);
+  assert.match(js, /indexedDB\.open/);
+  assert.match(js, /deleteQueuedReading/);
+  assert.doesNotMatch(html, /Copiar resumen|Exportar CSV/);
+  assert.doesNotMatch(js, /navigator\.clipboard\.writeText|text\/csv/);
   assert.doesNotMatch(js, /speedtest|ookla|telmex/i);
   assert.match(html, /No crea entradas[\s\S]*salidas[\s\S]*movimientos[\s\S]*reservas/);
 });
@@ -320,12 +334,13 @@ test("métrica de detección empieza al armar y excluye preparación y enfoque",
   assert.ok(arm.indexOf("cameraStartedAt = performance.now()") < arm.indexOf("scheduleCameraDetection()"));
   assert.doesNotMatch(start, /cameraStartedAt = performance\.now\(\)/);
   assert.match(detect, /performance\.now\(\) - cameraStartedAt/);
-  assert.match(process, /classificationStartedAt = performance\.now\(\)/);
-  assert.match(process, /performance\.now\(\) - classificationStartedAt/);
+  assert.match(process, /persistEntry\(entry, code\)/);
+  assert.match(evidenceService, /const startedAt = performance\.now\(\)/);
+  assert.match(evidenceService, /performance\.now\(\) - startedAt/);
   assert.match(html, /Hasta detección/);
   assert.match(html, /Clasificación API/);
-  assert.match(js, /tiempo_deteccion_ms/);
-  assert.match(js, /latencia_clasificacion_ms/);
+  assert.match(evidenceService, /detectionMs/);
+  assert.match(evidenceService, /classificationMs/);
   assert.doesNotMatch(js, /\blatencyMs\b/);
 });
 
@@ -335,8 +350,9 @@ test("primer OK cierra atómicamente cámara, callbacks y entradas posteriores",
   const halt = sourceFunction(js, "haltCameraCapture");
   const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
   assert.match(process, /if \(scanSessionClosed \|\| scanProcessing\) return null/);
-  assert.ok(process.indexOf("scanProcessing = true") < process.indexOf("await api("));
-  assert.ok(process.indexOf("completeSuccessfulScan()") < process.indexOf("history.unshift(entry)"));
+  const saved = sourceFunction(js, "applySavedReading");
+  assert.ok(process.indexOf("scanProcessing = true") < process.indexOf("await persistEntry("));
+  assert.match(saved, /entry\.result === "OK"\) completeSuccessfulScan\(\)/);
   assert.ok(complete.indexOf("scanSessionClosed = true") < complete.indexOf("haltCameraCapture()"));
   assert.ok(complete.indexOf("scanSessionClosed = true") < complete.indexOf("playSuccessFeedbackOnce()"));
   assert.match(halt, /window\.clearTimeout\(cameraTimer\)/);
@@ -347,7 +363,7 @@ test("primer OK cierra atómicamente cámara, callbacks y entradas posteriores",
   assert.match(complete, /armCameraBtn"\)\.textContent = "ESCANEAR SIGUIENTE"/);
   assert.match(complete, /scanBtn"\)\.textContent = "Escanear siguiente"/);
   assert.match(detect, /scanSessionClosed \|\|[\s\S]*runId !== cameraRunId/);
-  assert.match(js, /function registerNotRead\(\) \{\s*if \(scanSessionClosed \|\| scanProcessing\) return/);
+  assert.match(js, /async function registerNotRead\(\) \{\s*if \(scanSessionClosed \|\| scanProcessing\) return/);
 });
 
 test("normaliza solo ]C1 y estabiliza el SKU sin clasificar fragmentos intermedios", () => {
@@ -418,14 +434,14 @@ test("deduplica cada código por sesión y el rearme explícito limpia el estado
   const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
   const restart = sourceFunction(js, "restartCameraScan");
   const reset = sourceFunction(js, "resetScanSession");
-  assert.ok(process.indexOf("scanSessionSeenCodes.has(code)") < process.indexOf("await api("));
-  assert.ok(process.indexOf("scanSessionSeenCodes.add(code)") < process.indexOf("await api("));
+  assert.ok(process.indexOf("scanSessionSeenCodes.has(code)") < process.indexOf("await persistEntry("));
+  assert.ok(process.indexOf("scanSessionSeenCodes.add(code)") < process.indexOf("await persistEntry("));
   assert.match(detect, /scanSessionSeenCodes\.has\(rawValue\)[\s\S]*scheduleCameraDetection\(\);[\s\S]*return/);
   assert.match(restart, /resetScanSession\(\);[\s\S]*await startCamera\(\);[\s\S]*armCameraDetection\(\)/);
   assert.match(reset, /scanSessionSeenCodes\.clear\(\)/);
   assert.match(reset, /successFeedbackPlayed = false/);
   assert.doesNotMatch(html, /repeatBtn|Repetir \/ enfocar/);
-  assert.match(html, /pda-scanner-lab\.js\?v=6/);
+  assert.match(html, /pda-scanner-lab\.js\?v=7/);
 });
 
 test("frame local se genera solo tras detectar, no se persiste ni se envía", () => {
@@ -474,4 +490,83 @@ test("generador Code 128 es local, bajo demanda y no toca API ni base de datos",
   assert.match(appSource, /node_modules\/zxing-wasm\/dist\/writer\/zxing_writer\.wasm/);
   assert.match(appSource, /\/vendor\/zxing-wasm\/3\.1\.3\/writer\.js/);
   assert.match(appSource, /\/vendor\/zxing-wasm\/3\.1\.3\/zxing_writer\.wasm/);
+});
+
+test("resumen PDA calcula total, categorías y percentiles reproducibles", () => {
+  const summary = calculatePdaSessionSummary([
+    { result: "OK", detectionMs: 100, classificationMs: 20 },
+    { result: "OK", detectionMs: 200, classificationMs: 40 },
+    { result: "RECONOCIDO_NO_ENCONTRADO", detectionMs: 300, classificationMs: 60 },
+    { result: "NO_LEIDO", detectionMs: null, classificationMs: null },
+    { result: "LEIDO_INCORRECTAMENTE", detectionMs: 1000, classificationMs: 100 }
+  ]);
+  assert.deepEqual(summary, {
+    totalReadings: 5,
+    okReadings: 2,
+    notFoundReadings: 1,
+    failedReadings: 2,
+    successRate: 40,
+    detectionMinMs: 100,
+    detectionMedianMs: 250,
+    detectionP95Ms: 1000,
+    classificationMinMs: 20,
+    classificationMedianMs: 50,
+    classificationP95Ms: 100
+  });
+  assert.equal(pdaOutcome("SKU", "SKU"), "OK");
+  assert.equal(pdaOutcome("SKU", "LOTE"), "LEIDO_INCORRECTAMENTE");
+  assert.equal(pdaOutcome("NO_ENCONTRADO", "SKU"), "RECONOCIDO_NO_ENCONTRADO");
+});
+
+test("modelo PDA fuerza aislamiento cliente-sesión e idempotencia", () => {
+  assert.match(schema, /model PdaTestSession[\s\S]*@@unique\(\[clientId, clientSessionKey\]\)/);
+  assert.match(schema, /model PdaTestSession[\s\S]*@@unique\(\[id, clientId\]\)/);
+  assert.match(schema, /model PdaTestReading[\s\S]*@@unique\(\[clientId, idempotencyKey\]\)/);
+  assert.match(
+    schema,
+    /session\s+PdaTestSession\s+@relation\(fields: \[sessionId, clientId\], references: \[id, clientId\]/
+  );
+  assert.match(migration, /FOREIGN KEY \("sessionId", "clientId"\)/);
+  assert.doesNotMatch(migration, /Inventory|ScanEvent|Movement/);
+});
+
+test("endpoints de evidencia son ADMIN, flag-gated y tenant-scoped", () => {
+  for (const path of [
+    "/pda-test-sessions",
+    "/pda-test-sessions/:sessionId/readings",
+    "/pda-test-sessions/:sessionId/finalize",
+    "/pda-test-sessions/:testId/export.csv",
+    "/pda-test-sessions/:testId/export.json"
+  ]) {
+    const start = routes.indexOf(`"${path}"`);
+    assert.ok(start >= 0, `falta endpoint ${path}`);
+    const route = routes.slice(start, routes.indexOf("\n);", start));
+    assert.match(route, /pdaScannerLabApiGate/);
+    assert.match(route, /requireAuth/);
+    assert.match(route, /requireRole\(\["ADMIN"\]\)/);
+    assert.match(route, /requireOperationalClient/);
+  }
+  assert.match(evidenceService, /where: \{ clientId, testId \}/);
+  assert.match(evidenceService, /where: \{ id: context\.sessionId, clientId: context\.clientId \}/);
+  assert.doesNotMatch(evidenceService, /inventoryMovement|scanEvent|inventory\.(create|update|delete)/i);
+});
+
+test("cola móvil es efímera, no guarda imágenes/tokens y borra tras ACK", () => {
+  assert.match(js, /evidenceTtlMs = 24 \* 60 \* 60 \* 1000/);
+  assert.match(js, /await deleteQueuedReading\(item\.idempotencyKey\)/);
+  assert.match(js, /window\.addEventListener\("online"/);
+  assert.match(js, /networkMetadata: entry\.network/);
+  const persist = sourceFunction(js, "persistEntry");
+  assert.doesNotMatch(persist, /token|dataUrl|image|frame/i);
+  assert.match(html, /las imágenes nunca se envían ni persisten/);
+});
+
+test("vista ADMIN recupera por testId y exporta únicamente desde servidor", () => {
+  assert.match(appSource, /app\.get\("\/pda-test-evidence\.html", pdaScannerLabPageGate/);
+  assert.match(evidenceHtml, /id="sessionsBody"/);
+  assert.match(evidenceHtml, /id="readingsBody"/);
+  assert.match(evidenceJs, /encodeURIComponent\(testId\)/);
+  assert.match(evidenceJs, /\/export\.\$\{format\}/);
+  assert.match(routes, /Content-Disposition/);
+  assert.match(loginJs, /"\/pda-test-evidence\.html"/);
 });

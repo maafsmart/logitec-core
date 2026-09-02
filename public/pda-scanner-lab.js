@@ -26,6 +26,17 @@ const scanSessionSeenCodes = new Set();
 const cameraStabilityFrames = 3;
 const cameraTimedStabilityFrames = 2;
 const cameraStabilityMs = 200;
+const evidenceDbName = "logitec-pda-evidence-v1";
+const evidenceStoreName = "pending-readings";
+const evidenceTtlMs = 24 * 60 * 60 * 1000;
+const clientSessionKey = createLocalKey();
+const serverSessions = new Map();
+let syncInProgress = false;
+
+function createLocalKey() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
 
 function normalizeScannerRawValue(rawValue) {
   const value = String(rawValue ?? "").trim();
@@ -57,9 +68,15 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-async function api(path) {
+async function api(path, options = {}) {
   const response = await fetch(path, {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    method: options.method || "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      ...(options.body ? { "Content-Type": "application/json" } : {})
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
     cache: "no-store"
   });
   const data = await response.json().catch(() => ({}));
@@ -70,6 +87,143 @@ async function api(path) {
     throw error;
   }
   return data;
+}
+
+function openEvidenceDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(evidenceDbName, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(evidenceStoreName, { keyPath: "idempotencyKey" });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function evidenceStore(mode, operation) {
+  const db = await openEvidenceDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = db.transaction(evidenceStoreName, mode);
+      const request = operation(transaction.objectStore(evidenceStoreName));
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+const queueReading = (record) => evidenceStore("readwrite", (store) => store.put(record));
+const queuedReadings = () => evidenceStore("readonly", (store) => store.getAll());
+const deleteQueuedReading = (id) => evidenceStore("readwrite", (store) => store.delete(id));
+
+async function purgeExpiredQueue() {
+  const cutoff = Date.now() - evidenceTtlMs;
+  const queued = await queuedReadings();
+  await Promise.all(queued.filter((item) => item.queuedAt < cutoff).map((item) => deleteQueuedReading(item.idempotencyKey)));
+}
+
+function setSaveState(state, detail = "") {
+  const status = byId("syncStatus");
+  status.className = `sync-status ${state.toLowerCase()}`;
+  status.textContent = `${state === "SAVED" ? "Guardado" : state === "PENDING" ? "Pendiente de sincronizar" : "Error de guardado"}${detail ? ` · ${detail}` : ""}`;
+}
+
+function sessionPayload() {
+  const device = deviceSnapshot();
+  return {
+    clientSessionKey,
+    preferredTestId: field("testId"),
+    deviceType: device.deviceType || null,
+    deviceBrand: device.brand || null,
+    deviceModel: device.model || null,
+    deviceOs: device.os || null,
+    readerType: device.readerType || null,
+    deviceMetadata: {
+      total: device.total || null,
+      concurrent: device.concurrent || null,
+      month: device.month || null,
+      yearEnd: device.yearEnd || null
+    }
+  };
+}
+
+async function ensureServerSession(payload) {
+  if (serverSessions.has(payload.clientSessionKey)) return serverSessions.get(payload.clientSessionKey);
+  const response = await api("/api/admin/pda-test-sessions", { method: "POST", body: payload });
+  serverSessions.set(payload.clientSessionKey, response.session);
+  if (payload.clientSessionKey === clientSessionKey) byId("testId").value = response.session.testId;
+  return response.session;
+}
+
+function applySavedReading(idempotencyKey, reading) {
+  const entry = history.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+  if (!entry) return;
+  entry.code = reading.normalizedCode || reading.rawCode || "(sin lectura)";
+  entry.classification = reading.classification;
+  entry.result = reading.result;
+  entry.classificationMs = reading.classificationMs;
+  entry.saveState = "SAVED";
+  if (entry.result === "OK") completeSuccessfulScan();
+  renderLive(entry);
+  renderHistory();
+}
+
+async function syncEvidenceQueue() {
+  if (syncInProgress || !navigator.onLine) return;
+  syncInProgress = true;
+  try {
+    const queued = (await queuedReadings()).sort((a, b) => a.queuedAt - b.queuedAt);
+    for (const item of queued) {
+      try {
+        const session = await ensureServerSession(item.session);
+        const response = await api(`/api/admin/pda-test-sessions/${encodeURIComponent(session.id)}/readings`, {
+          method: "POST",
+          body: item.reading
+        });
+        applySavedReading(item.idempotencyKey, response.reading);
+        await deleteQueuedReading(item.idempotencyKey);
+      } catch (error) {
+        const entry = history.find((candidate) => candidate.idempotencyKey === item.idempotencyKey);
+        if (entry) entry.saveState = error.status ? "ERROR" : "PENDING";
+        setSaveState(error.status ? "ERROR" : "PENDING", error.message);
+        renderHistory();
+        break;
+      }
+    }
+    const remaining = await queuedReadings();
+    if (!remaining.length) setSaveState("SAVED", "sin datos locales pendientes");
+    else if (!byId("syncStatus").classList.contains("error")) setSaveState("PENDING", `${remaining.length} lectura(s)`);
+  } finally {
+    syncInProgress = false;
+  }
+}
+
+async function persistEntry(entry, rawCode) {
+  entry.idempotencyKey = createLocalKey();
+  entry.saveState = "PENDING";
+  const record = {
+    idempotencyKey: entry.idempotencyKey,
+    queuedAt: Date.now(),
+    session: sessionPayload(),
+    reading: {
+      idempotencyKey: entry.idempotencyKey,
+      observedAt: entry.timestamp,
+      rawCode: rawCode || null,
+      expectedType: entry.expectedType,
+      captureMethod: entry.captureMethod,
+      physicalZone: entry.zone,
+      distance: entry.distance || null,
+      detectionMs: Number.isFinite(entry.detectionMs) ? entry.detectionMs : null,
+      notes: entry.notes || null,
+      networkMetadata: entry.network
+    }
+  };
+  await queueReading(record);
+  setSaveState("PENDING", "cola local temporal");
+  await syncEvidenceQueue();
+  return entry;
 }
 
 function deviceSnapshot() {
@@ -126,7 +280,8 @@ function classificationLabel(value) {
     SERIE_IMEI: "Serie / IMEI",
     AMBIGUO: "AMBIGUO",
     NO_ENCONTRADO: "No encontrado",
-    NO_LEIDO: "No leído"
+    NO_LEIDO: "No leído",
+    PENDIENTE: "Pendiente"
   })[value] || value;
 }
 
@@ -150,7 +305,8 @@ function renderLive(entry, details = []) {
   liveResult.innerHTML = `<strong>${escapeHtml(entry.code)} · ${escapeHtml(classificationLabel(entry.classification))}</strong>
     <span>${escapeHtml(matchText)}</span>
     <span>Resultado: ${escapeHtml(resultLabel(entry.result))}</span>
-    <span>Tiempo hasta detección: ${escapeHtml(metricMs(entry.detectionMs))} · Latencia de clasificación API: ${escapeHtml(metricMs(entry.classificationMs))}</span>`;
+    <span>Tiempo hasta detección: ${escapeHtml(metricMs(entry.detectionMs))} · Latencia de clasificación API: ${escapeHtml(metricMs(entry.classificationMs))}</span>
+    <span>Persistencia: ${escapeHtml(entry.saveState === "SAVED" ? "Guardado" : entry.saveState === "ERROR" ? "Error de guardado" : "Pendiente de sincronizar")}</span>`;
 }
 
 function sessionLine(entry) {
@@ -167,7 +323,7 @@ function renderHistory() {
       <td>${escapeHtml(entry.device.testId || "—")}<br>${escapeHtml(entry.zone || "—")} · ${escapeHtml(entry.distance)}</td>
       <td><strong>${escapeHtml(entry.code)}</strong><br>${escapeHtml(entry.captureMethod)}</td>
       <td>${escapeHtml(classificationLabel(entry.classification))}<br>Esperado: ${escapeHtml(classificationLabel(entry.expectedType))}</td>
-      <td>${escapeHtml(resultLabel(entry.result))}${entry.notes ? `<br>${escapeHtml(entry.notes)}` : ""}</td>
+      <td>${escapeHtml(resultLabel(entry.result))}${entry.notes ? `<br>${escapeHtml(entry.notes)}` : ""}<br><strong>${escapeHtml(entry.saveState === "SAVED" ? "Guardado" : entry.saveState === "ERROR" ? "Error de guardado" : "Pendiente de sincronizar")}</strong></td>
       <td>${escapeHtml(metricMs(entry.detectionMs))}</td>
       <td>${escapeHtml(metricMs(entry.classificationMs))}</td>
       <td>${escapeHtml(networkSummary(entry.network))}</td>
@@ -222,30 +378,29 @@ async function processScan(rawCode, metrics = {}) {
   scanSessionSeenCodes.add(code);
   scanProcessing = true;
   byId("scanBtn").disabled = true;
-  const classificationStartedAt = performance.now();
   liveResult.className = "live-result idle";
-  liveResult.innerHTML = `<strong>Consultando ${escapeHtml(code)}…</strong><span>Solo lectura.</span>`;
+  liveResult.innerHTML = `<strong>Guardando ${escapeHtml(code)}…</strong><span>Persistencia automática server-side.</span>`;
   let entry = null;
   try {
-    const data = await api(`/api/admin/pda-scanner-diagnostic/classify?code=${encodeURIComponent(code)}`);
-    const classificationMs = Math.max(0, Math.round(performance.now() - classificationStartedAt));
     entry = makeEntry({
-      code: data.code,
-      classification: data.classification,
-      result: outcomeFor(data.classification, field("expectedType")),
+      code,
+      classification: "PENDIENTE",
+      result: "PENDIENTE",
       detectionMs: Number.isFinite(metrics.detectionMs) ? metrics.detectionMs : null,
-      classificationMs
+      classificationMs: null
     });
-    if (entry.result === "OK") completeSuccessfulScan();
     history.unshift(entry);
-    renderLive(entry, data.matches || []);
     renderHistory();
+    await persistEntry(entry, code);
+    renderLive(entry);
     byId("scanNotes").value = "";
     scanInput.value = "";
   } catch (error) {
-    scanSessionSeenCodes.delete(code);
+    if (entry) entry.saveState = "ERROR";
+    setSaveState("ERROR", error.message);
     liveResult.className = "live-result error";
-    liveResult.innerHTML = `<strong>No se pudo clasificar</strong><span>${escapeHtml(error.message)}</span>`;
+    liveResult.innerHTML = `<strong>Error de guardado</strong><span>${escapeHtml(error.message)}</span>`;
+    renderHistory();
   } finally {
     scanProcessing = false;
     if (!scanSessionClosed) {
@@ -704,7 +859,7 @@ function downloadTestBarcode() {
   anchor.click();
 }
 
-function registerNotRead() {
+async function registerNotRead() {
   if (scanSessionClosed || scanProcessing) return;
   if (!validateRequired()) return;
   const entry = makeEntry({
@@ -717,46 +872,52 @@ function registerNotRead() {
   history.unshift(entry);
   renderLive(entry);
   renderHistory();
+  try {
+    await persistEntry(entry, null);
+  } catch (error) {
+    entry.saveState = "ERROR";
+    setSaveState("ERROR", error.message);
+    renderHistory();
+  }
   byId("scanNotes").value = "";
   scanInput.value = "";
   scanInput.focus();
 }
 
-function csvCell(value) {
-  let text = String(value ?? "");
-  if (/^[=+\-@]/.test(text)) text = `'${text}`;
-  return `"${text.replaceAll('"', '""')}"`;
-}
-
-function exportCsv() {
-  if (!history.length) return;
-  const headers = ["fecha", "prueba", "dispositivo", "marca", "modelo", "so", "lector", "zona", "distancia", "esperado", "codigo", "clasificacion", "resultado", "tiempo_deteccion_ms", "latencia_clasificacion_ms", "captura", "red", "ping_ms", "down_mbps", "up_mbps", "observaciones"];
-  const rows = history.map((entry) => [
-    entry.timestamp, entry.device.testId, entry.device.deviceType, entry.device.brand, entry.device.model,
-    entry.device.os, entry.device.readerType, entry.zone, entry.distance, classificationLabel(entry.expectedType),
-    entry.code, classificationLabel(entry.classification), resultLabel(entry.result), entry.detectionMs ?? "",
-    entry.classificationMs ?? "",
-    entry.captureMethod, entry.network.provider, entry.network.ping, entry.network.down, entry.network.up, entry.notes
-  ]);
-  const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
-  const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `laboratorio-pda-${field("testId") || "sesion"}.csv`;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-async function copySummary() {
-  if (!history.length) return;
-  const text = history.map(sessionLine).join("\n");
+async function finalizeTest() {
+  const button = byId("finalizeBtn");
+  button.disabled = true;
   try {
-    await navigator.clipboard.writeText(text);
-    byId("copyBtn").textContent = "Resumen copiado";
-    setTimeout(() => { byId("copyBtn").textContent = "Copiar resumen"; }, 1400);
-  } catch (_error) {
-    window.prompt("Copia el resumen:", text);
+    await syncEvidenceQueue();
+    const remaining = await queuedReadings();
+    if (remaining.length) throw new Error("Aún hay lecturas pendientes; reconecta antes de finalizar.");
+    const session = await ensureServerSession(sessionPayload());
+    const summary = await api(`/api/admin/pda-test-sessions/${encodeURIComponent(session.id)}/finalize`, {
+      method: "POST"
+    });
+    scanSessionClosed = true;
+    if (cameraStream) stopCamera("Prueba finalizada.");
+    byId("finalSummary").hidden = false;
+    byId("finalSummary").textContent =
+      `${summary.totalReadings} total · ${summary.okReadings} OK · ${summary.notFoundReadings} no encontrados · ${summary.failedReadings} fallos · ${summary.successRate}% éxito · detección min/mediana/p95 ${metricMs(summary.detectionMinMs)} / ${metricMs(summary.detectionMedianMs)} / ${metricMs(summary.detectionP95Ms)} · clasificación min/mediana/p95 ${metricMs(summary.classificationMinMs)} / ${metricMs(summary.classificationMedianMs)} / ${metricMs(summary.classificationP95Ms)}`;
+    button.disabled = true;
+    button.textContent = "Prueba finalizada";
+    byId("scanBtn").disabled = true;
+    byId("notReadBtn").disabled = true;
+    byId("startCameraBtn").disabled = true;
+    byId("armCameraBtn").disabled = true;
+    setSaveState("SAVED", "sesión finalizada");
+  } catch (error) {
+    setSaveState("ERROR", error.message);
+    button.disabled = false;
   }
+}
+
+async function clearLocalEvidence() {
+  const queued = await queuedReadings();
+  if (queued.length && !window.confirm("Hay evidencia sin guardar. ¿Eliminarla de este dispositivo?")) return;
+  await Promise.all(queued.map((item) => deleteQueuedReading(item.idempotencyKey)));
+  setSaveState("SAVED", "datos locales eliminados");
 }
 
 async function initialize() {
@@ -776,7 +937,10 @@ async function initialize() {
     byId("sessionContext").textContent = `${me.fullName || me.email} · cliente ${clientName}`;
     gate.hidden = true;
     byId("labWorkspace").hidden = false;
-    byId("testId").value = `PDA-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-01`;
+    const date = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+    byId("testId").value = `PDA-${date}-${clientSessionKey.replaceAll("-", "").slice(0, 6).toUpperCase()}`;
+    await purgeExpiredQueue();
+    void syncEvidenceQueue();
     scanInput.focus();
   } catch (error) {
     gate.className = "access-gate error";
@@ -809,18 +973,11 @@ byId("discardDetectedFrameBtn").addEventListener("click", clearDetectedFrame);
 byId("generateBarcodeBtn").addEventListener("click", () => void generateTestBarcode());
 byId("useLastScanBtn").addEventListener("click", useLastScannedCode);
 byId("downloadBarcodeBtn").addEventListener("click", downloadTestBarcode);
-byId("notReadBtn").addEventListener("click", registerNotRead);
-byId("copyBtn").addEventListener("click", () => void copySummary());
-byId("exportBtn").addEventListener("click", exportCsv);
-byId("clearBtn").addEventListener("click", () => {
-  if (!history.length || window.confirm("¿Limpiar únicamente el historial temporal de esta pestaña?")) {
-    history.splice(0);
-    clearDetectedFrame();
-    renderHistory();
-    liveResult.className = "live-result idle";
-    liveResult.innerHTML = "<strong>Sesión limpia</strong><span>No se modificó inventario.</span>";
-  }
-});
+byId("notReadBtn").addEventListener("click", () => void registerNotRead());
+byId("finalizeBtn").addEventListener("click", () => void finalizeTest());
+byId("clearLocalBtn").addEventListener("click", () => void clearLocalEvidence());
+window.addEventListener("online", () => void syncEvidenceQueue());
+window.setInterval(() => void syncEvidenceQueue(), 15_000);
 window.addEventListener("pagehide", () => {
   if (cameraStream) stopCamera();
   clearDetectedFrame();

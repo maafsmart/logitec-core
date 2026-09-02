@@ -108,6 +108,9 @@ app.get("/vendor/zxing-wasm/3.1.3/zxing_writer.wasm", (_req, res) => {
 app.get("/pda-scanner-lab.html", pdaScannerLabPageGate, (_req, res) => {
   res.sendFile(path.join(publicDir, "pda-scanner-lab.html"));
 });
+app.get("/pda-test-evidence.html", pdaScannerLabPageGate, (_req, res) => {
+  res.sendFile(path.join(publicDir, "pda-test-evidence.html"));
+});
 app.use(express.static("public"));
 
 app.get(/^\/(?!api|health).*/, (_req, res) => {

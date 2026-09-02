@@ -67,7 +67,7 @@ function clearStoredNavRouteAfterLogin() {
 
 function resolvePostLoginPath(search) {
   const fallback = "/dashboard.html";
-  const allowed = new Set(["/pda-scanner-lab.html"]);
+  const allowed = new Set(["/pda-scanner-lab.html", "/pda-test-evidence.html"]);
   try {
     const raw = String(new URLSearchParams(String(search || "")).get("next") || "").trim();
     if (!raw) return fallback;

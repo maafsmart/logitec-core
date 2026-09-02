@@ -20,20 +20,25 @@
     <main>
       <section class="safety-banner" aria-label="Protección de inventario">
         <strong>Modo seguro de solo lectura.</strong>
-        Esta pantalla clasifica lecturas y conserva el historial únicamente en esta pestaña. No crea entradas,
-        salidas, movimientos, reservas, scans operativos ni cambios de inventario.
+        Cada resultado se guarda automáticamente como evidencia separada. No crea entradas, salidas, movimientos,
+        reservas, scans operativos ni cambios de inventario; las imágenes nunca se envían ni persisten.
       </section>
 
       <div id="accessGate" class="access-gate" role="alert">Validando sesión ADMIN y cliente activo…</div>
 
       <div id="labWorkspace" hidden>
+        <section class="sync-panel" aria-live="polite">
+          <strong id="syncStatus" class="sync-status pending">Pendiente de sincronizar · preparando sesión</strong>
+          <span>La cola local es mínima, temporal y se elimina tras confirmación del servidor.</span>
+          <a href="/pda-test-evidence.html">Abrir evidencias ADMIN</a>
+        </section>
         <section class="panel">
           <div class="section-title">
             <div><span>1</span><h2>Equipo y sesión</h2></div>
             <p>Completa una vez antes de iniciar los barridos.</p>
           </div>
           <div class="form-grid">
-            <label>Identificador de prueba<input id="testId" required placeholder="PDA-01-AN20" /></label>
+            <label>Identificador de prueba<input id="testId" required readonly placeholder="PDA-YYYYMMDD-XXXXXX" /></label>
             <label>Tipo de dispositivo
               <select id="deviceType"><option>PDA</option><option>Teléfono</option><option>Lector externo</option><option>Otro</option></select>
             </label>
@@ -154,12 +159,12 @@
           <div class="history-head">
             <div class="section-title"><div><span>5</span><h2>Resumen de sesión</h2></div></div>
             <div class="scan-actions">
-              <button id="copyBtn" class="button secondary" type="button">Copiar resumen</button>
-              <button id="exportBtn" class="button secondary" type="button">Exportar CSV</button>
-              <button id="clearBtn" class="button danger-outline" type="button">Limpiar sesión</button>
+              <button id="finalizeBtn" class="button primary" type="button">Finalizar prueba</button>
+              <button id="clearLocalBtn" class="button danger-outline" type="button">Eliminar datos locales</button>
             </div>
           </div>
           <div id="sessionStats" class="stats">0 lecturas</div>
+          <div id="finalSummary" class="final-summary" hidden></div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Hora</th><th>Prueba / zona</th><th>Código</th><th>Clasificación</th><th>Resultado</th><th>Hasta detección</th><th>Clasificación API</th><th>Red</th></tr></thead>
@@ -169,6 +174,6 @@
         </section>
       </div>
     </main>
-    <script src="/pda-scanner-lab.js?v=6"></script>
+    <script src="/pda-scanner-lab.js?v=7"></script>
   </body>
 </html>

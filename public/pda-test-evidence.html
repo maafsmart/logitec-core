@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="/canonical-host.js?v=1"></script>
+    <title>Evidencias de Laboratorio PDA · LOGITEC</title>
+    <link rel="stylesheet" href="/pda-scanner-lab.css?v=2" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOGITEC CORE · ADMIN · EVIDENCIA SERVER-SIDE</p>
+        <h1>Sesiones de Laboratorio PDA</h1>
+        <p id="sessionContext">Validando acceso…</p>
+      </div>
+      <a class="button secondary" href="/pda-scanner-lab.html">Nueva prueba</a>
+    </header>
+    <main>
+      <section class="safety-banner">
+        Evidencia separada del inventario. Esta vista no crea movimientos, reservas ni scans operativos.
+      </section>
+      <div id="accessGate" class="access-gate" role="alert">Validando sesión ADMIN y cliente activo…</div>
+      <div id="evidenceWorkspace" hidden>
+        <section class="panel">
+          <div class="history-head">
+            <div class="section-title"><div><span>1</span><h2>Sesiones guardadas</h2></div></div>
+            <button id="refreshBtn" class="button secondary" type="button">Actualizar</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Test ID</th><th>Inicio</th><th>Estado</th><th>Equipo</th><th>Resumen</th><th></th></tr></thead>
+              <tbody id="sessionsBody"><tr><td colspan="6" class="empty">Cargando…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+        <section id="detailPanel" class="panel" hidden>
+          <div class="history-head">
+            <div>
+              <p class="eyebrow evidence-eyebrow">DETALLE RECUPERABLE</p>
+              <h2 id="detailTitle">Sesión</h2>
+            </div>
+            <div class="scan-actions">
+              <button id="csvBtn" class="button secondary" type="button">Descargar CSV del servidor</button>
+              <button id="jsonBtn" class="button secondary" type="button">Descargar JSON del servidor</button>
+            </div>
+          </div>
+          <div id="detailSummary" class="stats"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Fecha</th><th>Raw / normalizado</th><th>Zona / captura</th><th>Clasificación</th><th>Resultado</th><th>Detección</th><th>Clasificación</th><th>Notas / red</th></tr></thead>
+              <tbody id="readingsBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </main>
+    <script src="/pda-test-evidence.js?v=1"></script>
+  </body>
+</html>
