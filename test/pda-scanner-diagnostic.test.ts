@@ -243,16 +243,39 @@ test("el laboratorio reenvía el login con next allowlisted al propio laboratori
   assert.equal((js.match(/href="\/login\.html(?:\?[^"]*)?"/g) || []).join(""), 'href="/login.html?next=/pda-scanner-lab.html"');
 });
 
-test("valor detectado pasa sin transformación al clasificador y la cámara conserva el preview", () => {
+test("detección válida captura feedback, clasifica con métrica y rearma sin cerrar preview", () => {
   const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
+  const detectedBranch = detect.slice(detect.indexOf("if (rawValue)"));
   assert.match(js, /const rawValue = String\(detections\?\.\[0\]\?\.rawValue \?\? ""\)/);
-  assert.match(detect, /scanInput\.value = rawValue;[\s\S]*await processScan\(rawValue, \{ detectionMs \}\)/);
+  assert.doesNotMatch(detectedBranch, /(?:await\s+)?showDetectedFrame\([^;]+\)\.catch\(/);
+  assert.match(
+    detectedBranch,
+    /showDetectedFrame\(cameraFrame, rawValue\);\s*playLocalDetectionFeedback\(\);\s*await processScan\(rawValue, \{ detectionMs \}\)/
+  );
+  assert.ok(
+    detectedBranch.indexOf('byId("armCameraBtn").disabled = false') >
+      detectedBranch.indexOf("await processScan(rawValue, { detectionMs })")
+  );
   assert.doesNotMatch(detect, /stopCamera\(/);
   assert.match(detect, /Cámara lista para enfocar/);
   assert.match(js, /encodeURIComponent\(code\)/);
   assert.match(js, /cameraStream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
   assert.match(js, /pagehide/);
   assert.match(js, /visibilitychange/);
+});
+
+test("feedback local de detección es opcional, no bloqueante y sin recursos externos", () => {
+  const prepare = js.slice(js.indexOf("function prepareDetectionAudio()"), js.indexOf("function playLocalDetectionFeedback()"));
+  const feedback = js.slice(js.indexOf("function playLocalDetectionFeedback()"), js.indexOf("function stopCamera("));
+  const arm = js.slice(js.indexOf("function armCameraDetection()"), js.indexOf("async function startCamera()"));
+  assert.match(prepare, /window\.AudioContext \|\| window\.webkitAudioContext/);
+  assert.match(prepare, /resume\(\)\.catch\(\(\) => \{\}\)/);
+  assert.match(feedback, /typeof navigator\.vibrate === "function"/);
+  assert.match(feedback, /navigator\.vibrate\(80\)/);
+  assert.match(feedback, /createOscillator\(\)/);
+  assert.match(feedback, /createGain\(\)/);
+  assert.match(arm, /prepareDetectionAudio\(\)/);
+  assert.doesNotMatch(`${prepare}\n${feedback}`, /await |fetch\(|api\(|localStorage|sessionStorage|indexedDB|new Audio\(/);
 });
 
 test("guía de cámara es amplia y no oscurece el video", () => {

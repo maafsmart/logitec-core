@@ -14,6 +14,7 @@ let cameraDetectionBusy = false;
 let cameraDetectionArmed = false;
 let barcodePolyfillPromise = null;
 let cameraStartedAt = null;
+let detectionAudioContext = null;
 let barcodeWriterPromise = null;
 let generatedBarcodeDataUrl = "";
 
@@ -248,6 +249,47 @@ function showDetectedFrame(canvas, rawValue) {
   return true;
 }
 
+function prepareDetectionAudio() {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return null;
+    detectionAudioContext = detectionAudioContext || new AudioContext();
+    if (detectionAudioContext.state === "suspended") {
+      void detectionAudioContext.resume().catch(() => {});
+    }
+    return detectionAudioContext;
+  } catch {
+    return null;
+  }
+}
+
+function playLocalDetectionFeedback() {
+  try {
+    if (typeof navigator.vibrate === "function") navigator.vibrate(80);
+  } catch {
+    // El feedback háptico es opcional y nunca debe interrumpir la lectura.
+  }
+
+  try {
+    const context = prepareDetectionAudio();
+    if (!context || context.state !== "running") return;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const now = context.currentTime;
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(now);
+    oscillator.stop(now + 0.12);
+  } catch {
+    // Web Audio puede no existir o estar bloqueado; la lectura debe continuar.
+  }
+}
+
 function stopCamera(message = "Cámara detenida.") {
   if (cameraTimer) window.clearTimeout(cameraTimer);
   cameraTimer = null;
@@ -358,7 +400,8 @@ async function detectCameraFrame() {
       cameraStartedAt = null;
       scanInput.value = rawValue;
       setCameraStatus(`Código detectado con ${cameraDetectorKind}. Clasificando…`, "ok");
-      await showDetectedFrame(cameraFrame, rawValue).catch(() => false);
+      showDetectedFrame(cameraFrame, rawValue);
+      playLocalDetectionFeedback();
       await processScan(rawValue, { detectionMs });
       if (cameraStream) {
         byId("armCameraBtn").disabled = false;
@@ -377,6 +420,7 @@ async function detectCameraFrame() {
 
 function armCameraDetection() {
   if (!cameraStream || cameraDetectionArmed) return;
+  prepareDetectionAudio();
   cameraDetectionArmed = true;
   cameraStartedAt = performance.now();
   byId("armCameraBtn").disabled = true;
