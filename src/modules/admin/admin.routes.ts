@@ -33,7 +33,7 @@ const labResetSchema = z.object({
 const nullableText = (max: number) => z.string().trim().max(max).nullish();
 const pdaSessionSchema = z.object({
   clientSessionKey: z.string().trim().min(8).max(120),
-  preferredTestId: z.string().trim().regex(/^PDA-\d{8}-[A-Z0-9]{4,12}$/).optional(),
+  preferredTestId: z.string().trim().regex(/^PDA-\d{8}-[A-Z0-9]{6,24}$/).optional(),
   deviceType: nullableText(80),
   deviceBrand: nullableText(120),
   deviceModel: nullableText(120),

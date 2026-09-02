@@ -66,7 +66,7 @@ function commitVersion(): string | null {
 
 export function createVisibleTestId(now = new Date()): string {
   const date = now.toISOString().slice(0, 10).replaceAll("-", "");
-  return `PDA-${date}-${randomBytes(3).toString("hex").toUpperCase()}`;
+  return `PDA-${date}-${randomBytes(12).toString("hex").toUpperCase()}`;
 }
 
 function percentile(values: Array<number | null>, kind: "min" | "median" | "p95"): number | null {
@@ -146,26 +146,27 @@ export async function createPdaTestSession(input: {
   });
   if (existing) return { session: existing, duplicate: true };
 
-  try {
-    const session = await prisma.pdaTestSession.create({
-      data: {
-        clientId: input.clientId,
-        createdById: input.userId,
-        clientSessionKey: input.clientSessionKey,
-        testId: input.preferredTestId || createVisibleTestId(),
-        userAgent: input.userAgent,
-        deviceType: input.deviceType,
-        deviceBrand: input.deviceBrand,
-        deviceModel: input.deviceModel,
-        deviceOs: input.deviceOs,
-        readerType: input.readerType,
-        appVersion: commitVersion(),
-        deviceMetadata: (input.deviceMetadata || undefined) as Prisma.InputJsonValue | undefined
-      }
-    });
-    return { session, duplicate: false };
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const session = await prisma.pdaTestSession.create({
+        data: {
+          clientId: input.clientId,
+          createdById: input.userId,
+          clientSessionKey: input.clientSessionKey,
+          testId: attempt === 0 && input.preferredTestId ? input.preferredTestId : createVisibleTestId(),
+          userAgent: input.userAgent,
+          deviceType: input.deviceType,
+          deviceBrand: input.deviceBrand,
+          deviceModel: input.deviceModel,
+          deviceOs: input.deviceOs,
+          readerType: input.readerType,
+          appVersion: commitVersion(),
+          deviceMetadata: (input.deviceMetadata || undefined) as Prisma.InputJsonValue | undefined
+        }
+      });
+      return { session, duplicate: false };
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
       const raced = await prisma.pdaTestSession.findUnique({
         where: { clientId_clientSessionKey: {
           clientId: input.clientId,
@@ -173,10 +174,9 @@ export async function createPdaTestSession(input: {
         } }
       });
       if (raced) return { session: raced, duplicate: true };
-      throw new HttpError(409, "El testId ya existe. Inicia otra sesión.", "PDA_TEST_ID_CONFLICT");
     }
-    throw error;
   }
+  throw new HttpError(409, "No se pudo asignar un testId único.", "PDA_TEST_ID_CONFLICT");
 }
 
 export async function recordPdaTestReading(

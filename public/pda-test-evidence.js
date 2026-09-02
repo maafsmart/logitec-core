@@ -1,6 +1,7 @@
 const token = localStorage.getItem("token") || "";
 const byId = (id) => document.getElementById(id);
 let selectedTestId = "";
+let selectedSessionId = "";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -11,9 +12,13 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-async function api(path, accept = "application/json") {
+async function api(path, options = {}) {
   const response = await fetch(path, {
-    headers: { Authorization: `Bearer ${token}`, Accept: accept },
+    method: options.method || "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: options.accept || "application/json"
+    },
     cache: "no-store"
   });
   if (!response.ok) {
@@ -48,6 +53,8 @@ async function loadSessions() {
 async function openSession(testId) {
   const session = await (await api(`/api/admin/pda-test-sessions/${encodeURIComponent(testId)}`)).json();
   selectedTestId = session.testId;
+  selectedSessionId = session.id;
+  byId("finalizeOpenBtn").hidden = session.status === "FINALIZED";
   byId("detailTitle").textContent = session.testId;
   byId("detailSummary").textContent = `${sessionSummary(session)} · detección min/mediana/p95 ${metric(session.detectionMinMs)} / ${metric(session.detectionMedianMs)} / ${metric(session.detectionP95Ms)} · clasificación min/mediana/p95 ${metric(session.classificationMinMs)} / ${metric(session.classificationMedianMs)} / ${metric(session.classificationP95Ms)}`;
   byId("readingsBody").innerHTML = session.readings.length
@@ -70,7 +77,7 @@ async function downloadServerExport(format) {
   if (!selectedTestId) return;
   const response = await api(
     `/api/admin/pda-test-sessions/${encodeURIComponent(selectedTestId)}/export.${format}`,
-    format === "csv" ? "text/csv" : "application/json"
+    { accept: format === "csv" ? "text/csv" : "application/json" }
   );
   const url = URL.createObjectURL(await response.blob());
   const anchor = document.createElement("a");
@@ -78,6 +85,24 @@ async function downloadServerExport(format) {
   anchor.download = `${selectedTestId}.${format}`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+async function finalizeOpenSession() {
+  if (!selectedSessionId) return;
+  const button = byId("finalizeOpenBtn");
+  if (!window.confirm(`¿Finalizar la sesión ${selectedTestId}?`)) return;
+  button.disabled = true;
+  try {
+    await api(`/api/admin/pda-test-sessions/${encodeURIComponent(selectedSessionId)}/finalize`, {
+      method: "POST"
+    });
+    await loadSessions();
+    await openSession(selectedTestId);
+  } catch (error) {
+    window.alert(error.message || "No se pudo finalizar la sesión.");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function initialize() {
@@ -107,6 +132,7 @@ byId("sessionsBody").addEventListener("click", (event) => {
   if (button) void openSession(button.dataset.testId);
 });
 byId("refreshBtn").addEventListener("click", () => void loadSessions());
+byId("finalizeOpenBtn").addEventListener("click", () => void finalizeOpenSession());
 byId("csvBtn").addEventListener("click", () => void downloadServerExport("csv"));
 byId("jsonBtn").addEventListener("click", () => void downloadServerExport("json"));
 void initialize();

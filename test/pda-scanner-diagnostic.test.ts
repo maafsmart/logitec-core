@@ -12,6 +12,7 @@ import {
 } from "../src/modules/admin/pda-scanner-lab.feature.js";
 import {
   calculatePdaSessionSummary,
+  createVisibleTestId,
   normalizePdaRawCode,
   pdaOutcome
 } from "../src/modules/admin/pda-test-evidence.service.js";
@@ -35,6 +36,10 @@ const evidenceService = readFileSync(new URL("../src/modules/admin/pda-test-evid
 const schema = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
 const migration = readFileSync(
   new URL("../prisma/migrations/20260902065000_pda_test_evidence/migration.sql", import.meta.url),
+  "utf8"
+);
+const testIdMigration = readFileSync(
+  new URL("../prisma/migrations/20260902070000_pda_test_id_tenant_unique/migration.sql", import.meta.url),
   "utf8"
 );
 const evidenceHtml = readFileSync(new URL("../public/pda-test-evidence.html", import.meta.url), "utf8");
@@ -442,7 +447,7 @@ test("deduplica cada código por sesión y el rearme explícito limpia el estado
   assert.match(reset, /scanSessionSeenCodes\.clear\(\)/);
   assert.match(reset, /successFeedbackPlayed = false/);
   assert.doesNotMatch(html, /repeatBtn|Repetir \/ enfocar/);
-  assert.match(html, /pda-scanner-lab\.js\?v=7/);
+  assert.match(html, /pda-scanner-lab\.js\?v=8/);
 });
 
 test("frame local se genera solo tras detectar, no se persiste ni se envía", () => {
@@ -519,10 +524,13 @@ test("resumen PDA calcula total, categorías y percentiles reproducibles", () =>
   assert.equal(pdaOutcome("NO_ENCONTRADO", "SKU"), "RECONOCIDO_NO_ENCONTRADO");
   assert.equal(normalizePdaRawCode(" ]C1QMR-FR000000000389 "), "QMR-FR000000000389");
   assert.equal(normalizePdaRawCode("SKU]C1LEGITIMO"), "SKU]C1LEGITIMO");
+  assert.match(createVisibleTestId(new Date("2026-09-02T00:00:00Z")), /^PDA-20260902-[A-F0-9]{24}$/);
 });
 
 test("modelo PDA fuerza aislamiento cliente-sesión e idempotencia", () => {
   assert.match(schema, /model PdaTestSession[\s\S]*@@unique\(\[clientId, clientSessionKey\]\)/);
+  assert.match(schema, /model PdaTestSession[\s\S]*@@unique\(\[clientId, testId\]\)/);
+  assert.doesNotMatch(schema, /testId\s+String\s+@unique/);
   assert.match(schema, /model PdaTestSession[\s\S]*@@unique\(\[id, clientId\]\)/);
   assert.match(schema, /model PdaTestReading[\s\S]*@@unique\(\[clientId, idempotencyKey\]\)/);
   assert.match(
@@ -530,6 +538,9 @@ test("modelo PDA fuerza aislamiento cliente-sesión e idempotencia", () => {
     /session\s+PdaTestSession\s+@relation\(fields: \[sessionId, clientId\], references: \[id, clientId\]/
   );
   assert.match(migration, /FOREIGN KEY \("sessionId", "clientId"\)/);
+  assert.match(migration, /"PdaTestSession_testId_key".*\("testId"\)/);
+  assert.match(testIdMigration, /"PdaTestSession_clientId_testId_key"[\s\S]*\("clientId", "testId"\)/);
+  assert.match(testIdMigration, /DROP INDEX IF EXISTS "PdaTestSession_testId_key"/);
   assert.doesNotMatch(migration, /(?:ALTER|CREATE) TABLE "(?:Inventory|ScanEvent|Movement)/);
 });
 
@@ -559,6 +570,8 @@ test("endpoints de evidencia son ADMIN, flag-gated y tenant-scoped", () => {
   assert.ok(record.indexOf("const existingReading") < record.indexOf("const candidateSession"));
   assert.match(evidenceService, /error\.code === "P2034"/);
   assert.match(evidenceService, /attempt < 3/);
+  assert.match(evidenceService, /randomBytes\(12\)/);
+  assert.match(evidenceService, /testId: attempt === 0[\s\S]*createVisibleTestId\(\)/);
   assert.equal((evidenceService.match(/serializableTransaction\(async \(tx\)/g) || []).length, 2);
   assert.doesNotMatch(evidenceService, /inventoryMovement|scanEvent|inventory\.(create|update|delete)/i);
 });
@@ -568,8 +581,17 @@ test("cola móvil es efímera, no guarda imágenes/tokens y borra tras ACK", () 
   assert.match(js, /await deleteQueuedReading\(item\.idempotencyKey\)/);
   assert.match(js, /window\.addEventListener\("online"/);
   assert.match(js, /clientId: activeClientId/);
-  assert.match(js, /\.filter\(\(item\) => item\.clientId === activeClientId\)/);
+  assert.match(js, /userId: activeUserId/);
+  assert.match(js, /item\.clientId === activeClientId && item\.userId === activeUserId/);
   assert.match(js, /activeClientId = me\.operationalClient\.id/);
+  assert.match(js, /activeUserId = me\.id/);
+  assert.match(js, /sessionStorage\.setItem\(activeSessionStorageKey\(\)/);
+  assert.match(js, /readActiveSessionDescriptor\(\)/);
+  assert.match(js, /async function recoverLegacyQueue\(\)/);
+  assert.match(js, /!item\.userId/);
+  assert.match(js, /async function revalidateRestoredSession\(restored\)/);
+  assert.match(js, /latest\.status === "FINALIZED"/);
+  assert.match(js, /compactServerSession/);
   assert.match(js, /networkMetadata: entry\.network/);
   const persist = sourceFunction(js, "persistEntry");
   assert.doesNotMatch(persist, /token|dataUrl|image|frame/i);
@@ -580,7 +602,9 @@ test("vista ADMIN recupera por testId y exporta únicamente desde servidor", () 
   assert.match(appSource, /app\.get\("\/pda-test-evidence\.html", pdaScannerLabPageGate/);
   assert.match(evidenceHtml, /id="sessionsBody"/);
   assert.match(evidenceHtml, /id="readingsBody"/);
+  assert.match(evidenceHtml, /id="finalizeOpenBtn"/);
   assert.match(evidenceJs, /encodeURIComponent\(testId\)/);
+  assert.match(evidenceJs, /async function finalizeOpenSession\(\)/);
   assert.match(evidenceJs, /\/export\.\$\{format\}/);
   assert.match(routes, /Content-Disposition/);
   assert.match(loginJs, /"\/pda-test-evidence\.html"/);

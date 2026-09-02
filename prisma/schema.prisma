@@ -608,7 +608,7 @@ model Incident {
 model PdaTestSession {
   id                     String           @id @default(cuid())
   clientId               String
-  testId                 String           @unique
+  testId                 String
   clientSessionKey       String
   status                 String           @default("OPEN")
   deviceType             String?
@@ -640,6 +640,7 @@ model PdaTestSession {
   readings               PdaTestReading[]
 
   @@unique([clientId, clientSessionKey])
+  @@unique([clientId, testId])
   @@unique([id, clientId])
   @@index([clientId, createdAt])
   @@index([clientId, status, createdAt])

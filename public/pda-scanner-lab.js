@@ -29,14 +29,70 @@ const cameraStabilityMs = 200;
 const evidenceDbName = "logitec-pda-evidence-v1";
 const evidenceStoreName = "pending-readings";
 const evidenceTtlMs = 24 * 60 * 60 * 1000;
-const clientSessionKey = createLocalKey();
+let clientSessionKey = "";
 const serverSessions = new Map();
 let syncInProgress = false;
 let activeClientId = "";
+let activeUserId = "";
 
 function createLocalKey() {
   if (crypto.randomUUID) return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function createVisibleTestId() {
+  const bytes = new Uint8Array(12);
+  if (crypto.getRandomValues) crypto.getRandomValues(bytes);
+  else bytes.forEach((_, index) => { bytes[index] = Math.floor(Math.random() * 256); });
+  const suffix = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("").toUpperCase();
+  const date = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+  return `PDA-${date}-${suffix}`;
+}
+
+function activeSessionStorageKey() {
+  return `logitec-pda-active-session:${activeClientId}:${activeUserId}`;
+}
+
+function readActiveSessionDescriptor() {
+  try {
+    const descriptor = JSON.parse(sessionStorage.getItem(activeSessionStorageKey()) || "null");
+    if (
+      descriptor?.clientId !== activeClientId ||
+      descriptor?.userId !== activeUserId ||
+      !descriptor?.clientSessionKey ||
+      !descriptor?.testId
+    ) return null;
+    return descriptor;
+  } catch {
+    return null;
+  }
+}
+
+function compactServerSession(session) {
+  return session ? { id: session.id, testId: session.testId, status: session.status } : null;
+}
+
+function saveActiveSessionDescriptor() {
+  if (!activeClientId || !activeUserId || !clientSessionKey || !field("testId")) return;
+  try {
+    sessionStorage.setItem(activeSessionStorageKey(), JSON.stringify({
+      clientId: activeClientId,
+      userId: activeUserId,
+      clientSessionKey,
+      testId: field("testId"),
+      serverSession: compactServerSession(serverSessions.get(clientSessionKey))
+    }));
+  } catch {
+    // La reanudación es auxiliar; la evidencia pendiente permanece en IndexedDB.
+  }
+}
+
+function clearActiveSessionDescriptor() {
+  try {
+    sessionStorage.removeItem(activeSessionStorageKey());
+  } catch {
+    // Sin acción: no contiene lecturas ni imágenes.
+  }
 }
 
 function normalizeScannerRawValue(rawValue) {
@@ -122,7 +178,11 @@ const deleteQueuedReading = (id) => evidenceStore("readwrite", (store) => store.
 async function purgeExpiredQueue() {
   const cutoff = Date.now() - evidenceTtlMs;
   const queued = await queuedReadings();
-  await Promise.all(queued.filter((item) => item.queuedAt < cutoff).map((item) => deleteQueuedReading(item.idempotencyKey)));
+  await Promise.all(
+    queued
+      .filter((item) => belongsToActiveContext(item) && item.queuedAt < cutoff)
+      .map((item) => deleteQueuedReading(item.idempotencyKey))
+  );
 }
 
 function setSaveState(state, detail = "") {
@@ -154,8 +214,69 @@ async function ensureServerSession(payload) {
   if (serverSessions.has(payload.clientSessionKey)) return serverSessions.get(payload.clientSessionKey);
   const response = await api("/api/admin/pda-test-sessions", { method: "POST", body: payload });
   serverSessions.set(payload.clientSessionKey, response.session);
-  if (payload.clientSessionKey === clientSessionKey) byId("testId").value = response.session.testId;
+  if (payload.clientSessionKey === clientSessionKey) {
+    byId("testId").value = response.session.testId;
+    saveActiveSessionDescriptor();
+  }
   return response.session;
+}
+
+function startFreshSession() {
+  clearActiveSessionDescriptor();
+  serverSessions.delete(clientSessionKey);
+  clientSessionKey = createLocalKey();
+  byId("testId").value = createVisibleTestId();
+  saveActiveSessionDescriptor();
+}
+
+async function revalidateRestoredSession(restored) {
+  if (!restored?.serverSession || !navigator.onLine) return;
+  try {
+    const latest = await api(`/api/admin/pda-test-sessions/${encodeURIComponent(restored.testId)}`);
+    if (latest.status === "FINALIZED") {
+      startFreshSession();
+      setSaveState("SAVED", `sesión ${restored.testId} ya finalizada; nueva prueba preparada`);
+      return;
+    }
+    serverSessions.set(clientSessionKey, latest);
+    saveActiveSessionDescriptor();
+  } catch (error) {
+    if (error.status === 404) {
+      startFreshSession();
+      return;
+    }
+    setSaveState("PENDING", "no se pudo revalidar la sesión; se reintentará");
+  }
+}
+
+function belongsToActiveContext(item) {
+  return item.clientId === activeClientId && item.userId === activeUserId;
+}
+
+async function activeQueuedReadings() {
+  return (await queuedReadings()).filter(belongsToActiveContext);
+}
+
+async function legacyQueuedReadings() {
+  return (await queuedReadings()).filter((item) => item.clientId === activeClientId && !item.userId);
+}
+
+async function recoverLegacyQueue() {
+  const legacy = await legacyQueuedReadings();
+  if (!legacy.length) return;
+  const recover = window.confirm(
+    `Hay ${legacy.length} lectura(s) de una versión previa sin usuario identificable. ` +
+    "Aceptar las asigna al usuario actual para sincronizarlas; Cancelar las deja en cuarentena sin enviar."
+  );
+  if (!recover) {
+    setSaveState("ERROR", `${legacy.length} lectura(s) antiguas en cuarentena`);
+    return;
+  }
+  const recoveredAt = Date.now();
+  await Promise.all(
+    legacy.map((item) => queueReading({ ...item, userId: activeUserId, queuedAt: recoveredAt }))
+  );
+  setSaveState("PENDING", `${legacy.length} lectura(s) recuperadas`);
 }
 
 function applySavedReading(idempotencyKey, reading) {
@@ -175,9 +296,8 @@ async function syncEvidenceQueue() {
   if (syncInProgress || !navigator.onLine || !activeClientId) return;
   syncInProgress = true;
   try {
-    const queued = (await queuedReadings())
-      .filter((item) => item.clientId === activeClientId)
-      .sort((a, b) => a.queuedAt - b.queuedAt);
+    const active = await activeQueuedReadings();
+    const queued = active.filter((item) => !item.blocked).sort((a, b) => a.queuedAt - b.queuedAt);
     for (const item of queued) {
       try {
         const session = await ensureServerSession(item.session);
@@ -192,11 +312,17 @@ async function syncEvidenceQueue() {
         if (entry) entry.saveState = error.status ? "ERROR" : "PENDING";
         setSaveState(error.status ? "ERROR" : "PENDING", error.message);
         renderHistory();
+        if (error.code === "PDA_SESSION_FINALIZED") {
+          await queueReading({ ...item, blocked: true, lastError: error.code });
+          continue;
+        }
         break;
       }
     }
-    const remaining = (await queuedReadings()).filter((item) => item.clientId === activeClientId);
-    if (!remaining.length) setSaveState("SAVED", "sin datos locales pendientes");
+    const remaining = await activeQueuedReadings();
+    const blocked = remaining.filter((item) => item.blocked);
+    if (blocked.length) setSaveState("ERROR", `${blocked.length} lectura(s) en cuarentena`);
+    else if (!remaining.length) setSaveState("SAVED", "sin datos locales pendientes");
     else if (!byId("syncStatus").classList.contains("error")) setSaveState("PENDING", `${remaining.length} lectura(s)`);
   } finally {
     syncInProgress = false;
@@ -209,6 +335,7 @@ async function persistEntry(entry, rawCode) {
   const record = {
     idempotencyKey: entry.idempotencyKey,
     clientId: activeClientId,
+    userId: activeUserId,
     queuedAt: Date.now(),
     session: sessionPayload(),
     reading: {
@@ -892,7 +1019,9 @@ async function finalizeTest() {
   button.disabled = true;
   try {
     await syncEvidenceQueue();
-    const remaining = (await queuedReadings()).filter((item) => item.clientId === activeClientId);
+    const remaining = (await activeQueuedReadings()).filter(
+      (item) => item.session.clientSessionKey === clientSessionKey
+    );
     if (remaining.length) throw new Error("Aún hay lecturas pendientes; reconecta antes de finalizar.");
     const session = await ensureServerSession(sessionPayload());
     const summary = await api(`/api/admin/pda-test-sessions/${encodeURIComponent(session.id)}/finalize`, {
@@ -909,6 +1038,7 @@ async function finalizeTest() {
     byId("notReadBtn").disabled = true;
     byId("startCameraBtn").disabled = true;
     byId("armCameraBtn").disabled = true;
+    clearActiveSessionDescriptor();
     setSaveState("SAVED", "sesión finalizada");
   } catch (error) {
     setSaveState("ERROR", error.message);
@@ -917,7 +1047,7 @@ async function finalizeTest() {
 }
 
 async function clearLocalEvidence() {
-  const queued = await queuedReadings();
+  const queued = [...(await activeQueuedReadings()), ...(await legacyQueuedReadings())];
   if (queued.length && !window.confirm("Hay evidencia sin guardar. ¿Eliminarla de este dispositivo?")) return;
   await Promise.all(queued.map((item) => deleteQueuedReading(item.idempotencyKey)));
   setSaveState("SAVED", "datos locales eliminados");
@@ -937,15 +1067,21 @@ async function initialize() {
       throw new Error("Selecciona primero un cliente activo en el panel y vuelve a abrir el laboratorio.");
     }
     activeClientId = me.operationalClient.id;
-    if (!activeClientId) throw new Error("El cliente activo no tiene un identificador válido.");
+    activeUserId = me.id;
+    if (!activeClientId || !activeUserId) throw new Error("La sesión no tiene identificadores válidos.");
     const clientName = me.operationalClient.tradeName || me.operationalClient.name || me.operationalClient.code;
     byId("sessionContext").textContent = `${me.fullName || me.email} · cliente ${clientName}`;
     gate.hidden = true;
     byId("labWorkspace").hidden = false;
-    const date = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-    byId("testId").value = `PDA-${date}-${clientSessionKey.replaceAll("-", "").slice(0, 6).toUpperCase()}`;
+    const restored = readActiveSessionDescriptor();
+    clientSessionKey = restored?.clientSessionKey || createLocalKey();
+    byId("testId").value = restored?.testId || createVisibleTestId();
+    if (restored?.serverSession) serverSessions.set(clientSessionKey, restored.serverSession);
+    saveActiveSessionDescriptor();
+    await revalidateRestoredSession(restored);
     await purgeExpiredQueue();
-    void syncEvidenceQueue();
+    await recoverLegacyQueue();
+    await syncEvidenceQueue();
     scanInput.focus();
   } catch (error) {
     gate.className = "access-gate error";
