@@ -27,7 +27,43 @@ test("el formulario de login es compatible con el gestor nativo de contraseñas"
   assert.match(html, /id="password"[^>]*type="password"/);
   assert.match(html, /id="password"[^>]*autocomplete="current-password"/);
   assert.match(html, /id="submitBtn"[^>]*type="submit"/);
-  assert.match(html, /login\.js\?v=4/);
+  assert.match(html, /login\.js\?v=5/);
+});
+
+function evalResolvePostLoginPath() {
+  const source = sliceFunction(js, "resolvePostLoginPath");
+  return new Function(`${source}; return resolvePostLoginPath;`)();
+}
+
+test("next permitido redirige al laboratorio PDA; ausente o inseguro cae al dashboard", () => {
+  const resolve = evalResolvePostLoginPath();
+  assert.equal(resolve(""), "/dashboard.html");
+  assert.equal(resolve("?foo=1"), "/dashboard.html");
+  assert.equal(resolve("?next=/pda-scanner-lab.html"), "/pda-scanner-lab.html");
+  assert.equal(resolve("next=/pda-scanner-lab.html"), "/pda-scanner-lab.html");
+  assert.equal(resolve("?next=%2Fpda-scanner-lab.html"), "/pda-scanner-lab.html");
+
+  const rejected = [
+    "?next=https://evil.example",
+    "?next=http://evil.example",
+    "?next=//evil.example",
+    "?next=///evil.example",
+    "?next=/\\evil.example",
+    "?next=javascript:alert(1)",
+    "?next=/pda-scanner-lab.html/../dashboard.html",
+    "?next=/pda-scanner-lab.html?x=1",
+    "?next=/pda-scanner-lab.html#x",
+    "?next=/dashboard.html",
+    "?next=/login.html",
+    "?next=https://www.control.logitec.com.mx/pda-scanner-lab.html",
+    "?next=//www.control.logitec.com.mx/pda-scanner-lab.html"
+  ];
+  for (const search of rejected) {
+    assert.equal(resolve(search), "/dashboard.html", search);
+  }
+
+  assert.match(js, /window\.location\.href = resolvePostLoginPath\(window\.location\.search\)/);
+  assert.doesNotMatch(js, /window\.location\.href = "\/dashboard\.html"/);
 });
 
 test("Recordar correo permanece independiente de Recordar contraseña", () => {

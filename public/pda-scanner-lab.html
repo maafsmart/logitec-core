@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="/canonical-host.js?v=1"></script>
+    <title>Laboratorio PDA / Scanner · LOGITEC</title>
+    <link rel="stylesheet" href="/pda-scanner-lab.css?v=1" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOGITEC CORE · ADMIN · FASE DIAGNÓSTICA</p>
+        <h1>Laboratorio PDA / Scanner</h1>
+        <p id="sessionContext">Validando acceso…</p>
+      </div>
+      <a class="button secondary" href="/dashboard.html">Volver al panel</a>
+    </header>
+
+    <main>
+      <section class="safety-banner" aria-label="Protección de inventario">
+        <strong>Modo seguro de solo lectura.</strong>
+        Esta pantalla clasifica lecturas y conserva el historial únicamente en esta pestaña. No crea entradas,
+        salidas, movimientos, reservas, scans operativos ni cambios de inventario.
+      </section>
+
+      <div id="accessGate" class="access-gate" role="alert">Validando sesión ADMIN y cliente activo…</div>
+
+      <div id="labWorkspace" hidden>
+        <section class="panel">
+          <div class="section-title">
+            <div><span>1</span><h2>Equipo y sesión</h2></div>
+            <p>Completa una vez antes de iniciar los barridos.</p>
+          </div>
+          <div class="form-grid">
+            <label>Identificador de prueba<input id="testId" required placeholder="PDA-01-AN20" /></label>
+            <label>Tipo de dispositivo
+              <select id="deviceType"><option>PDA</option><option>Teléfono</option><option>Lector externo</option><option>Otro</option></select>
+            </label>
+            <label>Marca<input id="deviceBrand" placeholder="Zebra, Honeywell, Samsung…" /></label>
+            <label>Modelo<input id="deviceModel" placeholder="Modelo del equipo" /></label>
+            <label>Sistema operativo / versión<input id="deviceOs" placeholder="Android 14, Windows…" /></label>
+            <label>Tipo de lector
+              <select id="readerType"><option>Integrado</option><option>Cámara</option><option>Bluetooth</option><option>USB</option><option>Emulación teclado</option><option>Desconocido</option></select>
+            </label>
+            <label>Total disponible<input id="deviceTotal" type="number" min="0" inputmode="numeric" /></label>
+            <label>Simultáneos previstos<input id="deviceConcurrent" type="number" min="0" inputmode="numeric" /></label>
+            <label>Previstos este mes<input id="deviceMonth" type="number" min="0" inputmode="numeric" /></label>
+            <label>Previstos fin de 2026<input id="deviceYearEnd" type="number" min="0" inputmode="numeric" /></label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-title">
+            <div><span>2</span><h2>Conectividad manual</h2></div>
+            <p>Copia aquí un resultado externo; LOGITEC no ejecuta speed tests.</p>
+          </div>
+          <div class="form-grid">
+            <label>Proveedor / red<input id="networkProvider" placeholder="Telmex, red Wi-Fi…" /></label>
+            <label>Zona de red<input id="networkZone" placeholder="Andén, AN20…" /></label>
+            <label>Ping ms<input id="networkPing" type="number" min="0" step="0.1" inputmode="decimal" /></label>
+            <label>Descarga Mbps<input id="networkDown" type="number" min="0" step="0.1" inputmode="decimal" /></label>
+            <label>Subida Mbps<input id="networkUp" type="number" min="0" step="0.1" inputmode="decimal" /></label>
+            <label>Estabilidad<input id="networkStability" placeholder="Estable, cortes…" /></label>
+            <label class="span-2">Resultado completo / referencia de captura
+              <textarea id="networkReference" rows="2" placeholder="Pega texto o anota el nombre de la captura"></textarea>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel scan-panel">
+          <div class="section-title">
+            <div><span>3</span><h2>Barrido diagnóstico</h2></div>
+            <p>Elige el origen de lectura; ambos usan el mismo clasificador e historial.</p>
+          </div>
+          <div class="mode-switch" role="tablist" aria-label="Modo de captura">
+            <button id="handheldModeBtn" class="mode-button active" type="button" role="tab" aria-selected="true" aria-controls="handheldCapture">Handheld / PDA</button>
+            <button id="cameraModeBtn" class="mode-button" type="button" role="tab" aria-selected="false" aria-controls="cameraCapture">Cámara de celular</button>
+          </div>
+          <div class="scan-context">
+            <label>Zona física<input id="physicalZone" required placeholder="AN20 / andén norte" /></label>
+            <label>Distancia
+              <select id="distance"><option>&lt;1 m</option><option>1–2 m</option><option>2–4 m</option><option>&gt;4 m</option></select>
+            </label>
+            <label>Tipo esperado
+              <select id="expectedType"><option value="SKU">SKU</option><option value="UBICACION">Ubicación</option><option value="LOTE">Lote</option><option value="SERIE_IMEI">Serie / IMEI</option><option value="OTRO">Otro</option></select>
+            </label>
+            <label>Forma de captura
+              <select id="captureMethod"><option>Scanner como teclado</option><option>Cámara de celular</option><option>Pegado manual</option><option>Otro</option></select>
+            </label>
+          </div>
+          <div id="handheldCapture" class="capture-surface" role="tabpanel" aria-labelledby="handheldModeBtn">
+            <p class="mode-help">Enfoca el campo y barre con un lector que emule teclado y termine con Enter. También puedes pegar o escribir un valor.</p>
+          </div>
+          <div id="cameraCapture" class="capture-surface camera-capture" role="tabpanel" aria-labelledby="cameraModeBtn" hidden>
+            <div class="camera-frame">
+              <video id="cameraVideo" muted playsinline aria-label="Vista previa de cámara"></video>
+              <div class="camera-guide" aria-hidden="true"></div>
+            </div>
+            <p id="cameraStatus" class="camera-status" role="status">La cámara está apagada. El navegador pedirá permiso únicamente al presionar “Iniciar cámara”.</p>
+            <div class="scan-actions">
+              <button id="startCameraBtn" class="button primary" type="button">Iniciar cámara</button>
+              <button id="stopCameraBtn" class="button secondary" type="button" disabled>Detener cámara</button>
+              <button id="cameraFallbackBtn" class="button secondary" type="button">Usar captura manual / PDA</button>
+            </div>
+          </div>
+          <label class="scan-label" for="scanInput">Código leído</label>
+          <input id="scanInput" class="scan-input" autocomplete="off" autocapitalize="off" spellcheck="false"
+            placeholder="Barre, escribe o usa la cámara; Enter procesa" />
+          <div class="scan-actions">
+            <button id="scanBtn" class="button primary" type="button">Procesar lectura</button>
+            <button id="notReadBtn" class="button danger" type="button">Registrar no leído</button>
+            <button id="repeatBtn" class="button secondary" type="button">Repetir / enfocar</button>
+          </div>
+          <label>Observaciones de la siguiente lectura
+            <textarea id="scanNotes" rows="2" placeholder="Etiqueta dañada, reflejo, lectura parcial…"></textarea>
+          </label>
+          <div id="liveResult" class="live-result idle" aria-live="polite">
+            <strong>Listo para barrer</strong><span>La lectura aparecerá aquí inmediatamente.</span>
+          </div>
+          <p class="camera-note"><strong>Compatibilidad:</strong> Chrome Android/Samsung Internet usan detección nativa cuando está disponible. Safari iPhone y navegadores sin BarcodeDetector usan ZXing-WASM local. Cámara requiere HTTPS o localhost; si se deniega el permiso o falla la detección, usa el campo manual/lector teclado.</p>
+        </section>
+
+        <section class="panel">
+          <div class="section-title">
+            <div><span>4</span><h2>Código de prueba · Code 128</h2></div>
+            <p>Generación local de solo lectura; no crea ni modifica SKU o inventario.</p>
+          </div>
+          <div class="barcode-generator">
+            <label>Texto o SKU real conocido
+              <input id="barcodeSampleInput" maxlength="120" placeholder="037-579419-002" />
+            </label>
+            <button id="generateBarcodeBtn" class="button secondary" type="button">Generar Code 128</button>
+          </div>
+          <div class="scan-actions">
+            <button id="useLastScanBtn" class="button secondary" type="button">Usar último código leído</button>
+            <button id="downloadBarcodeBtn" class="button secondary" type="button" hidden>Descargar PNG</button>
+          </div>
+          <p id="barcodeGeneratorStatus" class="barcode-generator-status" role="status">Muestra el código en otra pantalla o imprímelo; el generador se carga solo al usarlo.</p>
+          <div id="barcodePreview" class="barcode-preview" hidden>
+            <img id="barcodeImage" alt="Código de barras Code 128 generado" />
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="history-head">
+            <div class="section-title"><div><span>5</span><h2>Resumen de sesión</h2></div></div>
+            <div class="scan-actions">
+              <button id="copyBtn" class="button secondary" type="button">Copiar resumen</button>
+              <button id="exportBtn" class="button secondary" type="button">Exportar CSV</button>
+              <button id="clearBtn" class="button danger-outline" type="button">Limpiar sesión</button>
+            </div>
+          </div>
+          <div id="sessionStats" class="stats">0 lecturas</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Hora</th><th>Prueba / zona</th><th>Código</th><th>Clasificación</th><th>Resultado</th><th>Hasta detección</th><th>Clasificación API</th><th>Red</th></tr></thead>
+              <tbody id="historyBody"><tr><td colspan="8" class="empty">Sin lecturas en esta sesión.</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </main>
+    <script src="/pda-scanner-lab.js?v=3"></script>
+  </body>
+</html>
