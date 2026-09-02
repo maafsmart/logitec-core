@@ -126,7 +126,7 @@ model InventoryMovement {
   notes              String?
   userId             String
   taskId             String?
-  inventorySerialId  String?
+  inventorySerialId String?
   inventoryLayerId   String?
   requisitionLineId  String?
   fromAssignmentType InventoryAssignmentType?

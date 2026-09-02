@@ -32,6 +32,7 @@ const evidenceTtlMs = 24 * 60 * 60 * 1000;
 const clientSessionKey = createLocalKey();
 const serverSessions = new Map();
 let syncInProgress = false;
+let activeClientId = "";
 
 function createLocalKey() {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -171,10 +172,12 @@ function applySavedReading(idempotencyKey, reading) {
 }
 
 async function syncEvidenceQueue() {
-  if (syncInProgress || !navigator.onLine) return;
+  if (syncInProgress || !navigator.onLine || !activeClientId) return;
   syncInProgress = true;
   try {
-    const queued = (await queuedReadings()).sort((a, b) => a.queuedAt - b.queuedAt);
+    const queued = (await queuedReadings())
+      .filter((item) => item.clientId === activeClientId)
+      .sort((a, b) => a.queuedAt - b.queuedAt);
     for (const item of queued) {
       try {
         const session = await ensureServerSession(item.session);
@@ -192,7 +195,7 @@ async function syncEvidenceQueue() {
         break;
       }
     }
-    const remaining = await queuedReadings();
+    const remaining = (await queuedReadings()).filter((item) => item.clientId === activeClientId);
     if (!remaining.length) setSaveState("SAVED", "sin datos locales pendientes");
     else if (!byId("syncStatus").classList.contains("error")) setSaveState("PENDING", `${remaining.length} lectura(s)`);
   } finally {
@@ -205,6 +208,7 @@ async function persistEntry(entry, rawCode) {
   entry.saveState = "PENDING";
   const record = {
     idempotencyKey: entry.idempotencyKey,
+    clientId: activeClientId,
     queuedAt: Date.now(),
     session: sessionPayload(),
     reading: {
@@ -365,9 +369,8 @@ function validateRequired() {
 async function processScan(rawCode, metrics = {}) {
   if (scanSessionClosed || scanProcessing) return null;
   if (!validateRequired()) return;
-  const code = normalizeScannerRawValue(
-    rawCode === undefined ? String(scanInput.value || "") : String(rawCode)
-  );
+  const originalCode = rawCode === undefined ? String(scanInput.value || "") : String(rawCode);
+  const code = normalizeScannerRawValue(originalCode);
   if (!code.trim()) {
     liveResult.className = "live-result error";
     liveResult.innerHTML = "<strong>Sin código</strong><span>Barre un código o usa “Registrar no leído”.</span>";
@@ -391,7 +394,7 @@ async function processScan(rawCode, metrics = {}) {
     });
     history.unshift(entry);
     renderHistory();
-    await persistEntry(entry, code);
+    await persistEntry(entry, originalCode);
     renderLive(entry);
     byId("scanNotes").value = "";
     scanInput.value = "";
@@ -889,7 +892,7 @@ async function finalizeTest() {
   button.disabled = true;
   try {
     await syncEvidenceQueue();
-    const remaining = await queuedReadings();
+    const remaining = (await queuedReadings()).filter((item) => item.clientId === activeClientId);
     if (remaining.length) throw new Error("Aún hay lecturas pendientes; reconecta antes de finalizar.");
     const session = await ensureServerSession(sessionPayload());
     const summary = await api(`/api/admin/pda-test-sessions/${encodeURIComponent(session.id)}/finalize`, {
@@ -933,6 +936,8 @@ async function initialize() {
     if (!me.operationalClient) {
       throw new Error("Selecciona primero un cliente activo en el panel y vuelve a abrir el laboratorio.");
     }
+    activeClientId = me.operationalClient.id;
+    if (!activeClientId) throw new Error("El cliente activo no tiene un identificador válido.");
     const clientName = me.operationalClient.tradeName || me.operationalClient.name || me.operationalClient.code;
     byId("sessionContext").textContent = `${me.fullName || me.email} · cliente ${clientName}`;
     gate.hidden = true;

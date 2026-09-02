@@ -36,6 +36,25 @@ const sessionInclude = {
   readings: { orderBy: [{ observedAt: "asc" as const }, { id: "asc" as const }] }
 };
 
+async function serializableTransaction<T>(
+  operation: (tx: Prisma.TransactionClient) => Promise<T>
+): Promise<T> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(operation, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable
+      });
+    } catch (error) {
+      const retryable =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2034";
+      if (!retryable || attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+    }
+  }
+  throw new Error("Unreachable serializable transaction state");
+}
+
 function commitVersion(): string | null {
   return (
     process.env.RENDER_GIT_COMMIT ||
@@ -92,8 +111,14 @@ export function pdaOutcome(classification: string, expectedType: string): string
   return expectedType === "OTRO" || classification === expectedType ? "OK" : "LEIDO_INCORRECTAMENTE";
 }
 
-function fingerprintReading(input: PdaReadingInput): string {
+export function normalizePdaRawCode(rawCode: string): string {
+  const value = rawCode.trim();
+  return value.startsWith("]C1") ? value.slice(3) : value;
+}
+
+function fingerprintReading(sessionId: string, input: PdaReadingInput): string {
   return createHash("sha256").update(JSON.stringify({
+    sessionId,
     ...input,
     observedAt: input.observedAt.toISOString(),
     networkMetadata: input.networkMetadata || null
@@ -159,25 +184,26 @@ export async function recordPdaTestReading(
   input: PdaReadingInput,
   reader?: ScannerDiagnosticReader
 ) {
-  const requestFingerprint = fingerprintReading(input);
-  const duplicate = await prisma.pdaTestReading.findUnique({
-    where: { clientId_idempotencyKey: {
-      clientId: context.clientId,
-      idempotencyKey: input.idempotencyKey
-    } }
+  const requestFingerprint = fingerprintReading(context.sessionId, input);
+  const existingReading = await prisma.pdaTestReading.findUnique({
+    where: {
+      clientId_idempotencyKey: {
+        clientId: context.clientId,
+        idempotencyKey: input.idempotencyKey
+      }
+    }
   });
-  if (duplicate) {
-    if (duplicate.requestFingerprint !== requestFingerprint) {
+  if (existingReading) {
+    if (existingReading.requestFingerprint !== requestFingerprint) {
       throw new HttpError(409, "La clave idempotente ya fue usada con otros datos.", "PDA_IDEMPOTENCY_CONFLICT");
     }
-    return { reading: duplicate, duplicate: true };
+    return { reading: existingReading, duplicate: true };
   }
-
-  const session = await prisma.pdaTestSession.findFirst({
+  const candidateSession = await prisma.pdaTestSession.findFirst({
     where: { id: context.sessionId, clientId: context.clientId }
   });
-  if (!session) throw new HttpError(404, "Sesión PDA no encontrada.", "PDA_SESSION_NOT_FOUND");
-  if (session.status !== "OPEN") {
+  if (!candidateSession) throw new HttpError(404, "Sesión PDA no encontrada.", "PDA_SESSION_NOT_FOUND");
+  if (candidateSession.status !== "OPEN") {
     throw new HttpError(409, "La sesión PDA ya está finalizada.", "PDA_SESSION_FINALIZED");
   }
 
@@ -187,16 +213,37 @@ export async function recordPdaTestReading(
   let classificationMs: number | null = null;
   if (rawCode) {
     const startedAt = performance.now();
-    const diagnostic = await classifyScannerCode(rawCode, context.clientId, reader);
+    const diagnostic = await classifyScannerCode(normalizePdaRawCode(rawCode), context.clientId, reader);
     classificationMs = Math.max(0, Math.round(performance.now() - startedAt));
     normalizedCode = diagnostic.code;
     classification = diagnostic.classification;
   }
 
-  try {
-    const reading = await prisma.pdaTestReading.create({
+  return serializableTransaction(async (tx) => {
+    const duplicate = await tx.pdaTestReading.findUnique({
+      where: {
+        clientId_idempotencyKey: {
+          clientId: context.clientId,
+          idempotencyKey: input.idempotencyKey
+        }
+      }
+    });
+    if (duplicate) {
+      if (duplicate.requestFingerprint !== requestFingerprint) {
+        throw new HttpError(409, "La clave idempotente ya fue usada con otros datos.", "PDA_IDEMPOTENCY_CONFLICT");
+      }
+      return { reading: duplicate, duplicate: true };
+    }
+    const openSession = await tx.pdaTestSession.findFirst({
+      where: { id: context.sessionId, clientId: context.clientId, status: "OPEN" },
+      select: { id: true }
+    });
+    if (!openSession) {
+      throw new HttpError(409, "La sesión PDA ya está finalizada.", "PDA_SESSION_FINALIZED");
+    }
+    const reading = await tx.pdaTestReading.create({
       data: {
-        sessionId: session.id,
+        sessionId: openSession.id,
         clientId: context.clientId,
         createdById: context.userId,
         idempotencyKey: input.idempotencyKey,
@@ -217,18 +264,20 @@ export async function recordPdaTestReading(
       }
     });
     return { reading, duplicate: false };
-  } catch (error) {
+  }).catch(async (error) => {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       const raced = await prisma.pdaTestReading.findUnique({
-        where: { clientId_idempotencyKey: {
-          clientId: context.clientId,
-          idempotencyKey: input.idempotencyKey
-        } }
+        where: {
+          clientId_idempotencyKey: {
+            clientId: context.clientId,
+            idempotencyKey: input.idempotencyKey
+          }
+        }
       });
       if (raced?.requestFingerprint === requestFingerprint) return { reading: raced, duplicate: true };
     }
     throw error;
-  }
+  });
 }
 
 export async function listPdaTestSessions(clientId: string, limit = 100) {
@@ -265,16 +314,18 @@ export async function getPdaTestSession(clientId: string, testId: string) {
 }
 
 export async function finalizePdaTestSession(clientId: string, sessionId: string) {
-  const session = await prisma.pdaTestSession.findFirst({
-    where: { id: sessionId, clientId },
-    include: { readings: { select: { result: true, detectionMs: true, classificationMs: true } } }
-  });
-  if (!session) throw new HttpError(404, "Sesión PDA no encontrada.", "PDA_SESSION_NOT_FOUND");
-  if (session.status === "FINALIZED") return session;
-  const summary = calculatePdaSessionSummary(session.readings);
-  return prisma.pdaTestSession.update({
-    where: { id: session.id },
-    data: { status: "FINALIZED", finalizedAt: new Date(), ...summary }
+  return serializableTransaction(async (tx) => {
+    const session = await tx.pdaTestSession.findFirst({
+      where: { id: sessionId, clientId },
+      include: { readings: { select: { result: true, detectionMs: true, classificationMs: true } } }
+    });
+    if (!session) throw new HttpError(404, "Sesión PDA no encontrada.", "PDA_SESSION_NOT_FOUND");
+    if (session.status === "FINALIZED") return session;
+    const summary = calculatePdaSessionSummary(session.readings);
+    return tx.pdaTestSession.update({
+      where: { id: session.id },
+      data: { status: "FINALIZED", finalizedAt: new Date(), ...summary }
+    });
   });
 }
 

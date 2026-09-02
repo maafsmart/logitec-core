@@ -12,6 +12,7 @@ import {
 } from "../src/modules/admin/pda-scanner-lab.feature.js";
 import {
   calculatePdaSessionSummary,
+  normalizePdaRawCode,
   pdaOutcome
 } from "../src/modules/admin/pda-test-evidence.service.js";
 
@@ -212,7 +213,7 @@ test("HTML y API usan flag default-OFF antes de exponer el laboratorio", () => {
 });
 
 test("login next funciona en el dominio canónico sin aceptar redirects externos", () => {
-  assert.match(loginJs, /new Set\(\["\/pda-scanner-lab\.html"\]\)/);
+  assert.match(loginJs, /new Set\(\["\/pda-scanner-lab\.html", "\/pda-test-evidence\.html"\]\)/);
   assert.match(loginJs, /window\.location\.href = resolvePostLoginPath\(window\.location\.search\)/);
   assert.match(canonicalHostJs, /"https:\/\/" \+ WWW_HOST \+ pathname \+ search \+ hash/);
   assert.doesNotMatch(loginJs, /https:\/\/www\.control\.logitec\.com\.mx\/pda-scanner-lab/);
@@ -281,7 +282,7 @@ test("detección estable clasifica con detectionMs y no rearma después del prim
   );
   assert.match(detectedBranch, /if \(!scanSessionClosed && cameraStream\)[\s\S]*cameraDetectionArmed = true/);
   assert.match(detect, /runId !== cameraRunId/);
-  assert.match(js, /encodeURIComponent\(code\)/);
+  assert.match(js, /encodeURIComponent\(session\.id\)/);
   assert.match(js, /cameraStream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
   assert.match(js, /pagehide/);
   assert.match(js, /visibilitychange/);
@@ -334,7 +335,7 @@ test("métrica de detección empieza al armar y excluye preparación y enfoque",
   assert.ok(arm.indexOf("cameraStartedAt = performance.now()") < arm.indexOf("scheduleCameraDetection()"));
   assert.doesNotMatch(start, /cameraStartedAt = performance\.now\(\)/);
   assert.match(detect, /performance\.now\(\) - cameraStartedAt/);
-  assert.match(process, /persistEntry\(entry, code\)/);
+  assert.match(process, /persistEntry\(entry, originalCode\)/);
   assert.match(evidenceService, /const startedAt = performance\.now\(\)/);
   assert.match(evidenceService, /performance\.now\(\) - startedAt/);
   assert.match(html, /Hasta detección/);
@@ -516,6 +517,8 @@ test("resumen PDA calcula total, categorías y percentiles reproducibles", () =>
   assert.equal(pdaOutcome("SKU", "SKU"), "OK");
   assert.equal(pdaOutcome("SKU", "LOTE"), "LEIDO_INCORRECTAMENTE");
   assert.equal(pdaOutcome("NO_ENCONTRADO", "SKU"), "RECONOCIDO_NO_ENCONTRADO");
+  assert.equal(normalizePdaRawCode(" ]C1QMR-FR000000000389 "), "QMR-FR000000000389");
+  assert.equal(normalizePdaRawCode("SKU]C1LEGITIMO"), "SKU]C1LEGITIMO");
 });
 
 test("modelo PDA fuerza aislamiento cliente-sesión e idempotencia", () => {
@@ -527,7 +530,7 @@ test("modelo PDA fuerza aislamiento cliente-sesión e idempotencia", () => {
     /session\s+PdaTestSession\s+@relation\(fields: \[sessionId, clientId\], references: \[id, clientId\]/
   );
   assert.match(migration, /FOREIGN KEY \("sessionId", "clientId"\)/);
-  assert.doesNotMatch(migration, /Inventory|ScanEvent|Movement/);
+  assert.doesNotMatch(migration, /(?:ALTER|CREATE) TABLE "(?:Inventory|ScanEvent|Movement)/);
 });
 
 test("endpoints de evidencia son ADMIN, flag-gated y tenant-scoped", () => {
@@ -548,6 +551,15 @@ test("endpoints de evidencia son ADMIN, flag-gated y tenant-scoped", () => {
   }
   assert.match(evidenceService, /where: \{ clientId, testId \}/);
   assert.match(evidenceService, /where: \{ id: context\.sessionId, clientId: context\.clientId \}/);
+  assert.match(evidenceService, /fingerprintReading\(context\.sessionId, input\)/);
+  const record = evidenceService.slice(
+    evidenceService.indexOf("export async function recordPdaTestReading"),
+    evidenceService.indexOf("export async function listPdaTestSessions")
+  );
+  assert.ok(record.indexOf("const existingReading") < record.indexOf("const candidateSession"));
+  assert.match(evidenceService, /error\.code === "P2034"/);
+  assert.match(evidenceService, /attempt < 3/);
+  assert.equal((evidenceService.match(/serializableTransaction\(async \(tx\)/g) || []).length, 2);
   assert.doesNotMatch(evidenceService, /inventoryMovement|scanEvent|inventory\.(create|update|delete)/i);
 });
 
@@ -555,6 +567,9 @@ test("cola móvil es efímera, no guarda imágenes/tokens y borra tras ACK", () 
   assert.match(js, /evidenceTtlMs = 24 \* 60 \* 60 \* 1000/);
   assert.match(js, /await deleteQueuedReading\(item\.idempotencyKey\)/);
   assert.match(js, /window\.addEventListener\("online"/);
+  assert.match(js, /clientId: activeClientId/);
+  assert.match(js, /\.filter\(\(item\) => item\.clientId === activeClientId\)/);
+  assert.match(js, /activeClientId = me\.operationalClient\.id/);
   assert.match(js, /networkMetadata: entry\.network/);
   const persist = sourceFunction(js, "persistEntry");
   assert.doesNotMatch(persist, /token|dataUrl|image|frame/i);
