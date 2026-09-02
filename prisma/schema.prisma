@@ -89,6 +89,7 @@ model User {
   pdaTestReadings     PdaTestReading[]
   pdaPairingsCreated  PdaPairingChallenge[]
   pdaGrantsCreated    PdaLabGrant[]
+  pdaCaptureRunsCreated PdaCaptureRun[]
 
   @@index([clientId])
 }
@@ -759,11 +760,21 @@ model PdaCaptureRun {
   captureStoppedConfirmedAt DateTime?
   localCleanupConfirmedAt   DateTime?
   legacyImported            Boolean        @default(false)
+  deviceType               String?
+  deviceBrand              String?
+  deviceModel              String?
+  deviceOs                 String?
+  readerType               String?
+  userAgent                String?
+  deviceMetadata           Json?
+  reconciledAt             DateTime?
+  createdById              String?
   createdAt                 DateTime        @default(now())
   updatedAt                 DateTime        @updatedAt
   session                   PdaTestSession @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
   grant                     PdaLabGrant?   @relation(fields: [grantId, sessionId, clientId], references: [id, sessionId, clientId], onDelete: Restrict)
   client                    Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy                 User?          @relation(fields: [createdById], references: [id], onDelete: Restrict)
   readings                  PdaTestReading[]
 
   @@unique([id, sessionId, clientId])
@@ -826,4 +837,5 @@ model PdaLabGrant {
 
   @@unique([id, sessionId, clientId])
   @@index([clientId, sessionId, status, expiresAt])
+  @@index([expiresAt])
 }

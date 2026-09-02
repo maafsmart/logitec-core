@@ -136,7 +136,7 @@ pdaRouter.post("/runs/:runId/readings", async (req, res) => {
 pdaRouter.post("/runs/:runId/seal", async (req, res) => {
   const runId = z.string().trim().min(1).parse(req.params.runId);
   const body = z.object({
-    sealedAtSeq: z.number().int().min(0),
+    sealedAtSeq: z.number().int().min(0).max(100_000),
     expectedVersion: z.number().int().min(0).optional()
   }).parse(req.body);
   res.json(await sealPdaRun(req.pdaGrant!, runId, body.sealedAtSeq, body.expectedVersion));

@@ -104,6 +104,19 @@ export async function createPdaRun(
   }
   try {
     return await serializable(async (tx) => {
+      const currentGrant = await tx.pdaLabGrant.findFirst({
+        where: {
+          id: grant.id,
+          clientId: grant.clientId,
+          sessionId: grant.sessionId,
+          status: PdaGrantStatus.ACTIVE,
+          expiresAt: { gt: new Date() }
+        },
+        select: { id: true }
+      });
+      if (!currentGrant) {
+        throw new HttpError(401, "Capacidad PDA revocada o vencida.", "PDA_GRANT_REVOKED");
+      }
       const existing = await tx.pdaCaptureRun.findFirst({
         where: { grantId: grant.id, clientRunKey }
       });
@@ -299,6 +312,9 @@ export async function sealPdaRun(
   sealedAtSeq: number,
   expectedVersion?: number
 ) {
+  if (sealedAtSeq > 100_000) {
+    throw new HttpError(409, "La secuencia de sello excede el límite permitido.", "PDA_SEAL_RANGE_INVALID");
+  }
   return serializable(async (tx) => {
     const run = await tx.pdaCaptureRun.findFirst({
       where: {

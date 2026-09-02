@@ -15,7 +15,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "qa:e2e-users": "tsx scripts/ensure-qa-e2e-users.ts",
     "test:e2e": "npm run qa:e2e-users && playwright test",
-    "test:pda:pg": "tsx --test --test-concurrency=1 test/pda-lifecycle-pg.test.ts",
+    "test:pda:pg": "tsx --test --test-concurrency=1 test/pda-lifecycle-pg.test.ts test/pda-postgres-qa.test.ts",
     "dev:operational-reset": "tsx src/scripts/operational-reset/index.ts"
   },
   "dependencies": {
