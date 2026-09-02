@@ -246,7 +246,7 @@ test("el laboratorio reenvía el login con next allowlisted al propio laboratori
 test("valor detectado pasa sin transformación al clasificador y la cámara conserva el preview", () => {
   const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
   assert.match(js, /const rawValue = String\(detections\?\.\[0\]\?\.rawValue \?\? ""\)/);
-  assert.match(detect, /scanInput\.value = rawValue;[\s\S]*await processScan\(rawValue, \{ detectionMs \}\)/);
+  assert.match(detect, /scanInput\.value = rawValue;[\s\S]*await processScan\(rawValue, \{ detectionMs, frameDataUrl \}\)/);
   assert.doesNotMatch(detect, /stopCamera\(/);
   assert.match(detect, /Cámara lista para enfocar/);
   assert.match(js, /encodeURIComponent\(code\)/);
@@ -307,6 +307,7 @@ test("frame local se genera solo tras detectar, no se persiste ni se envía", ()
   assert.match(evidence, /dataUrl\.startsWith\("data:image\/jpeg"\)/);
   assert.doesNotMatch(evidence, /URL\.createObjectURL|blob:/);
   assert.match(rawValueBranch, /showDetectedFrame\(cameraFrame, rawValue\)/);
+  assert.doesNotMatch(rawValueBranch, /showDetectedFrame\([^)]*\)\.catch/);
   assert.doesNotMatch(start, /showDetectedFrame\(/);
   assert.doesNotMatch(evidence, /api\(|fetch\(|localStorage|sessionStorage|indexedDB/);
   assert.match(appSource, /"img-src": \["'self'", "data:", "https:"\]/);
@@ -341,4 +342,55 @@ test("generador Code 128 es local, bajo demanda y no toca API ni base de datos",
   assert.match(appSource, /node_modules\/zxing-wasm\/dist\/writer\/zxing_writer\.wasm/);
   assert.match(appSource, /\/vendor\/zxing-wasm\/3\.1\.3\/writer\.js/);
   assert.match(appSource, /\/vendor\/zxing-wasm\/3\.1\.3\/zxing_writer\.wasm/);
+});
+
+test("showDetectedFrame síncrona no usa .catch y detectionMs llega a processScan", () => {
+  const shown = true;
+  assert.equal(typeof shown.catch, "undefined");
+  assert.throws(() => shown.catch(() => false), TypeError);
+
+  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
+  const evidence = js.slice(js.indexOf("function showDetectedFrame("), js.indexOf("function stopCamera("));
+  const process = js.slice(js.indexOf("async function processScan("), js.indexOf("function setCameraStatus("));
+  const rawValueBranch = detect.slice(detect.indexOf("if (rawValue)"));
+
+  assert.match(evidence, /^function showDetectedFrame\(/);
+  assert.doesNotMatch(js, /async function showDetectedFrame/);
+  assert.doesNotMatch(js, /showDetectedFrame\([^;]*\)\.catch/);
+  assert.match(rawValueBranch, /showDetectedFrame\(cameraFrame, rawValue\)/);
+  assert.match(rawValueBranch, /await processScan\(rawValue, \{ detectionMs, frameDataUrl \}\)/);
+  assert.match(process, /Number\.isFinite\(metrics\.detectionMs\) \? metrics\.detectionMs : null/);
+  assert.match(rawValueBranch, /armCameraBtn"\)\.disabled = false/);
+  assert.doesNotMatch(rawValueBranch, /stopCamera\(/);
+  assert.doesNotMatch(js, /ScanEvent|mutateInventory/);
+  assert.match(appSource, /"img-src": \["'self'", "data:", "https:"\]/);
+  assert.doesNotMatch(appSource, /"img-src":[^\n]*"blob:"/);
+});
+
+test("feedback local de detección no bloquea la lectura si el navegador no lo soporta", () => {
+  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
+  const feedback = js.slice(js.indexOf("function playDetectionFeedback()"), js.indexOf("function validateRequired()"));
+  const arm = js.slice(js.indexOf("function armCameraDetection()"), js.indexOf("async function startCamera()"));
+  const rawValueBranch = detect.slice(detect.indexOf("if (rawValue)"));
+  assert.match(arm, /ensureDetectionAudio\(\)/);
+  assert.match(feedback, /navigator\.vibrate/);
+  assert.match(feedback, /AudioContext \|\| window\.webkitAudioContext/);
+  assert.match(rawValueBranch, /playDetectionFeedback\(\)/);
+  assert.ok(rawValueBranch.indexOf("playDetectionFeedback()") < rawValueBranch.indexOf("await processScan"));
+  assert.match(feedback, /catch \(_error\) \{\}/);
+  assert.doesNotMatch(feedback, /await |api\(|fetch\(/);
+});
+
+test("cada lectura de cámara retiene el frame en memoria y la exportación local no sube nada", () => {
+  const process = js.slice(js.indexOf("async function processScan("), js.indexOf("function setCameraStatus("));
+  const exporter = js.slice(js.indexOf("function exportCsv()"), js.indexOf("async function copySummary("));
+  assert.match(html, /Exportar CSV \/ evidencias/);
+  assert.match(css, /history-frame-thumb/);
+  assert.match(process, /metrics\.frameDataUrl\.startsWith\("data:image\/jpeg"\)/);
+  assert.match(js, /historyFrameHtml\(entry\)/);
+  assert.match(exporter, /text\/csv;charset=utf-8/);
+  assert.match(exporter, /application\/zip/);
+  assert.match(exporter, /manifiesto\.csv/);
+  assert.doesNotMatch(exporter, /api\(|fetch\(|localStorage|sessionStorage|indexedDB/);
+  assert.doesNotMatch(process, /localStorage|sessionStorage|indexedDB/);
 });

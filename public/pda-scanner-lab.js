@@ -16,6 +16,7 @@ let barcodePolyfillPromise = null;
 let cameraStartedAt = null;
 let barcodeWriterPromise = null;
 let generatedBarcodeDataUrl = "";
+let detectionAudioCtx = null;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -134,7 +135,7 @@ function renderHistory() {
     body.innerHTML = history.map((entry) => `<tr>
       <td>${escapeHtml(entry.timeLabel)}</td>
       <td>${escapeHtml(entry.device.testId || "—")}<br>${escapeHtml(entry.zone || "—")} · ${escapeHtml(entry.distance)}</td>
-      <td><strong>${escapeHtml(entry.code)}</strong><br>${escapeHtml(entry.captureMethod)}</td>
+      <td><strong>${escapeHtml(entry.code)}</strong><br>${escapeHtml(entry.captureMethod)}${historyFrameHtml(entry)}</td>
       <td>${escapeHtml(classificationLabel(entry.classification))}<br>Esperado: ${escapeHtml(classificationLabel(entry.expectedType))}</td>
       <td>${escapeHtml(resultLabel(entry.result))}${entry.notes ? `<br>${escapeHtml(entry.notes)}` : ""}</td>
       <td>${escapeHtml(metricMs(entry.detectionMs))}</td>
@@ -159,8 +160,50 @@ function makeEntry(overrides) {
     expectedType: field("expectedType"),
     captureMethod: field("captureMethod"),
     notes: field("scanNotes"),
+    frameDataUrl: "",
     ...overrides
   };
+}
+
+function historyFrameHtml(entry) {
+  const url = String(entry.frameDataUrl || "");
+  if (!url.startsWith("data:image/jpeg")) return "";
+  return `<br><img class="history-frame-thumb" alt="Evidencia local de esta lectura" src="${url}" />`;
+}
+
+function ensureDetectionAudio() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null;
+    detectionAudioCtx = detectionAudioCtx || new AudioCtx();
+    if (detectionAudioCtx.state === "suspended") {
+      void detectionAudioCtx.resume().catch(() => {});
+    }
+    return detectionAudioCtx;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function playDetectionFeedback() {
+  try {
+    if (typeof navigator.vibrate === "function") navigator.vibrate(50);
+  } catch (_error) {}
+  try {
+    const ctx = ensureDetectionAudio();
+    if (!ctx) return;
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.value = 880;
+    gain.gain.value = 0.07;
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start();
+    const stopAt = ctx.currentTime + 0.12;
+    gain.gain.exponentialRampToValueAtTime(0.001, stopAt);
+    oscillator.stop(stopAt);
+  } catch (_error) {}
 }
 
 function validateRequired() {
@@ -191,12 +234,16 @@ async function processScan(rawCode, metrics = {}) {
   try {
     const data = await api(`/api/admin/pda-scanner-diagnostic/classify?code=${encodeURIComponent(code)}`);
     const classificationMs = Math.max(0, Math.round(performance.now() - classificationStartedAt));
+    const frameDataUrl = typeof metrics.frameDataUrl === "string" && metrics.frameDataUrl.startsWith("data:image/jpeg")
+      ? metrics.frameDataUrl
+      : "";
     const entry = makeEntry({
       code: data.code,
       classification: data.classification,
       result: outcomeFor(data.classification, field("expectedType")),
       detectionMs: Number.isFinite(metrics.detectionMs) ? metrics.detectionMs : null,
-      classificationMs
+      classificationMs,
+      frameDataUrl
     });
     history.unshift(entry);
     renderLive(entry, data.matches || []);
@@ -240,12 +287,12 @@ function snapshotCameraFrame() {
 function showDetectedFrame(canvas, rawValue) {
   clearDetectedFrame();
   const dataUrl = canvas.toDataURL("image/jpeg", 0.88);
-  if (!dataUrl.startsWith("data:image/jpeg")) return false;
+  if (!dataUrl.startsWith("data:image/jpeg")) return "";
   byId("detectedFrameImage").src = dataUrl;
   byId("detectedFrameCaption").textContent =
     `Frame capturado al detectar “${rawValue}”. Solo memoria de esta pestaña; no se carga ni se guarda.`;
   byId("detectedFrameEvidence").hidden = false;
-  return true;
+  return dataUrl;
 }
 
 function stopCamera(message = "Cámara detenida.") {
@@ -358,8 +405,16 @@ async function detectCameraFrame() {
       cameraStartedAt = null;
       scanInput.value = rawValue;
       setCameraStatus(`Código detectado con ${cameraDetectorKind}. Clasificando…`, "ok");
-      await showDetectedFrame(cameraFrame, rawValue).catch(() => false);
-      await processScan(rawValue, { detectionMs });
+      let frameDataUrl = "";
+      try {
+        frameDataUrl = showDetectedFrame(cameraFrame, rawValue) || "";
+      } catch (_error) {
+        frameDataUrl = "";
+      }
+      try {
+        playDetectionFeedback();
+      } catch (_error) {}
+      await processScan(rawValue, { detectionMs, frameDataUrl });
       if (cameraStream) {
         byId("armCameraBtn").disabled = false;
         setCameraStatus(`Cámara lista para enfocar · detector ${cameraDetectorKind}.`, "ok");
@@ -380,6 +435,7 @@ function armCameraDetection() {
   cameraDetectionArmed = true;
   cameraStartedAt = performance.now();
   byId("armCameraBtn").disabled = true;
+  ensureDetectionAudio();
   setCameraStatus(`Lectura armada · detector ${cameraDetectorKind}. Buscando código…`, "armed");
   scheduleCameraDetection();
 }
@@ -547,6 +603,89 @@ function csvCell(value) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i += 1) {
+    crc ^= bytes[i];
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function u16(value) {
+  return new Uint8Array([value & 255, (value >>> 8) & 255]);
+}
+
+function u32(value) {
+  return new Uint8Array([value & 255, (value >>> 8) & 255, (value >>> 16) & 255, (value >>> 24) & 255]);
+}
+
+function concatBytes(chunks) {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+function dataUrlToBytes(dataUrl) {
+  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function zipStore(files) {
+  const encoder = new TextEncoder();
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const file of files) {
+    const nameBytes = encoder.encode(file.name);
+    const data = file.bytes;
+    const crc = crc32(data);
+    const local = concatBytes([
+      u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(crc), u32(data.length), u32(data.length), u16(nameBytes.length), u16(0),
+      nameBytes, data
+    ]);
+    const central = concatBytes([
+      u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(crc), u32(data.length), u32(data.length), u16(nameBytes.length),
+      u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), nameBytes
+    ]);
+    locals.push(local);
+    centrals.push(central);
+    offset += local.length;
+  }
+  const centralDir = concatBytes(centrals);
+  const end = concatBytes([
+    u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length),
+    u32(centralDir.length), u32(offset), u16(0)
+  ]);
+  return concatBytes([...locals, centralDir, end]);
+}
+
+function safeExportName(value, fallback) {
+  const cleaned = String(value || "").replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return (cleaned || fallback).slice(0, 48);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 function exportCsv() {
   if (!history.length) return;
   const headers = ["fecha", "prueba", "dispositivo", "marca", "modelo", "so", "lector", "zona", "distancia", "esperado", "codigo", "clasificacion", "resultado", "tiempo_deteccion_ms", "latencia_clasificacion_ms", "captura", "red", "ping_ms", "down_mbps", "up_mbps", "observaciones"];
@@ -558,12 +697,25 @@ function exportCsv() {
     entry.captureMethod, entry.network.provider, entry.network.ping, entry.network.down, entry.network.up, entry.notes
   ]);
   const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
-  const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `laboratorio-pda-${field("testId") || "sesion"}.csv`;
-  anchor.click();
-  URL.revokeObjectURL(url);
+  const sessionName = safeExportName(field("testId"), "sesion");
+  const frames = history.filter((entry) => String(entry.frameDataUrl || "").startsWith("data:image/jpeg"));
+  if (!frames.length) {
+    downloadBlob(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }), `laboratorio-pda-${sessionName}.csv`);
+    return;
+  }
+  const encoder = new TextEncoder();
+  const files = [{ name: `laboratorio-pda-${sessionName}.csv`, bytes: encoder.encode(`\uFEFF${csv}`) }];
+  const manifestLines = ["archivo,hora,codigo,clasificacion,resultado"];
+  frames.forEach((entry, frameIndex) => {
+    const imageName = `evidencia-${String(frameIndex + 1).padStart(2, "0")}-${safeExportName(entry.code, `lectura-${frameIndex + 1}`)}.jpg`;
+    files.push({ name: imageName, bytes: dataUrlToBytes(entry.frameDataUrl) });
+    manifestLines.push([
+      csvCell(imageName), csvCell(entry.timestamp), csvCell(entry.code),
+      csvCell(classificationLabel(entry.classification)), csvCell(resultLabel(entry.result))
+    ].join(","));
+  });
+  files.push({ name: "manifiesto.csv", bytes: encoder.encode(`\uFEFF${manifestLines.join("\r\n")}`) });
+  downloadBlob(new Blob([zipStore(files)], { type: "application/zip" }), `laboratorio-pda-${sessionName}.zip`);
 }
 
 async function copySummary() {

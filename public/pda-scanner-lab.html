@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script src="/canonical-host.js?v=1"></script>
     <title>Laboratorio PDA / Scanner · LOGITEC</title>
-    <link rel="stylesheet" href="/pda-scanner-lab.css?v=1" />
+    <link rel="stylesheet" href="/pda-scanner-lab.css?v=2" />
   </head>
   <body>
     <header class="topbar">
@@ -127,7 +127,7 @@
             <img id="detectedFrameImage" alt="Frame congelado al detectar el código" />
             <p id="detectedFrameCaption">Se conserva únicamente en memoria de esta pestaña.</p>
           </section>
-          <p class="camera-note"><strong>Compatibilidad:</strong> Chrome Android/Samsung Internet usan detección nativa cuando está disponible. Safari iPhone y navegadores sin BarcodeDetector usan ZXing-WASM local. Cámara requiere HTTPS o localhost; si se deniega el permiso o falla la detección, usa el campo manual/lector teclado.</p>
+          <p class="camera-note"><strong>Compatibilidad:</strong> Chrome Android/Samsung Internet usan detección nativa cuando está disponible. Safari iPhone y navegadores sin BarcodeDetector usan ZXing-WASM local. Cámara requiere HTTPS o localhost; si se deniega el permiso o falla la detección, usa el campo manual/lector teclado. Al detectar, el laboratorio intenta vibrar y emitir un beep local; si el navegador no lo soporta, la lectura continúa igual.</p>
         </section>
 
         <section class="panel">
@@ -156,7 +156,7 @@
             <div class="section-title"><div><span>5</span><h2>Resumen de sesión</h2></div></div>
             <div class="scan-actions">
               <button id="copyBtn" class="button secondary" type="button">Copiar resumen</button>
-              <button id="exportBtn" class="button secondary" type="button">Exportar CSV</button>
+              <button id="exportBtn" class="button secondary" type="button">Exportar CSV / evidencias</button>
               <button id="clearBtn" class="button danger-outline" type="button">Limpiar sesión</button>
             </div>
           </div>
@@ -170,6 +170,6 @@
         </section>
       </div>
     </main>
-    <script src="/pda-scanner-lab.js?v=3"></script>
+    <script src="/pda-scanner-lab.js?v=4"></script>
   </body>
 </html>

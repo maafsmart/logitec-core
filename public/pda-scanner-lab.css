@@ -249,7 +249,15 @@ input:focus, select:focus, textarea:focus {
 }
 .detected-frame-evidence p { margin: 9px 0 0; color: var(--muted); font-size: .82rem; }
 .camera-note { margin: 14px 0 0; color: var(--muted); font-size: .84rem; line-height: 1.45; }
-.history-head .section-title { margin: 0; }
+.history-frame-thumb {
+  display: block;
+  margin-top: 6px;
+  width: 96px;
+  height: 72px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #08131d;
+}
 .stats { margin: 12px 0; font-weight: 800; color: var(--blue); }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .82rem; }
