@@ -13,6 +13,29 @@ enum InventoryAssignmentType {
   LEGACY_UNASSIGNED
 }
 
+enum PdaTestSessionStatus {
+  OPEN
+  CLOSING
+  CLOSED
+  INCOMPLETE
+}
+
+enum PdaCaptureRunStatus {
+  ACTIVE
+  PAUSED
+  SEALED
+  DRAINING
+  RECONCILED
+  RELEASED
+  INCOMPLETE
+}
+
+enum PdaGrantStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
 model User {
   id                  String                 @id @default(cuid())
   email               String                 @unique
@@ -49,6 +72,9 @@ model User {
   importRowAudits     ImportRowAudit[]
   pdaTestSessions     PdaTestSession[]
   pdaTestReadings     PdaTestReading[]
+  pdaPairingChallenges PdaPairingChallenge[]
+  pdaLabGrants        PdaLabGrant[]
+  pdaCaptureRuns      PdaCaptureRun[]
 
   @@index([clientId])
 }
@@ -223,6 +249,9 @@ model Client {
   incidents       Incident[]
   pdaTestSessions PdaTestSession[]
   pdaTestReadings PdaTestReading[]
+  pdaPairingChallenges PdaPairingChallenge[]
+  pdaLabGrants    PdaLabGrant[]
+  pdaCaptureRuns  PdaCaptureRun[]
 }
 
 model Customer {
@@ -610,7 +639,8 @@ model PdaTestSession {
   clientId               String
   testId                 String
   clientSessionKey       String
-  status                 String           @default("OPEN")
+  status                 PdaTestSessionStatus @default(OPEN)
+  version                Int              @default(1)
   deviceType             String?
   deviceBrand            String?
   deviceModel            String?
@@ -638,6 +668,9 @@ model PdaTestSession {
   client                 Client           @relation(fields: [clientId], references: [id], onDelete: Restrict)
   createdBy              User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
   readings               PdaTestReading[]
+  runs                   PdaCaptureRun[]
+  pairingChallenges      PdaPairingChallenge[]
+  grants                 PdaLabGrant[]
 
   @@unique([clientId, clientSessionKey])
   @@unique([clientId, testId])
@@ -650,6 +683,10 @@ model PdaTestReading {
   id                 String         @id @default(cuid())
   sessionId          String
   clientId           String
+  runId              String
+  clientSeq          Int
+  epoch              Int
+  attemptId          String
   idempotencyKey     String
   requestFingerprint String
   observedAt         DateTime
@@ -670,9 +707,99 @@ model PdaTestReading {
   session            PdaTestSession @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
   client             Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
   createdBy          User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  run                PdaCaptureRun  @relation(fields: [runId, clientId], references: [id, clientId], onDelete: Restrict)
 
   @@unique([clientId, idempotencyKey])
+  @@unique([runId, clientSeq])
+  @@unique([runId, attemptId])
   @@index([sessionId, observedAt])
+  @@index([runId, observedAt])
   @@index([clientId, observedAt])
   @@index([clientId, result, observedAt])
+}
+
+model PdaPairingChallenge {
+  id          String    @id @default(cuid())
+  publicId    String    @unique
+  clientId    String
+  sessionId   String
+  secretDigest String   @unique
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  createdById String
+  session     PdaTestSession @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
+  client      Client    @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  grant       PdaLabGrant?
+
+  @@index([clientId, sessionId, expiresAt])
+}
+
+model PdaLabGrant {
+  id            String         @id @default(cuid())
+  publicId      String         @unique
+  clientId      String
+  sessionId     String
+  tokenDigest   String         @unique
+  status        PdaGrantStatus @default(ACTIVE)
+  scopes        String[]
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  revokeReason  String?
+  createdAt     DateTime       @default(now())
+  lastUsedAt    DateTime?
+  createdById   String
+  challengeId   String         @unique
+  session       PdaTestSession @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
+  client        Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy     User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  challenge     PdaPairingChallenge @relation(fields: [challengeId], references: [id], onDelete: Restrict)
+  runs          PdaCaptureRun[]
+
+  @@unique([id, clientId])
+  @@index([clientId, sessionId, status])
+  @@index([expiresAt])
+}
+
+model PdaCaptureRun {
+  id                 String              @id @default(cuid())
+  publicId           String              @unique
+  clientId           String
+  sessionId          String
+  grantId            String?
+  status             PdaCaptureRunStatus @default(ACTIVE)
+  epoch              Int                 @default(1)
+  version            Int                 @default(1)
+  lastAcceptedSeq    Int                 @default(0)
+  sealedThroughSeq   Int?
+  deviceType         String?
+  deviceBrand        String?
+  deviceModel        String?
+  deviceOs           String?
+  readerType         String?
+  userAgent          String?
+  deviceMetadata     Json?
+  startedAt          DateTime            @default(now())
+  pausedAt           DateTime?
+  sealedAt           DateTime?
+  reconciledAt       DateTime?
+  releasedAt         DateTime?
+  incompleteAt       DateTime?
+  incompleteReason   String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  createdById        String
+  session            PdaTestSession      @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
+  client             Client              @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  grant              PdaLabGrant?        @relation(fields: [grantId, clientId], references: [id, clientId], onDelete: Restrict)
+  createdBy          User                @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  readings           PdaTestReading[]
+
+  @@unique([id, clientId])
+  @@unique([sessionId, publicId])
+  @@index([clientId, sessionId, status])
+  @@index([grantId, status])
 }

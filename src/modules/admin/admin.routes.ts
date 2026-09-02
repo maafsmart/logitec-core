@@ -18,9 +18,10 @@ import {
   finalizePdaTestSession,
   getPdaTestSession,
   listPdaTestSessions,
-  pdaSessionCsv,
-  recordPdaTestReading
+  pdaSessionCsv
 } from "./pda-test-evidence.service.js";
+import { createPdaPairingChallenge } from "../pda/pda-auth.service.js";
+import { forceTakeoverPdaSession } from "../pda/pda-run.service.js";
 
 const adminRouter = Router();
 const pdaScannerLabApiGate = createPdaScannerLabGate(
@@ -41,19 +42,6 @@ const pdaSessionSchema = z.object({
   readerType: nullableText(120),
   deviceMetadata: z.record(z.unknown()).nullish()
 });
-const pdaReadingSchema = z.object({
-  idempotencyKey: z.string().trim().min(8).max(120),
-  observedAt: z.coerce.date(),
-  rawCode: nullableText(500),
-  expectedType: z.enum(["SKU", "UBICACION", "LOTE", "SERIE_IMEI", "OTRO"]),
-  captureMethod: z.string().trim().min(1).max(120),
-  physicalZone: z.string().trim().min(1).max(160),
-  distance: nullableText(80),
-  detectionMs: z.number().int().min(0).max(3_600_000).nullish(),
-  notes: nullableText(2000),
-  networkMetadata: z.record(z.unknown()).nullish()
-});
-
 function hideLabResetInProduction(_req: Request, _res: Response, next: NextFunction) {
   try {
     assertLabResetAvailable();
@@ -136,21 +124,35 @@ adminRouter.get(
 );
 
 adminRouter.post(
-  "/pda-test-sessions/:sessionId/readings",
+  "/pda-test-sessions/:sessionId/pairing",
   pdaScannerLabApiGate,
   requireAuth,
   requireRole(["ADMIN"]),
   requireOperationalClient,
   async (req, res) => {
     const sessionId = z.string().trim().min(1).parse(req.params.sessionId);
-    const body = pdaReadingSchema.parse(req.body);
-    const result = await recordPdaTestReading({
+    const result = await createPdaPairingChallenge({
       clientId: req.auth!.operationalClientId!,
       userId: req.auth!.userId,
       sessionId
-    }, body);
+    });
     res.setHeader("Cache-Control", "no-store");
-    res.status(result.duplicate ? 200 : 201).json(result);
+    res.status(201).json(result);
+  }
+);
+
+adminRouter.post(
+  "/pda-test-sessions/:sessionId/takeover",
+  pdaScannerLabApiGate,
+  requireAuth,
+  requireRole(["ADMIN"]),
+  requireOperationalClient,
+  async (req, res) => {
+    const sessionId = z.string().trim().min(1).parse(req.params.sessionId);
+    const body = z.object({ confirmed: z.literal(true) }).parse(req.body);
+    void body;
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await forceTakeoverPdaSession(req.auth!.operationalClientId!, sessionId));
   }
 );
 

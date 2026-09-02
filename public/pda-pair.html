@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Emparejar PDA · LOGITEC</title>
+    <link rel="stylesheet" href="/pda-scanner-lab.css?v=10" />
+  </head>
+  <body>
+    <main class="pair-shell">
+      <section class="panel">
+        <p class="eyebrow">LOGITEC CORE · DISPOSITIVO PRESTADO</p>
+        <h1>Emparejar laboratorio PDA</h1>
+        <p>Escanea el payload mostrado por el ADMIN o captura sus dos valores. No ingreses usuario ni contraseña LOGITEC.</p>
+        <form id="pairForm" autocomplete="off">
+          <label>ID de emparejamiento
+            <input id="challengeId" required minlength="8" maxlength="100" autocomplete="off" />
+          </label>
+          <label>Secreto de un solo uso
+            <input id="pairSecret" required minlength="40" maxlength="100" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          </label>
+          <button class="button primary" type="submit">Emparejar dispositivo</button>
+        </form>
+        <p id="pairStatus" role="status">El secreto no se guarda en URL, historial ni almacenamiento web.</p>
+      </section>
+    </main>
+    <script src="/pda-pair.js?v=10"></script>
+  </body>
+</html>

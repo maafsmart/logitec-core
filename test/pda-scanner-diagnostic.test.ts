@@ -3,609 +3,272 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   classifyScannerCode,
-  scannerLocationWhere,
   type ScannerDiagnosticReader
 } from "../src/modules/admin/pda-scanner-diagnostic.service.js";
-import {
-  createPdaScannerLabGate,
-  isPdaScannerLabEnabled
-} from "../src/modules/admin/pda-scanner-lab.feature.js";
 import {
   calculatePdaSessionSummary,
   createVisibleTestId,
   normalizePdaRawCode,
   pdaOutcome
 } from "../src/modules/admin/pda-test-evidence.service.js";
+import {
+  digestPdaSecret,
+  pdaGrantFailure
+} from "../src/modules/pda/pda-auth.service.js";
+import {
+  fingerprintPdaAttempt,
+  missingPdaSequences,
+  pdaRunAcceptsAttempt,
+  type PdaAttemptInput
+} from "../src/modules/pda/pda-run.service.js";
 
-const routes = readFileSync(new URL("../src/modules/admin/admin.routes.ts", import.meta.url), "utf8");
-const service = readFileSync(
-  new URL("../src/modules/admin/pda-scanner-diagnostic.service.ts", import.meta.url),
-  "utf8"
-);
-const html = readFileSync(new URL("../public/pda-scanner-lab.html", import.meta.url), "utf8");
-const js = readFileSync(new URL("../public/pda-scanner-lab.js", import.meta.url), "utf8");
-const css = readFileSync(new URL("../public/pda-scanner-lab.css", import.meta.url), "utf8");
-const appSource = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
-const envSource = readFileSync(new URL("../src/config/env.ts", import.meta.url), "utf8");
-const dashboardHtml = readFileSync(new URL("../public/dashboard.html", import.meta.url), "utf8");
-const loginJs = readFileSync(new URL("../public/login.js", import.meta.url), "utf8");
-const canonicalHostJs = readFileSync(new URL("../public/canonical-host.js", import.meta.url), "utf8");
-const envExample = readFileSync(new URL("../.env.example", import.meta.url), "utf8");
-const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-const evidenceService = readFileSync(new URL("../src/modules/admin/pda-test-evidence.service.ts", import.meta.url), "utf8");
-const schema = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
-const migration = readFileSync(
-  new URL("../prisma/migrations/20260902065000_pda_test_evidence/migration.sql", import.meta.url),
-  "utf8"
-);
-const testIdMigration = readFileSync(
-  new URL("../prisma/migrations/20260902070000_pda_test_id_tenant_unique/migration.sql", import.meta.url),
-  "utf8"
-);
-const evidenceHtml = readFileSync(new URL("../public/pda-test-evidence.html", import.meta.url), "utf8");
-const evidenceJs = readFileSync(new URL("../public/pda-test-evidence.js", import.meta.url), "utf8");
+const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+const schema = read("../prisma/schema.prisma");
+const migration = read("../prisma/migrations/20260902101500_pda_borrowed_device_protocol/migration.sql");
+const routes = read("../src/modules/pda/pda.routes.ts");
+const adminRoutes = read("../src/modules/admin/admin.routes.ts");
+const middleware = read("../src/modules/pda/pda-auth.middleware.ts");
+const authService = read("../src/modules/pda/pda-auth.service.ts");
+const runService = read("../src/modules/pda/pda-run.service.ts");
+const app = read("../src/app.ts");
+const html = read("../public/pda-scanner-lab.html");
+const js = read("../public/pda-scanner-lab.js");
+const pairHtml = read("../public/pda-pair.html");
+const pairJs = read("../public/pda-pair.js");
 
-function sourceFunction(source: string, name: string) {
-  const start = source.indexOf(`function ${name}(`);
-  assert.ok(start >= 0, `missing function ${name}`);
-  let depth = 0;
-  for (let index = start; index < source.length; index += 1) {
-    if (source[index] === "{") depth += 1;
-    if (source[index] === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(start, index + 1);
-    }
-  }
-  throw new Error(`unterminated function ${name}`);
-}
-
-function reader(overrides: Partial<ScannerDiagnosticReader> = {}) {
-  const calls: Array<{ operation: string; code: string; clientId: string }> = [];
-  const wrap = <T>(operation: string, value: T[]) =>
-    async (code: string, clientId: string): Promise<T[]> => {
-      calls.push({ operation, code, clientId });
-      return value;
-    };
-  const diagnosticReader: ScannerDiagnosticReader = {
-    findProducts: wrap("products", []),
-    findLocations: wrap("locations", []),
-    findLots: wrap("lots", []),
-    findSerials: wrap("serials", []),
+function reader(overrides: Partial<ScannerDiagnosticReader> = {}): ScannerDiagnosticReader {
+  return {
+    findProducts: async () => [],
+    findLocations: async () => [],
+    findLots: async () => [],
+    findSerials: async () => [],
     ...overrides
   };
-  return { diagnosticReader, calls };
 }
 
-test("clasifica SKU con consultas de solo lectura limitadas al cliente activo", async () => {
-  const inventoryState = {
-    qty: "18",
-    reservedQty: "2",
-    movements: 7,
-    reservations: 3,
-    scanEvents: 11
+function attempt(overrides: Partial<PdaAttemptInput> = {}): PdaAttemptInput {
+  return {
+    runPublicId: "RUN-test",
+    clientSeq: 1,
+    epoch: 1,
+    attemptId: "11111111-1111-4111-8111-111111111111",
+    idempotencyKey: "22222222-2222-4222-8222-222222222222",
+    observedAt: new Date("2026-09-02T10:00:00.000Z"),
+    rawCode: "SKU-1",
+    expectedType: "SKU",
+    captureMethod: "HID",
+    physicalZone: "AN20",
+    distance: "1–2 m",
+    detectionMs: 100,
+    notes: null,
+    networkMetadata: { online: true },
+    ...overrides
   };
-  const before = structuredClone(inventoryState);
-  const mock = reader({
+}
+
+test("clasificación PDA consulta solo y conserva tenant en cada lector", async () => {
+  const calls: string[] = [];
+  const result = await classifyScannerCode("SKU-1", "tenant-a", reader({
     findProducts: async (code, clientId) => {
-      assert.equal(code, "037-579419-002");
-      assert.equal(clientId, "client-aviat");
-      return [{ sku: code, barcode: null, name: "Radio" }];
-    }
-  });
-
-  const result = await classifyScannerCode(" 037-579419-002 ", "client-aviat", mock.diagnosticReader);
-
-  assert.equal(result.classification, "SKU");
-  assert.equal(result.matches.length, 1);
-  assert.deepEqual(inventoryState, before, "el diagnóstico no debe alterar estado de inventario");
-  assert.deepEqual(
-    mock.calls.map((call) => call.operation).sort(),
-    ["locations", "lots", "serials"],
-    "las demás búsquedas también son lecturas"
-  );
-  assert.ok(mock.calls.every((call) => call.clientId === "client-aviat"));
-});
-
-test("marca AMBIGUO cuando el mismo valor coincide con entidades distintas", async () => {
-  const mock = reader({
-    findLocations: async () => [{ code: "AN20", warehouse: "TULTITLAN24" }],
-    findLots: async () => [{
-      lotNumber: "AN20",
-      inventory: { product: { sku: "SKU-1" }, location: { code: "AN01" } }
-    }]
-  });
-  const result = await classifyScannerCode("AN20", "client-aviat", mock.diagnosticReader);
-  assert.equal(result.classification, "AMBIGUO");
-  assert.deepEqual(result.matches.map((match) => match.type), ["UBICACION", "LOTE"]);
-});
-
-test("reconoce ubicación maestra activa aunque todavía no tenga inventario", async () => {
-  const inventoryRows: unknown[] = [];
-  const mock = reader({
-    findLocations: async (code, clientId) => {
-      assert.equal(code, "vacia-a1");
-      assert.equal(clientId, "client-aviat");
-      assert.equal(inventoryRows.length, 0, "la ubicación de prueba debe estar vacía");
-      return [{ code: "VACIA-A1", warehouse: "TULTITLAN24" }];
-    }
-  });
-
-  const result = await classifyScannerCode("vacia-a1", "client-aviat", mock.diagnosticReader);
-
-  assert.equal(result.classification, "UBICACION");
-  assert.deepEqual(result.matches, [{
-    type: "UBICACION",
-    label: "VACIA-A1",
-    detail: "Almacén TULTITLAN24"
-  }]);
-  assert.deepEqual(scannerLocationWhere("vacia-a1"), {
-    code: { equals: "vacia-a1", mode: "insensitive" },
-    active: true
-  });
-});
-
-test("clasifica serie/IMEI y conserva el contexto de producto y ubicación", async () => {
-  const mock = reader({
-    findSerials: async () => [{
-      serialNumber: "SER-77",
-      imei: "358240051111110",
-      product: { sku: "PHONE-1" },
-      inventoryLayer: { inventory: { location: { code: "AN20-A" } } }
-    }]
-  });
-  const result = await classifyScannerCode("358240051111110", "client-aviat", mock.diagnosticReader);
-  assert.equal(result.classification, "SERIE_IMEI");
-  assert.match(result.matches[0]?.detail || "", /PHONE-1/);
-  assert.match(result.matches[0]?.detail || "", /AN20-A/);
-});
-
-test("endpoint diagnóstico es GET, ADMIN, con cliente operativo y sin escrituras", () => {
-  const routeStart = routes.indexOf('"/pda-scanner-diagnostic/classify"');
-  const routeEnd = routes.indexOf("adminRouter.post(", routeStart);
-  const route = routes.slice(routeStart, routeEnd);
-  assert.ok(routeStart >= 0);
-  assert.match(route, /pdaScannerLabApiGate/);
-  assert.ok(route.indexOf("pdaScannerLabApiGate") < route.indexOf("requireAuth"));
-  assert.match(route, /requireAuth/);
-  assert.match(route, /requireRole\(\["ADMIN"\]\)/);
-  assert.match(route, /requireOperationalClient/);
-  assert.match(route, /classifyScannerCode/);
-  assert.doesNotMatch(route, /\.create|\.update|\.delete|mutateInventory|ScanEvent/i);
-  assert.match(service, /\.findMany\(/);
-  assert.doesNotMatch(service, /\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/);
-  const locationLookup = service.slice(
-    service.indexOf("findLocations(code, _clientId)"),
-    service.indexOf("findLots(code, clientId)")
-  );
-  assert.match(locationLookup, /where: scannerLocationWhere\(code\)/);
-  assert.doesNotMatch(locationLookup, /inventories/);
-});
-
-test("feature flag OFF bloquea con 404 y ON permite continuar", () => {
-  assert.equal(isPdaScannerLabEnabled("false"), false);
-  assert.equal(isPdaScannerLabEnabled("true"), true);
-
-  let statusCode = 0;
-  let responseBody = "";
-  let nextCalls = 0;
-  const response = {
-    status(code: number) {
-      statusCode = code;
-      return this;
+      calls.push(`${code}:${clientId}`);
+      return [{ sku: "SKU-1", barcode: null, name: "Radio" }];
     },
-    send(body: string) {
-      responseBody = body;
-      return this;
-    }
-  };
-  createPdaScannerLabGate(false)({} as never, response as never, () => { nextCalls += 1; });
-  assert.equal(statusCode, 404);
-  assert.equal(responseBody, "Not Found");
-  assert.equal(nextCalls, 0);
-
-  createPdaScannerLabGate(true)({} as never, response as never, () => { nextCalls += 1; });
-  assert.equal(nextCalls, 1);
+    findLocations: async (_code, clientId) => { calls.push(`location:${clientId}`); return []; },
+    findLots: async (_code, clientId) => { calls.push(`lot:${clientId}`); return []; },
+    findSerials: async (_code, clientId) => { calls.push(`serial:${clientId}`); return []; }
+  }));
+  assert.equal(result.classification, "SKU");
+  assert.ok(calls.every((call) => call.endsWith(":tenant-a")));
 });
 
-test("HTML y API usan flag default-OFF antes de exponer el laboratorio", () => {
-  assert.match(envSource, /ENABLE_PDA_SCANNER_LAB:[\s\S]*value \?\? "false"/);
-  assert.match(envExample, /ENABLE_PDA_SCANNER_LAB=false/);
-  const pageRoute = appSource.indexOf('app.get("/pda-scanner-lab.html", pdaScannerLabPageGate');
-  const staticMount = appSource.indexOf('app.use(express.static("public"))');
-  assert.ok(pageRoute >= 0 && pageRoute < staticMount);
-  assert.match(appSource, /isPdaScannerLabEnabled\(env\.ENABLE_PDA_SCANNER_LAB\)/);
-  assert.doesNotMatch(dashboardHtml, /pdaScannerLabCard|Abrir laboratorio aislado/);
-});
-
-test("login next funciona en el dominio canónico sin aceptar redirects externos", () => {
-  assert.match(loginJs, /new Set\(\["\/pda-scanner-lab\.html", "\/pda-test-evidence\.html"\]\)/);
-  assert.match(loginJs, /window\.location\.href = resolvePostLoginPath\(window\.location\.search\)/);
-  assert.match(canonicalHostJs, /"https:\/\/" \+ WWW_HOST \+ pathname \+ search \+ hash/);
-  assert.doesNotMatch(loginJs, /https:\/\/www\.control\.logitec\.com\.mx\/pda-scanner-lab/);
-});
-
-test("pantalla móvil persiste automáticamente sin exportar evidencia al dispositivo", () => {
-  for (const id of [
-    "testId", "deviceType", "deviceBrand", "deviceModel", "deviceOs", "readerType",
-    "deviceTotal", "deviceConcurrent", "deviceMonth", "deviceYearEnd", "physicalZone",
-    "distance", "expectedType", "captureMethod", "scanInput", "networkProvider",
-    "networkZone", "networkPing", "networkDown", "networkUp", "networkStability",
-    "networkReference", "historyBody", "syncStatus", "finalizeBtn", "clearLocalBtn", "handheldModeBtn",
-    "cameraModeBtn", "cameraCapture", "cameraVideo", "startCameraBtn", "armCameraBtn", "cameraFallbackBtn",
-    "detectedFrameEvidence", "detectedFrameImage", "discardDetectedFrameBtn"
-  ]) {
-    assert.match(html, new RegExp(`id="${id}"`));
-  }
-  assert.equal((html.match(/id="scanInput"/g) || []).length, 1);
-  assert.equal((html.match(/id="historyBody"/g) || []).length, 1);
-  assert.match(js, /event\.key !== "Enter"/);
-  assert.match(js, /\/api\/admin\/pda-test-sessions/);
-  assert.match(js, /const history = \[\]/);
-  assert.match(js, /indexedDB\.open/);
-  assert.match(js, /deleteQueuedReading/);
-  assert.doesNotMatch(html, /Copiar resumen|Exportar CSV/);
-  assert.doesNotMatch(js, /navigator\.clipboard\.writeText|text\/csv/);
-  assert.doesNotMatch(js, /speedtest|ookla|telmex/i);
-  assert.match(html, /No crea entradas[\s\S]*salidas[\s\S]*movimientos[\s\S]*reservas/);
-});
-
-test("cámara solicita permiso solo por acción explícita y conserva fallback manual", () => {
-  const start = js.slice(js.indexOf("async function startCamera()"), js.indexOf("function registerNotRead()"));
-  assert.match(start, /navigator\.mediaDevices\.getUserMedia/);
-  assert.match(js, /startCameraBtn"\)\.addEventListener\("click", \(\) => void startCamera\(\)\)/);
-  assert.match(js, /cameraFallbackBtn"\)\.addEventListener\("click", \(\) => setCaptureMode\("handheld"\)\)/);
-  assert.match(js, /Permiso de cámara denegado[\s\S]*captura manual\/lector teclado/);
-  assert.ok(js.indexOf("navigator.mediaDevices.getUserMedia") > js.indexOf("async function startCamera()"));
-  assert.doesNotMatch(js.slice(0, js.indexOf("async function startCamera()")), /getUserMedia\(/);
-});
-
-test("cámara usa detector nativo o ZXing-WASM local sin CDN", () => {
-  assert.equal(packageJson.dependencies["barcode-detector"], "^3.2.2");
-  assert.match(js, /if \(window\.BarcodeDetector\)[\s\S]*cameraDetectorKind = "nativo"/);
-  assert.match(js, /\/vendor\/barcode-detector\/3\.2\.2\/polyfill\.js/);
-  assert.match(js, /\/vendor\/zxing-wasm\/3\.1\.3\/zxing_reader\.wasm/);
-  assert.doesNotMatch(js, /cdn\.jsdelivr|unpkg|https:\/\/.*barcode/i);
-  assert.match(appSource, /node_modules\/barcode-detector\/dist\/iife\/polyfill\.js/);
-  assert.match(appSource, /node_modules\/zxing-wasm\/dist\/reader\/zxing_reader\.wasm/);
-  assert.match(appSource, /\/vendor\/barcode-detector\/3\.2\.2\/polyfill\.js/);
-  assert.match(appSource, /\/vendor\/zxing-wasm\/3\.1\.3\/zxing_reader\.wasm/);
-  assert.match(appSource, /res\.type\("application\/wasm"\)\.sendFile/);
-});
-
-test("el laboratorio reenvía el login con next allowlisted al propio laboratorio", () => {
-  assert.match(js, /href="\/login\.html\?next=\/pda-scanner-lab\.html"/);
-  assert.equal((js.match(/href="\/login\.html(?:\?[^"]*)?"/g) || []).join(""), 'href="/login.html?next=/pda-scanner-lab.html"');
-});
-
-test("detección estable clasifica con detectionMs y no rearma después del primer OK", () => {
-  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
-  const detectedBranch = detect.slice(detect.indexOf("if (rawValue)"));
-  assert.doesNotMatch(detectedBranch, /(?:await\s+)?showDetectedFrame\([^;]+\)\.catch\(/);
-  assert.match(
-    detectedBranch,
-    /showDetectedFrame\(cameraFrame, rawValue\);\s*const entry = await processScan\(rawValue, \{ detectionMs \}\)/
-  );
-  assert.match(detectedBranch, /if \(!scanSessionClosed && cameraStream\)[\s\S]*cameraDetectionArmed = true/);
-  assert.match(detect, /runId !== cameraRunId/);
-  assert.match(js, /encodeURIComponent\(session\.id\)/);
-  assert.match(js, /cameraStream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
-  assert.match(js, /pagehide/);
-  assert.match(js, /visibilitychange/);
-});
-
-test("feedback de éxito se ejecuta una sola vez y no usa recursos externos", () => {
-  const audio = js.slice(js.indexOf("function prepareDetectionAudio()"), js.indexOf("function stopCamera("));
-  const arm = js.slice(js.indexOf("function armCameraDetection()"), js.indexOf("async function startCamera()"));
-  assert.match(audio, /window\.AudioContext \|\| window\.webkitAudioContext/);
-  assert.match(audio, /resume\(\)\.catch\(\(\) => \{\}\)/);
-  assert.match(audio, /typeof navigator\.vibrate === "function"/);
-  assert.match(audio, /navigator\.vibrate\(80\)/);
-  assert.match(audio, /createBuffer\(1, frameCount, context\.sampleRate\)/);
-  assert.match(audio, /createBufferSource\(\)/);
-  assert.match(audio, /createBiquadFilter\(\)/);
-  assert.doesNotMatch(audio, /createOscillator\(/);
-  assert.match(audio, /function playSuccessFeedbackOnce\(\)[\s\S]*if \(successFeedbackPlayed\) return;[\s\S]*successFeedbackPlayed = true/);
-  assert.match(arm, /prepareDetectionAudio\(\)/);
-  assert.doesNotMatch(audio, /await |fetch\(|api\(|localStorage|sessionStorage|indexedDB|new Audio\(/);
-});
-
-test("guía de cámara es amplia y no oscurece el video", () => {
-  const guide = css.slice(css.indexOf(".camera-guide {"), css.indexOf(".camera-status"));
-  assert.match(guide, /inset:\s*14% 5%/);
-  assert.match(guide, /border:\s*3px solid/);
-  assert.doesNotMatch(guide, /box-shadow|#0004|999px/);
-});
-
-test("preview no ejecuta detección antes de que el usuario arme la lectura", () => {
-  const schedule = js.slice(js.indexOf("function scheduleCameraDetection()"), js.indexOf("async function detectCameraFrame()"));
-  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
-  const arm = js.slice(js.indexOf("function armCameraDetection()"), js.indexOf("async function startCamera()"));
-  const start = js.slice(js.indexOf("async function startCamera()"), js.indexOf("function setBarcodeGeneratorStatus("));
-  assert.match(html, /id="armCameraBtn"[\s\S]*INICIAR LECTURA/);
-  assert.match(js, /armCameraBtn"\)\.addEventListener\("click", armCameraDetection\)/);
-  assert.match(schedule, /if \(!cameraStream \|\| !cameraDetectionArmed\) return/);
-  assert.match(detect, /if \(scanSessionClosed \|\| !cameraStream \|\| !cameraDetectionArmed \|\| cameraDetectionBusy\) return/);
-  assert.doesNotMatch(start, /cameraDetector\.detect|scheduleCameraDetection\(\)|cameraStartedAt = performance\.now\(\)/);
-  assert.match(start, /Cámara lista para enfocar/);
-  assert.match(arm, /cameraDetectionArmed = true/);
-  assert.match(arm, /scheduleCameraDetection\(\)/);
-});
-
-test("métrica de detección empieza al armar y excluye preparación y enfoque", () => {
-  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("async function startCamera()"));
-  const process = js.slice(js.indexOf("async function processScan("), js.indexOf("function setCameraStatus("));
-  const arm = js.slice(js.indexOf("function armCameraDetection()"), js.indexOf("async function startCamera()"));
-  const start = js.slice(js.indexOf("async function startCamera()"), js.indexOf("function setBarcodeGeneratorStatus("));
-  assert.match(arm, /cameraStartedAt = performance\.now\(\)/);
-  assert.ok(arm.indexOf("cameraStartedAt = performance.now()") < arm.indexOf("scheduleCameraDetection()"));
-  assert.doesNotMatch(start, /cameraStartedAt = performance\.now\(\)/);
-  assert.match(detect, /performance\.now\(\) - cameraStartedAt/);
-  assert.match(process, /persistEntry\(entry, originalCode\)/);
-  assert.match(evidenceService, /const startedAt = performance\.now\(\)/);
-  assert.match(evidenceService, /performance\.now\(\) - startedAt/);
-  assert.match(html, /Hasta detección/);
-  assert.match(html, /Clasificación API/);
-  assert.match(evidenceService, /detectionMs/);
-  assert.match(evidenceService, /classificationMs/);
-  assert.doesNotMatch(js, /\blatencyMs\b/);
-});
-
-test("primer OK cierra atómicamente cámara, callbacks y entradas posteriores", () => {
-  const process = js.slice(js.indexOf("async function processScan("), js.indexOf("function setCameraStatus("));
-  const complete = sourceFunction(js, "completeSuccessfulScan");
-  const halt = sourceFunction(js, "haltCameraCapture");
-  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
-  assert.match(process, /if \(scanSessionClosed \|\| scanProcessing\) return null/);
-  const saved = sourceFunction(js, "applySavedReading");
-  assert.ok(process.indexOf("scanProcessing = true") < process.indexOf("await persistEntry("));
-  assert.match(saved, /entry\.result === "OK"\) completeSuccessfulScan\(\)/);
-  assert.ok(complete.indexOf("scanSessionClosed = true") < complete.indexOf("haltCameraCapture()"));
-  assert.ok(complete.indexOf("scanSessionClosed = true") < complete.indexOf("playSuccessFeedbackOnce()"));
-  assert.match(halt, /window\.clearTimeout\(cameraTimer\)/);
-  assert.match(halt, /cameraRunId \+= 1/);
-  assert.match(halt, /cameraDetectionArmed = false/);
-  assert.match(halt, /track\.stop\(\)/);
-  assert.match(halt, /cameraStream = null/);
-  assert.match(complete, /armCameraBtn"\)\.textContent = "ESCANEAR SIGUIENTE"/);
-  assert.match(complete, /scanBtn"\)\.textContent = "Escanear siguiente"/);
-  assert.match(detect, /scanSessionClosed \|\|[\s\S]*runId !== cameraRunId/);
-  assert.match(js, /async function registerNotRead\(\) \{\s*if \(scanSessionClosed \|\| scanProcessing\) return/);
-});
-
-test("normaliza solo ]C1 y estabiliza el SKU sin clasificar fragmentos intermedios", () => {
-  const evaluate = new Function(`
-    const cameraStabilityFrames = 3;
-    const cameraTimedStabilityFrames = 2;
-    const cameraStabilityMs = 200;
-    ${sourceFunction(js, "normalizeScannerRawValue")}
-    ${sourceFunction(js, "advanceCameraCandidate")}
-    return { normalizeScannerRawValue, advanceCameraCandidate };
-  `)() as {
-    normalizeScannerRawValue(value: string): string;
-    advanceCameraCandidate(
-      state: { value: string; count: number; firstSeenAt: number | null; stableValue: string },
-      value: string,
-      at: number
-    ): { value: string; count: number; firstSeenAt: number | null; stableValue: string };
-  };
-  assert.equal(evaluate.normalizeScannerRawValue("]C1QMR-FR000000000389"), "QMR-FR000000000389");
-  assert.equal(evaluate.normalizeScannerRawValue("SKU]C1LEGITIMO"), "SKU]C1LEGITIMO");
-
-  let state = { value: "", count: 0, firstSeenAt: null as number | null, stableValue: "" };
-  const frames: Array<[string, number]> = [
-    ["2425", 0],
-    ["]C1101602005", 160],
-    ["]C1QMR-FR000000000389", 320],
-    ["]C1QMR-FR000000000389", 480],
-    ["]C1QMR-FR000000000389", 640]
-  ];
-  const stableValues = frames.map(([value, at]) => {
-    state = evaluate.advanceCameraCandidate(state, value, at);
-    return state.stableValue;
-  });
-  assert.deepEqual(stableValues, ["", "", "", "", "QMR-FR000000000389"]);
-});
-
-test("estabilización acepta 3 frames o 2 durante 200 ms, pero nunca un solo frame", () => {
-  const advance = new Function(`
-    const cameraStabilityFrames = 3;
-    const cameraTimedStabilityFrames = 2;
-    const cameraStabilityMs = 200;
-    ${sourceFunction(js, "normalizeScannerRawValue")}
-    ${sourceFunction(js, "advanceCameraCandidate")}
-    return advanceCameraCandidate;
-  `)() as (
-    state: { value: string; count: number; firstSeenAt: number | null; stableValue: string },
-    value: string,
-    at: number
-  ) => { value: string; count: number; firstSeenAt: number | null; stableValue: string };
-  const empty = { value: "", count: 0, firstSeenAt: null, stableValue: "" };
-
-  const oneFrame = advance(empty, "SKU-ESTABLE", 0);
-  assert.equal(oneFrame.stableValue, "");
-
-  const quickSecond = advance(oneFrame, "SKU-ESTABLE", 90);
-  assert.equal(quickSecond.stableValue, "");
-  const quickThird = advance(quickSecond, "SKU-ESTABLE", 150);
-  assert.equal(quickThird.stableValue, "SKU-ESTABLE");
-
-  const timedFirst = advance(empty, "SKU-TEMPORIZADO", 1000);
-  assert.equal(timedFirst.stableValue, "");
-  const timedSecond = advance(timedFirst, "SKU-TEMPORIZADO", 1200);
-  assert.equal(timedSecond.stableValue, "SKU-TEMPORIZADO");
-});
-
-test("deduplica cada código por sesión y el rearme explícito limpia el estado", () => {
-  const process = js.slice(js.indexOf("async function processScan("), js.indexOf("function setCameraStatus("));
-  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
-  const restart = sourceFunction(js, "restartCameraScan");
-  const reset = sourceFunction(js, "resetScanSession");
-  assert.ok(process.indexOf("scanSessionSeenCodes.has(code)") < process.indexOf("await persistEntry("));
-  assert.ok(process.indexOf("scanSessionSeenCodes.add(code)") < process.indexOf("await persistEntry("));
-  assert.match(detect, /scanSessionSeenCodes\.has\(rawValue\)[\s\S]*scheduleCameraDetection\(\);[\s\S]*return/);
-  assert.match(restart, /resetScanSession\(\);[\s\S]*await startCamera\(\);[\s\S]*armCameraDetection\(\)/);
-  assert.match(reset, /scanSessionSeenCodes\.clear\(\)/);
-  assert.match(reset, /successFeedbackPlayed = false/);
-  assert.doesNotMatch(html, /repeatBtn|Repetir \/ enfocar/);
-  assert.match(html, /pda-scanner-lab\.js\?v=8/);
-});
-
-test("frame local se genera solo tras detectar, no se persiste ni se envía", () => {
-  const snapshot = js.slice(js.indexOf("function snapshotCameraFrame()"), js.indexOf("function showDetectedFrame("));
-  const evidence = js.slice(js.indexOf("function showDetectedFrame("), js.indexOf("function stopCamera("));
-  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
-  const start = js.slice(js.indexOf("async function startCamera()"), js.indexOf("function setBarcodeGeneratorStatus("));
-  const rawValueBranch = detect.slice(detect.indexOf("if (rawValue)"));
-  assert.match(snapshot, /context\.drawImage\(cameraVideo, 0, 0, width, height\)/);
-  assert.match(detect, /const cameraFrame = snapshotCameraFrame\(\)[\s\S]*cameraDetector\.detect\(cameraFrame\)/);
-  assert.match(evidence, /canvas\.toDataURL\("image\/jpeg", 0\.88\)/);
-  assert.match(evidence, /dataUrl\.startsWith\("data:image\/jpeg"\)/);
-  assert.doesNotMatch(evidence, /URL\.createObjectURL|blob:/);
-  assert.match(rawValueBranch, /showDetectedFrame\(cameraFrame, rawValue\)/);
-  assert.doesNotMatch(start, /showDetectedFrame\(/);
-  assert.doesNotMatch(evidence, /api\(|fetch\(|localStorage|sessionStorage|indexedDB/);
-  assert.match(appSource, /"img-src": \["'self'", "data:", "https:"\]/);
-  assert.doesNotMatch(appSource, /"img-src":[^\n]*"blob:"/);
-});
-
-test("siguiente detección reemplaza la evidencia local y permite descartarla", () => {
-  const clear = js.slice(js.indexOf("function clearDetectedFrame()"), js.indexOf("function snapshotCameraFrame()"));
-  const evidence = js.slice(js.indexOf("function showDetectedFrame("), js.indexOf("function stopCamera("));
-  assert.doesNotMatch(clear, /URL\.revokeObjectURL|blob:/);
-  assert.match(clear, /detectedFrameImage"\)\.removeAttribute\("src"\)/);
-  assert.match(clear, /detectedFrameEvidence"\)\.hidden = true/);
-  assert.ok(evidence.indexOf("clearDetectedFrame()") < evidence.indexOf('canvas.toDataURL("image/jpeg", 0.88)'));
-  assert.match(js, /discardDetectedFrameBtn"\)\.addEventListener\("click", clearDetectedFrame\)/);
-  assert.match(js, /pagehide[\s\S]*clearDetectedFrame\(\)/);
-});
-
-test("generador Code 128 es local, bajo demanda y no toca API ni base de datos", () => {
-  for (const id of [
-    "barcodeSampleInput", "generateBarcodeBtn", "useLastScanBtn",
-    "downloadBarcodeBtn", "barcodeGeneratorStatus", "barcodePreview", "barcodeImage"
-  ]) {
-    assert.match(html, new RegExp(`id="${id}"`));
-  }
-  const generator = js.slice(js.indexOf("function loadBarcodeWriter()"), js.indexOf("function registerNotRead()"));
-  assert.match(generator, /\/vendor\/zxing-wasm\/3\.1\.3\/writer\.js/);
-  assert.match(generator, /\/vendor\/zxing-wasm\/3\.1\.3\/zxing_writer\.wasm/);
-  assert.match(generator, /writer\.writeBarcode\(value, \{\s*format: "Code128"/);
-  assert.match(generator, /blobToDataUrl\(output\.image\)/);
-  assert.doesNotMatch(generator, /api\(|fetch\(|\/api\//);
-  assert.match(appSource, /node_modules\/zxing-wasm\/dist\/iife\/writer\/index\.js/);
-  assert.match(appSource, /node_modules\/zxing-wasm\/dist\/writer\/zxing_writer\.wasm/);
-  assert.match(appSource, /\/vendor\/zxing-wasm\/3\.1\.3\/writer\.js/);
-  assert.match(appSource, /\/vendor\/zxing-wasm\/3\.1\.3\/zxing_writer\.wasm/);
-});
-
-test("resumen PDA calcula total, categorías y percentiles reproducibles", () => {
-  const summary = calculatePdaSessionSummary([
+test("resumen final calcula categorías y percentiles reproducibles", () => {
+  assert.deepEqual(calculatePdaSessionSummary([
     { result: "OK", detectionMs: 100, classificationMs: 20 },
     { result: "OK", detectionMs: 200, classificationMs: 40 },
     { result: "RECONOCIDO_NO_ENCONTRADO", detectionMs: 300, classificationMs: 60 },
-    { result: "NO_LEIDO", detectionMs: null, classificationMs: null },
-    { result: "LEIDO_INCORRECTAMENTE", detectionMs: 1000, classificationMs: 100 }
-  ]);
-  assert.deepEqual(summary, {
-    totalReadings: 5,
+    { result: "NO_LEIDO", detectionMs: null, classificationMs: null }
+  ]), {
+    totalReadings: 4,
     okReadings: 2,
     notFoundReadings: 1,
-    failedReadings: 2,
-    successRate: 40,
+    failedReadings: 1,
+    successRate: 50,
     detectionMinMs: 100,
-    detectionMedianMs: 250,
-    detectionP95Ms: 1000,
+    detectionMedianMs: 200,
+    detectionP95Ms: 300,
     classificationMinMs: 20,
-    classificationMedianMs: 50,
-    classificationP95Ms: 100
+    classificationMedianMs: 40,
+    classificationP95Ms: 60
   });
   assert.equal(pdaOutcome("SKU", "SKU"), "OK");
-  assert.equal(pdaOutcome("SKU", "LOTE"), "LEIDO_INCORRECTAMENTE");
   assert.equal(pdaOutcome("NO_ENCONTRADO", "SKU"), "RECONOCIDO_NO_ENCONTRADO");
-  assert.equal(normalizePdaRawCode(" ]C1QMR-FR000000000389 "), "QMR-FR000000000389");
-  assert.equal(normalizePdaRawCode("SKU]C1LEGITIMO"), "SKU]C1LEGITIMO");
+  assert.equal(normalizePdaRawCode(" ]C1SKU-1 "), "SKU-1");
   assert.match(createVisibleTestId(new Date("2026-09-02T00:00:00Z")), /^PDA-20260902-[A-F0-9]{24}$/);
 });
 
-test("modelo PDA fuerza aislamiento cliente-sesión e idempotencia", () => {
-  assert.match(schema, /model PdaTestSession[\s\S]*@@unique\(\[clientId, clientSessionKey\]\)/);
-  assert.match(schema, /model PdaTestSession[\s\S]*@@unique\(\[clientId, testId\]\)/);
-  assert.doesNotMatch(schema, /testId\s+String\s+@unique/);
-  assert.match(schema, /model PdaTestSession[\s\S]*@@unique\(\[id, clientId\]\)/);
-  assert.match(schema, /model PdaTestReading[\s\S]*@@unique\(\[clientId, idempotencyKey\]\)/);
-  assert.match(
-    schema,
-    /session\s+PdaTestSession\s+@relation\(fields: \[sessionId, clientId\], references: \[id, clientId\]/
+test("retry conserva fingerprint y payload distinto con la misma key entra en conflicto", () => {
+  const first = attempt();
+  assert.equal(fingerprintPdaAttempt(first), fingerprintPdaAttempt({ ...first }));
+  assert.notEqual(
+    fingerprintPdaAttempt(first),
+    fingerprintPdaAttempt({ ...first, rawCode: "SKU-2" })
   );
-  assert.match(migration, /FOREIGN KEY \("sessionId", "clientId"\)/);
-  assert.match(migration, /"PdaTestSession_testId_key".*\("testId"\)/);
-  assert.match(testIdMigration, /"PdaTestSession_clientId_testId_key"[\s\S]*\("clientId", "testId"\)/);
-  assert.match(testIdMigration, /DROP INDEX IF EXISTS "PdaTestSession_testId_key"/);
-  assert.doesNotMatch(migration, /(?:ALTER|CREATE) TABLE "(?:Inventory|ScanEvent|Movement)/);
 });
 
-test("endpoints de evidencia son ADMIN, flag-gated y tenant-scoped", () => {
-  for (const path of [
-    "/pda-test-sessions",
-    "/pda-test-sessions/:sessionId/readings",
-    "/pda-test-sessions/:sessionId/finalize",
-    "/pda-test-sessions/:testId/export.csv",
-    "/pda-test-sessions/:testId/export.json"
-  ]) {
-    const start = routes.indexOf(`"${path}"`);
-    assert.ok(start >= 0, `falta endpoint ${path}`);
-    const route = routes.slice(start, routes.indexOf("\n);", start));
-    assert.match(route, /pdaScannerLabApiGate/);
-    assert.match(route, /requireAuth/);
-    assert.match(route, /requireRole\(\["ADMIN"\]\)/);
-    assert.match(route, /requireOperationalClient/);
+test("repetición intencional del mismo código produce attempts distintos", () => {
+  const first = attempt();
+  const repeated = attempt({
+    clientSeq: 2,
+    attemptId: "33333333-3333-4333-8333-333333333333",
+    idempotencyKey: "44444444-4444-4444-8444-444444444444"
+  });
+  assert.equal(first.rawCode, repeated.rawCode);
+  assert.notEqual(first.attemptId, repeated.attemptId);
+  assert.notEqual(fingerprintPdaAttempt(first), fingerprintPdaAttempt(repeated));
+  assert.doesNotMatch(js, /scanSessionSeenCodes|new Set\(\)/);
+});
+
+test("seal acepta retries previos, rechaza attempts posteriores y reconcile detecta huecos", () => {
+  assert.equal(pdaRunAcceptsAttempt("ACTIVE", null, 99), true);
+  assert.equal(pdaRunAcceptsAttempt("SEALED", 3, 3), true);
+  assert.equal(pdaRunAcceptsAttempt("DRAINING", 3, 2), true);
+  assert.equal(pdaRunAcceptsAttempt("SEALED", 3, 4), false);
+  assert.equal(pdaRunAcceptsAttempt("RECONCILED", 3, 2), false);
+  assert.deepEqual(missingPdaSequences([1, 3, 3], 4), [2, 4]);
+  assert.deepEqual(missingPdaSequences([3, 2, 1], 3), []);
+  assert.match(runService, /sealedThroughSeq < run\.lastAcceptedSeq \|\| sealedThroughSeq > 100_000/);
+  assert.match(routes, /sealedThroughSeq: z\.number\(\)\.int\(\)\.min\(0\)\.max\(100_000\)/);
+});
+
+test("grant revocado y expirado fallan sin depender de referencia local", () => {
+  const future = new Date("2026-09-02T12:00:00Z");
+  const now = new Date("2026-09-02T10:00:00Z");
+  assert.equal(pdaGrantFailure({ status: "ACTIVE", expiresAt: future }, now), null);
+  assert.equal(pdaGrantFailure({ status: "REVOKED", expiresAt: future }, now), "PDA_GRANT_REVOKED");
+  assert.equal(pdaGrantFailure({ status: "ACTIVE", expiresAt: now }, now), "PDA_GRANT_EXPIRED");
+  assert.equal(digestPdaSecret("a".repeat(43)), digestPdaSecret("a".repeat(43)));
+  assert.notEqual(digestPdaSecret("a".repeat(43)), digestPdaSecret("b".repeat(43)));
+  assert.match(middleware, /tokenDigest: digestPdaSecret\(token\)/);
+  assert.match(middleware, /grant\.clientId/);
+});
+
+test("modelo Prisma impone FKs tenant-compuestas y unicidad attempt/sequence", () => {
+  for (const model of [
+    "PdaTestSession", "PdaCaptureRun", "PdaTestReading", "PdaPairingChallenge", "PdaLabGrant"
+  ]) assert.match(schema, new RegExp(`model ${model}`));
+  assert.match(schema, /PdaCaptureRun[\s\S]*@@unique\(\[id, clientId\]\)/);
+  assert.match(schema, /PdaTestReading[\s\S]*@@unique\(\[runId, clientSeq\]\)/);
+  assert.match(schema, /PdaTestReading[\s\S]*@@unique\(\[runId, attemptId\]\)/);
+  assert.match(schema, /run\s+PdaCaptureRun\s+@relation\(fields: \[runId, clientId\]/);
+  assert.match(migration, /FOREIGN KEY \("runId", "clientId"\)/);
+  assert.match(migration, /FORCED_TAKEOVER|PdaCaptureRunStatus/);
+  assert.doesNotMatch(migration, /(?:ALTER|CREATE) TABLE "(?:Inventory|ScanEvent|InventoryMovement)"/);
+});
+
+test("migración incremental preserva evidencia previa con legacy run", () => {
+  assert.match(migration, /INSERT INTO "PdaCaptureRun"/);
+  assert.match(migration, /ROW_NUMBER\(\) OVER \(PARTITION BY "sessionId"/);
+  assert.match(migration, /ALTER COLUMN "runId" SET NOT NULL/);
+  assert.match(migration, /CASE WHEN s\."status" = 'CLOSED' THEN 'RELEASED'/);
+});
+
+test("rutas PDA están aisladas del bearer ADMIN y derivan tenant del grant", () => {
+  assert.match(app, /app\.use\("\/api\/pda", pdaRouter\)/);
+  assert.match(routes, /router\.use\(requirePdaGrant\)/);
+  assert.match(routes, /req\.pdaAuth!\.clientId/);
+  assert.doesNotMatch(routes, /requireAuth|requireRole|operationalClientId|Authorization/);
+  assert.doesNotMatch(routes, /clientId:\s*(?:req\.body|body)|req\.query\.clientId/);
+  assert.doesNotMatch(adminRoutes, /pda-test-sessions\/:sessionId\/readings/);
+});
+
+test("pairing es one-shot fuerte, no viaja por URL y cookie es restringida", () => {
+  assert.match(authService, /randomBytes\(32\)\.toString\("base64url"\)/);
+  assert.match(authService, /consumedAt: null/);
+  assert.match(authService, /attempts: \{ lt: challenge\.maxAttempts \}/);
+  assert.match(authService, /prisma\.pdaPairingChallenge\.updateMany/);
+  assert.match(authService, /PDA_PAIRING_TTL_MS = 5 \* 60 \* 1000/);
+  assert.match(routes, /httpOnly: true/);
+  assert.match(routes, /secure: true/);
+  assert.match(routes, /sameSite: "strict"/);
+  assert.match(routes, /path: "\/api\/pda"/);
+  assert.match(pairJs, /history\.replaceState\(null, "", "\/pda-pair\.html"\)/);
+  assert.doesNotMatch(pairJs, /URLSearchParams|location\.search|location\.hash|localStorage|sessionStorage/);
+  assert.doesNotMatch(pairHtml, /password|login|Credential/i);
+});
+
+test("frontend prestado no contiene ADMIN, export, imágenes ni clipboard", () => {
+  assert.doesNotMatch(html, /ADMIN|inventario global|valuaci[oó]n|usuarios|export|PNG|historial/i);
+  assert.doesNotMatch(html, /detectedFrame|barcodeImage|historyBody|dashboard\.html/);
+  assert.doesNotMatch(js, /localStorage\.(?:setItem|removeItem)|Authorization|navigator\.clipboard|download|toDataURL|Blob/);
+  assert.match(js, /preexistingAdminAuth = Boolean\(localStorage\.getItem\("token"\)\)/);
+  assert.doesNotMatch(js, /purgeExpired|evidenceTtl|24 \* 60/);
+  assert.match(js, /indexedDB\.open\(DB_NAME/);
+  assert.match(js, /await deleteAttempt\(item\.idempotencyKey\)/);
+});
+
+test("hide/pagehide detiene captura, enmascara datos y exige revalidar grant", () => {
+  assert.match(js, /function lockSurface\(\)[\s\S]*stopCamera[\s\S]*maskVisibleReading/);
+  assert.match(js, /document\.addEventListener\("visibilitychange"/);
+  assert.match(js, /window\.addEventListener\("pagehide", lockSurface\)/);
+  assert.match(js, /async function unlockSurface\(\)[\s\S]*\/api\/pda\/status/);
+  assert.match(html, /id="privacyCover"/);
+});
+
+test("release limpia solo namespace del run y confirma 401 antes de SAFE_TO_RETURN", () => {
+  const release = js.slice(js.indexOf("async function finalizeAndRelease"), js.indexOf("function lockSurface"));
+  assert.match(release, /runQueue\(runId\)/);
+  assert.match(release, /deleteAttempt\(item\.idempotencyKey\)/);
+  assert.match(release, /\/release/);
+  assert.match(release, /await api\("\/api\/pda\/status"\)/);
+  assert.match(release, /revoked = error\.status === 401/);
+  assert.match(release, /SAFE_TO_RETURN/);
+  assert.match(runService, /status: "REVOKED"[\s\S]*revokeReason: "RUN_RELEASED"/);
+  assert.match(runService, /calculatePdaSessionSummary\(readings\)/);
+  assert.match(runService, /status: incompleteRuns \? "INCOMPLETE" : "CLOSED"/);
+});
+
+test("takeover forzado marca run anterior INCOMPLETE y revoca solo grants afectados", () => {
+  const takeover = runService.slice(runService.indexOf("export async function forceTakeoverPdaSession"));
+  assert.match(takeover, /status: "INCOMPLETE"/);
+  assert.match(takeover, /incompleteReason: "FORCED_TAKEOVER"/);
+  assert.match(takeover, /epoch: \{ increment: 1 \}/);
+  assert.match(takeover, /where: \{ clientId, sessionId, status: "ACTIVE" \}/);
+  assert.doesNotMatch(takeover, /pdaLabGrant\.updateMany\(\{\s*data/);
+  const createRun = runService.slice(
+    runService.indexOf("export async function createPdaCaptureRun"),
+    runService.indexOf("export async function getPdaRun")
+  );
+  assert.match(createRun, /tx\.pdaLabGrant\.findFirst/);
+  assert.match(createRun, /status: "ACTIVE"/);
+  assert.match(createRun, /expiresAt: \{ gt: new Date\(\) \}/);
+});
+
+test("proxy público same-origin no depende del Host interno de Render", () => {
+  assert.match(middleware, /fetchSite === "same-origin"/);
+  assert.match(middleware, /"www\.control\.logitec\.com\.mx"/);
+  assert.doesNotMatch(middleware, /const expected = `\$\{req\.protocol\}:\/\/\$\{req\.get\("host"\)\}`/);
+});
+
+test("ACK perdido de release se recupera con recibo read-only del grant revocado", () => {
+  assert.match(routes, /\/runs\/:runPublicId\/release-status/);
+  assert.match(routes, /requirePdaReleaseReceipt/);
+  assert.match(middleware, /grant\.status !== "REVOKED" \|\| grant\.revokeReason !== "RUN_RELEASED"/);
+  assert.match(js, /release-status/);
+});
+
+test("background offline permite continuar solo como pendiente no revalidado", () => {
+  assert.match(js, /!navigator\.onLine && restored/);
+  assert.match(js, /offline; grant sin revalidar/);
+  assert.match(js, /!navigator\.onLine && run && grant/);
+});
+
+test("cámara, HID, manual y NO_LEIDO convergen en contrato de attempt", () => {
+  for (const method of ["CAMERA", "HID", "MANUAL", "NO_LEIDO"]) {
+    assert.match(html + js + routes, new RegExp(method));
   }
-  assert.match(evidenceService, /where: \{ clientId, testId \}/);
-  assert.match(evidenceService, /where: \{ id: context\.sessionId, clientId: context\.clientId \}/);
-  assert.match(evidenceService, /fingerprintReading\(context\.sessionId, input\)/);
-  const record = evidenceService.slice(
-    evidenceService.indexOf("export async function recordPdaTestReading"),
-    evidenceService.indexOf("export async function listPdaTestSessions")
-  );
-  assert.ok(record.indexOf("const existingReading") < record.indexOf("const candidateSession"));
-  assert.match(evidenceService, /error\.code === "P2034"/);
-  assert.match(evidenceService, /attempt < 3/);
-  assert.match(evidenceService, /randomBytes\(12\)/);
-  assert.match(evidenceService, /testId: attempt === 0[\s\S]*createVisibleTestId\(\)/);
-  assert.equal((evidenceService.match(/serializableTransaction\(async \(tx\)/g) || []).length, 2);
-  assert.doesNotMatch(evidenceService, /inventoryMovement|scanEvent|inventory\.(create|update|delete)/i);
-});
-
-test("cola móvil es efímera, no guarda imágenes/tokens y borra tras ACK", () => {
-  assert.match(js, /evidenceTtlMs = 24 \* 60 \* 60 \* 1000/);
-  assert.match(js, /await deleteQueuedReading\(item\.idempotencyKey\)/);
-  assert.match(js, /window\.addEventListener\("online"/);
-  assert.match(js, /clientId: activeClientId/);
-  assert.match(js, /userId: activeUserId/);
-  assert.match(js, /item\.clientId === activeClientId && item\.userId === activeUserId/);
-  assert.match(js, /activeClientId = me\.operationalClient\.id/);
-  assert.match(js, /activeUserId = me\.id/);
-  assert.match(js, /sessionStorage\.setItem\(activeSessionStorageKey\(\)/);
-  assert.match(js, /readActiveSessionDescriptor\(\)/);
-  assert.match(js, /async function recoverLegacyQueue\(\)/);
-  assert.match(js, /!item\.userId/);
-  assert.match(js, /async function revalidateRestoredSession\(restored\)/);
-  assert.match(js, /latest\.status === "FINALIZED"/);
-  assert.match(js, /compactServerSession/);
-  assert.match(js, /networkMetadata: entry\.network/);
-  const persist = sourceFunction(js, "persistEntry");
-  assert.doesNotMatch(persist, /token|dataUrl|image|frame/i);
-  assert.match(html, /las imágenes nunca se envían ni persisten/);
-});
-
-test("vista ADMIN recupera por testId y exporta únicamente desde servidor", () => {
-  assert.match(appSource, /app\.get\("\/pda-test-evidence\.html", pdaScannerLabPageGate/);
-  assert.match(evidenceHtml, /id="sessionsBody"/);
-  assert.match(evidenceHtml, /id="readingsBody"/);
-  assert.match(evidenceHtml, /id="finalizeOpenBtn"/);
-  assert.match(evidenceJs, /encodeURIComponent\(testId\)/);
-  assert.match(evidenceJs, /async function finalizeOpenSession\(\)/);
-  assert.match(evidenceJs, /\/export\.\$\{format\}/);
-  assert.match(routes, /Content-Disposition/);
-  assert.match(loginJs, /"\/pda-test-evidence\.html"/);
+  assert.match(js, /crypto\.randomUUID/);
+  assert.match(js, /clientSeq \+= 1/);
+  assert.match(js, /attemptId,[\s\S]*idempotencyKey/);
+  assert.match(js, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(js, /event\.key !== "Enter"/);
 });

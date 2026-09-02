@@ -14,7 +14,7 @@
         <h1>Sesiones de Laboratorio PDA</h1>
         <p id="sessionContext">Validando acceso…</p>
       </div>
-      <a class="button secondary" href="/pda-scanner-lab.html">Nueva prueba</a>
+      <a class="button secondary" href="/dashboard.html">Volver al panel</a>
     </header>
     <main>
       <section class="safety-banner">
@@ -22,6 +22,21 @@
       </section>
       <div id="accessGate" class="access-gate" role="alert">Validando sesión ADMIN y cliente activo…</div>
       <div id="evidenceWorkspace" hidden>
+        <section class="panel">
+          <div class="history-head">
+            <div>
+              <p class="eyebrow evidence-eyebrow">ESTACIÓN ADMIN CONFIABLE</p>
+              <h2>Preparar dispositivo prestado</h2>
+            </div>
+            <button id="createSessionBtn" class="button primary" type="button">Crear sesión y pairing</button>
+          </div>
+          <div id="pairingOutput" class="final-summary" hidden>
+            <strong id="pairingTestId"></strong>
+            <p>En el PDA abre manualmente <strong>/pda-pair.html</strong>. El secreto es one-shot y vence en 5 minutos.</p>
+            <label>ID de pairing<input id="pairingChallengeId" readonly /></label>
+            <label>Secreto<input id="pairingSecret" readonly /></label>
+          </div>
+        </section>
         <section class="panel">
           <div class="history-head">
             <div class="section-title"><div><span>1</span><h2>Sesiones guardadas</h2></div></div>
@@ -42,11 +57,14 @@
             </div>
             <div class="scan-actions">
               <button id="finalizeOpenBtn" class="button primary" type="button" hidden>Finalizar sesión abierta</button>
+              <button id="pairSelectedBtn" class="button secondary" type="button" hidden>Crear pairing</button>
+              <button id="takeoverBtn" class="button danger-outline" type="button" hidden>Takeover forzado</button>
               <button id="csvBtn" class="button secondary" type="button">Descargar CSV del servidor</button>
               <button id="jsonBtn" class="button secondary" type="button">Descargar JSON del servidor</button>
             </div>
           </div>
           <div id="detailSummary" class="stats"></div>
+          <div id="runsSummary" class="stats"></div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Fecha</th><th>Raw / normalizado</th><th>Zona / captura</th><th>Clasificación</th><th>Resultado</th><th>Detección</th><th>Clasificación</th><th>Notas / red</th></tr></thead>
@@ -56,6 +74,6 @@
         </section>
       </div>
     </main>
-    <script src="/pda-test-evidence.js?v=2"></script>
+    <script src="/pda-test-evidence.js?v=10"></script>
   </body>
 </html>

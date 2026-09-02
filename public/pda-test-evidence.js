@@ -17,8 +17,10 @@ async function api(path, options = {}) {
     method: options.method || "GET",
     headers: {
       Authorization: `Bearer ${token}`,
-      Accept: options.accept || "application/json"
+      Accept: options.accept || "application/json",
+      ...(options.body ? { "Content-Type": "application/json" } : {})
     },
+    body: options.body ? JSON.stringify(options.body) : undefined,
     cache: "no-store"
   });
   if (!response.ok) {
@@ -42,7 +44,7 @@ async function loadSessions() {
     ? sessions.map((session) => `<tr>
         <td><strong>${escapeHtml(session.testId)}</strong></td>
         <td>${escapeHtml(new Date(session.startedAt).toLocaleString("es-MX"))}</td>
-        <td>${escapeHtml(session.status === "FINALIZED" ? "Finalizada" : "Abierta")}</td>
+        <td>${escapeHtml(session.status === "CLOSED" ? "Cerrada" : session.status)}</td>
         <td>${escapeHtml([session.deviceType, session.deviceBrand, session.deviceModel].filter(Boolean).join(" ") || "—")}</td>
         <td>${escapeHtml(sessionSummary(session))}</td>
         <td><button class="button secondary open-session" type="button" data-test-id="${escapeHtml(session.testId)}">Abrir</button></td>
@@ -54,9 +56,14 @@ async function openSession(testId) {
   const session = await (await api(`/api/admin/pda-test-sessions/${encodeURIComponent(testId)}`)).json();
   selectedTestId = session.testId;
   selectedSessionId = session.id;
-  byId("finalizeOpenBtn").hidden = session.status === "FINALIZED";
+  byId("finalizeOpenBtn").hidden = session.status === "CLOSED";
+  byId("pairSelectedBtn").hidden = session.status !== "OPEN";
+  byId("takeoverBtn").hidden = session.status !== "OPEN";
   byId("detailTitle").textContent = session.testId;
   byId("detailSummary").textContent = `${sessionSummary(session)} · detección min/mediana/p95 ${metric(session.detectionMinMs)} / ${metric(session.detectionMedianMs)} / ${metric(session.detectionP95Ms)} · clasificación min/mediana/p95 ${metric(session.classificationMinMs)} / ${metric(session.classificationMedianMs)} / ${metric(session.classificationP95Ms)}`;
+  byId("runsSummary").textContent = (session.runs || []).length
+    ? `Runs: ${session.runs.map((run) => `${run.publicId} · ${run.status} · seq ${run.lastAcceptedSeq}${run.sealedThroughSeq === null ? "" : `/${run.sealedThroughSeq}`}`).join(" | ")}`
+    : "Sin runs.";
   byId("readingsBody").innerHTML = session.readings.length
     ? session.readings.map((reading) => `<tr>
         <td>${escapeHtml(new Date(reading.observedAt).toLocaleString("es-MX"))}</td>
@@ -105,6 +112,53 @@ async function finalizeOpenSession() {
   }
 }
 
+function localId() {
+  return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+}
+
+async function showPairing(sessionId, testId) {
+  const response = await api(`/api/admin/pda-test-sessions/${encodeURIComponent(sessionId)}/pairing`, {
+    method: "POST"
+  });
+  const pairing = await response.json();
+  byId("pairingTestId").textContent = testId || pairing.testId;
+  byId("pairingChallengeId").value = pairing.challengeId;
+  byId("pairingSecret").value = pairing.secret;
+  byId("pairingOutput").hidden = false;
+  byId("pairingOutput").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+async function createSessionAndPairing() {
+  const button = byId("createSessionBtn");
+  button.disabled = true;
+  try {
+    const response = await api("/api/admin/pda-test-sessions", {
+      method: "POST",
+      body: { clientSessionKey: localId() }
+    });
+    const result = await response.json();
+    await showPairing(result.session.id, result.session.testId);
+    await loadSessions();
+  } catch (error) {
+    window.alert(error.message || "No se pudo crear la sesión.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function pairSelectedSession() {
+  if (selectedSessionId) await showPairing(selectedSessionId, selectedTestId);
+}
+
+async function forceTakeover() {
+  if (!selectedSessionId || !window.confirm(`¿Marcar runs activos de ${selectedTestId} como INCOMPLETE y revocar sus grants?`)) return;
+  await api(`/api/admin/pda-test-sessions/${encodeURIComponent(selectedSessionId)}/takeover`, {
+    method: "POST",
+    body: { confirmed: true }
+  });
+  await openSession(selectedTestId);
+}
+
 async function initialize() {
   const gate = byId("accessGate");
   if (!token) {
@@ -133,6 +187,9 @@ byId("sessionsBody").addEventListener("click", (event) => {
 });
 byId("refreshBtn").addEventListener("click", () => void loadSessions());
 byId("finalizeOpenBtn").addEventListener("click", () => void finalizeOpenSession());
+byId("createSessionBtn").addEventListener("click", () => void createSessionAndPairing());
+byId("pairSelectedBtn").addEventListener("click", () => void pairSelectedSession());
+byId("takeoverBtn").addEventListener("click", () => void forceTakeover());
 byId("csvBtn").addEventListener("click", () => void downloadServerExport("csv"));
 byId("jsonBtn").addEventListener("click", () => void downloadServerExport("json"));
 void initialize();

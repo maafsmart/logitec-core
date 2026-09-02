@@ -26,6 +26,7 @@ import { tasksRouter } from "./modules/tasks/tasks.routes.js";
 import { traceabilityRouter } from "./modules/traceability/traceability.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
 import { errorHandler } from "./middlewares/error.middleware.js";
+import { pdaRouter } from "./modules/pda/pda.routes.js";
 
 export const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -53,6 +54,7 @@ const pdaScannerLabPageGate = createPdaScannerLabGate(
 
 app.use(
   helmet({
+    referrerPolicy: { policy: "no-referrer" },
     contentSecurityPolicy: {
       useDefaults: true,
       directives: {
@@ -74,6 +76,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/auth", authRouter);
+app.use("/api/pda", pdaRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/clients", clientsRouter);
 app.use("/api/warehouses", warehousesRouter);
@@ -107,6 +110,10 @@ app.get("/vendor/zxing-wasm/3.1.3/zxing_writer.wasm", (_req, res) => {
 });
 app.get("/pda-scanner-lab.html", pdaScannerLabPageGate, (_req, res) => {
   res.sendFile(path.join(publicDir, "pda-scanner-lab.html"));
+});
+app.get("/pda-pair.html", pdaScannerLabPageGate, (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(path.join(publicDir, "pda-pair.html"));
 });
 app.get("/pda-test-evidence.html", pdaScannerLabPageGate, (_req, res) => {
   res.sendFile(path.join(publicDir, "pda-test-evidence.html"));

@@ -1,119 +1,28 @@
-const token = localStorage.getItem("token") || "";
-const history = [];
 const byId = (id) => document.getElementById(id);
-const field = (id) => String(byId(id)?.value || "").trim();
-const scanInput = byId("scanInput");
-const liveResult = byId("liveResult");
-const cameraVideo = byId("cameraVideo");
-let captureMode = "handheld";
+const DB_NAME = "logitec-pda-evidence-v2";
+const STORE_NAME = "pending-attempts";
+const RUN_DESCRIPTOR = "logitec:pda:active-run:v2";
+const MASK_DELAY_MS = 4_000;
+const IDLE_LOCK_MS = 2 * 60 * 1000;
+
+let grant = null;
+let run = null;
+let clientSeq = 0;
+let captureMethod = "HID";
+let syncBusy = false;
+let paused = false;
 let cameraStream = null;
+let detector = null;
 let cameraTimer = null;
-let cameraDetector = null;
-let cameraDetectorKind = "";
-let cameraDetectionBusy = false;
-let cameraDetectionArmed = false;
-let barcodePolyfillPromise = null;
-let cameraStartedAt = null;
-let detectionAudioContext = null;
-let barcodeWriterPromise = null;
-let generatedBarcodeDataUrl = "";
-let cameraRunId = 0;
-let cameraCandidateState = { value: "", count: 0, firstSeenAt: null, stableValue: "" };
-let scanSessionClosed = false;
-let scanProcessing = false;
-let successFeedbackPlayed = false;
-const scanSessionSeenCodes = new Set();
-const cameraStabilityFrames = 3;
-const cameraTimedStabilityFrames = 2;
-const cameraStabilityMs = 200;
-const evidenceDbName = "logitec-pda-evidence-v1";
-const evidenceStoreName = "pending-readings";
-const evidenceTtlMs = 24 * 60 * 60 * 1000;
-let clientSessionKey = "";
-const serverSessions = new Map();
-let syncInProgress = false;
-let activeClientId = "";
-let activeUserId = "";
+let cameraArmedAt = null;
+let maskTimer = null;
+let idleTimer = null;
+let counts = { total: 0, ok: 0, review: 0 };
+let preexistingAdminAuth = false;
 
-function createLocalKey() {
-  if (crypto.randomUUID) return crypto.randomUUID();
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
-}
-
-function createVisibleTestId() {
-  const bytes = new Uint8Array(12);
-  if (crypto.getRandomValues) crypto.getRandomValues(bytes);
-  else bytes.forEach((_, index) => { bytes[index] = Math.floor(Math.random() * 256); });
-  const suffix = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("").toUpperCase();
-  const date = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-  return `PDA-${date}-${suffix}`;
-}
-
-function activeSessionStorageKey() {
-  return `logitec-pda-active-session:${activeClientId}:${activeUserId}`;
-}
-
-function readActiveSessionDescriptor() {
-  try {
-    const descriptor = JSON.parse(sessionStorage.getItem(activeSessionStorageKey()) || "null");
-    if (
-      descriptor?.clientId !== activeClientId ||
-      descriptor?.userId !== activeUserId ||
-      !descriptor?.clientSessionKey ||
-      !descriptor?.testId
-    ) return null;
-    return descriptor;
-  } catch {
-    return null;
-  }
-}
-
-function compactServerSession(session) {
-  return session ? { id: session.id, testId: session.testId, status: session.status } : null;
-}
-
-function saveActiveSessionDescriptor() {
-  if (!activeClientId || !activeUserId || !clientSessionKey || !field("testId")) return;
-  try {
-    sessionStorage.setItem(activeSessionStorageKey(), JSON.stringify({
-      clientId: activeClientId,
-      userId: activeUserId,
-      clientSessionKey,
-      testId: field("testId"),
-      serverSession: compactServerSession(serverSessions.get(clientSessionKey))
-    }));
-  } catch {
-    // La reanudación es auxiliar; la evidencia pendiente permanece en IndexedDB.
-  }
-}
-
-function clearActiveSessionDescriptor() {
-  try {
-    sessionStorage.removeItem(activeSessionStorageKey());
-  } catch {
-    // Sin acción: no contiene lecturas ni imágenes.
-  }
-}
-
-function normalizeScannerRawValue(rawValue) {
-  const value = String(rawValue ?? "").trim();
-  return value.startsWith("]C1") ? value.slice(3) : value;
-}
-
-function advanceCameraCandidate(state, rawValue, detectedAt) {
-  const value = normalizeScannerRawValue(rawValue);
-  if (!value) return { value: "", count: 0, firstSeenAt: null, stableValue: "" };
-  if (value !== state.value) {
-    return { value, count: 1, firstSeenAt: detectedAt, stableValue: "" };
-  }
-  const count = state.count + 1;
-  const firstSeenAt = state.firstSeenAt ?? detectedAt;
-  const stableValue =
-    count >= cameraStabilityFrames ||
-    (count >= cameraTimedStabilityFrames && detectedAt - firstSeenAt >= cameraStabilityMs)
-      ? value
-      : "";
-  return { value, count, firstSeenAt, stableValue };
+function uuid() {
+  if (!crypto.randomUUID) throw new Error("Este navegador no soporta identificadores seguros.");
+  return crypto.randomUUID();
 }
 
 function escapeHtml(value) {
@@ -128,41 +37,40 @@ function escapeHtml(value) {
 async function api(path, options = {}) {
   const response = await fetch(path, {
     method: options.method || "GET",
+    credentials: "same-origin",
     headers: {
-      Authorization: `Bearer ${token}`,
       Accept: "application/json",
       ...(options.body ? { "Content-Type": "application/json" } : {})
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-    cache: "no-store"
+    cache: "no-store",
+    referrerPolicy: "no-referrer"
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(data.message || `Error HTTP ${response.status}`);
-    error.code = data.code || "";
     error.status = response.status;
+    error.code = data.code || "";
     throw error;
   }
   return data;
 }
 
-function openEvidenceDb() {
+function openDb() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(evidenceDbName, 1);
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore(evidenceStoreName, { keyPath: "idempotencyKey" });
-    };
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(STORE_NAME, { keyPath: "idempotencyKey" });
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
 }
 
-async function evidenceStore(mode, operation) {
-  const db = await openEvidenceDb();
+async function storeOperation(mode, operation) {
+  const db = await openDb();
   try {
     return await new Promise((resolve, reject) => {
-      const transaction = db.transaction(evidenceStoreName, mode);
-      const request = operation(transaction.objectStore(evidenceStoreName));
+      const transaction = db.transaction(STORE_NAME, mode);
+      const request = operation(transaction.objectStore(STORE_NAME));
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -171,960 +79,480 @@ async function evidenceStore(mode, operation) {
   }
 }
 
-const queueReading = (record) => evidenceStore("readwrite", (store) => store.put(record));
-const queuedReadings = () => evidenceStore("readonly", (store) => store.getAll());
-const deleteQueuedReading = (id) => evidenceStore("readwrite", (store) => store.delete(id));
-
-async function purgeExpiredQueue() {
-  const cutoff = Date.now() - evidenceTtlMs;
-  const queued = await queuedReadings();
-  await Promise.all(
-    queued
-      .filter((item) => belongsToActiveContext(item) && item.queuedAt < cutoff)
-      .map((item) => deleteQueuedReading(item.idempotencyKey))
+const queueAttempt = (record) => storeOperation("readwrite", (store) => store.put(record));
+const allQueued = () => storeOperation("readonly", (store) => store.getAll());
+const deleteAttempt = (key) => storeOperation("readwrite", (store) => store.delete(key));
+const runQueue = async (runPublicId = run?.publicId) =>
+  (await allQueued()).filter((item) =>
+    item.grantPublicId === grant?.grantPublicId && item.runPublicId === runPublicId
   );
-}
 
-function setSaveState(state, detail = "") {
-  const status = byId("syncStatus");
-  status.className = `sync-status ${state.toLowerCase()}`;
-  status.textContent = `${state === "SAVED" ? "Guardado" : state === "PENDING" ? "Pendiente de sincronizar" : "Error de guardado"}${detail ? ` · ${detail}` : ""}`;
-}
-
-function sessionPayload() {
-  const device = deviceSnapshot();
-  return {
-    clientSessionKey,
-    preferredTestId: field("testId"),
-    deviceType: device.deviceType || null,
-    deviceBrand: device.brand || null,
-    deviceModel: device.model || null,
-    deviceOs: device.os || null,
-    readerType: device.readerType || null,
-    deviceMetadata: {
-      total: device.total || null,
-      concurrent: device.concurrent || null,
-      month: device.month || null,
-      yearEnd: device.yearEnd || null
-    }
-  };
-}
-
-async function ensureServerSession(payload) {
-  if (serverSessions.has(payload.clientSessionKey)) return serverSessions.get(payload.clientSessionKey);
-  const response = await api("/api/admin/pda-test-sessions", { method: "POST", body: payload });
-  serverSessions.set(payload.clientSessionKey, response.session);
-  if (payload.clientSessionKey === clientSessionKey) {
-    byId("testId").value = response.session.testId;
-    saveActiveSessionDescriptor();
+async function legacyEvidenceState() {
+  if (typeof indexedDB.databases !== "function") return "UNVERIFIABLE_LEGACY_STORAGE";
+  const databases = await indexedDB.databases();
+  if (databases.some((database) => database.name === "logitec-pda-evidence-v1")) {
+    return "UNVERIFIABLE_LEGACY_STORAGE";
   }
-  return response.session;
+  return null;
 }
 
-function startFreshSession() {
-  clearActiveSessionDescriptor();
-  serverSessions.delete(clientSessionKey);
-  clientSessionKey = createLocalKey();
-  byId("testId").value = createVisibleTestId();
-  saveActiveSessionDescriptor();
+function saveDescriptor() {
+  if (!grant || !run) return;
+  sessionStorage.setItem(RUN_DESCRIPTOR, JSON.stringify({
+    grantPublicId: grant.grantPublicId,
+    runPublicId: run.publicId,
+    epoch: run.epoch,
+    clientSeq,
+    testId: run.session?.testId || null
+  }));
 }
 
-async function revalidateRestoredSession(restored) {
-  if (!restored?.serverSession || !navigator.onLine) return;
+function readDescriptor(expectedGrantId = grant?.grantPublicId) {
   try {
-    const latest = await api(`/api/admin/pda-test-sessions/${encodeURIComponent(restored.testId)}`);
-    if (latest.status === "FINALIZED") {
-      startFreshSession();
-      setSaveState("SAVED", `sesión ${restored.testId} ya finalizada; nueva prueba preparada`);
-      return;
-    }
-    serverSessions.set(clientSessionKey, latest);
-    saveActiveSessionDescriptor();
-  } catch (error) {
-    if (error.status === 404) {
-      startFreshSession();
-      return;
-    }
-    setSaveState("PENDING", "no se pudo revalidar la sesión; se reintentará");
-  }
-}
-
-function belongsToActiveContext(item) {
-  return item.clientId === activeClientId && item.userId === activeUserId;
-}
-
-async function activeQueuedReadings() {
-  return (await queuedReadings()).filter(belongsToActiveContext);
-}
-
-async function legacyQueuedReadings() {
-  return (await queuedReadings()).filter((item) => item.clientId === activeClientId && !item.userId);
-}
-
-async function recoverLegacyQueue() {
-  const legacy = await legacyQueuedReadings();
-  if (!legacy.length) return;
-  const recover = window.confirm(
-    `Hay ${legacy.length} lectura(s) de una versión previa sin usuario identificable. ` +
-    "Aceptar las asigna al usuario actual para sincronizarlas; Cancelar las deja en cuarentena sin enviar."
-  );
-  if (!recover) {
-    setSaveState("ERROR", `${legacy.length} lectura(s) antiguas en cuarentena`);
-    return;
-  }
-  const recoveredAt = Date.now();
-  await Promise.all(
-    legacy.map((item) => queueReading({ ...item, userId: activeUserId, queuedAt: recoveredAt }))
-  );
-  setSaveState("PENDING", `${legacy.length} lectura(s) recuperadas`);
-}
-
-function applySavedReading(idempotencyKey, reading) {
-  const entry = history.find((candidate) => candidate.idempotencyKey === idempotencyKey);
-  if (!entry) return;
-  entry.code = reading.normalizedCode || reading.rawCode || "(sin lectura)";
-  entry.classification = reading.classification;
-  entry.result = reading.result;
-  entry.classificationMs = reading.classificationMs;
-  entry.saveState = "SAVED";
-  if (entry.result === "OK") completeSuccessfulScan();
-  renderLive(entry);
-  renderHistory();
-}
-
-async function syncEvidenceQueue() {
-  if (syncInProgress || !navigator.onLine || !activeClientId) return;
-  syncInProgress = true;
-  try {
-    const active = await activeQueuedReadings();
-    const queued = active.filter((item) => !item.blocked).sort((a, b) => a.queuedAt - b.queuedAt);
-    for (const item of queued) {
-      try {
-        const session = await ensureServerSession(item.session);
-        const response = await api(`/api/admin/pda-test-sessions/${encodeURIComponent(session.id)}/readings`, {
-          method: "POST",
-          body: item.reading
-        });
-        applySavedReading(item.idempotencyKey, response.reading);
-        await deleteQueuedReading(item.idempotencyKey);
-      } catch (error) {
-        const entry = history.find((candidate) => candidate.idempotencyKey === item.idempotencyKey);
-        if (entry) entry.saveState = error.status ? "ERROR" : "PENDING";
-        setSaveState(error.status ? "ERROR" : "PENDING", error.message);
-        renderHistory();
-        if (error.code === "PDA_SESSION_FINALIZED") {
-          await queueReading({ ...item, blocked: true, lastError: error.code });
-          continue;
-        }
-        break;
-      }
-    }
-    const remaining = await activeQueuedReadings();
-    const blocked = remaining.filter((item) => item.blocked);
-    if (blocked.length) setSaveState("ERROR", `${blocked.length} lectura(s) en cuarentena`);
-    else if (!remaining.length) setSaveState("SAVED", "sin datos locales pendientes");
-    else if (!byId("syncStatus").classList.contains("error")) setSaveState("PENDING", `${remaining.length} lectura(s)`);
-  } finally {
-    syncInProgress = false;
-  }
-}
-
-async function persistEntry(entry, rawCode) {
-  entry.idempotencyKey = createLocalKey();
-  entry.saveState = "PENDING";
-  const record = {
-    idempotencyKey: entry.idempotencyKey,
-    clientId: activeClientId,
-    userId: activeUserId,
-    queuedAt: Date.now(),
-    session: sessionPayload(),
-    reading: {
-      idempotencyKey: entry.idempotencyKey,
-      observedAt: entry.timestamp,
-      rawCode: rawCode || null,
-      expectedType: entry.expectedType,
-      captureMethod: entry.captureMethod,
-      physicalZone: entry.zone,
-      distance: entry.distance || null,
-      detectionMs: Number.isFinite(entry.detectionMs) ? entry.detectionMs : null,
-      notes: entry.notes || null,
-      networkMetadata: entry.network
-    }
-  };
-  await queueReading(record);
-  setSaveState("PENDING", "cola local temporal");
-  await syncEvidenceQueue();
-  return entry;
-}
-
-function deviceSnapshot() {
-  return {
-    testId: field("testId"),
-    deviceType: field("deviceType"),
-    brand: field("deviceBrand"),
-    model: field("deviceModel"),
-    os: field("deviceOs"),
-    readerType: field("readerType"),
-    total: field("deviceTotal"),
-    concurrent: field("deviceConcurrent"),
-    month: field("deviceMonth"),
-    yearEnd: field("deviceYearEnd")
-  };
-}
-
-function networkSnapshot() {
-  return {
-    provider: field("networkProvider"),
-    zone: field("networkZone"),
-    ping: field("networkPing"),
-    down: field("networkDown"),
-    up: field("networkUp"),
-    stability: field("networkStability"),
-    reference: field("networkReference")
-  };
-}
-
-function networkSummary(network) {
-  const speed = [
-    network.ping ? `ping ${network.ping} ms` : "",
-    network.down ? `${network.down} Mbps down` : "",
-    network.up ? `${network.up} Mbps up` : ""
-  ].filter(Boolean).join(" / ");
-  return [network.provider, network.zone, speed].filter(Boolean).join(" · ") || "Sin dato";
-}
-
-function resultLabel(result) {
-  return ({
-    OK: "OK",
-    NO_LEIDO: "No leído",
-    LEIDO_INCORRECTAMENTE: "Leído incorrectamente",
-    RECONOCIDO_NO_ENCONTRADO: "Reconocido pero no encontrado",
-    OTRO: "Otro / ambiguo"
-  })[result] || result;
-}
-
-function classificationLabel(value) {
-  return ({
-    SKU: "SKU",
-    UBICACION: "Ubicación",
-    LOTE: "Lote",
-    SERIE_IMEI: "Serie / IMEI",
-    AMBIGUO: "AMBIGUO",
-    NO_ENCONTRADO: "No encontrado",
-    NO_LEIDO: "No leído",
-    PENDIENTE: "Pendiente"
-  })[value] || value;
-}
-
-function outcomeFor(classification, expected) {
-  if (classification === "NO_ENCONTRADO") return "RECONOCIDO_NO_ENCONTRADO";
-  if (classification === "AMBIGUO") return "OTRO";
-  if (expected === "OTRO" || classification === expected) return "OK";
-  return "LEIDO_INCORRECTAMENTE";
-}
-
-function metricMs(value) {
-  return Number.isFinite(value) ? `${value} ms` : "—";
-}
-
-function renderLive(entry, details = []) {
-  const css = entry.result === "OK" ? "ok" : entry.result === "NO_LEIDO" ? "error" : "warn";
-  liveResult.className = `live-result ${css}`;
-  const matchText = details.length
-    ? details.map((match) => `${classificationLabel(match.type)}: ${match.label} (${match.detail})`).join(" · ")
-    : "Sin coincidencias en el cliente activo.";
-  liveResult.innerHTML = `<strong>${escapeHtml(entry.code)} · ${escapeHtml(classificationLabel(entry.classification))}</strong>
-    <span>${escapeHtml(matchText)}</span>
-    <span>Resultado: ${escapeHtml(resultLabel(entry.result))}</span>
-    <span>Tiempo hasta detección: ${escapeHtml(metricMs(entry.detectionMs))} · Latencia de clasificación API: ${escapeHtml(metricMs(entry.classificationMs))}</span>
-    <span>Persistencia: ${escapeHtml(entry.saveState === "SAVED" ? "Guardado" : entry.saveState === "ERROR" ? "Error de guardado" : "Pendiente de sincronizar")}</span>`;
-}
-
-function sessionLine(entry) {
-  return `${entry.device.testId || "Sin ID"} | ${entry.zone || "Sin zona"} | ${entry.distance} | ${classificationLabel(entry.classification)} | ${entry.code} | ${resultLabel(entry.result)} | detección ${metricMs(entry.detectionMs)} | clasificación ${metricMs(entry.classificationMs)} | ${networkSummary(entry.network)}`;
-}
-
-function renderHistory() {
-  const body = byId("historyBody");
-  if (!history.length) {
-    body.innerHTML = '<tr><td colspan="8" class="empty">Sin lecturas en esta sesión.</td></tr>';
-  } else {
-    body.innerHTML = history.map((entry) => `<tr>
-      <td>${escapeHtml(entry.timeLabel)}</td>
-      <td>${escapeHtml(entry.device.testId || "—")}<br>${escapeHtml(entry.zone || "—")} · ${escapeHtml(entry.distance)}</td>
-      <td><strong>${escapeHtml(entry.code)}</strong><br>${escapeHtml(entry.captureMethod)}</td>
-      <td>${escapeHtml(classificationLabel(entry.classification))}<br>Esperado: ${escapeHtml(classificationLabel(entry.expectedType))}</td>
-      <td>${escapeHtml(resultLabel(entry.result))}${entry.notes ? `<br>${escapeHtml(entry.notes)}` : ""}<br><strong>${escapeHtml(entry.saveState === "SAVED" ? "Guardado" : entry.saveState === "ERROR" ? "Error de guardado" : "Pendiente de sincronizar")}</strong></td>
-      <td>${escapeHtml(metricMs(entry.detectionMs))}</td>
-      <td>${escapeHtml(metricMs(entry.classificationMs))}</td>
-      <td>${escapeHtml(networkSummary(entry.network))}</td>
-    </tr>`).join("");
-  }
-  const ok = history.filter((entry) => entry.result === "OK").length;
-  byId("sessionStats").textContent = `${history.length} lectura${history.length === 1 ? "" : "s"} · ${ok} OK · ${history.length - ok} con revisión`;
-}
-
-function makeEntry(overrides) {
-  const now = new Date();
-  return {
-    id: `${now.getTime()}-${history.length}`,
-    timestamp: now.toISOString(),
-    timeLabel: now.toLocaleTimeString("es-MX"),
-    device: deviceSnapshot(),
-    network: networkSnapshot(),
-    zone: field("physicalZone"),
-    distance: field("distance"),
-    expectedType: field("expectedType"),
-    captureMethod: field("captureMethod"),
-    notes: field("scanNotes"),
-    ...overrides
-  };
-}
-
-function validateRequired() {
-  const missing = [];
-  if (!field("testId")) missing.push("identificador de prueba");
-  if (!field("physicalZone")) missing.push("zona física");
-  if (missing.length) {
-    liveResult.className = "live-result error";
-    liveResult.innerHTML = `<strong>Faltan datos</strong><span>Completa ${escapeHtml(missing.join(" y "))}.</span>`;
-    return false;
-  }
-  return true;
-}
-
-async function processScan(rawCode, metrics = {}) {
-  if (scanSessionClosed || scanProcessing) return null;
-  if (!validateRequired()) return;
-  const originalCode = rawCode === undefined ? String(scanInput.value || "") : String(rawCode);
-  const code = normalizeScannerRawValue(originalCode);
-  if (!code.trim()) {
-    liveResult.className = "live-result error";
-    liveResult.innerHTML = "<strong>Sin código</strong><span>Barre un código o usa “Registrar no leído”.</span>";
-    scanInput.focus();
-    return;
-  }
-  if (scanSessionSeenCodes.has(code)) return null;
-  scanSessionSeenCodes.add(code);
-  scanProcessing = true;
-  byId("scanBtn").disabled = true;
-  liveResult.className = "live-result idle";
-  liveResult.innerHTML = `<strong>Guardando ${escapeHtml(code)}…</strong><span>Persistencia automática server-side.</span>`;
-  let entry = null;
-  try {
-    entry = makeEntry({
-      code,
-      classification: "PENDIENTE",
-      result: "PENDIENTE",
-      detectionMs: Number.isFinite(metrics.detectionMs) ? metrics.detectionMs : null,
-      classificationMs: null
-    });
-    history.unshift(entry);
-    renderHistory();
-    await persistEntry(entry, originalCode);
-    renderLive(entry);
-    byId("scanNotes").value = "";
-    scanInput.value = "";
-  } catch (error) {
-    if (entry) entry.saveState = "ERROR";
-    setSaveState("ERROR", error.message);
-    liveResult.className = "live-result error";
-    liveResult.innerHTML = `<strong>Error de guardado</strong><span>${escapeHtml(error.message)}</span>`;
-    renderHistory();
-  } finally {
-    scanProcessing = false;
-    if (!scanSessionClosed) {
-      byId("scanBtn").disabled = false;
-      scanInput.focus();
-    }
-  }
-  return entry;
-}
-
-function setCameraStatus(message, tone = "") {
-  const status = byId("cameraStatus");
-  status.textContent = message;
-  status.className = `camera-status${tone ? ` ${tone}` : ""}`;
-}
-
-function clearDetectedFrame() {
-  byId("detectedFrameImage").removeAttribute("src");
-  byId("detectedFrameEvidence").hidden = true;
-}
-
-function snapshotCameraFrame() {
-  const width = cameraVideo.videoWidth;
-  const height = cameraVideo.videoHeight;
-  if (!width || !height) return null;
-
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d");
-  if (!context) return null;
-  context.drawImage(cameraVideo, 0, 0, width, height);
-  return canvas;
-}
-
-function showDetectedFrame(canvas, rawValue) {
-  clearDetectedFrame();
-  const dataUrl = canvas.toDataURL("image/jpeg", 0.88);
-  if (!dataUrl.startsWith("data:image/jpeg")) return false;
-  byId("detectedFrameImage").src = dataUrl;
-  byId("detectedFrameCaption").textContent =
-    `Frame capturado al detectar “${rawValue}”. Solo memoria de esta pestaña; no se carga ni se guarda.`;
-  byId("detectedFrameEvidence").hidden = false;
-  return true;
-}
-
-function prepareDetectionAudio() {
-  try {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContext) return null;
-    detectionAudioContext = detectionAudioContext || new AudioContext();
-    if (detectionAudioContext.state === "suspended") {
-      void detectionAudioContext.resume().catch(() => {});
-    }
-    return detectionAudioContext;
+    const value = JSON.parse(sessionStorage.getItem(RUN_DESCRIPTOR) || "null");
+    return value?.runPublicId && (!expectedGrantId || value.grantPublicId === expectedGrantId) ? value : null;
   } catch {
     return null;
   }
 }
 
-function scheduleShutterClick(context, start, duration, volume, cutoff) {
-  const frameCount = Math.max(1, Math.floor(context.sampleRate * duration));
-  const buffer = context.createBuffer(1, frameCount, context.sampleRate);
-  const samples = buffer.getChannelData(0);
-  for (let index = 0; index < frameCount; index += 1) {
-    const envelope = Math.pow(1 - (index / frameCount), 3);
-    samples[index] = ((Math.random() * 2) - 1) * envelope;
-  }
-  const source = context.createBufferSource();
-  const filter = context.createBiquadFilter();
-  const gain = context.createGain();
-  source.buffer = buffer;
-  filter.type = "highpass";
-  filter.frequency.setValueAtTime(cutoff, start);
-  gain.gain.setValueAtTime(volume, start);
-  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-  source.connect(filter);
-  filter.connect(gain);
-  gain.connect(context.destination);
-  source.start(start);
-  source.stop(start + duration);
+function clearDescriptor() {
+  sessionStorage.removeItem(RUN_DESCRIPTOR);
 }
 
-function playSuccessFeedbackOnce() {
-  if (successFeedbackPlayed) return;
-  successFeedbackPlayed = true;
-  try {
-    if (typeof navigator.vibrate === "function") navigator.vibrate(80);
-  } catch {
-    // El feedback háptico es opcional y nunca debe interrumpir la lectura.
-  }
+function setSaveState(state, detail = "") {
+  const status = byId("syncStatus");
+  const labels = {
+    saved: "Guardado",
+    pending: "Pendiente de sincronizar",
+    error: "Error de guardado"
+  };
+  status.className = `sync-status ${state}`;
+  status.textContent = `${labels[state]}${detail ? ` · ${detail}` : ""}`;
+}
 
+function renderCounts() {
+  byId("sessionStats").textContent =
+    `${counts.total} lecturas · ${counts.ok} OK · ${counts.review} revisión`;
+}
+
+function maskVisibleReading() {
+  byId("scanInput").value = "";
+  const result = byId("liveResult");
+  result.className = "live-result idle";
+  result.innerHTML = "<strong>Lectura protegida</strong><span>Resultado guardado; el código se retiró de pantalla.</span>";
+}
+
+function showResult(reading, state) {
+  window.clearTimeout(maskTimer);
+  const code = reading.normalizedCode || reading.rawCode || "(sin lectura)";
+  const masked = code.length <= 4 ? "••••" : `${code.slice(0, 2)}••••${code.slice(-2)}`;
+  const result = byId("liveResult");
+  result.className = `live-result ${reading.result === "OK" ? "ok" : "warn"}`;
+  result.innerHTML = `<strong>${escapeHtml(masked)} · ${escapeHtml(reading.result)}</strong>
+    <span>${escapeHtml(reading.classification)} · ${state === "saved" ? "Guardado" : "Pendiente de sincronizar"}</span>`;
+  maskTimer = window.setTimeout(maskVisibleReading, MASK_DELAY_MS);
+}
+
+async function syncQueue() {
+  if (syncBusy || !navigator.onLine || !run) return;
+  syncBusy = true;
   try {
-    const context = prepareDetectionAudio();
-    if (!context || context.state !== "running") return;
-    const now = context.currentTime;
-    scheduleShutterClick(context, now, 0.045, 0.32, 700);
-    scheduleShutterClick(context, now + 0.065, 0.07, 0.22, 1100);
-  } catch {
-    // Web Audio puede no existir o estar bloqueado; la lectura debe continuar.
+    const queued = (await runQueue()).sort((a, b) => a.clientSeq - b.clientSeq);
+    for (const item of queued) {
+      try {
+        const response = await api("/api/pda/readings", { method: "POST", body: item.payload });
+        await deleteAttempt(item.idempotencyKey);
+        if (!item.counted) {
+          counts.total += 1;
+          if (response.reading.result === "OK") counts.ok += 1;
+          else counts.review += 1;
+          renderCounts();
+        }
+        showResult(response.reading, "saved");
+      } catch (error) {
+        setSaveState(error.status ? "error" : "pending", error.message);
+        break;
+      }
+    }
+    const remaining = await runQueue();
+    if (!remaining.length) setSaveState("saved", "sin pendientes locales");
+    else if (!byId("syncStatus").classList.contains("error")) {
+      setSaveState("pending", `${remaining.length} intento(s)`);
+    }
+  } finally {
+    syncBusy = false;
   }
 }
 
-function haltCameraCapture() {
-  if (cameraTimer) window.clearTimeout(cameraTimer);
-  cameraTimer = null;
-  cameraRunId += 1;
-  cameraDetectionBusy = false;
-  cameraDetectionArmed = false;
-  if (cameraStream) {
-    cameraStream.getTracks().forEach((track) => track.stop());
+function networkMetadata() {
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  return {
+    online: navigator.onLine,
+    effectiveType: connection?.effectiveType || null,
+    downlink: connection?.downlink || null,
+    rtt: connection?.rtt || null
+  };
+}
+
+async function capture(rawCode, detectionMs = null, method = captureMethod) {
+  if (!run || paused || !["ACTIVE", "DRAINING"].includes(run.status)) return;
+  const code = String(rawCode ?? "").trim();
+  if (!code && method !== "NO_LEIDO") {
+    setSaveState("error", "captura vacía");
+    return;
   }
-  cameraStream = null;
-  cameraStartedAt = null;
-  cameraCandidateState = { value: "", count: 0, firstSeenAt: null, stableValue: "" };
-  cameraVideo.pause();
-  cameraVideo.srcObject = null;
+  const attemptId = uuid();
+  const idempotencyKey = uuid();
+  clientSeq += 1;
+  const payload = {
+    runPublicId: run.publicId,
+    clientSeq,
+    epoch: run.epoch,
+    attemptId,
+    idempotencyKey,
+    observedAt: new Date().toISOString(),
+    rawCode: method === "NO_LEIDO" ? null : code,
+    expectedType: byId("expectedType").value,
+    captureMethod: method,
+    physicalZone: byId("physicalZone").value.trim(),
+    distance: byId("distance").value,
+    detectionMs,
+    notes: byId("scanNotes").value.trim() || null,
+    networkMetadata: networkMetadata()
+  };
+  if (!payload.physicalZone) {
+    clientSeq -= 1;
+    setSaveState("error", "indica la zona física");
+    byId("physicalZone").focus();
+    return;
+  }
+  await queueAttempt({
+    grantPublicId: grant.grantPublicId,
+    runPublicId: run.publicId,
+    clientSeq,
+    attemptId,
+    idempotencyKey,
+    queuedAt: Date.now(),
+    payload
+  });
+  saveDescriptor();
+  byId("scanInput").value = "";
+  byId("scanNotes").value = "";
+  setSaveState("pending", `intento ${clientSeq}`);
+  showResult({ rawCode: code, result: "PENDIENTE", classification: "PENDIENTE" }, "pending");
+  await syncQueue();
+}
+
+async function createOrRestoreRun() {
+  const restored = readDescriptor();
+  if (restored?.runPublicId) {
+    try {
+      run = await api(`/api/pda/runs/${encodeURIComponent(restored.runPublicId)}`);
+    } catch {
+      clearDescriptor();
+    }
+  }
+  if (!run || !["ACTIVE", "PAUSED", "SEALED", "DRAINING", "RECONCILED"].includes(run.status)) {
+    const response = await api("/api/pda/runs", {
+      method: "POST",
+      body: {
+        deviceType: /Android|iPhone|Mobile/i.test(navigator.userAgent) ? "MOBILE" : "PDA",
+        deviceOs: navigator.platform || null,
+        readerType: "CAMERA_HID_MANUAL",
+        deviceMetadata: { language: navigator.language, screen: `${screen.width}x${screen.height}` }
+      }
+    });
+    run = response.run;
+    run = await api(`/api/pda/runs/${encodeURIComponent(run.publicId)}`);
+  }
+  const pending = await runQueue(run.publicId);
+  clientSeq = Math.max(
+    Number(run.lastAcceptedSeq || 0),
+    Number(restored?.clientSeq || 0),
+    ...pending.map((item) => Number(item.clientSeq || 0))
+  );
+  paused = run.status === "PAUSED";
+  byId("runStatus").textContent = `${run.publicId} · ${run.status}`;
+  saveDescriptor();
 }
 
 function stopCamera(message = "Cámara detenida.") {
-  haltCameraCapture();
+  if (cameraTimer) window.clearTimeout(cameraTimer);
+  cameraTimer = null;
+  if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
+  cameraStream = null;
+  cameraArmedAt = null;
+  byId("cameraVideo").srcObject = null;
   byId("startCameraBtn").disabled = false;
   byId("armCameraBtn").disabled = true;
-  byId("armCameraBtn").textContent = "INICIAR LECTURA";
   byId("stopCameraBtn").disabled = true;
-  setCameraStatus(message);
+  byId("cameraStatus").textContent = message;
 }
 
-function completeSuccessfulScan() {
-  if (scanSessionClosed) return false;
-  scanSessionClosed = true;
-  haltCameraCapture();
-  scanInput.disabled = true;
-  byId("scanBtn").disabled = false;
-  byId("scanBtn").textContent = "Escanear siguiente";
-  byId("notReadBtn").disabled = true;
-  byId("startCameraBtn").disabled = true;
-  byId("armCameraBtn").disabled = false;
-  byId("armCameraBtn").textContent = "ESCANEAR SIGUIENTE";
-  byId("stopCameraBtn").disabled = true;
-  setCameraStatus("OK confirmado · cámara detenida y lectura finalizada.", "ok");
-  playSuccessFeedbackOnce();
-  return true;
-}
-
-function resetScanSession() {
-  scanSessionClosed = false;
-  scanProcessing = false;
-  successFeedbackPlayed = false;
-  scanSessionSeenCodes.clear();
-  cameraCandidateState = { value: "", count: 0, firstSeenAt: null, stableValue: "" };
-  scanInput.disabled = false;
-  scanInput.value = "";
-  byId("scanBtn").disabled = false;
-  byId("scanBtn").textContent = "Procesar lectura";
-  byId("notReadBtn").disabled = false;
-  byId("startCameraBtn").disabled = false;
-  byId("armCameraBtn").disabled = true;
-  byId("armCameraBtn").textContent = "INICIAR LECTURA";
-  clearDetectedFrame();
-}
-
-function setCaptureMode(mode) {
-  captureMode = mode === "camera" ? "camera" : "handheld";
-  const camera = captureMode === "camera";
-  byId("handheldModeBtn").classList.toggle("active", !camera);
-  byId("handheldModeBtn").setAttribute("aria-selected", String(!camera));
-  byId("cameraModeBtn").classList.toggle("active", camera);
-  byId("cameraModeBtn").setAttribute("aria-selected", String(camera));
-  byId("handheldCapture").hidden = camera;
-  byId("cameraCapture").hidden = !camera;
-  if (camera) {
-    byId("deviceType").value = "Teléfono";
-    byId("readerType").value = "Cámara";
-    byId("captureMethod").value = "Cámara de celular";
-  } else {
-    if (cameraStream) stopCamera("Cámara detenida; captura manual disponible.");
-    if (field("captureMethod") === "Cámara de celular") {
-      byId("captureMethod").value = "Scanner como teclado";
-    }
-    scanInput.focus();
-  }
-}
-
-function loadBarcodeDetectorPolyfill() {
-  if (window.BarcodeDetector) return Promise.resolve();
-  if (barcodePolyfillPromise) return barcodePolyfillPromise;
-  barcodePolyfillPromise = new Promise((resolve, reject) => {
+async function loadDetector() {
+  if (window.BarcodeDetector) return new window.BarcodeDetector();
+  await new Promise((resolve, reject) => {
     const script = document.createElement("script");
     script.src = "/vendor/barcode-detector/3.2.2/polyfill.js";
-    script.dataset.barcodeDetectorPolyfill = "true";
     script.onload = resolve;
-    script.onerror = () => {
-      script.remove();
-      barcodePolyfillPromise = null;
-      reject(new Error("No se pudo cargar el decodificador local."));
-    };
+    script.onerror = reject;
     document.head.appendChild(script);
   });
-  return barcodePolyfillPromise;
-}
-
-async function createCameraDetector() {
-  if (window.BarcodeDetector) {
-    cameraDetectorKind = "nativo";
-    return new window.BarcodeDetector();
-  }
-  await loadBarcodeDetectorPolyfill();
-  const prepare = window.BarcodeDetectionAPI?.prepareZXingModule;
-  if (typeof prepare === "function") {
-    await prepare({
-      overrides: {
-        locateFile(path, prefix) {
-          return path.endsWith(".wasm")
-            ? "/vendor/zxing-wasm/3.1.3/zxing_reader.wasm"
-            : `${prefix}${path}`;
-        }
-      }
+  if (window.BarcodeDetectionAPI?.prepareZXingModule) {
+    await window.BarcodeDetectionAPI.prepareZXingModule({
+      overrides: { locateFile: (path) => path.endsWith(".wasm") ? "/vendor/zxing-wasm/3.1.3/zxing_reader.wasm" : path }
     });
   }
-  if (!window.BarcodeDetector) throw new Error("El decodificador de códigos no está disponible.");
-  cameraDetectorKind = "ZXing-WASM";
   return new window.BarcodeDetector();
 }
 
-function scheduleCameraDetection() {
-  if (!cameraStream || !cameraDetectionArmed) return;
-  cameraTimer = window.setTimeout(() => void detectCameraFrame(), 160);
-}
-
-async function detectCameraFrame() {
-  if (scanSessionClosed || !cameraStream || !cameraDetectionArmed || cameraDetectionBusy) return;
-  if (cameraVideo.readyState < 2) {
-    scheduleCameraDetection();
-    return;
-  }
-  const runId = cameraRunId;
-  cameraDetectionBusy = true;
-  try {
-    const cameraFrame = snapshotCameraFrame();
-    if (!cameraFrame) {
-      scheduleCameraDetection();
-      return;
-    }
-    const detections = await cameraDetector.detect(cameraFrame);
-    if (
-      scanSessionClosed ||
-      runId !== cameraRunId ||
-      !cameraStream ||
-      !cameraDetectionArmed
-    ) return;
-    const detectionNow = performance.now();
-    cameraCandidateState = advanceCameraCandidate(
-      cameraCandidateState,
-      detections?.[0]?.rawValue ?? "",
-      detectionNow
-    );
-    const rawValue = cameraCandidateState.stableValue;
-    if (rawValue) {
-      if (scanSessionSeenCodes.has(rawValue)) {
-        setCameraStatus("Código ya procesado en esta lectura · esperando uno distinto…", "armed");
-        scheduleCameraDetection();
-        return;
-      }
-      const detectionMs = Number.isFinite(cameraStartedAt)
-        ? Math.max(0, Math.round(performance.now() - cameraStartedAt))
-        : null;
-      cameraDetectionArmed = false;
-      cameraStartedAt = null;
-      scanInput.value = rawValue;
-      setCameraStatus(`Código detectado con ${cameraDetectorKind}. Clasificando…`, "ok");
-      showDetectedFrame(cameraFrame, rawValue);
-      const entry = await processScan(rawValue, { detectionMs });
-      if (!scanSessionClosed && cameraStream) {
-        cameraDetectionArmed = true;
-        cameraStartedAt = performance.now();
-        byId("armCameraBtn").disabled = true;
-        setCameraStatus(
-          entry
-            ? "Código registrado una vez · buscando un código distinto."
-            : "Lectura ocupada · buscando un código distinto.",
-          "ok"
-        );
-        scheduleCameraDetection();
-      }
-      return;
-    }
-  } catch (error) {
-    if (!cameraStream) return;
-    setCameraStatus(`Buscando código… ${error?.message || "ajusta distancia e iluminación"}`);
-  } finally {
-    cameraDetectionBusy = false;
-  }
-  scheduleCameraDetection();
-}
-
-function armCameraDetection() {
-  prepareDetectionAudio();
-  if (scanSessionClosed) {
-    void restartCameraScan();
-    return;
-  }
-  if (!cameraStream || cameraDetectionArmed) return;
-  cameraCandidateState = { value: "", count: 0, firstSeenAt: null, stableValue: "" };
-  cameraDetectionArmed = true;
-  cameraStartedAt = performance.now();
-  byId("armCameraBtn").disabled = true;
-  setCameraStatus(`Lectura armada · detector ${cameraDetectorKind}. Buscando código…`, "armed");
-  scheduleCameraDetection();
-}
-
-async function restartCameraScan() {
-  if (!scanSessionClosed || scanProcessing) return;
-  resetScanSession();
-  await startCamera();
-  if (cameraStream) armCameraDetection();
-}
-
 async function startCamera() {
-  if (!window.isSecureContext && window.location.hostname !== "localhost") {
-    setCameraStatus("La cámara requiere HTTPS. Usa captura manual/lector teclado.", "error");
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    byId("cameraStatus").textContent = "Cámara requiere HTTPS; usa HID o manual.";
     return;
   }
-  if (!navigator.mediaDevices?.getUserMedia) {
-    setCameraStatus("Este navegador no ofrece acceso a cámara. Usa captura manual/lector teclado.", "error");
-    return;
-  }
-  byId("startCameraBtn").disabled = true;
-  byId("armCameraBtn").disabled = true;
-  setCameraStatus("Preparando cámara · solicitando permiso explícito…");
   try {
     cameraStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: {
-        facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      }
+      video: { facingMode: { ideal: "environment" } }
     });
-    cameraVideo.srcObject = cameraStream;
-    await cameraVideo.play();
-    cameraDetector = cameraDetector || await createCameraDetector();
+    byId("cameraVideo").srcObject = cameraStream;
+    await byId("cameraVideo").play();
+    detector = detector || await loadDetector();
     byId("armCameraBtn").disabled = false;
     byId("stopCameraBtn").disabled = false;
-    setCameraStatus(`Cámara lista para enfocar · detector ${cameraDetectorKind}.`, "ok");
+    byId("startCameraBtn").disabled = true;
+    byId("cameraStatus").textContent = "Cámara lista; inicia una lectura.";
   } catch (error) {
-    stopCamera("Cámara no disponible.");
-    const denied = error?.name === "NotAllowedError";
-    setCameraStatus(
-      denied
-        ? "Permiso de cámara denegado. Habilítalo en el navegador o usa captura manual/lector teclado."
-        : `No se pudo iniciar la cámara: ${error?.message || "error desconocido"}. Usa captura manual/lector teclado.`,
-      "error"
-    );
+    stopCamera("Cámara no disponible; usa HID o manual.");
   }
 }
 
-function setBarcodeGeneratorStatus(message, tone = "") {
-  const status = byId("barcodeGeneratorStatus");
-  status.textContent = message;
-  status.className = `barcode-generator-status${tone ? ` ${tone}` : ""}`;
-}
-
-function loadBarcodeWriter() {
-  if (window.ZXingWASM?.writeBarcode) return Promise.resolve(window.ZXingWASM);
-  if (barcodeWriterPromise) return barcodeWriterPromise;
-  barcodeWriterPromise = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "/vendor/zxing-wasm/3.1.3/writer.js";
-    script.dataset.zxingWriter = "true";
-    script.onload = () => {
-      const writer = window.ZXingWASM;
-      if (!writer?.writeBarcode || typeof writer.prepareZXingModule !== "function") {
-        reject(new Error("El generador Code 128 no está disponible."));
-        return;
-      }
-      writer.prepareZXingModule({
-        overrides: {
-          locateFile(path, prefix) {
-            return path.endsWith(".wasm")
-              ? "/vendor/zxing-wasm/3.1.3/zxing_writer.wasm"
-              : `${prefix}${path}`;
-          }
-        }
-      });
-      resolve(writer);
-    };
-    script.onerror = () => {
-      script.remove();
-      barcodeWriterPromise = null;
-      reject(new Error("No se pudo cargar el generador local."));
-    };
-    document.head.appendChild(script);
-  });
-  return barcodeWriterPromise;
-}
-
-function blobToDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("No se pudo preparar la imagen generada."));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function generateTestBarcode() {
-  const value = field("barcodeSampleInput");
-  if (!value) {
-    setBarcodeGeneratorStatus("Escribe un texto o SKU real conocido.", "error");
-    byId("barcodeSampleInput").focus();
-    return;
-  }
-  const button = byId("generateBarcodeBtn");
-  button.disabled = true;
-  setBarcodeGeneratorStatus("Generando Code 128 localmente…");
+async function detectFrame() {
+  if (!cameraStream || !cameraArmedAt || document.hidden) return;
   try {
-    const writer = await loadBarcodeWriter();
-    const output = await writer.writeBarcode(value, {
-      format: "Code128",
-      scale: 3,
-      addHRT: true,
-      addQuietZones: true
-    });
-    if (output.error || !output.image) {
-      throw new Error(output.error || "ZXing no produjo una imagen.");
+    const found = await detector.detect(byId("cameraVideo"));
+    const raw = found?.[0]?.rawValue;
+    if (raw) {
+      const detectionMs = Math.max(0, Math.round(performance.now() - cameraArmedAt));
+      cameraArmedAt = null;
+      stopCamera("Código detectado; cámara detenida.");
+      await capture(raw, detectionMs, "CAMERA");
+      return;
     }
-    generatedBarcodeDataUrl = await blobToDataUrl(output.image);
-    byId("barcodeImage").src = generatedBarcodeDataUrl;
-    byId("barcodePreview").hidden = false;
-    byId("downloadBarcodeBtn").hidden = false;
-    setBarcodeGeneratorStatus(`Code 128 generado para “${value}”. No se consultó ni modificó la base de datos.`, "ok");
-  } catch (error) {
-    setBarcodeGeneratorStatus(`No se pudo generar: ${error?.message || "error desconocido"}.`, "error");
-  } finally {
-    button.disabled = false;
+  } catch {
+    byId("cameraStatus").textContent = "Buscando código…";
   }
+  cameraTimer = window.setTimeout(() => void detectFrame(), 180);
 }
 
-function useLastScannedCode() {
-  const last = history.find((entry) => entry.code && entry.code !== "(sin lectura)");
-  if (!last) {
-    setBarcodeGeneratorStatus("Aún no hay un código leído en esta sesión.", "error");
-    return;
+function armCamera() {
+  if (!cameraStream) return;
+  cameraArmedAt = performance.now();
+  byId("armCameraBtn").disabled = true;
+  byId("cameraStatus").textContent = "Buscando código…";
+  void detectFrame();
+}
+
+function selectMode(method) {
+  captureMethod = method;
+  for (const [id, value] of [["hidModeBtn", "HID"], ["manualModeBtn", "MANUAL"], ["cameraModeBtn", "CAMERA"]]) {
+    byId(id).classList.toggle("active", value === method);
+    byId(id).setAttribute("aria-selected", String(value === method));
   }
-  byId("barcodeSampleInput").value = last.code;
-  byId("barcodeSampleInput").focus();
-  setBarcodeGeneratorStatus("Último código copiado. Presiona “Generar Code 128”.");
+  byId("cameraCapture").hidden = method !== "CAMERA";
+  if (method !== "CAMERA") stopCamera();
+  byId("scanInput").placeholder = method === "HID" ? "Barre; Enter registra" : "Escribe; Enter registra";
+  byId("scanInput").focus();
 }
 
-function downloadTestBarcode() {
-  if (!generatedBarcodeDataUrl) return;
-  const anchor = document.createElement("a");
-  anchor.href = generatedBarcodeDataUrl;
-  anchor.download = "logitec-code128-prueba.png";
-  anchor.click();
+async function pauseOrResume() {
+  const action = paused ? "resume" : "pause";
+  run = await api(`/api/pda/runs/${encodeURIComponent(run.publicId)}/${action}`, { method: "POST" });
+  paused = !paused;
+  if (paused) stopCamera("Cámara detenida por pausa.");
+  byId("pauseBtn").textContent = paused ? "Reanudar" : "Pausar";
+  byId("runStatus").textContent = `${run.publicId} · ${run.status}`;
 }
 
-async function registerNotRead() {
-  if (scanSessionClosed || scanProcessing) return;
-  if (!validateRequired()) return;
-  const entry = makeEntry({
-    code: field("scanInput") || "(sin lectura)",
-    classification: "NO_LEIDO",
-    result: "NO_LEIDO",
-    detectionMs: null,
-    classificationMs: null
+async function sealAndReconcile() {
+  stopCamera("Captura finalizada.");
+  run = await api(`/api/pda/runs/${encodeURIComponent(run.publicId)}/seal`, {
+    method: "POST",
+    body: { sealedThroughSeq: clientSeq }
   });
-  history.unshift(entry);
-  renderLive(entry);
-  renderHistory();
-  try {
-    await persistEntry(entry, null);
-  } catch (error) {
-    entry.saveState = "ERROR";
-    setSaveState("ERROR", error.message);
-    renderHistory();
-  }
-  byId("scanNotes").value = "";
-  scanInput.value = "";
-  scanInput.focus();
+  await syncQueue();
+  const pending = await runQueue();
+  if (pending.length) throw new Error(`${pending.length} intento(s) pendientes; reconecta antes de liberar.`);
+  const result = await api(`/api/pda/runs/${encodeURIComponent(run.publicId)}/reconcile`, { method: "POST" });
+  if (!result.reconciled) throw new Error(`Faltan secuencias: ${result.missing.join(", ")}`);
+  run.status = "RECONCILED";
+  return result;
 }
 
-async function finalizeTest() {
+async function newRound() {
+  try {
+    await sealAndReconcile();
+    run = null;
+    clientSeq = 0;
+    clearDescriptor();
+    await createOrRestoreRun();
+    byId("runStatus").textContent = `${run.publicId} · ACTIVE`;
+    setSaveState("saved", "nueva ronda preparada");
+  } catch (error) {
+    setSaveState("error", error.message);
+  }
+}
+
+async function finalizeAndRelease() {
   const button = byId("finalizeBtn");
   button.disabled = true;
   try {
-    await syncEvidenceQueue();
-    const remaining = (await activeQueuedReadings()).filter(
-      (item) => item.session.clientSessionKey === clientSessionKey
-    );
-    if (remaining.length) throw new Error("Aún hay lecturas pendientes; reconecta antes de finalizar.");
-    const session = await ensureServerSession(sessionPayload());
-    const summary = await api(`/api/admin/pda-test-sessions/${encodeURIComponent(session.id)}/finalize`, {
-      method: "POST"
-    });
-    scanSessionClosed = true;
-    if (cameraStream) stopCamera("Prueba finalizada.");
+    await sealAndReconcile();
+    const runId = run.publicId;
+    const cleanupIssues = [];
+    try {
+      const local = await runQueue(runId);
+      await Promise.all(local.map((item) => deleteAttempt(item.idempotencyKey)));
+      if ((await runQueue(runId)).length) cleanupIssues.push("RUN_NAMESPACE_NOT_CLEAN");
+      if ((await allQueued()).length) cleanupIssues.push("OTHER_PDA_QUEUE_PRESENT");
+      const legacyState = await legacyEvidenceState();
+      if (legacyState) cleanupIssues.push(legacyState);
+    } catch {
+      cleanupIssues.push("LOCAL_STORAGE_UNVERIFIABLE");
+    }
+    if (preexistingAdminAuth) cleanupIssues.push("PREEXISTING_ADMIN_AUTH");
+    clearDescriptor();
+    let result;
+    try {
+      result = await api(`/api/pda/runs/${encodeURIComponent(runId)}/release`, { method: "POST" });
+    } catch (releaseError) {
+      result = await api(`/api/pda/runs/${encodeURIComponent(runId)}/release-status`);
+      if (result.status !== "SAFE_TO_RETURN") throw releaseError;
+    }
+    let revoked = false;
+    try {
+      await api("/api/pda/status");
+    } catch (error) {
+      revoked = error.status === 401;
+    }
+    if (!revoked) throw new Error("No se pudo confirmar revocación server-side.");
+    maskVisibleReading();
+    byId("labWorkspace").hidden = true;
     byId("finalSummary").hidden = false;
-    byId("finalSummary").textContent =
-      `${summary.totalReadings} total · ${summary.okReadings} OK · ${summary.notFoundReadings} no encontrados · ${summary.failedReadings} fallos · ${summary.successRate}% éxito · detección min/mediana/p95 ${metricMs(summary.detectionMinMs)} / ${metricMs(summary.detectionMedianMs)} / ${metricMs(summary.detectionP95Ms)} · clasificación min/mediana/p95 ${metricMs(summary.classificationMinMs)} / ${metricMs(summary.classificationMedianMs)} / ${metricMs(summary.classificationP95Ms)}`;
-    button.disabled = true;
-    button.textContent = "Prueba finalizada";
-    byId("scanBtn").disabled = true;
-    byId("notReadBtn").disabled = true;
-    byId("startCameraBtn").disabled = true;
-    byId("armCameraBtn").disabled = true;
-    clearActiveSessionDescriptor();
-    setSaveState("SAVED", "sesión finalizada");
+    byId("finalSummary").textContent = result.status;
+    byId("accessGate").hidden = false;
+    byId("accessGate").className = cleanupIssues.length ? "access-gate error" : "access-gate";
+    byId("accessGate").textContent = cleanupIssues.length
+      ? `UNVERIFIABLE · grant revocado y evidencia reconciliada, pero: ${cleanupIssues.join(", ")}.`
+      : "SAFE_TO_RETURN · evidencia reconciliada, captura detenida, namespaces PDA limpios y grant PDA revocado. No certifica screenshots ni credenciales externas.";
   } catch (error) {
-    setSaveState("ERROR", error.message);
+    setSaveState("error", error.message);
+    byId("finalSummary").hidden = false;
+    byId("finalSummary").textContent = `UNVERIFIABLE · ${error.message}`;
     button.disabled = false;
   }
 }
 
-async function clearLocalEvidence() {
-  const queued = [...(await activeQueuedReadings()), ...(await legacyQueuedReadings())];
-  if (queued.length && !window.confirm("Hay evidencia sin guardar. ¿Eliminarla de este dispositivo?")) return;
-  await Promise.all(queued.map((item) => deleteQueuedReading(item.idempotencyKey)));
-  setSaveState("SAVED", "datos locales eliminados");
+function lockSurface() {
+  stopCamera("Cámara detenida al ocultar la aplicación.");
+  maskVisibleReading();
+  byId("labWorkspace").hidden = true;
+  byId("privacyCover").hidden = false;
 }
 
-async function initialize() {
-  const gate = byId("accessGate");
-  if (!token) {
-    gate.className = "access-gate error";
-    gate.innerHTML = 'Inicia sesión como ADMIN en el <a href="/login.html?next=/pda-scanner-lab.html">login</a>.';
+async function unlockSurface() {
+  if (!navigator.onLine && run && grant) {
+    byId("privacyCover").hidden = true;
+    byId("labWorkspace").hidden = false;
+    setSaveState("pending", "offline; grant sin revalidar");
+    resetIdleTimer();
     return;
   }
   try {
-    const me = await api("/api/auth/me");
-    if (me.role !== "ADMIN") throw new Error("Este laboratorio está restringido a ADMIN.");
-    if (!me.operationalClient) {
-      throw new Error("Selecciona primero un cliente activo en el panel y vuelve a abrir el laboratorio.");
-    }
-    activeClientId = me.operationalClient.id;
-    activeUserId = me.id;
-    if (!activeClientId || !activeUserId) throw new Error("La sesión no tiene identificadores válidos.");
-    const clientName = me.operationalClient.tradeName || me.operationalClient.name || me.operationalClient.code;
-    byId("sessionContext").textContent = `${me.fullName || me.email} · cliente ${clientName}`;
-    gate.hidden = true;
+    grant = await api("/api/pda/status");
+    if (run) run = await api(`/api/pda/runs/${encodeURIComponent(run.publicId)}`);
+    byId("privacyCover").hidden = true;
     byId("labWorkspace").hidden = false;
-    const restored = readActiveSessionDescriptor();
-    clientSessionKey = restored?.clientSessionKey || createLocalKey();
-    byId("testId").value = restored?.testId || createVisibleTestId();
-    if (restored?.serverSession) serverSessions.set(clientSessionKey, restored.serverSession);
-    saveActiveSessionDescriptor();
-    await revalidateRestoredSession(restored);
-    await purgeExpiredQueue();
-    await recoverLegacyQueue();
-    await syncEvidenceQueue();
-    scanInput.focus();
-  } catch (error) {
-    gate.className = "access-gate error";
-    gate.innerHTML = `${escapeHtml(error.message)} <a href="/dashboard.html">Ir al panel</a>.`;
+    resetIdleTimer();
+  } catch {
+    byId("privacyCover").querySelector("span").textContent = "Grant inválido, expirado o revocado. Requiere nuevo pairing ADMIN.";
   }
 }
 
-scanInput.addEventListener("keydown", (event) => {
+function resetIdleTimer() {
+  window.clearTimeout(idleTimer);
+  idleTimer = window.setTimeout(lockSurface, IDLE_LOCK_MS);
+}
+
+async function initialize() {
+  try {
+    preexistingAdminAuth = Boolean(localStorage.getItem("token"));
+  } catch {
+    preexistingAdminAuth = true;
+  }
+  try {
+    grant = await api("/api/pda/status");
+    await createOrRestoreRun();
+    byId("testId").textContent = run.session.testId;
+    byId("watermark").textContent =
+      `${run.publicId} · ${grant.grantPublicId} · ${new Date().toLocaleTimeString("es-MX")}`;
+    byId("accessGate").hidden = true;
+    byId("labWorkspace").hidden = false;
+    await syncQueue();
+    resetIdleTimer();
+    byId("scanInput").focus();
+  } catch (error) {
+    const restored = readDescriptor(null);
+    if (!navigator.onLine && restored) {
+      grant = { grantPublicId: restored.grantPublicId };
+      run = {
+        publicId: restored.runPublicId,
+        epoch: restored.epoch,
+        status: "ACTIVE",
+        lastAcceptedSeq: 0,
+        session: { testId: restored.testId || "PDA · OFFLINE", status: "OPEN" }
+      };
+      clientSeq = Number(restored.clientSeq || 0);
+      byId("testId").textContent = run.session.testId;
+      byId("watermark").textContent = `${run.publicId} · OFFLINE · grant sin revalidar`;
+      byId("accessGate").hidden = true;
+      byId("labWorkspace").hidden = false;
+      setSaveState("pending", "offline; grant sin revalidar");
+      resetIdleTimer();
+      return;
+    }
+    byId("accessGate").className = "access-gate error";
+    byId("accessGate").innerHTML =
+      `${escapeHtml(error.message)} <a href="/pda-pair.html">Emparejar este dispositivo</a>.`;
+  }
+}
+
+byId("scanInput").addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
-  prepareDetectionAudio();
-  void processScan();
+  void capture(byId("scanInput").value);
 });
-byId("scanBtn").addEventListener("click", () => {
-  if (scanSessionClosed) {
-    resetScanSession();
-    scanInput.focus();
-    return;
-  }
-  prepareDetectionAudio();
-  void processScan();
-});
-byId("handheldModeBtn").addEventListener("click", () => setCaptureMode("handheld"));
-byId("cameraModeBtn").addEventListener("click", () => setCaptureMode("camera"));
+byId("scanBtn").addEventListener("click", () => void capture(byId("scanInput").value));
+byId("notReadBtn").addEventListener("click", () => void capture(null, null, "NO_LEIDO"));
+byId("hidModeBtn").addEventListener("click", () => selectMode("HID"));
+byId("manualModeBtn").addEventListener("click", () => selectMode("MANUAL"));
+byId("cameraModeBtn").addEventListener("click", () => selectMode("CAMERA"));
 byId("startCameraBtn").addEventListener("click", () => void startCamera());
-byId("armCameraBtn").addEventListener("click", armCameraDetection);
+byId("armCameraBtn").addEventListener("click", armCamera);
 byId("stopCameraBtn").addEventListener("click", () => stopCamera());
-byId("cameraFallbackBtn").addEventListener("click", () => setCaptureMode("handheld"));
-byId("discardDetectedFrameBtn").addEventListener("click", clearDetectedFrame);
-byId("generateBarcodeBtn").addEventListener("click", () => void generateTestBarcode());
-byId("useLastScanBtn").addEventListener("click", useLastScannedCode);
-byId("downloadBarcodeBtn").addEventListener("click", downloadTestBarcode);
-byId("notReadBtn").addEventListener("click", () => void registerNotRead());
-byId("finalizeBtn").addEventListener("click", () => void finalizeTest());
-byId("clearLocalBtn").addEventListener("click", () => void clearLocalEvidence());
-window.addEventListener("online", () => void syncEvidenceQueue());
-window.setInterval(() => void syncEvidenceQueue(), 15_000);
-window.addEventListener("pagehide", () => {
-  if (cameraStream) stopCamera();
-  clearDetectedFrame();
-});
+byId("pauseBtn").addEventListener("click", () => void pauseOrResume());
+byId("newRunBtn").addEventListener("click", () => void newRound());
+byId("finalizeBtn").addEventListener("click", () => void finalizeAndRelease());
+byId("unlockBtn").addEventListener("click", () => void unlockSurface());
+window.addEventListener("online", () => void syncQueue());
+window.addEventListener("pagehide", lockSurface);
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden && cameraStream) stopCamera("Cámara detenida al ocultar la pestaña.");
+  if (document.hidden) lockSurface();
 });
+for (const eventName of ["pointerdown", "keydown", "touchstart"]) {
+  document.addEventListener(eventName, resetIdleTimer, { passive: true });
+}
 
 void initialize();
