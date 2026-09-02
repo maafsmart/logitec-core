@@ -17,6 +17,11 @@ let cameraStartedAt = null;
 let detectionAudioContext = null;
 let barcodeWriterPromise = null;
 let generatedBarcodeDataUrl = "";
+let blockedCameraRawValue = "";
+let blockedCameraUntil = 0;
+let blockedCameraMissingFrames = 0;
+const duplicateCooldownMs = 1200;
+const duplicateReleaseFrames = 3;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -189,10 +194,11 @@ async function processScan(rawCode, metrics = {}) {
   const classificationStartedAt = performance.now();
   liveResult.className = "live-result idle";
   liveResult.innerHTML = `<strong>Consultando ${escapeHtml(code)}…</strong><span>Solo lectura.</span>`;
+  let entry = null;
   try {
     const data = await api(`/api/admin/pda-scanner-diagnostic/classify?code=${encodeURIComponent(code)}`);
     const classificationMs = Math.max(0, Math.round(performance.now() - classificationStartedAt));
-    const entry = makeEntry({
+    entry = makeEntry({
       code: data.code,
       classification: data.classification,
       result: outcomeFor(data.classification, field("expectedType")),
@@ -211,6 +217,7 @@ async function processScan(rawCode, metrics = {}) {
     byId("scanBtn").disabled = false;
     scanInput.focus();
   }
+  return entry;
 }
 
 function setCameraStatus(message, tone = "") {
@@ -263,6 +270,29 @@ function prepareDetectionAudio() {
   }
 }
 
+function scheduleShutterClick(context, start, duration, volume, cutoff) {
+  const frameCount = Math.max(1, Math.floor(context.sampleRate * duration));
+  const buffer = context.createBuffer(1, frameCount, context.sampleRate);
+  const samples = buffer.getChannelData(0);
+  for (let index = 0; index < frameCount; index += 1) {
+    const envelope = Math.pow(1 - (index / frameCount), 3);
+    samples[index] = ((Math.random() * 2) - 1) * envelope;
+  }
+  const source = context.createBufferSource();
+  const filter = context.createBiquadFilter();
+  const gain = context.createGain();
+  source.buffer = buffer;
+  filter.type = "highpass";
+  filter.frequency.setValueAtTime(cutoff, start);
+  gain.gain.setValueAtTime(volume, start);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(context.destination);
+  source.start(start);
+  source.stop(start + duration);
+}
+
 function playLocalDetectionFeedback() {
   try {
     if (typeof navigator.vibrate === "function") navigator.vibrate(80);
@@ -273,18 +303,9 @@ function playLocalDetectionFeedback() {
   try {
     const context = prepareDetectionAudio();
     if (!context || context.state !== "running") return;
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
     const now = context.currentTime;
-    oscillator.type = "sine";
-    oscillator.frequency.setValueAtTime(880, now);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
-    oscillator.connect(gain);
-    gain.connect(context.destination);
-    oscillator.start(now);
-    oscillator.stop(now + 0.12);
+    scheduleShutterClick(context, now, 0.045, 0.32, 700);
+    scheduleShutterClick(context, now + 0.065, 0.07, 0.22, 1100);
   } catch {
     // Web Audio puede no existir o estar bloqueado; la lectura debe continuar.
   }
@@ -300,6 +321,9 @@ function stopCamera(message = "Cámara detenida.") {
   }
   cameraStream = null;
   cameraStartedAt = null;
+  blockedCameraRawValue = "";
+  blockedCameraUntil = 0;
+  blockedCameraMissingFrames = 0;
   cameraVideo.pause();
   cameraVideo.srcObject = null;
   byId("startCameraBtn").disabled = false;
@@ -392,7 +416,22 @@ async function detectCameraFrame() {
     const detections = await cameraDetector.detect(cameraFrame);
     if (!cameraStream || !cameraDetectionArmed) return;
     const rawValue = String(detections?.[0]?.rawValue ?? "");
+    const detectionNow = performance.now();
+    if (!rawValue && blockedCameraRawValue && detectionNow >= blockedCameraUntil) {
+      blockedCameraMissingFrames += 1;
+      if (blockedCameraMissingFrames >= duplicateReleaseFrames) {
+        blockedCameraRawValue = "";
+        blockedCameraUntil = 0;
+        blockedCameraMissingFrames = 0;
+      }
+    }
     if (rawValue) {
+      blockedCameraMissingFrames = 0;
+      if (rawValue === blockedCameraRawValue) {
+        setCameraStatus("Código anterior aún visible · esperando uno distinto…", "armed");
+        scheduleCameraDetection();
+        return;
+      }
       const detectionMs = Number.isFinite(cameraStartedAt)
         ? Math.max(0, Math.round(performance.now() - cameraStartedAt))
         : null;
@@ -400,12 +439,20 @@ async function detectCameraFrame() {
       cameraStartedAt = null;
       scanInput.value = rawValue;
       setCameraStatus(`Código detectado con ${cameraDetectorKind}. Clasificando…`, "ok");
-      showDetectedFrame(cameraFrame, rawValue);
       playLocalDetectionFeedback();
-      await processScan(rawValue, { detectionMs });
+      showDetectedFrame(cameraFrame, rawValue);
+      const entry = await processScan(rawValue, { detectionMs });
+      if (entry?.result === "OK") {
+        blockedCameraRawValue = rawValue;
+        blockedCameraUntil = performance.now() + duplicateCooldownMs;
+        blockedCameraMissingFrames = 0;
+      }
       if (cameraStream) {
-        byId("armCameraBtn").disabled = false;
-        setCameraStatus(`Cámara lista para enfocar · detector ${cameraDetectorKind}.`, "ok");
+        cameraDetectionArmed = true;
+        cameraStartedAt = performance.now();
+        byId("armCameraBtn").disabled = true;
+        setCameraStatus("Lista para el siguiente código · lectura rearmada automáticamente.", "ok");
+        scheduleCameraDetection();
       }
       return;
     }
@@ -421,6 +468,9 @@ async function detectCameraFrame() {
 function armCameraDetection() {
   if (!cameraStream || cameraDetectionArmed) return;
   prepareDetectionAudio();
+  blockedCameraRawValue = "";
+  blockedCameraUntil = 0;
+  blockedCameraMissingFrames = 0;
   cameraDetectionArmed = true;
   cameraStartedAt = performance.now();
   byId("armCameraBtn").disabled = true;
@@ -664,7 +714,6 @@ byId("generateBarcodeBtn").addEventListener("click", () => void generateTestBarc
 byId("useLastScanBtn").addEventListener("click", useLastScannedCode);
 byId("downloadBarcodeBtn").addEventListener("click", downloadTestBarcode);
 byId("notReadBtn").addEventListener("click", registerNotRead);
-byId("repeatBtn").addEventListener("click", () => { scanInput.value = ""; scanInput.focus(); });
 byId("copyBtn").addEventListener("click", () => void copySummary());
 byId("exportBtn").addEventListener("click", exportCsv);
 byId("clearBtn").addEventListener("click", () => {
