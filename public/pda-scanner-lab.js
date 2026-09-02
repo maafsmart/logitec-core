@@ -14,6 +14,8 @@ let cameraDetectionBusy = false;
 let cameraDetectionArmed = false;
 let barcodePolyfillPromise = null;
 let cameraStartedAt = null;
+let detectedFrameUrl = "";
+let detectedFrameGeneration = 0;
 let barcodeWriterPromise = null;
 let generatedBarcodeDataUrl = "";
 
@@ -218,6 +220,39 @@ function setCameraStatus(message, tone = "") {
   status.className = `camera-status${tone ? ` ${tone}` : ""}`;
 }
 
+function clearDetectedFrame() {
+  detectedFrameGeneration += 1;
+  if (detectedFrameUrl) URL.revokeObjectURL(detectedFrameUrl);
+  detectedFrameUrl = "";
+  byId("detectedFrameImage").removeAttribute("src");
+  byId("detectedFrameEvidence").hidden = true;
+}
+
+async function captureDetectedFrame(rawValue) {
+  const width = cameraVideo.videoWidth;
+  const height = cameraVideo.videoHeight;
+  if (!width || !height) return false;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return false;
+  context.drawImage(cameraVideo, 0, 0, width, height);
+
+  clearDetectedFrame();
+  const captureGeneration = detectedFrameGeneration;
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
+  if (!blob || captureGeneration !== detectedFrameGeneration) return false;
+
+  detectedFrameUrl = URL.createObjectURL(blob);
+  byId("detectedFrameImage").src = detectedFrameUrl;
+  byId("detectedFrameCaption").textContent =
+    `Frame capturado al detectar “${rawValue}”. Solo memoria de esta pestaña; no se carga ni se guarda.`;
+  byId("detectedFrameEvidence").hidden = false;
+  return true;
+}
+
 function stopCamera(message = "Cámara detenida.") {
   if (cameraTimer) window.clearTimeout(cameraTimer);
   cameraTimer = null;
@@ -323,6 +358,7 @@ async function detectCameraFrame() {
       cameraStartedAt = null;
       scanInput.value = rawValue;
       setCameraStatus(`Código detectado con ${cameraDetectorKind}. Clasificando…`, "ok");
+      await captureDetectedFrame(rawValue).catch(() => false);
       await processScan(rawValue, { detectionMs });
       if (cameraStream) {
         byId("armCameraBtn").disabled = false;
@@ -579,6 +615,7 @@ byId("startCameraBtn").addEventListener("click", () => void startCamera());
 byId("armCameraBtn").addEventListener("click", armCameraDetection);
 byId("stopCameraBtn").addEventListener("click", () => stopCamera());
 byId("cameraFallbackBtn").addEventListener("click", () => setCaptureMode("handheld"));
+byId("discardDetectedFrameBtn").addEventListener("click", clearDetectedFrame);
 byId("generateBarcodeBtn").addEventListener("click", () => void generateTestBarcode());
 byId("useLastScanBtn").addEventListener("click", useLastScannedCode);
 byId("downloadBarcodeBtn").addEventListener("click", downloadTestBarcode);
@@ -589,6 +626,7 @@ byId("exportBtn").addEventListener("click", exportCsv);
 byId("clearBtn").addEventListener("click", () => {
   if (!history.length || window.confirm("¿Limpiar únicamente el historial temporal de esta pestaña?")) {
     history.splice(0);
+    clearDetectedFrame();
     renderHistory();
     liveResult.className = "live-result idle";
     liveResult.innerHTML = "<strong>Sesión limpia</strong><span>No se modificó inventario.</span>";
@@ -596,6 +634,7 @@ byId("clearBtn").addEventListener("click", () => {
 });
 window.addEventListener("pagehide", () => {
   if (cameraStream) stopCamera();
+  clearDetectedFrame();
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && cameraStream) stopCamera("Cámara detenida al ocultar la pestaña.");

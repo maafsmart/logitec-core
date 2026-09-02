@@ -199,7 +199,8 @@ test("pantalla aislada comparte captura, sesión, red manual e historial entre a
     "distance", "expectedType", "captureMethod", "scanInput", "networkProvider",
     "networkZone", "networkPing", "networkDown", "networkUp", "networkStability",
     "networkReference", "historyBody", "copyBtn", "exportBtn", "handheldModeBtn",
-    "cameraModeBtn", "cameraCapture", "cameraVideo", "startCameraBtn", "armCameraBtn", "cameraFallbackBtn"
+    "cameraModeBtn", "cameraCapture", "cameraVideo", "startCameraBtn", "armCameraBtn", "cameraFallbackBtn",
+    "detectedFrameEvidence", "detectedFrameImage", "discardDetectedFrameBtn"
   ]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
@@ -292,6 +293,29 @@ test("métrica de detección empieza al armar y excluye preparación y enfoque",
   assert.match(js, /tiempo_deteccion_ms/);
   assert.match(js, /latencia_clasificacion_ms/);
   assert.doesNotMatch(js, /\blatencyMs\b/);
+});
+
+test("frame local se genera solo tras detectar, no se persiste ni se envía", () => {
+  const capture = js.slice(js.indexOf("async function captureDetectedFrame("), js.indexOf("function stopCamera("));
+  const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
+  const start = js.slice(js.indexOf("async function startCamera()"), js.indexOf("function setBarcodeGeneratorStatus("));
+  const rawValueBranch = detect.slice(detect.indexOf("if (rawValue)"));
+  assert.match(capture, /context\.drawImage\(cameraVideo, 0, 0, width, height\)/);
+  assert.match(capture, /canvas\.toBlob\(resolve, "image\/jpeg", 0\.88\)/);
+  assert.match(capture, /URL\.createObjectURL\(blob\)/);
+  assert.match(rawValueBranch, /captureDetectedFrame\(rawValue\)/);
+  assert.doesNotMatch(start, /captureDetectedFrame\(/);
+  assert.doesNotMatch(capture, /api\(|fetch\(|localStorage|sessionStorage|indexedDB/);
+});
+
+test("siguiente detección reemplaza la evidencia local y permite descartarla", () => {
+  const clear = js.slice(js.indexOf("function clearDetectedFrame()"), js.indexOf("async function captureDetectedFrame("));
+  const capture = js.slice(js.indexOf("async function captureDetectedFrame("), js.indexOf("function stopCamera("));
+  assert.match(clear, /URL\.revokeObjectURL\(detectedFrameUrl\)/);
+  assert.match(clear, /detectedFrameEvidence"\)\.hidden = true/);
+  assert.ok(capture.indexOf("clearDetectedFrame()") < capture.indexOf("URL.createObjectURL(blob)"));
+  assert.match(js, /discardDetectedFrameBtn"\)\.addEventListener\("click", clearDetectedFrame\)/);
+  assert.match(js, /pagehide[\s\S]*clearDetectedFrame\(\)/);
 });
 
 test("generador Code 128 es local, bajo demanda y no toca API ni base de datos", () => {
