@@ -13,6 +13,44 @@ enum InventoryAssignmentType {
   LEGACY_UNASSIGNED
 }
 
+enum PdaSessionStatus {
+  OPEN
+  CLOSING
+  CLOSED
+  INCOMPLETE
+}
+
+enum PdaRunStatus {
+  ACTIVE
+  PAUSED
+  SEALED
+  DRAINING
+  RECONCILED
+  RELEASED
+  INCOMPLETE
+}
+
+enum PdaPairingStatus {
+  PENDING
+  CONSUMED
+  LOCKED
+  EXPIRED
+}
+
+enum PdaGrantStatus {
+  ACTIVE
+  DRAIN_ONLY
+  REVOKED
+  EXPIRED
+}
+
+enum PdaCaptureMode {
+  CAMERA
+  HID
+  MANUAL
+  NO_LEIDO
+}
+
 model User {
   id                  String                 @id @default(cuid())
   email               String                 @unique
@@ -49,6 +87,8 @@ model User {
   importRowAudits     ImportRowAudit[]
   pdaTestSessions     PdaTestSession[]
   pdaTestReadings     PdaTestReading[]
+  pdaPairingsCreated  PdaPairingChallenge[]
+  pdaGrantsCreated    PdaLabGrant[]
 
   @@index([clientId])
 }
@@ -223,6 +263,9 @@ model Client {
   incidents       Incident[]
   pdaTestSessions PdaTestSession[]
   pdaTestReadings PdaTestReading[]
+  pdaCaptureRuns  PdaCaptureRun[]
+  pdaPairings     PdaPairingChallenge[]
+  pdaLabGrants    PdaLabGrant[]
 }
 
 model Customer {
@@ -610,7 +653,12 @@ model PdaTestSession {
   clientId               String
   testId                 String
   clientSessionKey       String
-  status                 String           @default("OPEN")
+  status                 PdaSessionStatus @default(OPEN)
+  version                Int              @default(0)
+  captureEpoch           Int              @default(0)
+  closingAt              DateTime?
+  incompleteRuns         Int              @default(0)
+  knownMissingAttempts   Int              @default(0)
   deviceType             String?
   deviceBrand            String?
   deviceModel            String?
@@ -638,6 +686,9 @@ model PdaTestSession {
   client                 Client           @relation(fields: [clientId], references: [id], onDelete: Restrict)
   createdBy              User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
   readings               PdaTestReading[]
+  runs                   PdaCaptureRun[]
+  pairingChallenges      PdaPairingChallenge[]
+  grants                 PdaLabGrant[]
 
   @@unique([clientId, clientSessionKey])
   @@unique([clientId, testId])
@@ -650,6 +701,10 @@ model PdaTestReading {
   id                 String         @id @default(cuid())
   sessionId          String
   clientId           String
+  runId               String
+  grantId             String?
+  clientSeq           Int
+  attemptId           String
   idempotencyKey     String
   requestFingerprint String
   observedAt         DateTime
@@ -658,6 +713,7 @@ model PdaTestReading {
   expectedType       String
   classification     String
   result             String
+  captureMode        PdaCaptureMode
   captureMethod      String
   physicalZone       String
   distance           String?
@@ -668,11 +724,105 @@ model PdaTestReading {
   createdAt          DateTime       @default(now())
   createdById        String
   session            PdaTestSession @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
+  run                PdaCaptureRun  @relation(fields: [runId, sessionId, clientId], references: [id, sessionId, clientId], onDelete: Restrict)
+  grant              PdaLabGrant?   @relation(fields: [grantId, sessionId, clientId], references: [id, sessionId, clientId], onDelete: Restrict)
   client             Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
   createdBy          User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
 
+  @@unique([runId, clientSeq])
+  @@unique([runId, attemptId])
   @@unique([clientId, idempotencyKey])
   @@index([sessionId, observedAt])
   @@index([clientId, observedAt])
   @@index([clientId, result, observedAt])
+}
+
+model PdaCaptureRun {
+  id                        String         @id @default(cuid())
+  publicId                  String         @unique
+  clientId                  String
+  sessionId                 String
+  grantId                   String?
+  clientRunKey              String
+  epoch                     Int
+  version                   Int            @default(0)
+  status                    PdaRunStatus   @default(ACTIVE)
+  sealedAtSeq               Int?
+  receivedCount             Int            @default(0)
+  startedAt                 DateTime       @default(now())
+  sealedAt                  DateTime?
+  pausedAt                  DateTime?
+  releasedAt                DateTime?
+  incompleteAt              DateTime?
+  incompleteReason          String?
+  captureStoppedConfirmedAt DateTime?
+  localCleanupConfirmedAt   DateTime?
+  legacyImported            Boolean        @default(false)
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+  session                   PdaTestSession @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
+  grant                     PdaLabGrant?   @relation(fields: [grantId, sessionId, clientId], references: [id, sessionId, clientId], onDelete: Restrict)
+  client                    Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  readings                  PdaTestReading[]
+
+  @@unique([id, sessionId, clientId])
+  @@unique([clientId, sessionId, epoch])
+  @@unique([grantId, clientRunKey])
+  @@index([sessionId, status, startedAt])
+  @@index([clientId, createdAt])
+}
+
+model PdaPairingChallenge {
+  id                 String           @id @default(cuid())
+  publicId           String           @unique
+  clientId           String
+  sessionId          String
+  qrSecretDigest     String           @unique
+  manualSecretDigest String           @unique
+  status             PdaPairingStatus @default(PENDING)
+  failedAttempts     Int              @default(0)
+  maxAttempts        Int              @default(5)
+  expiresAt          DateTime
+  consumedAt         DateTime?
+  createdById        String
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  session            PdaTestSession   @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
+  client             Client           @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy          User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  grant              PdaLabGrant?
+
+  @@index([clientId, sessionId, status, expiresAt])
+}
+
+model PdaLabGrant {
+  id                     String         @id @default(cuid())
+  publicId               String         @unique
+  clientId               String
+  sessionId              String
+  pairingId              String         @unique
+  tokenDigest            String         @unique
+  scope                  String         @default("PDA_SESSION_CAPTURE_V1")
+  status                 PdaGrantStatus @default(ACTIVE)
+  expiresAt              DateTime
+  lastUsedAt             DateTime?
+  captureRevokedAt       DateTime?
+  revokedAt              DateTime?
+  revokeReason           String?
+  releaseNonceDigest     String?
+  releaseReceiptId       String?        @unique
+  releaseConfirmedAt     DateTime?
+  version                Int            @default(0)
+  createdById            String
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  session                PdaTestSession @relation(fields: [sessionId, clientId], references: [id, clientId], onDelete: Restrict)
+  pairing                PdaPairingChallenge @relation(fields: [pairingId], references: [id], onDelete: Restrict)
+  client                 Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy              User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  runs                   PdaCaptureRun[]
+  readings               PdaTestReading[]
+
+  @@unique([id, sessionId, clientId])
+  @@index([clientId, sessionId, status, expiresAt])
 }

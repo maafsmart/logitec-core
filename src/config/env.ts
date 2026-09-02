@@ -15,6 +15,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   PRODUCTION_DATABASE_HOST: z.string().trim().min(1).optional(),
   JWT_SECRET: z.string().min(12, "JWT_SECRET must have at least 12 characters"),
+  PDA_TOKEN_PEPPER: z.string().min(32, "PDA_TOKEN_PEPPER must have at least 32 characters").optional(),
   ENABLE_PDA_SCANNER_LAB: z.preprocess(
     (value) => String(value ?? "false").trim().toLowerCase() === "true" ? "true" : "false",
     z.enum(["true", "false"]).default("false")

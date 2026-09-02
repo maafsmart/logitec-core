@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Emparejar PDA · LOGITEC</title>
+    <link rel="stylesheet" href="/pda-scanner-lab.css?v=2" />
+  </head>
+  <body>
+    <header class="topbar pda-topbar">
+      <div><p class="eyebrow">LOGITEC · ACCESO PDA EFÍMERO</p><h1>Emparejar dispositivo</h1></div>
+    </header>
+    <main>
+      <section class="safety-banner">
+        Esta pantalla no solicita usuario, contraseña ni acceso ADMIN. El código es one-shot y vence en cinco minutos.
+      </section>
+      <section class="panel">
+        <div id="preexistingWarning" class="access-gate error" hidden>
+          Este navegador contiene autenticación LOGITEC previa. Puede capturar, pero la devolución quedará UNVERIFIABLE.
+        </div>
+        <label>Código de emparejamiento
+          <textarea id="pairingCode" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false"
+            placeholder="PAIR_… . código de alta entropía"></textarea>
+        </label>
+        <div class="scan-actions">
+          <button id="exchangeBtn" class="button primary" type="button">Emparejar</button>
+          <button id="cameraBtn" class="button secondary" type="button">Escanear QR</button>
+          <button id="stopCameraBtn" class="button secondary" type="button" hidden>Detener cámara</button>
+        </div>
+        <div id="pairCamera" class="camera-frame" hidden>
+          <video id="cameraVideo" muted playsinline aria-label="Escáner de QR"></video>
+          <div class="camera-guide" aria-hidden="true"></div>
+        </div>
+        <p id="pairingStatus" role="status">Esperando código emitido desde la estación ADMIN.</p>
+      </section>
+    </main>
+    <script src="/pda-pair.js?v=1"></script>
+  </body>
+</html>

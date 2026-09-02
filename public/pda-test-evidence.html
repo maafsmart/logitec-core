@@ -14,7 +14,7 @@
         <h1>Sesiones de Laboratorio PDA</h1>
         <p id="sessionContext">Validando acceso…</p>
       </div>
-      <a class="button secondary" href="/pda-scanner-lab.html">Nueva prueba</a>
+      <a class="button secondary" href="/dashboard.html">Volver al panel</a>
     </header>
     <main>
       <section class="safety-banner">
@@ -22,6 +22,14 @@
       </section>
       <div id="accessGate" class="access-gate" role="alert">Validando sesión ADMIN y cliente activo…</div>
       <div id="evidenceWorkspace" hidden>
+        <section class="panel">
+          <div class="section-title"><div><span>1</span><h2>Nueva sesión</h2></div></div>
+          <div class="form-grid">
+            <label>Tipo de dispositivo<input id="newDeviceType" value="PDA prestado" maxlength="80" /></label>
+            <label>Modelo / alias<input id="newDeviceModel" maxlength="120" placeholder="Honeywell 01" /></label>
+          </div>
+          <button id="createSessionBtn" class="button primary" type="button">Crear sesión PDA</button>
+        </section>
         <section class="panel">
           <div class="history-head">
             <div class="section-title"><div><span>1</span><h2>Sesiones guardadas</h2></div></div>
@@ -42,11 +50,18 @@
             </div>
             <div class="scan-actions">
               <button id="finalizeOpenBtn" class="button primary" type="button" hidden>Finalizar sesión abierta</button>
+              <button id="pairBtn" class="button primary" type="button" hidden>Emitir pairing</button>
               <button id="csvBtn" class="button secondary" type="button">Descargar CSV del servidor</button>
               <button id="jsonBtn" class="button secondary" type="button">Descargar JSON del servidor</button>
             </div>
           </div>
           <div id="detailSummary" class="stats"></div>
+          <section id="pairingPanel" class="final-summary" hidden>
+            <strong>Pairing one-shot · vence en 5 minutos</strong>
+            <div id="pairingQr" class="barcode-preview"></div>
+            <label>Fallback manual<textarea id="manualPairingCode" rows="2" readonly></textarea></label>
+            <p>Abra <strong>/pda-pair.html</strong> en el dispositivo prestado. No introduzca credenciales ADMIN.</p>
+          </section>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Fecha</th><th>Raw / normalizado</th><th>Zona / captura</th><th>Clasificación</th><th>Resultado</th><th>Detección</th><th>Clasificación</th><th>Notas / red</th></tr></thead>
@@ -56,6 +71,6 @@
         </section>
       </div>
     </main>
-    <script src="/pda-test-evidence.js?v=2"></script>
+    <script src="/pda-test-evidence.js?v=3"></script>
   </body>
 </html>

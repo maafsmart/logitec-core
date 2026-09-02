@@ -285,6 +285,41 @@ table { width: 100%; border-collapse: collapse; font-size: .82rem; }
 th, td { padding: 9px 8px; border-bottom: 1px solid #dce2e7; text-align: left; vertical-align: top; }
 th { background: #eef2f5; color: #344252; white-space: nowrap; }
 .empty { padding: 22px; color: var(--muted); text-align: center; }
+.pda-topbar { position: relative; }
+.pda-counters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: #fff;
+}
+.pda-watermark {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #122a400a;
+  font-size: clamp(1rem, 4vw, 3rem);
+  font-weight: 900;
+  letter-spacing: .12em;
+  transform: rotate(-24deg);
+  pointer-events: none;
+}
+.topbar, main { position: relative; z-index: 1; }
+.privacy-lock {
+  min-height: 60vh;
+  padding: 48px 18px;
+  border-radius: 12px;
+  background: var(--navy);
+  color: #fff;
+  text-align: center;
+}
+.privacy-lock[hidden] { display: none; }
+#pairCamera[hidden] { display: none; }
 @media (max-width: 760px) {
   .topbar { position: static; align-items: flex-start; padding: 12px 14px; }
   main { padding: 10px; }

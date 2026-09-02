@@ -17,8 +17,10 @@ async function api(path, options = {}) {
     method: options.method || "GET",
     headers: {
       Authorization: `Bearer ${token}`,
-      Accept: options.accept || "application/json"
+      Accept: options.accept || "application/json",
+      ...(options.body ? { "Content-Type": "application/json" } : {})
     },
+    body: options.body ? JSON.stringify(options.body) : undefined,
     cache: "no-store"
   });
   if (!response.ok) {
@@ -42,7 +44,7 @@ async function loadSessions() {
     ? sessions.map((session) => `<tr>
         <td><strong>${escapeHtml(session.testId)}</strong></td>
         <td>${escapeHtml(new Date(session.startedAt).toLocaleString("es-MX"))}</td>
-        <td>${escapeHtml(session.status === "FINALIZED" ? "Finalizada" : "Abierta")}</td>
+        <td>${escapeHtml(session.status)}</td>
         <td>${escapeHtml([session.deviceType, session.deviceBrand, session.deviceModel].filter(Boolean).join(" ") || "—")}</td>
         <td>${escapeHtml(sessionSummary(session))}</td>
         <td><button class="button secondary open-session" type="button" data-test-id="${escapeHtml(session.testId)}">Abrir</button></td>
@@ -54,7 +56,9 @@ async function openSession(testId) {
   const session = await (await api(`/api/admin/pda-test-sessions/${encodeURIComponent(testId)}`)).json();
   selectedTestId = session.testId;
   selectedSessionId = session.id;
-  byId("finalizeOpenBtn").hidden = session.status === "FINALIZED";
+  byId("finalizeOpenBtn").hidden = session.status === "CLOSED" || session.status === "INCOMPLETE";
+  byId("pairBtn").hidden = session.status !== "OPEN";
+  byId("pairingPanel").hidden = true;
   byId("detailTitle").textContent = session.testId;
   byId("detailSummary").textContent = `${sessionSummary(session)} · detección min/mediana/p95 ${metric(session.detectionMinMs)} / ${metric(session.detectionMedianMs)} / ${metric(session.detectionP95Ms)} · clasificación min/mediana/p95 ${metric(session.classificationMinMs)} / ${metric(session.classificationMedianMs)} / ${metric(session.classificationP95Ms)}`;
   byId("readingsBody").innerHTML = session.readings.length
@@ -105,6 +109,91 @@ async function finalizeOpenSession() {
   }
 }
 
+async function createSession() {
+  const button = byId("createSessionBtn");
+  button.disabled = true;
+  try {
+    const response = await api("/api/admin/pda-test-sessions", {
+      method: "POST",
+      body: {
+        clientSessionKey: crypto.randomUUID(),
+        deviceType: byId("newDeviceType").value.trim() || null,
+        deviceModel: byId("newDeviceModel").value.trim() || null,
+        deviceMetadata: { borrowedDeviceFlow: true }
+      }
+    });
+    const data = await response.json();
+    await loadSessions();
+    await openSession(data.session.testId);
+  } catch (error) {
+    window.alert(error.message || "No se pudo crear la sesión.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function loadBarcodeWriter() {
+  if (window.ZXingWASM?.writeBarcode) return Promise.resolve(window.ZXingWASM);
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "/vendor/zxing-wasm/3.1.3/writer.js";
+    script.onload = async () => {
+      const writer = window.ZXingWASM;
+      await writer.prepareZXingModule({
+        overrides: {
+          locateFile(path, prefix) {
+            return path.endsWith(".wasm")
+              ? "/vendor/zxing-wasm/3.1.3/zxing_writer.wasm"
+              : `${prefix}${path}`;
+          }
+        }
+      });
+      resolve(writer);
+    };
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("No se pudo renderizar el QR."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function createPairing() {
+  if (!selectedSessionId) return;
+  const button = byId("pairBtn");
+  button.disabled = true;
+  try {
+    const response = await api(
+      `/api/admin/pda-test-sessions/${encodeURIComponent(selectedSessionId)}/pairings`,
+      { method: "POST", body: {} }
+    );
+    const pairing = await response.json();
+    byId("manualPairingCode").value = pairing.manualCode;
+    const writer = await loadBarcodeWriter();
+    const output = await writer.writeBarcode(pairing.qrPayload, {
+      format: "QRCode",
+      scale: 4,
+      addQuietZones: true
+    });
+    if (output.error || !output.image) throw new Error(output.error || "No se pudo crear QR.");
+    const image = document.createElement("img");
+    image.alt = "QR de pairing efímero";
+    image.src = await blobToDataUrl(output.image);
+    byId("pairingQr").replaceChildren(image);
+    byId("pairingPanel").hidden = false;
+  } catch (error) {
+    window.alert(error.message || "No se pudo emitir pairing.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function initialize() {
   const gate = byId("accessGate");
   if (!token) {
@@ -132,7 +221,9 @@ byId("sessionsBody").addEventListener("click", (event) => {
   if (button) void openSession(button.dataset.testId);
 });
 byId("refreshBtn").addEventListener("click", () => void loadSessions());
+byId("createSessionBtn").addEventListener("click", () => void createSession());
 byId("finalizeOpenBtn").addEventListener("click", () => void finalizeOpenSession());
+byId("pairBtn").addEventListener("click", () => void createPairing());
 byId("csvBtn").addEventListener("click", () => void downloadServerExport("csv"));
 byId("jsonBtn").addEventListener("click", () => void downloadServerExport("json"));
 void initialize();
