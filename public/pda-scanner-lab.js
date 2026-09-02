@@ -11,6 +11,7 @@ let cameraTimer = null;
 let cameraDetector = null;
 let cameraDetectorKind = "";
 let cameraDetectionBusy = false;
+let cameraDetectionArmed = false;
 let barcodePolyfillPromise = null;
 let cameraStartedAt = null;
 let barcodeWriterPromise = null;
@@ -221,6 +222,7 @@ function stopCamera(message = "Cámara detenida.") {
   if (cameraTimer) window.clearTimeout(cameraTimer);
   cameraTimer = null;
   cameraDetectionBusy = false;
+  cameraDetectionArmed = false;
   if (cameraStream) {
     cameraStream.getTracks().forEach((track) => track.stop());
   }
@@ -229,6 +231,7 @@ function stopCamera(message = "Cámara detenida.") {
   cameraVideo.pause();
   cameraVideo.srcObject = null;
   byId("startCameraBtn").disabled = false;
+  byId("armCameraBtn").disabled = true;
   byId("stopCameraBtn").disabled = true;
   setCameraStatus(message);
 }
@@ -297,12 +300,12 @@ async function createCameraDetector() {
 }
 
 function scheduleCameraDetection() {
-  if (!cameraStream) return;
+  if (!cameraStream || !cameraDetectionArmed) return;
   cameraTimer = window.setTimeout(() => void detectCameraFrame(), 160);
 }
 
 async function detectCameraFrame() {
-  if (!cameraStream || cameraDetectionBusy) return;
+  if (!cameraStream || !cameraDetectionArmed || cameraDetectionBusy) return;
   if (cameraVideo.readyState < 2) {
     scheduleCameraDetection();
     return;
@@ -310,14 +313,21 @@ async function detectCameraFrame() {
   cameraDetectionBusy = true;
   try {
     const detections = await cameraDetector.detect(cameraVideo);
+    if (!cameraStream || !cameraDetectionArmed) return;
     const rawValue = String(detections?.[0]?.rawValue ?? "");
     if (rawValue) {
       const detectionMs = Number.isFinite(cameraStartedAt)
         ? Math.max(0, Math.round(performance.now() - cameraStartedAt))
         : null;
+      cameraDetectionArmed = false;
+      cameraStartedAt = null;
       scanInput.value = rawValue;
-      stopCamera(`Código detectado con ${cameraDetectorKind}. Clasificando…`);
+      setCameraStatus(`Código detectado con ${cameraDetectorKind}. Clasificando…`, "ok");
       await processScan(rawValue, { detectionMs });
+      if (cameraStream) {
+        byId("armCameraBtn").disabled = false;
+        setCameraStatus(`Cámara lista para enfocar · detector ${cameraDetectorKind}.`, "ok");
+      }
       return;
     }
   } catch (error) {
@@ -326,6 +336,15 @@ async function detectCameraFrame() {
   } finally {
     cameraDetectionBusy = false;
   }
+  scheduleCameraDetection();
+}
+
+function armCameraDetection() {
+  if (!cameraStream || cameraDetectionArmed) return;
+  cameraDetectionArmed = true;
+  cameraStartedAt = performance.now();
+  byId("armCameraBtn").disabled = true;
+  setCameraStatus(`Lectura armada · detector ${cameraDetectorKind}. Buscando código…`, "armed");
   scheduleCameraDetection();
 }
 
@@ -339,7 +358,8 @@ async function startCamera() {
     return;
   }
   byId("startCameraBtn").disabled = true;
-  setCameraStatus("Solicitando permiso explícito de cámara…");
+  byId("armCameraBtn").disabled = true;
+  setCameraStatus("Preparando cámara · solicitando permiso explícito…");
   try {
     cameraStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
@@ -352,10 +372,9 @@ async function startCamera() {
     cameraVideo.srcObject = cameraStream;
     await cameraVideo.play();
     cameraDetector = cameraDetector || await createCameraDetector();
+    byId("armCameraBtn").disabled = false;
     byId("stopCameraBtn").disabled = false;
-    cameraStartedAt = performance.now();
-    setCameraStatus(`Cámara activa · detector ${cameraDetectorKind}. Centra un código de barras o QR.`, "ok");
-    scheduleCameraDetection();
+    setCameraStatus(`Cámara lista para enfocar · detector ${cameraDetectorKind}.`, "ok");
   } catch (error) {
     stopCamera("Cámara no disponible.");
     const denied = error?.name === "NotAllowedError";
@@ -557,6 +576,7 @@ byId("scanBtn").addEventListener("click", () => void processScan());
 byId("handheldModeBtn").addEventListener("click", () => setCaptureMode("handheld"));
 byId("cameraModeBtn").addEventListener("click", () => setCaptureMode("camera"));
 byId("startCameraBtn").addEventListener("click", () => void startCamera());
+byId("armCameraBtn").addEventListener("click", armCameraDetection);
 byId("stopCameraBtn").addEventListener("click", () => stopCamera());
 byId("cameraFallbackBtn").addEventListener("click", () => setCaptureMode("handheld"));
 byId("generateBarcodeBtn").addEventListener("click", () => void generateTestBarcode());

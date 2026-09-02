@@ -153,6 +153,7 @@ input:focus, select:focus, textarea:focus {
 }
 .camera-status { margin: 10px 0 0; color: var(--muted); font-size: .86rem; line-height: 1.4; }
 .camera-status.ok { color: var(--ok); }
+.camera-status.armed { color: var(--blue); font-weight: 800; }
 .camera-status.error { color: var(--danger); }
 .barcode-generator {
   display: grid;
@@ -204,6 +205,7 @@ input:focus, select:focus, textarea:focus {
   font-weight: 800;
 }
 .primary { background: var(--blue); color: #fff; }
+.arm-reading { background: var(--ok); color: #fff; }
 .secondary { border-color: #9cabb8; background: #fff; color: var(--navy); }
 .danger { background: var(--danger); color: #fff; }
 .danger-outline { border-color: #dc8f89; background: #fff; color: var(--danger); }

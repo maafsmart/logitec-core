@@ -97,9 +97,10 @@
               <video id="cameraVideo" muted playsinline aria-label="Vista previa de cámara"></video>
               <div class="camera-guide" aria-hidden="true"></div>
             </div>
-            <p id="cameraStatus" class="camera-status" role="status">La cámara está apagada. El navegador pedirá permiso únicamente al presionar “Iniciar cámara”.</p>
+            <p id="cameraStatus" class="camera-status" role="status">La cámara está apagada. Ábrela, encuadra y enfoca el código; la detección solo comienza al presionar “INICIAR LECTURA”.</p>
             <div class="scan-actions">
-              <button id="startCameraBtn" class="button primary" type="button">Iniciar cámara</button>
+              <button id="startCameraBtn" class="button primary" type="button">Abrir cámara</button>
+              <button id="armCameraBtn" class="button arm-reading" type="button" disabled>INICIAR LECTURA</button>
               <button id="stopCameraBtn" class="button secondary" type="button" disabled>Detener cámara</button>
               <button id="cameraFallbackBtn" class="button secondary" type="button">Usar captura manual / PDA</button>
             </div>
