@@ -228,3 +228,122 @@ test("pairing limpia URL y no persiste secreto ni bearer", async ({ page }) => {
   expect(storage.session).toEqual({});
   expect(JSON.stringify(storage)).not.toContain("A".repeat(26));
 });
+
+test("ADMIN crea, abre y emite invitación sin alert ni nodo DOM ausente", async ({ page }) => {
+  const dialogs: string[] = [];
+  const pageErrors: string[] = [];
+  const testId = "PDA-20260902-MOTOROLA";
+  const session = {
+    id: "session-motorola",
+    testId,
+    status: "OPEN",
+    deviceType: "PDA prestado",
+    deviceBrand: null,
+    deviceModel: "moto g86 POWER",
+    totalReadings: 0,
+    okReadings: 0,
+    notFoundReadings: 0,
+    failedReadings: 0,
+    successRate: null,
+    detectionMinMs: null,
+    detectionMedianMs: null,
+    detectionP95Ms: null,
+    classificationMinMs: null,
+    classificationMedianMs: null,
+    classificationP95Ms: null,
+    startedAt: new Date().toISOString(),
+    finalizedAt: null,
+    createdAt: new Date().toISOString(),
+    runs: [],
+    readings: []
+  };
+  let created = false;
+
+  page.on("dialog", async (dialog) => {
+    dialogs.push(dialog.message());
+    await dialog.dismiss();
+  });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    localStorage.setItem("token", "qa-admin-token");
+    Object.defineProperty(window, "ZXingWASM", {
+      configurable: true,
+      value: {
+        prepareZXingModule: async () => {},
+        writeBarcode: async () => ({
+          image: new Blob(["qa-qr"], { type: "image/png" })
+        })
+      }
+    });
+  });
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      id: "admin",
+      role: "ADMIN",
+      email: "qa@example.invalid",
+      fullName: "QA Admin",
+      operationalClient: { id: "client-a", code: "AVIAT", name: "QA AVIAT" }
+    })
+  }));
+  await page.route("**/api/admin/pda-test-sessions**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "POST" && path === "/api/admin/pda-test-sessions") {
+      created = true;
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ session, duplicate: false })
+      });
+      return;
+    }
+    if (request.method() === "GET" && path === "/api/admin/pda-test-sessions") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(created ? [session] : [])
+      });
+      return;
+    }
+    if (request.method() === "GET" && path.endsWith("/remote-qa")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ session: { id: session.id, testId }, runs: [] })
+      });
+      return;
+    }
+    if (request.method() === "POST" && path.endsWith("/pairings")) {
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          manualCode: `PAIR-MOTO.${"A".repeat(26)}`,
+          qrPayload: `LOGITEC-PDA1:PAIR-MOTO.${"B".repeat(43)}`
+        })
+      });
+      return;
+    }
+    if (request.method() === "GET" && path.endsWith(`/${testId}`)) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(session)
+      });
+      return;
+    }
+    await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+  });
+
+  await page.goto("/pda-test-evidence.html");
+  await page.locator("#newDeviceModel").fill("moto g86 POWER");
+  await page.locator("#createSessionBtn").click();
+  await expect(page.locator("#detailTitle")).toHaveText(testId);
+  await expect(page.locator("#runsSummary")).toHaveText("Sin runs.");
+  await page.locator("#pairBtn").click();
+  await expect(page.locator("#remoteInviteUrl")).toHaveValue(/\/pda-pair\.html#p=/);
+  expect(dialogs).toEqual([]);
+  expect(pageErrors).toEqual([]);
+});
