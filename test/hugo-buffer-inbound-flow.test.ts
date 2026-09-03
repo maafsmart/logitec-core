@@ -8,6 +8,7 @@ import { Prisma } from "@prisma/client";
 
 process.env.ENABLE_HUGO_BUFFER_INBOUND = "true";
 process.env.HUGO_BUFFER_IN_LOCATION_PREFERENCE = "BUFFER-IN";
+process.env.HUGO_BUFFER_OUT_LOCATION_PREFERENCE = "BUFFER-OUT";
 
 const { app } = await import("../src/app.js");
 const { prisma } = await import("../src/db/prisma.js");
@@ -57,15 +58,31 @@ test("artefactos Hugo documentan bandera local y flujo buffer", () => {
   assert.match(html, /Pedido \/ referencia del cliente/);
   assert.match(html, />Mover</);
   assert.match(html, /Confirmar movimiento/);
+  assert.match(html, />Preparar salida</);
+  assert.match(html, /Confirmar preparación/);
   assert.match(js, /\/api\/catalog\/products\/search/);
   assert.match(js, /\/api\/inventory\/movements/);
   assert.match(js, /\/api\/inventory\/stock/);
   assert.match(js, /\/api\/inventory\/relocate/);
+  assert.match(js, /Preparación Buffer de salida/);
+  assert.match(js, /OUT_PREP_NOTES/);
+  assert.match(js, /normalizeClientReference/);
+  assert.match(html, /outOrderRefInput/);
+  assert.match(html, /Pedido \/ referencia del cliente/);
   assert.match(envExample, /ENABLE_HUGO_BUFFER_INBOUND/);
   assert.match(envExample, /HUGO_BUFFER_IN_LOCATION_PREFERENCE/);
+  assert.match(envExample, /HUGO_BUFFER_OUT_LOCATION_PREFERENCE/);
+  assert.match(featureSrc, /preferredBufferOutLocationCode/);
   assert.match(featureSrc, /production/);
   assert.doesNotMatch(js, /mobile-picking-qa|qaOnly/i);
   assert.doesNotMatch(js, /transporte|caja|picking/i);
+  const submitOut = sliceFunction(js, "submitOutPrepare");
+  assert.match(submitOut, /\/api\/inventory\/relocate/);
+  assert.match(submitOut, /notes: OUT_PREP_NOTES/);
+  assert.match(submitOut, /normalizeClientReference\(outOrderRefInput/);
+  assert.doesNotMatch(submitOut, /\/api\/inventory\/movements/);
+  assert.doesNotMatch(submitOut, /type:\s*"OUT"/);
+  assert.doesNotMatch(submitOut, /type:\s*'OUT'/);
 });
 
 test("UI filtra ubicaciones inactivas en selector", () => {
@@ -141,6 +158,36 @@ test("productos serializados bloquean reubicación Hugo", () => {
   assert.match(js, /product\.serialControlled/);
 });
 
+test("preparar salida usa reubicación, filtra almacén y refresca stock", () => {
+  assert.match(js, /outOriginWarehouse/);
+  assert.match(js, /sameOutWarehouse/);
+  assert.match(js, /refreshOutAfterSuccess/);
+  const submitOut = sliceFunction(js, "submitOutPrepare");
+  assert.match(submitOut, /await refreshOutAfterSuccess\(\)/);
+  assert.doesNotMatch(submitOut, /type:\s*"OUT"/);
+  const bufferScanStart = js.indexOf('outBufferScan.addEventListener("keydown"');
+  assert.ok(bufferScanStart >= 0);
+  const bufferScanEnd = js.indexOf("});", bufferScanStart);
+  const bufferScanHandler = js.slice(bufferScanStart, bufferScanEnd + 3);
+  assert.match(bufferScanHandler, /resolveOutBufferFromScan\(outBufferScan\.value\)/);
+  assert.doesNotMatch(bufferScanHandler, /submitOutPrepare/);
+  assert.match(js, /if \(state\.outBusy \|\| !state\.outOrigin \|\| !state\.outProduct\) return/);
+  assert.match(js, /state\.outBusy = true/);
+  const refreshOut = sliceFunction(js, "refreshOutAfterSuccess");
+  assert.match(refreshOut, /await loadOutStock\(\)/);
+});
+
+test("pedido/referencia opcional no envía Enter ni HTML inseguro", () => {
+  assert.match(js, /bindReferenceEnterGuard\(orderRefInput\)/);
+  assert.match(js, /bindReferenceEnterGuard\(outOrderRefInput\)/);
+  const normalize = sliceFunction(js, "normalizeClientReference");
+  assert.match(normalize, /CLIENT_REF_MAX/);
+  assert.match(normalize, /replace\(\/\\s\+\//);
+  const submitInbound = sliceFunction(js, "submitInbound");
+  assert.match(submitInbound, /normalizeClientReference\(orderRefInput/);
+  assert.doesNotMatch(submitInbound, /innerHTML.*orderRefInput/);
+});
+
 test("mensajes y valores escaneados no usan HTML inseguro", () => {
   assert.match(js, /escapeHtml\(/);
   assert.match(js, /gateMessage\.textContent = text/);
@@ -178,6 +225,8 @@ const operator = {
 const locations = [
   { id: "loc-buffer", code: "BUFFER-IN", warehouse: "TULTITLAN24", active: true, description: "Buffer entrada" },
   { id: "loc-an2", code: "AN2-A", warehouse: "TULTITLAN24", active: true, description: "Destino activo" },
+  { id: "loc-buffer-out", code: "BUFFER-OUT", warehouse: "TULTITLAN24", active: true, description: "Buffer salida" },
+  { id: "loc-wh2", code: "BUFFER-OUT-2", warehouse: "OTHER-WH", active: true, description: "Buffer otro almacén" },
   { id: "loc-off", code: "OFF-LOC", warehouse: "TULTITLAN24", active: false, description: "Inactiva" }
 ];
 
@@ -201,7 +250,37 @@ let movementCreates = 0;
 let inventoryCreates = 0;
 let transactionCalls = 0;
 let relocateMovementCreates = 0;
+let outMovementCreates = 0;
+let lastRelocateMovement: Record<string, unknown> | null = null;
 let useRelocateTx = false;
+let useJourneyWorld = false;
+
+const journeyState = {
+  inventories: [] as Array<Record<string, unknown>>,
+  layers: [] as Array<Record<string, unknown>>,
+  movements: [] as Array<Record<string, unknown>>,
+  nextId: 1
+};
+
+function resetJourneyState() {
+  journeyState.inventories = [];
+  journeyState.layers = [];
+  journeyState.movements = [];
+  journeyState.nextId = 1;
+}
+
+function journeyQtyAt(locationCode: string) {
+  const loc = locations.find((row) => row.code === locationCode);
+  if (!loc) return d("0");
+  const row = journeyState.inventories.find((item) => item.locationId === loc.id);
+  return row ? d(String(row.qty)) : d("0");
+}
+
+function journeyInventoryAt(locationCode: string) {
+  const loc = locations.find((row) => row.code === locationCode);
+  if (!loc) return null;
+  return journeyState.inventories.find((item) => item.locationId === loc.id) || null;
+}
 
 const stockInventoryRow = {
   id: "inv-hugo-src",
@@ -279,11 +358,7 @@ function d(n: string | number) {
 function buildRelocateTx() {
   const locFrom = locations[0];
   const locTo = locations[1];
-  const locationMap = {
-    [locFrom.id]: locFrom,
-    [locTo.id]: locTo,
-    [locations[2].id]: locations[2]
-  };
+  const locationMap = Object.fromEntries(locations.map((row) => [row.id, row]));
   const productRow = {
     id: product.id,
     serialControlled: product.serialControlled,
@@ -390,6 +465,7 @@ function buildRelocateTx() {
         create: async ({ data }: { data: Record<string, unknown> }) => {
           relocateMovementCreates += 1;
           const row = { id: `mov-${state.nextId++}`, ...data };
+          lastRelocateMovement = row;
           state.movements.push(row);
           return row;
         }
@@ -422,6 +498,195 @@ function buildRelocateTx() {
           return [{ id: inv.id, qty: inv.qty }];
         }
         if (text.includes("FOR UPDATE")) return [{ id: "layer-hugo-1" }];
+        return [];
+      }
+    }
+  };
+}
+
+function buildJourneyTx() {
+  const locationMap = Object.fromEntries(locations.map((row) => [row.id, row]));
+  const productRow = {
+    id: product.id,
+    serialControlled: product.serialControlled,
+    customerId: product.customerId,
+    customer: { id: product.customerId, clientId: AVIAT.id },
+    sku: product.sku,
+    name: product.name
+  };
+
+  function hydrateInventory(row: Record<string, unknown>) {
+    return {
+      ...row,
+      location: locationMap[String(row.locationId) as keyof typeof locationMap],
+      product: productRow
+    };
+  }
+
+  return {
+    state: journeyState,
+    tx: {
+      product: {
+        findUnique: async ({ where }: { where: { id: string } }) => (where.id === product.id ? productRow : null)
+      },
+      customer: {
+        findUnique: async ({ where }: { where: { id: string } }) =>
+          where.id === "proj-att" ? { id: "proj-att", code: "ATT", name: "AT&T", active: true, clientId: AVIAT.id } : null
+      },
+      client: {
+        findUnique: async ({ where }: { where: { id: string } }) => (where.id === AVIAT.id ? AVIAT : null)
+      },
+      inventoryStatusDefinition: {
+        findUnique: async () => ({ code: "AVAILABLE", active: true })
+      },
+      inventory: {
+        findUnique: async ({ where }: { where: Record<string, unknown> }) => {
+          if (where.id) {
+            const found = journeyState.inventories.find((row) => row.id === where.id);
+            return found ? hydrateInventory(found) : null;
+          }
+          const key = (
+            where as {
+              productId_locationId_status_assignmentKey?: {
+                productId: string;
+                locationId: string;
+                status: string;
+                assignmentKey: string;
+              };
+            }
+          ).productId_locationId_status_assignmentKey;
+          if (!key) return null;
+          const found = journeyState.inventories.find(
+            (row) =>
+              row.productId === key.productId &&
+              row.locationId === key.locationId &&
+              row.status === key.status &&
+              row.assignmentKey === key.assignmentKey
+          );
+          return found ? hydrateInventory(found) : null;
+        },
+        findUniqueOrThrow: async ({ where }: { where: Record<string, unknown> }) => {
+          const found = await (async () => {
+            if (where.id) return journeyState.inventories.find((row) => row.id === where.id) || null;
+            const key = (
+              where as {
+                productId_locationId_status_assignmentKey?: {
+                  productId: string;
+                  locationId: string;
+                  status: string;
+                  assignmentKey: string;
+                };
+              }
+            ).productId_locationId_status_assignmentKey;
+            if (!key) return null;
+            return (
+              journeyState.inventories.find(
+                (row) =>
+                  row.productId === key.productId &&
+                  row.locationId === key.locationId &&
+                  row.status === key.status &&
+                  row.assignmentKey === key.assignmentKey
+              ) || null
+            );
+          })();
+          if (!found) throw new Error("inventory not found");
+          return hydrateInventory(found);
+        },
+        create: async ({ data }: { data: Record<string, unknown> }) => {
+          inventoryCreates += 1;
+          const row = {
+            id: `inv-j-${journeyState.nextId++}`,
+            ...data,
+            qty: d(String(data.qty ?? 0)),
+            reservedQty: d(String(data.reservedQty ?? 0))
+          };
+          journeyState.inventories.push(row);
+          return hydrateInventory(row);
+        }
+      },
+      inventoryLayer: {
+        findMany: async ({ where }: { where?: { inventoryId?: string } }) =>
+          journeyState.layers.filter((layer) => !where?.inventoryId || layer.inventoryId === where.inventoryId),
+        create: async ({ data }: { data: Record<string, unknown> }) => {
+          const row = {
+            id: `layer-j-${journeyState.nextId++}`,
+            ...data,
+            qty: d(String(data.qty ?? 0)),
+            reservedQty: d(String(data.reservedQty ?? 0)),
+            lotNumber: (data.lotNumber as string | null) ?? null,
+            receivedAt: (data.receivedAt as Date | null) ?? new Date(),
+            unitPriceMxn: data.unitPriceMxn == null ? null : d(String(data.unitPriceMxn)),
+            unitPriceUsd: null,
+            sourceReference: (data.sourceReference as string | null) ?? null,
+            sourceType: (data.sourceType as string | null) ?? null,
+            createdAt: new Date()
+          };
+          journeyState.layers.push(row);
+          return row;
+        }
+      },
+      inventorySerial: { findFirst: async () => null, findMany: async () => [], create: async () => ({ id: "ser-1" }), count: async () => 0 },
+      inventoryMovement: {
+        create: async ({ data }: { data: Record<string, unknown> }) => {
+          movementCreates += 1;
+          if (String(data.type || "").toUpperCase() === "OUT") outMovementCreates += 1;
+          if (String(data.type || "").toUpperCase() === "RELOCATE") {
+            relocateMovementCreates += 1;
+            lastRelocateMovement = { id: `mov-j-${journeyState.nextId}`, ...data };
+          }
+          const row = { id: `mov-j-${journeyState.nextId++}`, ...data };
+          journeyState.movements.push(row);
+          return row;
+        }
+      },
+      activityLog: { create: async () => ({ id: "act-1" }) },
+      $queryRaw: async (query: unknown, ...values: unknown[]) => {
+        const text = String((query as { strings?: string[] })?.strings?.join("") || query);
+        if (text.includes("InventoryLayer") && text.includes("qty = qty -")) {
+          const delta = d(String(values[0]));
+          const id = String(values[1]);
+          const layer = journeyState.layers.find((item) => item.id === id);
+          if (!layer) return [];
+          layer.qty = d(String(layer.qty)).minus(delta);
+          return [{ id: layer.id, qty: layer.qty, reservedQty: layer.reservedQty }];
+        }
+        if (text.includes('UPDATE "Inventory"') && text.includes("qty = qty -")) {
+          const delta = d(String(values[0]));
+          const id = String(values[1]);
+          const inv = journeyState.inventories.find((item) => item.id === id);
+          if (!inv) return [];
+          inv.qty = d(String(inv.qty)).minus(delta);
+          return [{ id: inv.id, qty: inv.qty, reservedQty: inv.reservedQty }];
+        }
+        if (text.includes('UPDATE "Inventory"') && text.includes("qty = qty +")) {
+          const delta = d(String(values[0]));
+          const id = String(values[1]);
+          let inv = journeyState.inventories.find((item) => item.id === id);
+          if (!inv) {
+            inv = {
+              id,
+              productId: product.id,
+              locationId: locations[2].id,
+              clientId: AVIAT.id,
+              status: "AVAILABLE",
+              assignmentType: "FREE_TO_SALE",
+              assignmentKey: `FREE_TO_SALE:${AVIAT.id}`,
+              projectId: null,
+              qty: d("0"),
+              reservedQty: d("0")
+            };
+            journeyState.inventories.push(inv);
+          }
+          inv.qty = d(String(inv.qty)).plus(delta);
+          return [{ id: inv.id, qty: inv.qty }];
+        }
+        if (text.includes("InventoryLayer") && text.includes("qty = qty +")) {
+          return [{ id: String(values[1] ?? "layer-j-new"), qty: d(String(values[0] ?? 1)), unitPriceMxn: null }];
+        }
+        if (text.includes("FOR UPDATE") && text.includes("InventoryLayer")) {
+          return journeyState.layers.map((layer) => ({ id: layer.id }));
+        }
+        if (text.includes("FOR UPDATE")) return journeyState.inventories.map((row) => ({ id: row.id }));
         return [];
       }
     }
@@ -510,6 +775,7 @@ function buildTx() {
       inventoryMovement: {
         create: async ({ data }: { data: Record<string, unknown> }) => {
           movementCreates += 1;
+          if (String(data.type || "").toUpperCase() === "OUT") outMovementCreates += 1;
           const row = { id: `mov-${state.nextId++}`, ...data };
           state.movements.push(row);
           return row;
@@ -559,6 +825,10 @@ before(async () => {
   originals.push({ model: "__root__", method: "$transaction", fn: origTransaction });
   prismaRoot.$transaction = async (fn: (tx: unknown) => Promise<unknown>) => {
     transactionCalls += 1;
+    if (useJourneyWorld) {
+      const { tx } = buildJourneyTx();
+      return fn(tx);
+    }
     if (useRelocateTx) {
       const { tx } = buildRelocateTx();
       return fn(tx);
@@ -596,8 +866,57 @@ before(async () => {
     return null;
   });
   stub("product", "findMany", async () => [product]);
-  stub("inventory", "findMany", async () => [stockInventoryRow]);
+  stub("inventory", "findMany", async () => {
+    if (useJourneyWorld) {
+      return journeyState.inventories
+        .filter((row) => d(String(row.qty)).greaterThan(0))
+        .map((row) => ({
+          id: row.id,
+          productId: row.productId,
+          locationId: row.locationId,
+          clientId: row.clientId,
+          qty: row.qty,
+          reservedQty: row.reservedQty || d("0"),
+          status: row.status,
+          assignmentType: row.assignmentType,
+          assignmentKey: row.assignmentKey,
+          projectId: row.projectId,
+          product: stockInventoryRow.product,
+          location: locations.find((loc) => loc.id === row.locationId),
+          client: { ...AVIAT },
+          project: null,
+          layers: journeyState.layers
+            .filter((layer) => layer.inventoryId === row.id)
+            .map((layer) => ({
+              id: layer.id,
+              lotNumber: layer.lotNumber ?? null,
+              qty: layer.qty,
+              reservedQty: layer.reservedQty || d("0"),
+              unitPriceMxn: null,
+              unitPriceUsd: null
+            }))
+        }));
+    }
+    return [stockInventoryRow];
+  });
   stub("inventory", "findFirst", async ({ where }: { where?: { id?: string; clientId?: string } }) => {
+    if (useJourneyWorld && where?.id) {
+      const row = journeyState.inventories.find((item) => item.id === where.id);
+      if (!row) return null;
+      if (where.clientId && row.clientId !== where.clientId) return null;
+      return {
+        ...row,
+        product: {
+          id: product.id,
+          sku: product.sku,
+          name: product.name,
+          serialControlled: product.serialControlled,
+          customerId: product.customerId,
+          customer: { id: product.customerId, clientId: AVIAT.id }
+        },
+        location: locations.find((loc) => loc.id === row.locationId)
+      };
+    }
     if (where?.id === stockInventoryRow.id) {
       if (where.clientId && where.clientId !== AVIAT.id) return null;
       return {
@@ -645,9 +964,14 @@ test("bootstrap exige autenticación", async () => {
 test("bootstrap autenticado expone preferencia configurable", async () => {
   const ok = await request("/api/hugo-flow/bootstrap", { token: tokenFor(operator) });
   assert.equal(ok.status, 200);
-  const body = ok.json as { preferredLocationCode?: string; flow?: string };
+  const body = ok.json as {
+    preferredLocationCode?: string;
+    preferredBufferOutLocationCode?: string;
+    flow?: string;
+  };
   assert.equal(body.flow, "buffer-inbound");
   assert.equal(body.preferredLocationCode, "BUFFER-IN");
+  assert.equal(body.preferredBufferOutLocationCode, "BUFFER-OUT");
 });
 
 test("búsqueda predictiva por SKU autenticada", async () => {
@@ -727,6 +1051,7 @@ test("pantalla HTML responde solo con bandera activa", async () => {
   assert.equal(page.status, 200);
   assert.match(String(page.text), /Buffer de entrada/);
   assert.match(String(page.text), />Mover</);
+  assert.match(String(page.text), />Preparar salida</);
 });
 
 test("stock autenticado expone existencias del cliente activo", async () => {
@@ -856,5 +1181,172 @@ test("inventario de otro cliente rechaza reubicación", async () => {
     assert.equal(transactionCalls, beforeTx);
   } finally {
     useRelocateTx = false;
+  }
+});
+
+test("preparación Buffer de salida válida reubica sin movimiento OUT", async () => {
+  useRelocateTx = true;
+  const beforeRelocate = relocateMovementCreates;
+  const beforeOut = outMovementCreates;
+  const beforeTx = transactionCalls;
+  try {
+    const prepare = await request("/api/inventory/relocate", {
+      method: "POST",
+      token: tokenFor(operator),
+      body: {
+        inventoryId: "inv-hugo-src",
+        allocationMode: "FIFO",
+        destinationLocation: "BUFFER-OUT",
+        quantity: 2,
+        reference: "PED-HUGO-OUT-001",
+        notes: "Preparación Buffer de salida"
+      }
+    });
+    assert.equal(prepare.status, 201, JSON.stringify(prepare.json));
+    assert.equal(relocateMovementCreates, beforeRelocate + 1);
+    assert.equal(outMovementCreates, beforeOut);
+    assert.equal(transactionCalls, beforeTx + 1);
+    assert.equal(lastRelocateMovement?.reference, "PED-HUGO-OUT-001");
+    assert.equal(lastRelocateMovement?.notes, "Preparación Buffer de salida");
+    assert.notEqual(lastRelocateMovement?.type, "OUT");
+  } finally {
+    useRelocateTx = false;
+  }
+});
+
+test("preparación mantiene inventario reubicado en Buffer de salida", async () => {
+  useRelocateTx = true;
+  try {
+    const prepare = await request("/api/inventory/relocate", {
+      method: "POST",
+      token: tokenFor(operator),
+      body: {
+        inventoryId: "inv-hugo-src",
+        allocationMode: "FIFO",
+        destinationLocation: "BUFFER-OUT",
+        quantity: 2,
+        reference: "Preparación Buffer de salida"
+      }
+    });
+    assert.equal(prepare.status, 201);
+    const body = prepare.json as { type?: string };
+    assert.equal(body.type, "RELOCATE");
+    assert.notEqual(body.type, "OUT");
+  } finally {
+    useRelocateTx = false;
+  }
+});
+
+test("preparación rechaza Buffer de salida en otro almacén", async () => {
+  useRelocateTx = true;
+  const beforeRelocate = relocateMovementCreates;
+  try {
+    const cross = await request("/api/inventory/relocate", {
+      method: "POST",
+      token: tokenFor(operator),
+      body: {
+        inventoryId: "inv-hugo-src",
+        allocationMode: "FIFO",
+        destinationLocation: "BUFFER-OUT-2",
+        quantity: 1,
+        reference: "Preparación Buffer de salida"
+      }
+    });
+    assert.equal(cross.status, 400);
+    assert.match(String((cross.json as { message?: string })?.message || ""), /almacén|no existe/i);
+    assert.equal(relocateMovementCreates, beforeRelocate);
+  } finally {
+    useRelocateTx = false;
+  }
+});
+
+test("recorrido completo Hugo: entrada → operativa → Buffer de salida", async () => {
+  useJourneyWorld = true;
+  resetJourneyState();
+  const token = tokenFor(operator);
+  const clientRef = "PED-JOURNEY-7788";
+  try {
+    const inbound = await request("/api/inventory/movements", {
+      method: "POST",
+      token,
+      body: {
+        sku: "SKU-HUGO-1",
+        type: "IN",
+        quantity: 5,
+        location: "BUFFER-IN",
+        assignmentType: "FREE_TO_SALE",
+        clientId: AVIAT.id,
+        reference: clientRef
+      }
+    });
+    assert.equal(inbound.status, 201, JSON.stringify(inbound.json));
+    assert.equal(journeyQtyAt("BUFFER-IN").toString(), "5");
+
+    const bufferInv = journeyInventoryAt("BUFFER-IN");
+    assert.ok(bufferInv?.id);
+
+    const toOps = await request("/api/inventory/relocate", {
+      method: "POST",
+      token,
+      body: {
+        inventoryId: String(bufferInv?.id),
+        allocationMode: "FIFO",
+        destinationLocation: "AN2-A",
+        quantity: 3
+      }
+    });
+    assert.equal(toOps.status, 201, JSON.stringify(toOps.json));
+    assert.equal(journeyQtyAt("BUFFER-IN").toString(), "2");
+    assert.equal(journeyQtyAt("AN2-A").toString(), "3");
+
+    const opsInv = journeyInventoryAt("AN2-A");
+    assert.ok(opsInv?.id);
+
+    const prepare = await request("/api/inventory/relocate", {
+      method: "POST",
+      token,
+      body: {
+        inventoryId: String(opsInv?.id),
+        allocationMode: "FIFO",
+        destinationLocation: "BUFFER-OUT",
+        quantity: 2,
+        reference: clientRef,
+        notes: "Preparación Buffer de salida"
+      }
+    });
+    assert.equal(prepare.status, 201, JSON.stringify(prepare.json));
+    assert.equal(journeyQtyAt("AN2-A").toString(), "1");
+    assert.equal(journeyQtyAt("BUFFER-OUT").toString(), "2");
+
+    const prepareBody = prepare.json as { type?: string; reference?: string | null; notes?: string | null };
+    assert.equal(prepareBody.type, "RELOCATE");
+    assert.notEqual(prepareBody.type, "OUT");
+    assert.equal(prepareBody.reference, clientRef);
+    assert.equal(prepareBody.notes, "Preparación Buffer de salida");
+
+    const last = journeyState.movements[journeyState.movements.length - 1] as {
+      type?: string;
+      movementType?: string;
+      reference?: string | null;
+      notes?: string | null;
+    };
+    assert.equal(last.movementType || last.type, "RELOCATE");
+    assert.equal(last.reference, clientRef);
+    assert.equal(last.notes, "Preparación Buffer de salida");
+
+    const inboundMove = journeyState.movements.find((row) => row.movementType === "IN") as
+      | { reference?: string | null }
+      | undefined;
+    assert.equal(inboundMove?.reference, clientRef);
+
+    const stock = await request("/api/inventory/stock", { token });
+    assert.equal(stock.status, 200);
+    const rows = stock.json as Array<{ location?: { code?: string }; qty: string }>;
+    const outRow = rows.find((row) => row.location?.code === "BUFFER-OUT");
+    assert.ok(outRow);
+    assert.equal(String(outRow?.qty), "2");
+  } finally {
+    useJourneyWorld = false;
+    resetJourneyState();
   }
 });

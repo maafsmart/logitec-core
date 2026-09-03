@@ -2,6 +2,8 @@
   "use strict";
 
   var TOKEN_KEY = "token";
+  var OUT_PREP_NOTES = "Preparación Buffer de salida";
+  var CLIENT_REF_MAX = 120;
   var state = {
     me: null,
     bootstrap: null,
@@ -13,7 +15,11 @@
     moveBusy: false,
     moveProduct: null,
     moveStock: [],
-    moveOrigin: null
+    moveOrigin: null,
+    outBusy: false,
+    outProduct: null,
+    outStock: [],
+    outOrigin: null
   };
 
   var gateMessage = document.getElementById("gateMessage");
@@ -45,6 +51,18 @@
   var moveQtyInput = document.getElementById("moveQtyInput");
   var moveSubmitBtn = document.getElementById("moveSubmitBtn");
   var moveActionMessage = document.getElementById("moveActionMessage");
+  var outScanInput = document.getElementById("outScanInput");
+  var outProductMatches = document.getElementById("outProductMatches");
+  var outSelectedProductEl = document.getElementById("outSelectedProduct");
+  var outStockBlock = document.getElementById("outStockBlock");
+  var outStockList = document.getElementById("outStockList");
+  var outOriginSummary = document.getElementById("outOriginSummary");
+  var outBufferScan = document.getElementById("outBufferScan");
+  var outBufferSelect = document.getElementById("outBufferSelect");
+  var outQtyInput = document.getElementById("outQtyInput");
+  var outOrderRefInput = document.getElementById("outOrderRefInput");
+  var outSubmitBtn = document.getElementById("outSubmitBtn");
+  var outActionMessage = document.getElementById("outActionMessage");
 
   function token() {
     try {
@@ -87,6 +105,17 @@
     if (moveActionMessage) moveActionMessage.classList.add("hidden");
   }
 
+  function setOutAction(text, tone) {
+    if (!outActionMessage) return;
+    outActionMessage.textContent = text;
+    outActionMessage.className = "msg " + (tone || "idle");
+    outActionMessage.classList.remove("hidden");
+  }
+
+  function hideOutAction() {
+    if (outActionMessage) outActionMessage.classList.add("hidden");
+  }
+
   function authHeaders() {
     var headers = { Accept: "application/json" };
     var t = token();
@@ -122,6 +151,23 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  function normalizeClientReference(raw, maxLen) {
+    var limit = maxLen || CLIENT_REF_MAX;
+    var value = String(raw || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!value) return null;
+    return value.slice(0, limit);
+  }
+
+  function bindReferenceEnterGuard(inputEl) {
+    if (!inputEl) return;
+    inputEl.addEventListener("keydown", function (event) {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+    });
   }
 
   function availableQty(row) {
@@ -723,6 +769,429 @@
     }
   }
 
+  function clearOutMatches() {
+    if (!outProductMatches) return;
+    outProductMatches.innerHTML = "";
+    outProductMatches.classList.add("hidden");
+  }
+
+  function renderOutSelectedProduct() {
+    var product = state.outProduct;
+    if (!product || !outSelectedProductEl) {
+      if (outSelectedProductEl) outSelectedProductEl.classList.add("hidden");
+      syncOutSubmitEnabled();
+      return;
+    }
+    outSelectedProductEl.classList.remove("hidden");
+    outSelectedProductEl.innerHTML =
+      "<strong>" + escapeHtml(product.sku) + "</strong> · " + escapeHtml(product.name || "");
+    syncOutSubmitEnabled();
+  }
+
+  function outOriginCode() {
+    var row = state.outOrigin;
+    if (!row || !row.location) return "";
+    return String(row.location.code || "").trim().toUpperCase();
+  }
+
+  function outOriginWarehouse() {
+    var row = state.outOrigin;
+    if (!row || !row.location) return "";
+    return String(row.location.warehouse || "").trim().toUpperCase();
+  }
+
+  function sameOutWarehouse(locationRow) {
+    var originWh = outOriginWarehouse();
+    if (!originWh || !locationRow) return true;
+    return String(locationRow.warehouse || "").trim().toUpperCase() === originWh;
+  }
+
+  function outBufferCode() {
+    var scanned = outBufferScan && outBufferScan.value.trim();
+    if (scanned) return scanned.toUpperCase();
+    return outBufferSelect && outBufferSelect.value ? String(outBufferSelect.value).trim().toUpperCase() : "";
+  }
+
+  function preferredBufferOutLocation() {
+    if (!state.bootstrap) return null;
+    var prefCode = String(state.bootstrap.preferredBufferOutLocationCode || "").trim().toUpperCase();
+    var prefWh = String(state.bootstrap.preferredBufferOutWarehouse || "").trim().toUpperCase();
+    if (!prefCode) return null;
+    return (
+      state.locations.find(function (row) {
+        if (row.active === false) return false;
+        if (String(row.code || "").toUpperCase() !== prefCode) return false;
+        if (prefWh && String(row.warehouse || "").toUpperCase() !== prefWh) return false;
+        if (outOriginWarehouse() && !sameOutWarehouse(row)) return false;
+        return true;
+      }) || null
+    );
+  }
+
+  function fillOutBufferSelect() {
+    if (!outBufferSelect) return;
+    var origin = outOriginCode();
+    var originWh = outOriginWarehouse();
+    var previous = outBufferSelect.value;
+    outBufferSelect.innerHTML = '<option value="">— Seleccionar Buffer de salida —</option>';
+    state.locations.forEach(function (row) {
+      if (row.active === false) return;
+      if (originWh && !sameOutWarehouse(row)) return;
+      var code = String(row.code || "").toUpperCase();
+      if (origin && code === origin) return;
+      var opt = document.createElement("option");
+      opt.value = row.code;
+      opt.setAttribute("data-code", row.code);
+      opt.setAttribute("data-warehouse", row.warehouse || "");
+      opt.textContent = (row.warehouse ? row.warehouse + " · " : "") + row.code;
+      outBufferSelect.appendChild(opt);
+    });
+    if (previous) {
+      for (var i = 0; i < outBufferSelect.options.length; i += 1) {
+        if (String(outBufferSelect.options[i].value).toUpperCase() === String(previous).toUpperCase()) {
+          outBufferSelect.selectedIndex = i;
+          break;
+        }
+      }
+    }
+    applyPreferredBufferOut();
+    syncOutSubmitEnabled();
+  }
+
+  function applyPreferredBufferOut() {
+    var match = preferredBufferOutLocation();
+    if (!match || !outBufferSelect) return;
+    for (var i = 0; i < outBufferSelect.options.length; i += 1) {
+      if (String(outBufferSelect.options[i].value).toUpperCase() === String(match.code).toUpperCase()) {
+        outBufferSelect.selectedIndex = i;
+        if (outBufferScan) outBufferScan.value = match.code;
+        break;
+      }
+    }
+  }
+
+  function renderOutOriginSummary() {
+    if (!outOriginSummary) return;
+    var row = state.outOrigin;
+    if (!row) {
+      outOriginSummary.classList.add("hidden");
+      outOriginSummary.innerHTML = "";
+      fillOutBufferSelect();
+      syncOutSubmitEnabled();
+      return;
+    }
+    var loc = row.location || {};
+    outOriginSummary.classList.remove("hidden");
+    outOriginSummary.innerHTML =
+      "Origen: <strong>" +
+      escapeHtml(loc.warehouse ? loc.warehouse + " · " + loc.code : loc.code || "") +
+      "</strong> · " +
+      escapeHtml(row.status || "") +
+      " · " +
+      escapeHtml(assignmentLabel(row)) +
+      " · disp. " +
+      escapeHtml(String(availableQty(row)));
+    fillOutBufferSelect();
+    syncOutSubmitEnabled();
+  }
+
+  function renderOutStockList() {
+    if (!outStockList || !outStockBlock) return;
+    var rows = state.outStock;
+    if (!rows.length) {
+      outStockBlock.classList.remove("hidden");
+      outStockList.innerHTML = '<li><button type="button" class="ghost" disabled>Sin existencias disponibles</button></li>';
+      syncOutSubmitEnabled();
+      return;
+    }
+    outStockBlock.classList.remove("hidden");
+    outStockList.innerHTML = rows
+      .map(function (row, index) {
+        var loc = row.location || {};
+        var label =
+          (loc.warehouse ? loc.warehouse + " · " : "") +
+          (loc.code || "") +
+          " · " +
+          (row.status || "") +
+          " · " +
+          assignmentLabel(row) +
+          " · disp. " +
+          availableQty(row);
+        return (
+          '<li><button type="button" data-index="' +
+          index +
+          '"><strong>' +
+          escapeHtml(label) +
+          "</strong></button></li>"
+        );
+      })
+      .join("");
+    outStockList.querySelectorAll("button[data-index]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var idx = Number(btn.getAttribute("data-index"));
+        selectOutOrigin(state.outStock[idx]);
+      });
+    });
+    syncOutSubmitEnabled();
+  }
+
+  function selectOutOrigin(row) {
+    state.outOrigin = row;
+    renderOutOriginSummary();
+    hideOutAction();
+    if (outBufferScan) outBufferScan.focus();
+  }
+
+  function resolveOutBufferFromScan(rawCode) {
+    if (state.outBusy) return;
+    var code = String(rawCode || "").trim();
+    if (!code) return;
+    hideOutAction();
+    var match = state.locations.find(function (row) {
+      return String(row.code || "").toUpperCase() === code.toUpperCase();
+    });
+    if (!match) {
+      setOutAction("Ubicación Buffer de salida no encontrada.", "err");
+      return;
+    }
+    if (match.active === false) {
+      setOutAction("La ubicación Buffer de salida no está activa.", "err");
+      return;
+    }
+    if (!sameOutWarehouse(match)) {
+      setOutAction(
+        "El Buffer de salida debe estar en el mismo almacén que el origen (" + outOriginWarehouse() + ").",
+        "err"
+      );
+      return;
+    }
+    if (outOriginCode() && outOriginCode() === String(match.code || "").toUpperCase()) {
+      setOutAction("Origen y Buffer de salida deben ser distintos.", "err");
+      return;
+    }
+    if (outBufferSelect) {
+      for (var i = 0; i < outBufferSelect.options.length; i += 1) {
+        if (String(outBufferSelect.options[i].value).toUpperCase() === String(match.code).toUpperCase()) {
+          outBufferSelect.selectedIndex = i;
+          break;
+        }
+      }
+    }
+    if (outBufferScan) outBufferScan.value = match.code;
+    setOutAction("Buffer de salida seleccionado: " + match.code + ".", "ok");
+    syncOutSubmitEnabled();
+    if (outQtyInput) outQtyInput.focus();
+  }
+
+  async function loadOutStock() {
+    if (!state.outProduct) return;
+    hideOutAction();
+    state.outOrigin = null;
+    state.outStock = [];
+    renderOutOriginSummary();
+    var response = await apiFetch("/api/inventory/stock");
+    var data = await response.json().catch(function () {
+      return [];
+    });
+    if (!response.ok) {
+      setOutAction((data && data.message) || "No se pudieron leer existencias.", "err");
+      renderOutStockList();
+      return;
+    }
+    var rows = Array.isArray(data) ? data : [];
+    var productId = state.outProduct.id;
+    var sku = String(state.outProduct.sku || "").toUpperCase();
+    state.outStock = rows.filter(function (row) {
+      var matchesProduct =
+        row.productId === productId || (row.product && String(row.product.sku || "").toUpperCase() === sku);
+      return matchesProduct && availableQty(row) > 0;
+    });
+    renderOutStockList();
+    if (!state.outStock.length) {
+      setOutAction("Sin existencias disponibles para este producto.", "err");
+    } else {
+      setOutAction("Selecciona la ubicación origen.", "idle");
+    }
+  }
+
+  function selectOutProduct(product) {
+    if (product && product.serialControlled) {
+      state.outProduct = null;
+      state.outStock = [];
+      state.outOrigin = null;
+      clearOutMatches();
+      renderOutSelectedProduct();
+      renderOutStockList();
+      renderOutOriginSummary();
+      setOutAction("Producto serializado: usa el flujo especializado de reubicación en el dashboard.", "err");
+      return;
+    }
+    state.outProduct = product;
+    state.outOrigin = null;
+    clearOutMatches();
+    if (outScanInput) outScanInput.value = product.sku || "";
+    renderOutSelectedProduct();
+    void loadOutStock();
+  }
+
+  async function lookupOutCode(rawCode) {
+    if (state.outBusy) return;
+    var code = String(rawCode || "").trim();
+    if (!code) return;
+    hideOutAction();
+    var response = await apiFetch("/api/catalog/products/search?q=" + encodeURIComponent(code) + "&limit=12");
+    var data = await response.json().catch(function () {
+      return [];
+    });
+    if (!response.ok) {
+      setOutAction((data && data.message) || "No se pudo buscar el código.", "err");
+      return;
+    }
+    var rows = Array.isArray(data) ? data : [];
+    if (!rows.length) {
+      clearOutMatches();
+      state.outProduct = null;
+      state.outStock = [];
+      state.outOrigin = null;
+      renderOutSelectedProduct();
+      renderOutStockList();
+      renderOutOriginSummary();
+      setOutAction("Código no identificado en catálogo.", "err");
+      return;
+    }
+    var exact = rows.find(function (row) {
+      return (
+        String(row.sku || "").toUpperCase() === code.toUpperCase() ||
+        String(row.barcode || "").toUpperCase() === code.toUpperCase()
+      );
+    });
+    if (exact) {
+      selectOutProduct(exact);
+      return;
+    }
+    if (rows.length === 1) {
+      selectOutProduct(rows[0]);
+      return;
+    }
+    renderMatches(rows, outProductMatches, selectOutProduct);
+    setOutAction("Varias coincidencias. Elige el producto correcto.", "idle");
+  }
+
+  function syncOutSubmitEnabled() {
+    if (!outSubmitBtn) return;
+    var qty = Number(outQtyInput && outQtyInput.value);
+    var buffer = outBufferCode();
+    var origin = outOriginCode();
+    var ok =
+      !state.outBusy &&
+      state.outOrigin &&
+      buffer &&
+      origin &&
+      origin !== buffer &&
+      qty > 0 &&
+      Number.isFinite(qty) &&
+      qty <= availableQty(state.outOrigin);
+    outSubmitBtn.disabled = !ok;
+  }
+
+  async function refreshOutAfterSuccess() {
+    if (outBufferScan) outBufferScan.value = "";
+    if (outBufferSelect) outBufferSelect.selectedIndex = 0;
+    if (outQtyInput) outQtyInput.value = "1";
+    if (outOrderRefInput) outOrderRefInput.value = "";
+    state.outOrigin = null;
+    renderOutOriginSummary();
+    fillOutBufferSelect();
+    if (state.outProduct) {
+      await loadOutStock();
+    }
+    if (outScanInput) outScanInput.focus();
+  }
+
+  async function submitOutPrepare() {
+    if (state.outBusy || !state.outOrigin || !state.outProduct) return;
+    var originRow = state.outOrigin;
+    var originCode = outOriginCode();
+    var bufferCode = outBufferCode();
+    var qty = Number(outQtyInput && outQtyInput.value);
+    var available = availableQty(originRow);
+
+    if (!bufferCode) {
+      setOutAction("Selecciona o escanea la ubicación Buffer de salida.", "err");
+      return;
+    }
+    if (originCode && originCode === bufferCode.toUpperCase()) {
+      setOutAction("Origen y Buffer de salida deben ser distintos.", "err");
+      return;
+    }
+    if (!(qty > 0) || !Number.isFinite(qty)) {
+      setOutAction("Indica una cantidad mayor que cero.", "err");
+      return;
+    }
+    if (qty > available) {
+      setOutAction("La cantidad no puede superar la disponible (" + available + ").", "err");
+      return;
+    }
+    var bufferMatch = state.locations.find(function (row) {
+      return String(row.code || "").toUpperCase() === bufferCode.toUpperCase();
+    });
+    if (bufferMatch && !sameOutWarehouse(bufferMatch)) {
+      setOutAction(
+        "El Buffer de salida debe estar en el mismo almacén que el origen (" + outOriginWarehouse() + ").",
+        "err"
+      );
+      return;
+    }
+    if (bufferMatch && bufferMatch.active === false) {
+      setOutAction("La ubicación Buffer de salida no está activa.", "err");
+      return;
+    }
+
+    state.outBusy = true;
+    syncOutSubmitEnabled();
+    hideOutAction();
+    var clientReference = normalizeClientReference(outOrderRefInput && outOrderRefInput.value);
+    try {
+      var relocateBody = {
+        inventoryId: originRow.id,
+        allocationMode: "FIFO",
+        destinationLocation: bufferCode,
+        quantity: qty,
+        notes: OUT_PREP_NOTES
+      };
+      if (clientReference) relocateBody.reference = clientReference;
+      var response = await apiFetch("/api/inventory/relocate", {
+        method: "POST",
+        body: relocateBody
+      });
+      var data = await response.json().catch(function () {
+        return {};
+      });
+      if (!response.ok) {
+        setOutAction((data && data.message) || "No se pudo confirmar la preparación.", "err");
+        return;
+      }
+      setOutAction(
+        "Preparación registrada · " +
+          state.outProduct.sku +
+          " · " +
+          qty +
+          " pza · " +
+          originCode +
+          " → Buffer " +
+          bufferCode.toUpperCase() +
+          (clientReference ? " · pedido " + clientReference : ""),
+        "ok"
+      );
+      await refreshOutAfterSuccess();
+    } catch (_e) {
+      setOutAction("Error de red.", "err");
+    } finally {
+      state.outBusy = false;
+      syncOutSubmitEnabled();
+    }
+  }
+
   function parseSerialToken(raw) {
     var value = String(raw || "").trim();
     if (!value) return null;
@@ -764,6 +1233,7 @@
       return;
     }
 
+    var clientReference = normalizeClientReference(orderRefInput && orderRefInput.value);
     var payload = {
       sku: product.sku,
       type: "IN",
@@ -771,9 +1241,9 @@
       location: locationCode,
       status: "AVAILABLE",
       assignmentType: assignmentType,
-      reference: orderRefInput && orderRefInput.value.trim() ? orderRefInput.value.trim() : undefined,
       notes: notesInput && notesInput.value.trim() ? notesInput.value.trim() : undefined
     };
+    if (clientReference) payload.reference = clientReference;
     if (lotInput && lotInput.value.trim()) payload.lotNumber = lotInput.value.trim();
     if (assignmentType === "FREE_TO_SALE") {
       payload.clientId = clientId;
@@ -800,7 +1270,10 @@
         setAction((data && data.message) || "No se pudo registrar la entrada.", "err");
         return;
       }
-      setAction("Entrada registrada en " + locationCode + ".", "ok");
+      setAction(
+        "Entrada registrada en " + locationCode + (clientReference ? " · pedido " + clientReference : "") + ".",
+        "ok"
+      );
       state.selectedProduct = null;
       state.serials = [];
       if (scanInput) scanInput.value = "";
@@ -864,6 +1337,7 @@
     }
     state.locations = Array.isArray(locations) ? locations.filter(function (row) { return row.active !== false; }) : [];
     fillLocations(state.locations);
+    fillOutBufferSelect();
 
     var projResp = await apiFetch("/api/inventory/projects");
     var projects = await projResp.json().catch(function () {
@@ -879,9 +1353,12 @@
     syncAssignmentUi();
     syncSubmitEnabled();
     syncMoveSubmitEnabled();
+    syncOutSubmitEnabled();
     if (scanInput) scanInput.focus();
   }
 
+  bindReferenceEnterGuard(orderRefInput);
+  bindReferenceEnterGuard(outOrderRefInput);
   if (scanInput) {
     scanInput.addEventListener("keydown", function (event) {
       if (event.key !== "Enter") return;
@@ -901,6 +1378,20 @@
       if (event.key !== "Enter") return;
       event.preventDefault();
       resolveMoveDestFromScan(moveDestScan.value);
+    });
+  }
+  if (outScanInput) {
+    outScanInput.addEventListener("keydown", function (event) {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      lookupOutCode(outScanInput.value);
+    });
+  }
+  if (outBufferScan) {
+    outBufferScan.addEventListener("keydown", function (event) {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      resolveOutBufferFromScan(outBufferScan.value);
     });
   }
   if (serialInput) {
@@ -926,8 +1417,14 @@
     if (el) el.addEventListener("input", syncMoveSubmitEnabled);
     if (el) el.addEventListener("change", syncMoveSubmitEnabled);
   });
+  ["outQtyInput", "outBufferSelect"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener("input", syncOutSubmitEnabled);
+    if (el) el.addEventListener("change", syncOutSubmitEnabled);
+  });
   if (submitBtn) submitBtn.addEventListener("click", submitInbound);
   if (moveSubmitBtn) moveSubmitBtn.addEventListener("click", submitMove);
+  if (outSubmitBtn) outSubmitBtn.addEventListener("click", submitOutPrepare);
 
   bootstrap();
 })();

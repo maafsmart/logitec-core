@@ -169,8 +169,34 @@
       <button id="moveSubmitBtn" type="button" disabled>Confirmar movimiento</button>
       <div id="moveActionMessage" class="msg idle hidden"></div>
     </section>
+
+    <hr style="border:0;border-top:1px solid var(--line);margin:16px 0" />
+    <h2 style="font-size:1.05rem;margin:0 0 4px">Preparar salida</h2>
+    <p class="sub" style="margin-bottom:10px">Identificar existencia → origen → Buffer de salida → cantidad → preparar salida</p>
+
+    <section class="card">
+      <label for="outScanInput">Escaneo o búsqueda de producto</label>
+      <input id="outScanInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" placeholder="SKU, código de barras u otro identificador" />
+      <ul id="outProductMatches" class="product-pick hidden"></ul>
+      <div id="outSelectedProduct" class="selected-product hidden"></div>
+      <div id="outStockBlock" class="hidden" style="margin-top:8px">
+        <label>Existencias disponibles (cliente y proyecto autorizados)</label>
+        <ul id="outStockList" class="product-pick"></ul>
+      </div>
+      <div id="outOriginSummary" class="selected-product hidden" style="margin-top:8px"></div>
+      <label for="outBufferScan" style="margin-top:8px">Buffer de salida (escaneo + Enter o selector)</label>
+      <input id="outBufferScan" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" placeholder="Escanea ubicación Buffer de salida" />
+      <label for="outBufferSelect" style="margin-top:8px">Ubicación Buffer de salida activa</label>
+      <select id="outBufferSelect"><option value="">— Seleccionar Buffer de salida —</option></select>
+      <label for="outQtyInput" style="margin-top:8px">Cantidad a preparar</label>
+      <input id="outQtyInput" type="number" min="1" step="1" value="1" inputmode="numeric" />
+      <label for="outOrderRefInput" style="margin-top:8px">Pedido / referencia del cliente (opcional)</label>
+      <input id="outOrderRefInput" type="text" maxlength="120" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="SAP, pedido, folio…" />
+      <button id="outSubmitBtn" type="button" disabled>Confirmar preparación</button>
+      <div id="outActionMessage" class="msg idle hidden"></div>
+    </section>
   </div>
 
-  <script src="/hugo-buffer-inbound.js?v=3"></script>
+  <script src="/hugo-buffer-inbound.js?v=5"></script>
 </body>
 </html>

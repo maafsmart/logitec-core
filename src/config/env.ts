@@ -25,6 +25,8 @@ const envSchema = z.object({
   ),
   HUGO_BUFFER_IN_LOCATION_PREFERENCE: z.string().trim().max(120).optional(),
   HUGO_BUFFER_IN_WAREHOUSE_PREFERENCE: z.string().trim().max(80).optional(),
+  HUGO_BUFFER_OUT_LOCATION_PREFERENCE: z.string().trim().max(120).optional(),
+  HUGO_BUFFER_OUT_WAREHOUSE_PREFERENCE: z.string().trim().max(80).optional(),
   ALLOW_TENANT_INVENTORY_RESET: z.preprocess(
     (value) => {
       const raw = String(value ?? "false").trim().toLowerCase();
