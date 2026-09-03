@@ -63,6 +63,17 @@
   var outOrderRefInput = document.getElementById("outOrderRefInput");
   var outSubmitBtn = document.getElementById("outSubmitBtn");
   var outActionMessage = document.getElementById("outActionMessage");
+  var locationsWarn = document.getElementById("locationsWarn");
+  var submitHelp = document.getElementById("submitHelp");
+  var moveSubmitHelp = document.getElementById("moveSubmitHelp");
+  var outSubmitHelp = document.getElementById("outSubmitHelp");
+
+  var FLOW_TABS = [
+    { id: "recepcion", tabId: "tab-recepcion", panelId: "panel-recepcion", scanEl: function () { return scanInput; } },
+    { id: "mover", tabId: "tab-mover", panelId: "panel-mover", scanEl: function () { return moveScanInput; } },
+    { id: "salida", tabId: "tab-salida", panelId: "panel-salida", scanEl: function () { return outScanInput; } }
+  ];
+  var activeFlow = "recepcion";
 
   function token() {
     try {
@@ -80,7 +91,147 @@
   function setGate(text, tone) {
     if (!gateMessage) return;
     gateMessage.textContent = text;
-    gateMessage.className = "card msg " + (tone || "idle");
+    gateMessage.className = "gate-status " + (tone || "idle");
+  }
+
+  function activeLocationCount() {
+    return state.locations.filter(function (row) {
+      return row.active !== false;
+    }).length;
+  }
+
+  function syncLocationsWarning() {
+    if (!locationsWarn) return;
+    if (activeLocationCount() === 0) {
+      locationsWarn.textContent =
+        "No hay ubicaciones activas autorizadas para este cliente. No puedes operar hasta que existan ubicaciones disponibles.";
+      locationsWarn.classList.remove("hidden");
+    } else {
+      locationsWarn.textContent = "";
+      locationsWarn.classList.add("hidden");
+    }
+  }
+
+  function setSubmitHelp(el, text, visible) {
+    if (!el) return;
+    el.textContent = text || "";
+    el.classList.toggle("hidden", !visible);
+  }
+
+  function setActiveFlow(flowId, options) {
+    options = options || {};
+    if (flowId !== "recepcion") hideAction();
+    if (flowId !== "mover") hideMoveAction();
+    if (flowId !== "salida") hideOutAction();
+    activeFlow = flowId;
+    FLOW_TABS.forEach(function (entry) {
+      var isActive = entry.id === flowId;
+      var tabEl = document.getElementById(entry.tabId);
+      var panelEl = document.getElementById(entry.panelId);
+      if (tabEl) {
+        tabEl.setAttribute("aria-selected", isActive ? "true" : "false");
+        tabEl.classList.toggle("is-active", isActive);
+        tabEl.tabIndex = isActive ? 0 : -1;
+      }
+      if (panelEl) {
+        panelEl.classList.toggle("hidden", !isActive);
+        if (isActive) panelEl.removeAttribute("hidden");
+        else panelEl.setAttribute("hidden", "");
+      }
+    });
+    if (options.focus !== false) {
+      var active = FLOW_TABS.find(function (entry) {
+        return entry.id === flowId;
+      });
+      var scanEl = active && active.scanEl ? active.scanEl() : null;
+      if (scanEl) scanEl.focus();
+    }
+  }
+
+  function initFlowTabs() {
+    FLOW_TABS.forEach(function (entry, index) {
+      var tabEl = document.getElementById(entry.tabId);
+      if (!tabEl) return;
+      tabEl.addEventListener("click", function () {
+        setActiveFlow(entry.id);
+      });
+      tabEl.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          setActiveFlow(entry.id);
+          return;
+        }
+        var nextIndex = -1;
+        if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+          event.preventDefault();
+          nextIndex = (index + 1) % FLOW_TABS.length;
+        } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+          event.preventDefault();
+          nextIndex = (index - 1 + FLOW_TABS.length) % FLOW_TABS.length;
+        } else if (event.key === "Home") {
+          event.preventDefault();
+          nextIndex = 0;
+        } else if (event.key === "End") {
+          event.preventDefault();
+          nextIndex = FLOW_TABS.length - 1;
+        }
+        if (nextIndex < 0) return;
+        var next = FLOW_TABS[nextIndex];
+        setActiveFlow(next.id);
+        var nextTab = document.getElementById(next.tabId);
+        if (nextTab) nextTab.focus();
+      });
+    });
+    setActiveFlow("recepcion", { focus: false });
+  }
+
+  function inboundSubmitHint() {
+    if (activeLocationCount() === 0) {
+      return "No hay ubicaciones autorizadas. No puedes registrar hasta tener ubicaciones activas.";
+    }
+    if (state.busy) return "Registrando entrada…";
+    if (!state.selectedProduct) return "Escanea o identifica un producto para continuar.";
+    if (!locationSelect || !locationSelect.value) return "Selecciona una ubicación activa.";
+    if (assignmentSelect && assignmentSelect.value === "PROJECT" && projectSelect && !projectSelect.value) {
+      return "Selecciona un proyecto.";
+    }
+    if (state.selectedProduct.serialControlled) {
+      var qty = Number(qtyInput && qtyInput.value);
+      if (state.serials.length !== qty) {
+        return "Captura todas las series requeridas (" + state.serials.length + "/" + qty + ").";
+      }
+    }
+    return "";
+  }
+
+  function moveSubmitHint() {
+    if (activeLocationCount() === 0) {
+      return "No hay ubicaciones autorizadas. No puedes mover hasta tener ubicaciones activas.";
+    }
+    if (state.moveBusy) return "Confirmando movimiento…";
+    if (!state.moveOrigin) return "Selecciona la existencia de origen.";
+    if (!moveDestCode()) return "Indica la ubicación destino.";
+    var qty = Number(moveQtyInput && moveQtyInput.value);
+    if (!Number.isFinite(qty) || qty <= 0) return "Indica una cantidad válida.";
+    if (state.moveOrigin && qty > availableQty(state.moveOrigin)) {
+      return "La cantidad supera lo disponible en origen.";
+    }
+    return "";
+  }
+
+  function outSubmitHint() {
+    if (activeLocationCount() === 0) {
+      return "No hay ubicaciones autorizadas. No puedes preparar salida hasta tener ubicaciones activas.";
+    }
+    if (state.outBusy) return "Confirmando preparación…";
+    if (!state.outOrigin) return "Selecciona la existencia de origen.";
+    if (!outBufferCode()) return "Indica la ubicación Buffer de salida.";
+    var qty = Number(outQtyInput && outQtyInput.value);
+    if (!Number.isFinite(qty) || qty <= 0) return "Indica una cantidad válida.";
+    if (state.outOrigin && qty > availableQty(state.outOrigin)) {
+      return "La cantidad supera lo disponible en origen.";
+    }
+    return "";
   }
 
   function setAction(text, tone) {
@@ -217,7 +368,9 @@
     if (!submitBtn) return;
     var qty = Number(qtyInput && qtyInput.value);
     var locationCode = locationSelect && locationSelect.value;
+    var hasLocations = activeLocationCount() > 0;
     var ok =
+      hasLocations &&
       !state.busy &&
       state.selectedProduct &&
       locationCode &&
@@ -228,6 +381,8 @@
       ok = ok && projectSelect && projectSelect.value;
     }
     submitBtn.disabled = !ok;
+    submitBtn.classList.toggle("is-disabled", !ok);
+    setSubmitHelp(submitHelp, inboundSubmitHint(), !ok);
   }
 
   function renderSelectedProduct() {
@@ -326,6 +481,7 @@
       locationSelect.appendChild(opt);
     });
     applyPreferredLocation();
+    syncLocationsWarning();
     syncSubmitEnabled();
     fillMoveDestSelect();
   }
@@ -668,7 +824,9 @@
     var qty = Number(moveQtyInput && moveQtyInput.value);
     var dest = moveDestCode();
     var origin = moveOriginCode();
+    var hasLocations = activeLocationCount() > 0;
     var ok =
+      hasLocations &&
       !state.moveBusy &&
       state.moveOrigin &&
       dest &&
@@ -678,6 +836,8 @@
       Number.isFinite(qty) &&
       qty <= availableQty(state.moveOrigin);
     moveSubmitBtn.disabled = !ok;
+    moveSubmitBtn.classList.toggle("is-disabled", !ok);
+    setSubmitHelp(moveSubmitHelp, moveSubmitHint(), !ok);
   }
 
   async function refreshMoveAfterSuccess() {
@@ -1082,7 +1242,9 @@
     var qty = Number(outQtyInput && outQtyInput.value);
     var buffer = outBufferCode();
     var origin = outOriginCode();
+    var hasLocations = activeLocationCount() > 0;
     var ok =
+      hasLocations &&
       !state.outBusy &&
       state.outOrigin &&
       buffer &&
@@ -1092,6 +1254,8 @@
       Number.isFinite(qty) &&
       qty <= availableQty(state.outOrigin);
     outSubmitBtn.disabled = !ok;
+    outSubmitBtn.classList.toggle("is-disabled", !ok);
+    setSubmitHelp(outSubmitHelp, outSubmitHint(), !ok);
   }
 
   async function refreshOutAfterSuccess() {
@@ -1350,13 +1514,15 @@
 
     if (workspace) workspace.classList.remove("hidden");
     setGate("Listo · cliente " + (state.me.operationalClient && state.me.operationalClient.tradeName || state.me.operationalClient && state.me.operationalClient.name || "activo"), "ok");
+    syncLocationsWarning();
     syncAssignmentUi();
     syncSubmitEnabled();
     syncMoveSubmitEnabled();
     syncOutSubmitEnabled();
-    if (scanInput) scanInput.focus();
+    setActiveFlow("recepcion");
   }
 
+  initFlowTabs();
   bindReferenceEnterGuard(orderRefInput);
   bindReferenceEnterGuard(outOrderRefInput);
   if (scanInput) {

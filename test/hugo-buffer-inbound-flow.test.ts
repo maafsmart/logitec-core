@@ -58,8 +58,13 @@ test("artefactos Hugo documentan bandera local y flujo buffer", () => {
   assert.match(html, /Pedido \/ referencia del cliente/);
   assert.match(html, />Mover</);
   assert.match(html, /Confirmar movimiento/);
-  assert.match(html, />Preparar salida</);
+  assert.match(html, /Preparar salida/);
   assert.match(html, /Confirmar preparación/);
+  assert.match(html, /role="tablist"/);
+  assert.match(html, /role="tabpanel"/);
+  assert.match(html, />Libre venta</);
+  assert.match(html, /value="FREE_TO_SALE"/);
+  assert.match(html, /id="locationsWarn"/);
   assert.match(js, /\/api\/catalog\/products\/search/);
   assert.match(js, /\/api\/inventory\/movements/);
   assert.match(js, /\/api\/inventory\/stock/);
@@ -67,6 +72,9 @@ test("artefactos Hugo documentan bandera local y flujo buffer", () => {
   assert.match(js, /Preparación Buffer de salida/);
   assert.match(js, /OUT_PREP_NOTES/);
   assert.match(js, /normalizeClientReference/);
+  assert.match(js, /setActiveFlow/);
+  assert.match(js, /syncLocationsWarning/);
+  assert.match(js, /initFlowTabs/);
   assert.match(html, /outOrderRefInput/);
   assert.match(html, /Pedido \/ referencia del cliente/);
   assert.match(envExample, /ENABLE_HUGO_BUFFER_INBOUND/);
@@ -85,8 +93,36 @@ test("artefactos Hugo documentan bandera local y flujo buffer", () => {
   assert.doesNotMatch(submitOut, /type:\s*'OUT'/);
 });
 
+test("referencia Enter no envía formularios", () => {
+  assert.match(js, /bindReferenceEnterGuard\(orderRefInput\)/);
+  assert.match(js, /bindReferenceEnterGuard\(outOrderRefInput\)/);
+  const guardStart = js.indexOf("function bindReferenceEnterGuard(");
+  assert.ok(guardStart >= 0);
+  const guardEnd = js.indexOf("}", js.indexOf("event.preventDefault();", guardStart));
+  const guard = js.slice(guardStart, guardEnd + 1);
+  assert.match(guard, /event\.preventDefault\(\)/);
+  assert.doesNotMatch(guard, /submitInbound|submitMove|submitOutPrepare/);
+});
+
 test("UI filtra ubicaciones inactivas en selector", () => {
   assert.match(js, /active !== false/);
+  assert.match(js, /syncLocationsWarning/);
+  assert.match(js, /activeLocationCount\(\) === 0/);
+});
+
+test("pestañas son botones accesibles y limpian mensajes ajenos", () => {
+  assert.match(html, /type="button" role="tab"/);
+  assert.match(html, /hugo-buffer-inbound\.js\?v=6/);
+  assert.match(js, /if \(flowId !== "recepcion"\) hideAction\(\)/);
+  assert.match(js, /if \(flowId !== "mover"\) hideMoveAction\(\)/);
+  assert.match(js, /if \(flowId !== "salida"\) hideOutAction\(\)/);
+  const tabHandlerStart = js.indexOf("tabEl.addEventListener(\"keydown\"");
+  assert.ok(tabHandlerStart >= 0);
+  const tabHandler = js.slice(tabHandlerStart, tabHandlerStart + 600);
+  assert.match(tabHandler, /event\.key === "Enter"/);
+  assert.match(tabHandler, /event\.key === " "/);
+  assert.match(tabHandler, /ArrowRight/);
+  assert.match(tabHandler, /ArrowLeft/);
 });
 
 test("login ?next= rechaza URLs externas y acepta rutas internas allowlist", () => {
@@ -1051,7 +1087,7 @@ test("pantalla HTML responde solo con bandera activa", async () => {
   assert.equal(page.status, 200);
   assert.match(String(page.text), /Buffer de entrada/);
   assert.match(String(page.text), />Mover</);
-  assert.match(String(page.text), />Preparar salida</);
+  assert.match(String(page.text), /Preparar salida/);
 });
 
 test("stock autenticado expone existencias del cliente activo", async () => {
