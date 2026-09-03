@@ -54,7 +54,8 @@ function sliceFunction(source: string, name: string): string {
 }
 
 test("artefactos Hugo documentan bandera local y flujo buffer", () => {
-  assert.match(html, /Buffer de entrada/);
+  assert.match(html, /Operación por escaneo/);
+  assert.match(html, /Recepción · Movimientos · Buffer de salida/);
   assert.match(html, /Pedido \/ referencia del cliente/);
   assert.match(html, />Mover</);
   assert.match(html, /Confirmar movimiento/);
@@ -112,7 +113,13 @@ test("UI filtra ubicaciones inactivas en selector", () => {
 
 test("pestañas son botones accesibles y limpian mensajes ajenos", () => {
   assert.match(html, /type="button" role="tab"/);
-  assert.match(html, /hugo-buffer-inbound\.js\?v=6/);
+  assert.match(js, /syncFlowTheme/);
+  assert.match(js, /flow-pos-/);
+  assert.match(js, /flow-palette-/);
+  assert.match(html, /tab-hint/);
+  assert.match(html, /flow-pos-first/);
+  assert.match(html, /flow-palette-recepcion/);
+  assert.match(html, /hugo-buffer-inbound\.js\?v=9/);
   assert.match(js, /if \(flowId !== "recepcion"\) hideAction\(\)/);
   assert.match(js, /if \(flowId !== "mover"\) hideMoveAction\(\)/);
   assert.match(js, /if \(flowId !== "salida"\) hideOutAction\(\)/);
@@ -1085,7 +1092,7 @@ test("ubicación inexistente rechaza sin mutar inventario", async () => {
 test("pantalla HTML responde solo con bandera activa", async () => {
   const page = await request("/hugo-buffer-inbound.html");
   assert.equal(page.status, 200);
-  assert.match(String(page.text), /Buffer de entrada/);
+  assert.match(String(page.text), /Operación por escaneo/);
   assert.match(String(page.text), />Mover</);
   assert.match(String(page.text), /Preparar salida/);
 });

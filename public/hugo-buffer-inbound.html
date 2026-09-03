@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0b1222" />
-  <title>Recepción · Buffer de entrada · LOGITEC</title>
+  <title>Operación por escaneo · LOGITEC</title>
   <style>
     :root {
       --bg: #0b1222;
@@ -15,7 +15,13 @@
       --ok: #2f9e6b;
       --warn: #c45c12;
       --err: #c0394a;
-      --accent: #3d7eff;
+      --flow-accent: #3d7eff;
+      --flow-accent-strong: #3d7eff;
+      --flow-accent-soft: rgba(61, 126, 255, 0.18);
+      --flow-accent-ring: rgba(61, 126, 255, 0.45);
+      --flow-panel-edge: transparent;
+      --flow-edge-style: gradient;
+      --flow-glow-rgb: 61, 126, 255;
       --sticky-top: 0px;
     }
     * { box-sizing: border-box; }
@@ -47,8 +53,20 @@
       flex-wrap: wrap;
     }
     h1 { font-size: 1.05rem; margin: 0; line-height: 1.2; }
+    .page-sub {
+      margin: 2px 0 0;
+      font-size: .74rem;
+      line-height: 1.3;
+      color: var(--muted);
+      letter-spacing: .01em;
+    }
     .sub { color: var(--muted); font-size: .82rem; margin: 0 0 8px; line-height: 1.35; }
-    .panel-hint { margin-top: 0; }
+    .panel-hint {
+      margin-top: 0;
+      padding-left: 10px;
+      border-left: 3px solid var(--flow-accent);
+      color: #c5d4f5;
+    }
     .gate-status {
       border-radius: 8px;
       padding: 6px 10px;
@@ -66,12 +84,17 @@
       z-index: 20;
       margin: 0 -12px 8px;
       padding: 6px 12px 8px;
-      background: linear-gradient(180deg, rgba(11, 18, 34, .98) 70%, rgba(11, 18, 34, 0));
+      background: linear-gradient(
+        180deg,
+        rgba(var(--flow-glow-rgb), 0.14) 0%,
+        rgba(11, 18, 34, 0.97) 58%,
+        rgba(11, 18, 34, 0)
+      );
       backdrop-filter: blur(6px);
     }
     .flow-tabs {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 6px;
     }
     .flow-tabs [role="tab"] {
@@ -80,26 +103,178 @@
       border-radius: 10px;
       background: rgba(19, 32, 56, .85);
       color: var(--muted);
-      font: 700 .82rem/1.1 Inter, Segoe UI, sans-serif;
+      font: 700 .82rem/1.15 Inter, Segoe UI, sans-serif;
       min-height: 48px;
-      padding: 10px 8px;
+      padding: 8px 6px 7px;
       margin: 0;
       width: 100%;
       cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+    }
+    .tab-label { display: block; }
+    .tab-hint {
+      display: block;
+      font-size: .68rem;
+      font-weight: 600;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: #7f8fad;
     }
     .flow-tabs [role="tab"].is-active,
     .flow-tabs [role="tab"][aria-selected="true"] {
       color: var(--text);
-      border-color: var(--accent);
-      background: rgba(61, 126, 255, .18);
-      box-shadow: inset 0 0 0 1px rgba(61, 126, 255, .35);
+      border-color: var(--flow-accent);
+      background: var(--flow-accent-soft);
+      box-shadow: inset 0 0 0 1px var(--flow-accent-ring);
+    }
+    .flow-tabs [role="tab"].is-active .tab-hint,
+    .flow-tabs [role="tab"][aria-selected="true"] .tab-hint {
+      color: var(--flow-accent);
     }
     .flow-tabs [role="tab"]:focus-visible {
-      outline: 2px solid var(--accent);
+      outline: 2px solid var(--flow-accent);
       outline-offset: 2px;
     }
+    /*
+      Regla reutilizable por posición de pestaña (paleta = módulo, posición = dirección/intensidad):
+      - flow-pos-first  → entrada: izquierda clara → derecha oscura (to right, stops descendentes)
+      - flow-pos-middle → halo radial central (sin eje horizontal dominante)
+      - flow-pos-last   → salida: izquierda oscura → derecha clara (to right, stops ascendentes)
+      Con 4+ tabs: first=entrada, last=salida, middle*=misma familia sólida con --flow-tone-shift.
+    */
+    #workspace {
+      position: relative;
+      isolation: isolate;
+      --flow-bg-wash: none;
+      --flow-tone-shift: 0%;
+    }
+    #workspace::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background: var(--flow-bg-wash);
+    }
+    #workspace > * {
+      position: relative;
+      z-index: 1;
+    }
+    #workspace.flow-pos-first {
+      --flow-bg-wash: linear-gradient(
+        to right,
+        rgba(var(--flow-glow-rgb), 0.28) 0%,
+        rgba(var(--flow-glow-rgb), 0.16) 18%,
+        rgba(var(--flow-glow-rgb), 0.06) 38%,
+        transparent 62%
+      );
+      --flow-panel-edge: linear-gradient(
+        to right,
+        rgba(var(--flow-glow-rgb), 0.72) 0%,
+        rgba(var(--flow-glow-rgb), 0.14) 42%,
+        transparent 100%
+      );
+      --flow-edge-style: gradient;
+    }
+    #workspace.flow-pos-first .flow-tabs-wrap {
+      background:
+        linear-gradient(
+          to right,
+          rgba(var(--flow-glow-rgb), 0.16) 0%,
+          rgba(var(--flow-glow-rgb), 0.07) 40%,
+          transparent 68%
+        ),
+        linear-gradient(
+          180deg,
+          rgba(var(--flow-glow-rgb), 0.14) 0%,
+          rgba(11, 18, 34, 0.97) 58%,
+          rgba(11, 18, 34, 0)
+        );
+    }
+    #workspace.flow-pos-middle {
+      --flow-bg-wash: radial-gradient(
+        ellipse 125% 62% at 50% -6%,
+        rgba(var(--flow-glow-rgb), 0.2) 0%,
+        rgba(var(--flow-glow-rgb), 0.09) 28%,
+        rgba(var(--flow-glow-rgb), 0.03) 48%,
+        transparent 70%
+      );
+      --flow-panel-edge: var(--flow-accent);
+      --flow-edge-style: solid;
+    }
+    #workspace.flow-pos-middle[data-flow-middle-index="2"] {
+      --flow-tone-shift: 4%;
+    }
+    #workspace.flow-pos-middle[data-flow-middle-index="3"] {
+      --flow-tone-shift: -4%;
+    }
+    #workspace.flow-pos-last {
+      --flow-bg-wash: linear-gradient(
+        to right,
+        rgba(var(--flow-glow-rgb), 0.03) 0%,
+        rgba(var(--flow-glow-rgb), 0.06) 28%,
+        rgba(var(--flow-glow-rgb), 0.16) 52%,
+        rgba(var(--flow-glow-rgb), 0.28) 100%
+      );
+      --flow-panel-edge: linear-gradient(
+        to right,
+        transparent 0%,
+        rgba(var(--flow-glow-rgb), 0.14) 58%,
+        rgba(var(--flow-glow-rgb), 0.72) 100%
+      );
+      --flow-edge-style: gradient;
+    }
+    #workspace.flow-pos-last .flow-tabs-wrap {
+      background:
+        linear-gradient(
+          to right,
+          transparent 32%,
+          rgba(var(--flow-glow-rgb), 0.07) 50%,
+          rgba(var(--flow-glow-rgb), 0.16) 100%
+        ),
+        linear-gradient(
+          180deg,
+          rgba(var(--flow-glow-rgb), 0.14) 0%,
+          rgba(11, 18, 34, 0.97) 58%,
+          rgba(11, 18, 34, 0)
+        );
+    }
+    #workspace.flow-palette-recepcion {
+      --flow-glow-rgb: 46, 196, 214;
+      --flow-accent: #2ec4d6;
+      --flow-accent-strong: color-mix(in srgb, #1aa3b8 calc(100% - var(--flow-tone-shift)), #2ec4d6 var(--flow-tone-shift));
+      --flow-accent-soft: rgba(46, 196, 214, 0.18);
+      --flow-accent-ring: rgba(46, 196, 214, 0.48);
+    }
+    #workspace.flow-palette-mover {
+      --flow-glow-rgb: 99, 102, 214;
+      --flow-accent: #6366d6;
+      --flow-accent-strong: color-mix(in srgb, #4f52bf calc(100% - var(--flow-tone-shift)), #6366d6 var(--flow-tone-shift));
+      --flow-accent-soft: rgba(99, 102, 214, 0.22);
+      --flow-accent-ring: rgba(99, 102, 214, 0.48);
+    }
+    #workspace.flow-palette-salida {
+      --flow-glow-rgb: 56, 189, 248;
+      --flow-accent: #38bdf8;
+      --flow-accent-strong: color-mix(in srgb, #0ea5e9 calc(100% - var(--flow-tone-shift)), #38bdf8 var(--flow-tone-shift));
+      --flow-accent-soft: rgba(56, 189, 248, 0.18);
+      --flow-accent-ring: rgba(56, 189, 248, 0.48);
+    }
     .flow-panel[hidden] { display: none !important; }
-    .flow-panel { scroll-margin-top: 72px; }
+    .flow-panel {
+      scroll-margin-top: 72px;
+      border-top: 3px solid transparent;
+      border-image: var(--flow-panel-edge) 1;
+      padding-top: 4px;
+    }
+    #workspace.flow-pos-middle .flow-panel:not([hidden]) {
+      border-image: none;
+      border-top-color: var(--flow-accent);
+    }
     .panel-hint { scroll-margin-top: 72px; }
     .card {
       background: rgba(19, 32, 56, .95);
@@ -127,6 +302,11 @@
       font: inherit;
       min-height: 48px;
     }
+    input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 2px solid var(--flow-accent);
+      outline-offset: 1px;
+      border-color: var(--flow-accent);
+    }
     textarea { min-height: 72px; resize: vertical; }
     button {
       appearance: none;
@@ -135,7 +315,7 @@
       padding: 14px 16px;
       font: 700 1rem/1.1 Inter, Segoe UI, sans-serif;
       color: #fff;
-      background: var(--accent);
+      background: var(--flow-accent-strong);
       min-height: 48px;
       width: 100%;
       margin-top: 8px;
@@ -181,7 +361,16 @@
     .hidden { display: none !important; }
     @media (max-width: 420px) {
       .row-2 { grid-template-columns: 1fr; }
-      .flow-tabs [role="tab"] { font-size: .78rem; padding-inline: 6px; }
+      .flow-tabs [role="tab"] { font-size: .76rem; padding-inline: 4px; }
+      .tab-hint { font-size: .62rem; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
     }
   </style>
 </head>
@@ -189,17 +378,20 @@
   <header class="page-head">
     <div class="banner">DEV LOCAL · BUFFER · NO PRODUCCIÓN</div>
     <div class="head-row">
-      <h1>Buffer de entrada</h1>
+      <div class="head-copy">
+        <h1>Operación por escaneo</h1>
+        <p class="page-sub">Recepción · Movimientos · Buffer de salida</p>
+      </div>
       <div id="gateMessage" class="gate-status idle">Validando sesión…</div>
     </div>
   </header>
 
-  <div id="workspace" class="hidden">
+  <div id="workspace" class="hidden flow-pos-first flow-palette-recepcion" data-flow-middle-index="">
     <div class="flow-tabs-wrap">
       <div class="flow-tabs" role="tablist" aria-label="Flujos de buffer">
-        <button type="button" role="tab" id="tab-recepcion" aria-controls="panel-recepcion" aria-selected="true">Recepción</button>
-        <button type="button" role="tab" id="tab-mover" aria-controls="panel-mover" aria-selected="false" tabindex="-1">Mover</button>
-        <button type="button" role="tab" id="tab-salida" aria-controls="panel-salida" aria-selected="false" tabindex="-1">Salida</button>
+        <button type="button" role="tab" id="tab-recepcion" aria-controls="panel-recepcion" aria-selected="true"><span class="tab-label">Recepción</span><span class="tab-hint">Entrada</span></button>
+        <button type="button" role="tab" id="tab-mover" aria-controls="panel-mover" aria-selected="false" tabindex="-1"><span class="tab-label">Mover</span><span class="tab-hint">Interno</span></button>
+        <button type="button" role="tab" id="tab-salida" aria-controls="panel-salida" aria-selected="false" tabindex="-1"><span class="tab-label">Salida</span><span class="tab-hint">Buffer</span></button>
       </div>
     </div>
 
@@ -302,6 +494,6 @@
     </div>
   </div>
 
-  <script src="/hugo-buffer-inbound.js?v=6"></script>
+  <script src="/hugo-buffer-inbound.js?v=9"></script>
 </body>
 </html>

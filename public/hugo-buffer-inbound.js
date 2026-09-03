@@ -118,12 +118,43 @@
     el.classList.toggle("hidden", !visible);
   }
 
+  var FLOW_POS_BY_ID = { recepcion: "first", mover: "middle", salida: "last" };
+  var FLOW_PALETTE_BY_ID = { recepcion: "recepcion", mover: "mover", salida: "salida" };
+  var FLOW_POS_CLASSES = ["flow-pos-first", "flow-pos-middle", "flow-pos-last"];
+  var FLOW_PALETTE_CLASSES = ["flow-palette-recepcion", "flow-palette-mover", "flow-palette-salida"];
+
+  function syncFlowTheme(flowId) {
+    if (!workspace) return;
+    FLOW_POS_CLASSES.forEach(function (name) {
+      workspace.classList.remove(name);
+    });
+    FLOW_PALETTE_CLASSES.forEach(function (name) {
+      workspace.classList.remove(name);
+    });
+    var pos = FLOW_POS_BY_ID[flowId] || "middle";
+    var palette = FLOW_PALETTE_BY_ID[flowId] || flowId;
+    workspace.classList.add("flow-pos-" + pos, "flow-palette-" + palette);
+    if (pos === "middle") {
+      var middleIndex = FLOW_TABS.findIndex(function (entry) {
+        return entry.id === flowId;
+      });
+      if (middleIndex > 0 && middleIndex < FLOW_TABS.length - 1) {
+        workspace.setAttribute("data-flow-middle-index", String(middleIndex));
+      } else {
+        workspace.removeAttribute("data-flow-middle-index");
+      }
+    } else {
+      workspace.removeAttribute("data-flow-middle-index");
+    }
+  }
+
   function setActiveFlow(flowId, options) {
     options = options || {};
     if (flowId !== "recepcion") hideAction();
     if (flowId !== "mover") hideMoveAction();
     if (flowId !== "salida") hideOutAction();
     activeFlow = flowId;
+    syncFlowTheme(flowId);
     FLOW_TABS.forEach(function (entry) {
       var isActive = entry.id === flowId;
       var tabEl = document.getElementById(entry.tabId);
