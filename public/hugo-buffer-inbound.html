@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1222" />
+  <title>Recepción · Buffer de entrada · LOGITEC</title>
+  <style>
+    :root {
+      --bg: #0b1222;
+      --card: #132038;
+      --line: #2a3b63;
+      --text: #eaf0ff;
+      --muted: #9caacc;
+      --ok: #2f9e6b;
+      --warn: #c45c12;
+      --err: #c0394a;
+      --accent: #3d7eff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      font-family: Inter, Segoe UI, system-ui, sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at top, #16305a 0%, var(--bg) 55%);
+      padding: 12px;
+      padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    }
+    .banner {
+      background: var(--warn);
+      color: #fff;
+      text-align: center;
+      font: 700 11px/24px Inter, Segoe UI, sans-serif;
+      letter-spacing: .08em;
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+    h1 { font-size: 1.15rem; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: .9rem; margin: 0 0 12px; }
+    .card {
+      background: rgba(19, 32, 56, .95);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 4px; }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0b1222;
+      color: var(--text);
+      padding: 12px;
+      font: inherit;
+      min-height: 48px;
+    }
+    textarea { min-height: 72px; resize: vertical; }
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font: 700 1rem/1.1 Inter, Segoe UI, sans-serif;
+      color: #fff;
+      background: var(--accent);
+      min-height: 48px;
+      width: 100%;
+      margin-top: 8px;
+    }
+    button:disabled { opacity: .45; }
+    button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+    .msg { border-radius: 10px; padding: 10px 12px; font-size: .9rem; margin-top: 8px; }
+    .msg.ok { background: rgba(47, 158, 107, .15); border: 1px solid var(--ok); }
+    .msg.err { background: rgba(192, 57, 74, .15); border: 1px solid var(--err); }
+    .msg.idle { background: rgba(61, 126, 255, .1); border: 1px solid var(--line); color: var(--muted); }
+    .product-pick { list-style: none; margin: 8px 0 0; padding: 0; }
+    .product-pick li button {
+      text-align: left;
+      background: #0b1222;
+      border: 1px solid var(--line);
+      margin-top: 6px;
+    }
+    .product-pick li button strong { display: block; color: var(--text); }
+    .product-pick li button span { font-size: .85rem; color: var(--muted); font-weight: 400; }
+    .selected-product {
+      border: 1px solid var(--ok);
+      border-radius: 10px;
+      padding: 10px;
+      margin-top: 8px;
+      font-size: .9rem;
+    }
+    .serial-list { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: .85rem; }
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="banner">DEV LOCAL · RECEPCIÓN BUFFER · NO PRODUCCIÓN</div>
+  <h1>Buffer de entrada</h1>
+  <p class="sub">Escaneo → identificación → cantidad → ubicación → registrar entrada</p>
+
+  <div id="gateMessage" class="card msg idle">Validando sesión…</div>
+
+  <div id="workspace" class="hidden">
+    <section class="card">
+      <label for="scanInput">Escaneo (SKU, código de barras u otro identificador)</label>
+      <input id="scanInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" placeholder="Dispara el escáner o escribe y Enter" />
+      <ul id="productMatches" class="product-pick hidden"></ul>
+      <div id="selectedProduct" class="selected-product hidden"></div>
+    </section>
+
+    <section class="card">
+      <div class="row-2">
+        <div>
+          <label for="qtyInput">Cantidad</label>
+          <input id="qtyInput" type="number" min="1" step="1" value="1" inputmode="numeric" />
+        </div>
+        <div>
+          <label for="assignmentSelect">Asignación</label>
+          <select id="assignmentSelect">
+            <option value="FREE_TO_SALE">Free to Sale</option>
+            <option value="PROJECT">Proyecto</option>
+          </select>
+        </div>
+      </div>
+      <div id="projectWrap" class="hidden" style="margin-top:8px">
+        <label for="projectSelect">Proyecto</label>
+        <select id="projectSelect"><option value="">— Seleccionar —</option></select>
+      </div>
+      <label for="locationSelect" style="margin-top:8px">Ubicación activa</label>
+      <select id="locationSelect"><option value="">Cargando ubicaciones…</option></select>
+      <label for="orderRefInput" style="margin-top:8px">Pedido / referencia del cliente (opcional)</label>
+      <input id="orderRefInput" type="text" maxlength="120" placeholder="SAP, pedido, folio…" />
+      <label for="lotInput" style="margin-top:8px">Lote (opcional)</label>
+      <input id="lotInput" type="text" maxlength="120" placeholder="Solo si aplica al producto" />
+      <div id="serialBlock" class="hidden" style="margin-top:8px">
+        <label for="serialInput">Serie / IMEI (un disparo = un código)</label>
+        <input id="serialInput" type="text" maxlength="120" placeholder="Escanea cada serie y Enter" />
+        <ul id="serialList" class="serial-list"></ul>
+      </div>
+      <label for="notesInput" style="margin-top:8px">Notas (opcional)</label>
+      <textarea id="notesInput" maxlength="500" rows="2"></textarea>
+      <button id="submitBtn" type="button" disabled>Registrar entrada</button>
+      <div id="actionMessage" class="msg idle hidden"></div>
+    </section>
+  </div>
+
+  <script src="/hugo-buffer-inbound.js?v=1"></script>
+</body>
+</html>
