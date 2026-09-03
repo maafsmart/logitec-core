@@ -145,8 +145,32 @@
       <button id="submitBtn" type="button" disabled>Registrar entrada</button>
       <div id="actionMessage" class="msg idle hidden"></div>
     </section>
+
+    <hr style="border:0;border-top:1px solid var(--line);margin:16px 0" />
+    <h2 style="font-size:1.05rem;margin:0 0 4px">Mover</h2>
+    <p class="sub" style="margin-bottom:10px">Identificar existencia → origen → destino → cantidad → confirmar movimiento</p>
+
+    <section class="card">
+      <label for="moveScanInput">Escaneo o búsqueda de producto</label>
+      <input id="moveScanInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" placeholder="SKU, código de barras u otro identificador" />
+      <ul id="moveProductMatches" class="product-pick hidden"></ul>
+      <div id="moveSelectedProduct" class="selected-product hidden"></div>
+      <div id="moveStockBlock" class="hidden" style="margin-top:8px">
+        <label>Existencias disponibles (cliente y proyecto autorizados)</label>
+        <ul id="moveStockList" class="product-pick"></ul>
+      </div>
+      <div id="moveOriginSummary" class="selected-product hidden" style="margin-top:8px"></div>
+      <label for="moveDestScan" style="margin-top:8px">Destino (escaneo + Enter o selector)</label>
+      <input id="moveDestScan" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" placeholder="Escanea ubicación destino" />
+      <label for="moveDestSelect" style="margin-top:8px">Ubicación destino activa</label>
+      <select id="moveDestSelect"><option value="">— Seleccionar destino —</option></select>
+      <label for="moveQtyInput" style="margin-top:8px">Cantidad a mover</label>
+      <input id="moveQtyInput" type="number" min="1" step="1" value="1" inputmode="numeric" />
+      <button id="moveSubmitBtn" type="button" disabled>Confirmar movimiento</button>
+      <div id="moveActionMessage" class="msg idle hidden"></div>
+    </section>
   </div>
 
-  <script src="/hugo-buffer-inbound.js?v=1"></script>
+  <script src="/hugo-buffer-inbound.js?v=3"></script>
 </body>
 </html>
