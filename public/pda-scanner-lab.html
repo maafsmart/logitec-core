@@ -78,6 +78,18 @@
             <button id="cameraModeBtn" class="mode-button" type="button" role="tab" aria-selected="false" aria-controls="cameraCapture">Cámara de celular</button>
           </div>
           <div class="scan-context">
+            <label>Contexto de ubicación
+              <select id="locationContext" required>
+                <option value="">Selecciona…</option>
+                <option>Dentro de bodega</option>
+                <option>Fuera de bodega</option>
+                <option>Otra bodega</option>
+                <option>Despacho Rodrigo Maafs</option>
+                <option>Casa</option>
+                <option>Casa Hugo</option>
+                <option>Otro lugar</option>
+              </select>
+            </label>
             <label>Zona física<input id="physicalZone" required placeholder="AN20 / andén norte" /></label>
             <label>Distancia
               <select id="distance"><option>&lt;1 m</option><option>1–2 m</option><option>2–4 m</option><option>&gt;4 m</option></select>
@@ -169,6 +181,7 @@
         </section>
       </div>
     </main>
-    <script src="/pda-scanner-lab.js?v=6"></script>
+    <script src="/device-server-metrics.js?v=1"></script>
+    <script src="/pda-scanner-lab.js?v=7"></script>
   </body>
 </html>

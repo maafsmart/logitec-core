@@ -1,5 +1,7 @@
 const token = localStorage.getItem("token") || "";
+const metrics = globalThis.LogitecDeviceMetrics;
 const history = [];
+let labSessionId = "";
 const byId = (id) => document.getElementById(id);
 const field = (id) => String(byId(id)?.value || "").trim();
 const scanInput = byId("scanInput");
@@ -57,10 +59,11 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-async function api(path) {
+async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-    cache: "no-store"
+    cache: "no-store",
+    signal: options.signal
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -70,6 +73,89 @@ async function api(path) {
     throw error;
   }
   return data;
+}
+
+function metricsContext() {
+  return {
+    sessionId: labSessionId || field("testId") || "Sin dato",
+    deviceType: field("deviceType") || "Sin dato",
+    locationContext: field("locationContext"),
+    networkProviderManual: field("networkProvider"),
+    networkProviderAuto: metrics?.detectConnectionProvider?.() || "Sin dato",
+    expectedType: field("expectedType")
+  };
+}
+
+function enrichEntry(base) {
+  if (!metrics?.buildMetricsRecord) return base;
+  return { ...base, ...metrics.buildMetricsRecord({ ...metricsContext(), ...base }) };
+}
+
+async function classifyCode(code, detectionMs = null) {
+  const endpoint = `/api/admin/pda-scanner-diagnostic/classify?code=${encodeURIComponent(code)}`;
+  const measurementId = metrics?.createMeasurementId?.("pda") || `pda-${Date.now()}`;
+  const requestSentAt = new Date().toISOString();
+  const startedAt = performance.now();
+  let httpStatus = null;
+  try {
+    const response = await fetch(endpoint, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      cache: "no-store"
+    });
+    httpStatus = response.status;
+    const data = await response.json().catch(() => ({}));
+    const roundTripMs = Math.max(0, Math.round(performance.now() - startedAt));
+    const responseReceivedAt = new Date().toISOString();
+    if (!response.ok) {
+      const error = new Error(data.message || `Error HTTP ${response.status}`);
+      error.code = data.code || "";
+      error.status = response.status;
+      error.metrics = enrichEntry({
+        measurementId,
+        requestSentAt,
+        responseReceivedAt,
+        roundTripMs,
+        detectionMs,
+        httpStatus,
+        endpoint,
+        code,
+        classification: "ERROR",
+        result: "ERROR",
+        errorSummary: error.message
+      });
+      throw error;
+    }
+    return {
+      data,
+      metrics: enrichEntry({
+        measurementId,
+        requestSentAt,
+        responseReceivedAt,
+        roundTripMs,
+        detectionMs,
+        httpStatus,
+        endpoint,
+        code: data.code
+      })
+    };
+  } catch (error) {
+    if (error.metrics) throw error;
+    const roundTripMs = Math.max(0, Math.round(performance.now() - startedAt));
+    error.metrics = enrichEntry({
+      measurementId,
+      requestSentAt,
+      responseReceivedAt: new Date().toISOString(),
+      roundTripMs,
+      detectionMs,
+      httpStatus,
+      endpoint,
+      code,
+      classification: "ERROR",
+      result: "ERROR",
+      errorSummary: error.message || "Error de red"
+    });
+    throw error;
+  }
 }
 
 function deviceSnapshot() {
@@ -150,11 +236,11 @@ function renderLive(entry, details = []) {
   liveResult.innerHTML = `<strong>${escapeHtml(entry.code)} · ${escapeHtml(classificationLabel(entry.classification))}</strong>
     <span>${escapeHtml(matchText)}</span>
     <span>Resultado: ${escapeHtml(resultLabel(entry.result))}</span>
-    <span>Tiempo hasta detección: ${escapeHtml(metricMs(entry.detectionMs))} · Latencia de clasificación API: ${escapeHtml(metricMs(entry.classificationMs))}</span>`;
+    <span>Tiempo hasta detección: ${escapeHtml(metricMs(entry.detectionMs))} · Round-trip API: ${escapeHtml(metricMs(entry.roundTripMs ?? entry.classificationMs))} · Total observable: ${escapeHtml(metricMs(entry.totalMs))}</span>`;
 }
 
 function sessionLine(entry) {
-  return `${entry.device.testId || "Sin ID"} | ${entry.zone || "Sin zona"} | ${entry.distance} | ${classificationLabel(entry.classification)} | ${entry.code} | ${resultLabel(entry.result)} | detección ${metricMs(entry.detectionMs)} | clasificación ${metricMs(entry.classificationMs)} | ${networkSummary(entry.network)}`;
+  return `${entry.device.testId || "Sin ID"} | ${entry.locationContext || "Sin dato"} | ${entry.zone || "Sin zona"} | ${entry.distance} | ${classificationLabel(entry.classification)} | ${entry.code} | ${resultLabel(entry.result)} | detección ${metricMs(entry.detectionMs)} | round-trip ${metricMs(entry.roundTripMs ?? entry.classificationMs)} | total ${metricMs(entry.totalMs)} | ${entry.networkProvider || networkSummary(entry.network)}`;
 }
 
 function renderHistory() {
@@ -169,7 +255,7 @@ function renderHistory() {
       <td>${escapeHtml(classificationLabel(entry.classification))}<br>Esperado: ${escapeHtml(classificationLabel(entry.expectedType))}</td>
       <td>${escapeHtml(resultLabel(entry.result))}${entry.notes ? `<br>${escapeHtml(entry.notes)}` : ""}</td>
       <td>${escapeHtml(metricMs(entry.detectionMs))}</td>
-      <td>${escapeHtml(metricMs(entry.classificationMs))}</td>
+      <td>${escapeHtml(metricMs(entry.roundTripMs ?? entry.classificationMs))}</td>
       <td>${escapeHtml(networkSummary(entry.network))}</td>
     </tr>`).join("");
   }
@@ -179,12 +265,13 @@ function renderHistory() {
 
 function makeEntry(overrides) {
   const now = new Date();
-  return {
+  const base = {
     id: `${now.getTime()}-${history.length}`,
     timestamp: now.toISOString(),
     timeLabel: now.toLocaleTimeString("es-MX"),
     device: deviceSnapshot(),
     network: networkSnapshot(),
+    locationContext: field("locationContext"),
     zone: field("physicalZone"),
     distance: field("distance"),
     expectedType: field("expectedType"),
@@ -192,11 +279,13 @@ function makeEntry(overrides) {
     notes: field("scanNotes"),
     ...overrides
   };
+  return enrichEntry(base);
 }
 
 function validateRequired() {
   const missing = [];
   if (!field("testId")) missing.push("identificador de prueba");
+  if (!field("locationContext")) missing.push("contexto de ubicación");
   if (!field("physicalZone")) missing.push("zona física");
   if (missing.length) {
     liveResult.className = "live-result error";
@@ -206,7 +295,7 @@ function validateRequired() {
   return true;
 }
 
-async function processScan(rawCode, metrics = {}) {
+async function processScan(rawCode, scanTiming = {}) {
   if (scanSessionClosed || scanProcessing) return null;
   if (!validateRequired()) return;
   const code = normalizeScannerRawValue(
@@ -222,19 +311,29 @@ async function processScan(rawCode, metrics = {}) {
   scanSessionSeenCodes.add(code);
   scanProcessing = true;
   byId("scanBtn").disabled = true;
-  const classificationStartedAt = performance.now();
   liveResult.className = "live-result idle";
   liveResult.innerHTML = `<strong>Consultando ${escapeHtml(code)}…</strong><span>Solo lectura.</span>`;
   let entry = null;
   try {
-    const data = await api(`/api/admin/pda-scanner-diagnostic/classify?code=${encodeURIComponent(code)}`);
-    const classificationMs = Math.max(0, Math.round(performance.now() - classificationStartedAt));
+    const detectionMs = Number.isFinite(scanTiming.detectionMs) ? scanTiming.detectionMs : null;
+    const { data, metrics: requestMetrics } = await classifyCode(code, detectionMs);
     entry = makeEntry({
       code: data.code,
       classification: data.classification,
       result: outcomeFor(data.classification, field("expectedType")),
-      detectionMs: Number.isFinite(metrics.detectionMs) ? metrics.detectionMs : null,
-      classificationMs
+      detectionMs: requestMetrics.detectionMs,
+      roundTripMs: requestMetrics.roundTripMs,
+      apiLatencyMs: requestMetrics.apiLatencyMs,
+      classificationMs: requestMetrics.classificationMs,
+      totalMs: requestMetrics.totalMs,
+      measurementId: requestMetrics.measurementId,
+      requestSentAt: requestMetrics.requestSentAt,
+      responseReceivedAt: requestMetrics.responseReceivedAt,
+      httpStatus: requestMetrics.httpStatus,
+      endpoint: requestMetrics.endpoint,
+      networkProvider: requestMetrics.networkProvider,
+      sessionId: requestMetrics.sessionId,
+      errorSummary: null
     });
     if (entry.result === "OK") completeSuccessfulScan();
     history.unshift(entry);
@@ -244,6 +343,28 @@ async function processScan(rawCode, metrics = {}) {
     scanInput.value = "";
   } catch (error) {
     scanSessionSeenCodes.delete(code);
+    if (error.metrics) {
+      const failedEntry = makeEntry({
+        code,
+        classification: error.metrics.classification || "ERROR",
+        result: error.metrics.result || "ERROR",
+        detectionMs: error.metrics.detectionMs,
+        roundTripMs: error.metrics.roundTripMs,
+        apiLatencyMs: error.metrics.apiLatencyMs,
+        classificationMs: error.metrics.classificationMs,
+        totalMs: error.metrics.totalMs,
+        measurementId: error.metrics.measurementId,
+        requestSentAt: error.metrics.requestSentAt,
+        responseReceivedAt: error.metrics.responseReceivedAt,
+        httpStatus: error.metrics.httpStatus,
+        endpoint: error.metrics.endpoint,
+        networkProvider: error.metrics.networkProvider,
+        sessionId: error.metrics.sessionId,
+        errorSummary: error.metrics.errorSummary || error.message
+      });
+      history.unshift(failedEntry);
+      renderHistory();
+    }
     liveResult.className = "live-result error";
     liveResult.innerHTML = `<strong>No se pudo clasificar</strong><span>${escapeHtml(error.message)}</span>`;
   } finally {
@@ -730,12 +851,25 @@ function csvCell(value) {
 
 function exportCsv() {
   if (!history.length) return;
-  const headers = ["fecha", "prueba", "dispositivo", "marca", "modelo", "so", "lector", "zona", "distancia", "esperado", "codigo", "clasificacion", "resultado", "tiempo_deteccion_ms", "latencia_clasificacion_ms", "captura", "red", "ping_ms", "down_mbps", "up_mbps", "observaciones"];
+  const headers = [
+    "fecha", "prueba", "sesion", "dispositivo", "marca", "modelo", "so", "lector",
+    "contexto_ubicacion", "zona", "distancia", "esperado", "codigo", "clasificacion", "resultado",
+    "tiempo_deteccion_ms", "latencia_clasificacion_ms", "round_trip_ms", "api_latency_ms", "total_ms",
+    "measurement_id", "request_sent_at", "response_received_at", "endpoint", "http_status", "error_summary",
+    "network_provider", "captura", "red", "ping_ms", "down_mbps", "up_mbps", "observaciones"
+  ];
   const rows = history.map((entry) => [
-    entry.timestamp, entry.device.testId, entry.device.deviceType, entry.device.brand, entry.device.model,
-    entry.device.os, entry.device.readerType, entry.zone, entry.distance, classificationLabel(entry.expectedType),
-    entry.code, classificationLabel(entry.classification), resultLabel(entry.result), entry.detectionMs ?? "",
-    entry.classificationMs ?? "",
+    entry.timestamp, entry.device.testId, entry.sessionId || labSessionId || "",
+    entry.device.deviceType, entry.device.brand, entry.device.model,
+    entry.device.os, entry.device.readerType, entry.locationContext || "",
+    entry.zone, entry.distance, classificationLabel(entry.expectedType),
+    entry.code, classificationLabel(entry.classification), resultLabel(entry.result),
+    entry.detectionMs ?? "", entry.classificationMs ?? entry.roundTripMs ?? "",
+    entry.roundTripMs ?? entry.classificationMs ?? "", entry.apiLatencyMs ?? entry.roundTripMs ?? "",
+    entry.totalMs ?? "",
+    entry.measurementId || "", entry.requestSentAt || "", entry.responseReceivedAt || "",
+    entry.endpoint || "", entry.httpStatus ?? "", entry.errorSummary || "",
+    entry.networkProvider || entry.network.provider || "",
     entry.captureMethod, entry.network.provider, entry.network.ping, entry.network.down, entry.network.up, entry.notes
   ]);
   const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
@@ -777,6 +911,7 @@ async function initialize() {
     gate.hidden = true;
     byId("labWorkspace").hidden = false;
     byId("testId").value = `PDA-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-01`;
+    labSessionId = metrics?.createMeasurementId?.("lab") || `lab-${Date.now()}`;
     scanInput.focus();
   } catch (error) {
     gate.className = "access-gate error";

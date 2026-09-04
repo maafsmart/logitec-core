@@ -200,7 +200,7 @@ test("HTML y API usan flag default-OFF antes de exponer el laboratorio", () => {
 });
 
 test("login next funciona en el dominio canónico sin aceptar redirects externos", () => {
-  assert.match(loginJs, /new Set\(\["\/pda-scanner-lab\.html"\]\)/);
+  assert.match(loginJs, /new Set\(\["\/pda-scanner-lab\.html", "\/hugo-buffer-inbound\.html"\]\)/);
   assert.match(loginJs, /window\.location\.href = resolvePostLoginPath\(window\.location\.search\)/);
   assert.match(canonicalHostJs, /"https:\/\/" \+ WWW_HOST \+ pathname \+ search \+ hash/);
   assert.doesNotMatch(loginJs, /https:\/\/www\.control\.logitec\.com\.mx\/pda-scanner-lab/);
@@ -311,8 +311,9 @@ test("preview no ejecuta detección antes de que el usuario arme la lectura", ()
   assert.match(arm, /scheduleCameraDetection\(\)/);
 });
 
-test("métrica de detección empieza al armar y excluye preparación y enfoque", () => {
+test("métrica de detección empieza al armar y la latencia API se mide en classifyCode", () => {
   const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("async function startCamera()"));
+  const classify = js.slice(js.indexOf("async function classifyCode("), js.indexOf("function deviceSnapshot()"));
   const process = js.slice(js.indexOf("async function processScan("), js.indexOf("function setCameraStatus("));
   const arm = js.slice(js.indexOf("function armCameraDetection()"), js.indexOf("async function startCamera()"));
   const start = js.slice(js.indexOf("async function startCamera()"), js.indexOf("function setBarcodeGeneratorStatus("));
@@ -320,12 +321,16 @@ test("métrica de detección empieza al armar y excluye preparación y enfoque",
   assert.ok(arm.indexOf("cameraStartedAt = performance.now()") < arm.indexOf("scheduleCameraDetection()"));
   assert.doesNotMatch(start, /cameraStartedAt = performance\.now\(\)/);
   assert.match(detect, /performance\.now\(\) - cameraStartedAt/);
-  assert.match(process, /classificationStartedAt = performance\.now\(\)/);
-  assert.match(process, /performance\.now\(\) - classificationStartedAt/);
+  assert.match(classify, /const startedAt = performance\.now\(\)/);
+  assert.match(classify, /performance\.now\(\) - startedAt/);
+  assert.match(process, /await classifyCode\(code, detectionMs\)/);
   assert.match(html, /Hasta detección/);
   assert.match(html, /Clasificación API/);
+  assert.match(html, /locationContext/);
   assert.match(js, /tiempo_deteccion_ms/);
   assert.match(js, /latencia_clasificacion_ms/);
+  assert.match(js, /round_trip_ms/);
+  assert.match(html, /device-server-metrics\.js/);
   assert.doesNotMatch(js, /\blatencyMs\b/);
 });
 
@@ -335,7 +340,7 @@ test("primer OK cierra atómicamente cámara, callbacks y entradas posteriores",
   const halt = sourceFunction(js, "haltCameraCapture");
   const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
   assert.match(process, /if \(scanSessionClosed \|\| scanProcessing\) return null/);
-  assert.ok(process.indexOf("scanProcessing = true") < process.indexOf("await api("));
+  assert.ok(process.indexOf("scanProcessing = true") < process.indexOf("await classifyCode("));
   assert.ok(process.indexOf("completeSuccessfulScan()") < process.indexOf("history.unshift(entry)"));
   assert.ok(complete.indexOf("scanSessionClosed = true") < complete.indexOf("haltCameraCapture()"));
   assert.ok(complete.indexOf("scanSessionClosed = true") < complete.indexOf("playSuccessFeedbackOnce()"));
@@ -418,14 +423,14 @@ test("deduplica cada código por sesión y el rearme explícito limpia el estado
   const detect = js.slice(js.indexOf("async function detectCameraFrame()"), js.indexOf("function armCameraDetection()"));
   const restart = sourceFunction(js, "restartCameraScan");
   const reset = sourceFunction(js, "resetScanSession");
-  assert.ok(process.indexOf("scanSessionSeenCodes.has(code)") < process.indexOf("await api("));
-  assert.ok(process.indexOf("scanSessionSeenCodes.add(code)") < process.indexOf("await api("));
+  assert.ok(process.indexOf("scanSessionSeenCodes.has(code)") < process.indexOf("await classifyCode("));
+  assert.ok(process.indexOf("scanSessionSeenCodes.add(code)") < process.indexOf("await classifyCode("));
   assert.match(detect, /scanSessionSeenCodes\.has\(rawValue\)[\s\S]*scheduleCameraDetection\(\);[\s\S]*return/);
   assert.match(restart, /resetScanSession\(\);[\s\S]*await startCamera\(\);[\s\S]*armCameraDetection\(\)/);
   assert.match(reset, /scanSessionSeenCodes\.clear\(\)/);
   assert.match(reset, /successFeedbackPlayed = false/);
   assert.doesNotMatch(html, /repeatBtn|Repetir \/ enfocar/);
-  assert.match(html, /pda-scanner-lab\.js\?v=6/);
+  assert.match(html, /pda-scanner-lab\.js\?v=7/);
 });
 
 test("frame local se genera solo tras detectar, no se persiste ni se envía", () => {

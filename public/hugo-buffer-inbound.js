@@ -19,7 +19,9 @@
     outBusy: false,
     outProduct: null,
     outStock: [],
-    outOrigin: null
+    outOrigin: null,
+    deviceMetrics: [],
+    metricsSessionId: ""
   };
 
   var gateMessage = document.getElementById("gateMessage");
@@ -305,16 +307,61 @@
     return headers;
   }
 
+  function recordDeviceMetric(input) {
+    var dm = globalThis.LogitecDeviceMetrics;
+    if (!dm || typeof dm.buildMetricsRecord !== "function" || typeof dm.safeRecordMetrics !== "function") {
+      return;
+    }
+    dm.safeRecordMetrics(function (record) {
+      state.deviceMetrics.push(record);
+    }, dm.buildMetricsRecord(Object.assign({
+      sessionId: state.metricsSessionId || null,
+      deviceType: "Hugo mobile flow",
+      locationContext: "Sin dato",
+      networkProviderAuto: dm.detectConnectionProvider ? dm.detectConnectionProvider() : "Sin dato"
+    }, input || {})));
+  }
+
   function apiFetch(path, options) {
     options = options || {};
     var headers = Object.assign({}, authHeaders(), options.headers || {});
     if (options.body && !headers["Content-Type"]) {
       headers["Content-Type"] = "application/json";
     }
+    var dm = globalThis.LogitecDeviceMetrics;
+    var measurementId = dm && dm.createMeasurementId ? dm.createMeasurementId("hugo") : "hugo-" + Date.now();
+    var requestSentAt = new Date().toISOString();
+    var startedAt = performance.now();
     return fetch(path, {
       method: options.method || "GET",
       headers: headers,
       body: options.body ? JSON.stringify(options.body) : undefined
+    }).then(function (response) {
+      var roundTripMs = Math.max(0, Math.round(performance.now() - startedAt));
+      recordDeviceMetric({
+        measurementId: measurementId,
+        requestSentAt: requestSentAt,
+        responseReceivedAt: new Date().toISOString(),
+        roundTripMs: roundTripMs,
+        httpStatus: response.status,
+        endpoint: path,
+        result: response.ok ? "OK" : "ERROR",
+        errorSummary: response.ok ? null : "HTTP " + response.status
+      });
+      return response;
+    }).catch(function (error) {
+      var roundTripMs = Math.max(0, Math.round(performance.now() - startedAt));
+      recordDeviceMetric({
+        measurementId: measurementId,
+        requestSentAt: requestSentAt,
+        responseReceivedAt: new Date().toISOString(),
+        roundTripMs: roundTripMs,
+        httpStatus: null,
+        endpoint: path,
+        result: "ERROR",
+        errorSummary: error && error.message ? error.message : "Error de red"
+      });
+      throw error;
     });
   }
 
@@ -1503,6 +1550,9 @@
       return;
     }
     state.me = me.user || me;
+    var dm = globalThis.LogitecDeviceMetrics;
+    state.metricsSessionId = dm && dm.createMeasurementId ? dm.createMeasurementId("hugo-lab") : "hugo-lab-" + Date.now();
+    state.deviceMetrics = [];
     if (state.me && state.me.role === "ADMIN" && !operationalClientId()) {
       setGate("Selecciona un cliente operativo en el dashboard antes de usar esta pantalla.", "err");
       return;
