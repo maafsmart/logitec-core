@@ -47,40 +47,29 @@
     outbound: "Preparar salida"
   };
 
-  const SCAN_FLOWS = {
-    receive: {
-      id: "receive",
-      label: "Recepción",
-      taskType: "receive",
-      palette: "recepcion",
-      pos: "first",
-      steps: ["Escanee mercancía", "Cotejo recepción", "Registrar recibido", "Buffer de entrada"]
-    },
-    putaway: {
-      id: "putaway",
-      label: "Acomodo",
-      taskType: "putaway",
-      palette: "mover",
-      pos: "middle",
-      steps: ["Escanee mercancía", "Escanee ubicación destino", "Validar acomodo"]
-    },
-    relocate: {
-      id: "relocate",
-      label: "Reubicación",
-      taskType: "relocate",
-      palette: "mover",
-      pos: "middle",
-      steps: ["Escanee producto", "Escanee origen", "Escanee destino", "Confirmar"]
-    },
-    outbound: {
-      id: "outbound",
-      label: "Preparar salida",
-      taskType: "outbound",
-      palette: "salida",
-      pos: "last",
-      steps: ["Escanee mercancía", "Cotejar pedido", "Picking · buffer salida", "Completar salida"]
+  function taskFlowSteps(task) {
+    switch (task.type) {
+      case "receive":
+        return [{ label: "Escanee mercancía", key: "product" }];
+      case "putaway":
+        return [
+          { label: "Escanee mercancía", key: "product" },
+          { label: "Escanee ubicación destino", key: "destination" }
+        ];
+      case "relocate":
+        return [
+          { label: "Escanee mercancía", key: "product" },
+          { label: "Escanee ubicación destino", key: "destination" }
+        ];
+      case "outbound":
+        return [
+          { label: "Escanee mercancía · picking", key: "product" },
+          { label: "Escanee buffer de salida", key: "destination" }
+        ];
+      default:
+        return [{ label: "Escanee mercancía", key: "product" }];
     }
-  };
+  }
 
   const FLOW_POS_BY_PALETTE = { recepcion: "first", mover: "middle", salida: "last" };
 
@@ -177,12 +166,11 @@
     CLIENT: {
       tabs: [{ id: "inicio", label: "Inicio" }, { id: "consulta", label: "Consulta" }],
       modules: {
-        inicio: [{ id: "control", label: "Resumen", desc: "Inventario de sus proyectos", primary: true }],
+        inicio: [{ id: "control", label: "Resumen de inventario", desc: "Inventario autorizado de sus proyectos", primary: true }],
         consulta: [
-          { id: "inventory", label: "Existencias", desc: "Stock autorizado" },
+          { id: "inventory", label: "Existencias", desc: "Stock con búsqueda integrada" },
           { id: "movements", label: "Movimientos / Trazabilidad", desc: "Historial consultable" },
-          { id: "reports", label: "Reportes", desc: "Reportes autorizados" },
-          { id: "products", label: "Buscar existencias", desc: "SKU · ubicación · proyecto" }
+          { id: "reports", label: "Reportes", desc: "Reportes autorizados" }
         ]
       }
     }
@@ -204,9 +192,6 @@
     inventoryFilter: { q: "", project: "", location: "" },
     page: 1,
     pageSize: 50,
-    scanMode: false,
-    scanFlowId: null,
-    scanStep: 0,
     scanInputStartedAt: null,
     scanLastMetrics: null,
     scanSuccessPlayed: false,
@@ -230,18 +215,14 @@
 
   function syncDirectorViewUi() {
     document.querySelectorAll("#roleSwitch [data-role]").forEach((btn) => {
-      btn.classList.toggle("active", !state.scanMode && btn.getAttribute("data-role") === state.role);
+      btn.classList.toggle("active", btn.getAttribute("data-role") === state.role);
     });
     document.querySelectorAll("#directorViewBar [data-director-role]").forEach((btn) => {
-      btn.classList.toggle("active", !state.scanMode && btn.getAttribute("data-director-role") === state.role);
-    });
-    document.querySelectorAll("#directorViewBar [data-director-view]").forEach((btn) => {
-      btn.classList.toggle("active", state.scanMode && btn.getAttribute("data-director-view") === "SCAN");
+      btn.classList.toggle("active", btn.getAttribute("data-director-role") === state.role);
     });
     document.querySelectorAll("#directorViewBar [data-director-mobile]").forEach((btn) => {
       btn.classList.toggle("active", state.mobileEmulation);
     });
-    document.body.classList.toggle("scan-mode-active", state.scanMode);
     document.body.classList.toggle("mobile-emulation-active", state.mobileEmulation);
     syncMobileEmulationChrome();
   }
@@ -268,9 +249,6 @@
     state.role = "ADMIN";
     state.tab = "inicio";
     state.module = "control";
-    state.scanMode = false;
-    state.scanFlowId = null;
-    state.scanStep = 0;
     state.scanInputStartedAt = null;
     state.scanLastMetrics = null;
     state.scanSuccessPlayed = false;
@@ -280,10 +258,18 @@
     state.mobileEmulation = false;
     state.concentration = false;
     document.body.classList.remove("focus-mode");
+    syncConcentrationOverlay();
+  }
+
+  function syncConcentrationOverlay() {
+    const overlay = document.getElementById("concentrationOverlay");
+    if (!overlay) return;
+    overlay.hidden = !state.concentration;
+    overlay.classList.toggle("hidden", !state.concentration);
   }
 
   function canUseConcentration() {
-    if (state.scanMode || state.mobileEmulation) return false;
+    if (state.mobileEmulation) return false;
     return state.role === "ADMIN" || state.role === "SUPERVISOR";
   }
 
@@ -314,49 +300,50 @@
     state.concentration = next;
     document.body.classList.toggle("focus-mode", state.concentration);
     syncConcentrationButton();
+    syncConcentrationOverlay();
   }
 
   function wireConcentration() {
     const btn = document.getElementById("focusModeBtn");
-    if (!btn || btn.dataset.wired === "1") return;
-    btn.dataset.wired = "1";
-    btn.addEventListener("click", () => applyConcentration(!state.concentration));
+    if (btn && btn.dataset.wired !== "1") {
+      btn.dataset.wired = "1";
+      btn.addEventListener("click", () => applyConcentration(!state.concentration));
+    }
+    const exitBtn = document.getElementById("concentrationExitBtn");
+    if (exitBtn && exitBtn.dataset.wired !== "1") {
+      exitBtn.dataset.wired = "1";
+      exitBtn.addEventListener("click", () => applyConcentration(false));
+    }
     syncConcentrationUi();
   }
 
-  function applyDirectorView(view) {
-    if (view === "SCAN") {
-      state.scanMode = true;
-      state.scanFlowId = null;
-      state.scanStep = 0;
-      state.scanInputStartedAt = null;
-      state.scanLastMetrics = null;
-      state.scanSuccessPlayed = false;
-      state.scanProcessing = false;
-      state.activeTaskId = null;
-      state.taskFlow = null;
-      if (state.concentration) applyConcentration(false);
-      syncDirectorViewUi();
-      syncRoleViewUi();
-      render();
-      return;
-    }
-    state.scanMode = false;
-    state.scanFlowId = null;
-    applyRoleView(view);
+  function applyDirectorView(role) {
+    applyRoleView(role);
+  }
+
+  function cancelActiveTask() {
+    state.activeTaskId = null;
+    state.taskFlow = null;
+    state.scanProcessing = false;
+    state.scanSuccessPlayed = false;
+    state.scanInputStartedAt = null;
+    state.scanLastMetrics = null;
+    state.module = "tasks";
+    state.tab = "operacion";
+    render();
   }
 
   function applyRoleView(role) {
     if (!NAV[role]) return;
-    state.scanMode = false;
-    state.scanFlowId = null;
     state.role = role;
     state.concentration = false;
     document.body.classList.remove("focus-mode");
+    syncConcentrationOverlay();
     state.tab = ROLE_TAB_DEFAULT[role] || Object.keys(NAV[role].modules)[0];
     state.module = ROLE_DEFAULT[role] || (NAV[role].modules[state.tab] || [])[0]?.id || "control";
     state.activeTaskId = null;
     state.taskFlow = null;
+    state.scanProcessing = false;
     syncDirectorViewUi();
     syncRoleViewUi();
     syncConcentrationUi();
@@ -364,11 +351,11 @@
   }
 
   function syncRoleViewUi() {
-    document.body.setAttribute("data-role-view", state.scanMode ? "scan" : state.role.toLowerCase());
+    document.body.setAttribute("data-role-view", state.role.toLowerCase());
     const roleSwitch = document.getElementById("roleSwitch");
     if (roleSwitch) {
       const hideForClient = state.role === "CLIENT";
-      roleSwitch.hidden = hideForClient || isDirectorViewSwitchEnabled() || state.scanMode;
+      roleSwitch.hidden = hideForClient || isDirectorViewSwitchEnabled();
       roleSwitch.classList.toggle("hidden", roleSwitch.hidden);
     }
   }
@@ -396,15 +383,17 @@
     bar.querySelectorAll("[data-director-role]").forEach((btn) => {
       btn.addEventListener("click", () => applyDirectorView(btn.getAttribute("data-director-role") || "OPERATOR"));
     });
-    bar.querySelectorAll("[data-director-view]").forEach((btn) => {
-      btn.addEventListener("click", () => applyDirectorView(btn.getAttribute("data-director-view") || "SCAN"));
-    });
     bar.querySelectorAll("[data-director-mobile]").forEach((btn) => {
       btn.addEventListener("click", () => setMobileEmulation(true));
     });
     bar.querySelectorAll("[data-director-system]").forEach((btn) => {
       btn.addEventListener("click", () => {
+        if (btn.dataset.opening === "1") return;
+        btn.dataset.opening = "1";
         window.open("/dashboard.html", "_blank", "noopener,noreferrer");
+        window.setTimeout(() => {
+          btn.dataset.opening = "0";
+        }, 800);
       });
     });
     const restoreBtn = document.getElementById("mobileEmulationRestore");
@@ -667,7 +656,11 @@
     if (state.page > totalPages) state.page = totalPages;
     const start = paginate ? (state.page - 1) * state.pageSize : 0;
     const slice = paginate ? rows.slice(start, start + state.pageSize) : rows.slice(0, 200);
-    return `<div class="module-screen-header"><h3>Existencias</h3><p class="module-lead">Datos reales de la fuente demo · READ-ONLY</p></div>
+    const lead =
+      state.role === "CLIENT"
+        ? "Consulta autorizada · búsqueda integrada por SKU, SAP, pedido, proyecto y ubicación"
+        : "Datos reales de la fuente demo · READ-ONLY";
+    return `<div class="module-screen-header"><h3>Existencias</h3><p class="module-lead">${lead}</p></div>
       ${kpis()}
       <div class="card-panel">
         <div class="filters-bar">
@@ -736,36 +729,24 @@
 
   function operatorTaskFlow(task) {
     const flow = state.taskFlow || { step: 0 };
-    const steps =
-      task.type === "receive"
-        ? ["Escanee mercancía", "Cotejo recepción", "Registrar recibido", "Buffer de entrada"]
-        : task.type === "putaway"
-          ? ["Escanee mercancía", "Escanee ubicación destino", "Validar acomodo"]
-          : task.type === "relocate"
-            ? ["Escanee producto", "Escanee origen", "Escanee destino", "Confirmar"]
-            : ["Escanee mercancía", "Cotejar pedido", "Picking · buffer salida", "Completar salida"];
-    return `<div class="page-toolbar"><button type="button" class="btn-secondary btn-compact" data-nav-module="tasks">← Mis tareas</button></div>
-      <header class="cc-hero"><h2 class="cc-title">${esc(task.id)} · ${esc(task.typeLabel)}</h2>
-        <p class="cc-tagline">Pedido ${esc(task.reference)} · Proyecto ${esc(task.project)} · Cantidad ${esc(fmtQty(task.qty))}</p>
-      </header>
-      <div class="card-panel">
-        <p><strong>Esperado:</strong> ${esc(task.description || task.product)} · ${esc(fmtQty(task.qty))} pzas</p>
-        <div class="pipeline-flow">${steps
-          .map((s, i) => `<div class="pipeline-step${i < flow.step ? " done" : i === flow.step ? " active" : ""}">${esc(s)}</div>`)
-          .join("")}</div>
-        <div class="scan-workspace">
-          <h4>${esc(steps[flow.step] || "Completar")}</h4>
-          <input class="scan-input field" id="scanValue" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Escaneo · Enter" />
-          <div class="scan-handheld-fallback">
-            <button type="button" class="btn-secondary btn-compact" data-nav-module="tasks">Cancelar</button>
-            <button type="button" class="btn-secondary btn-compact" id="scanReportDiff" hidden>Reportar diferencia</button>
-            <button type="button" class="scan-manual-link" id="scanManual">Captura manual</button>
-          </div>
-          <div id="scanFeedback" class="scan-status idle">Escaneo listo</div>
+    const steps = taskFlowSteps(task);
+    const current = steps[flow.step] || steps[steps.length - 1];
+    const expected = expectedScanForTask(task, flow.step);
+    return `<div class="operator-handheld-shell">
+      <div class="scan-workspace operator-scan-active">
+        <p class="scan-handheld-meta">${esc(task.id)} · ${esc(task.typeLabel)} · paso ${flow.step + 1}/${steps.length}</p>
+        <h2 class="scan-handheld-instruction">${esc(current.label)}</h2>
+        <input class="scan-input scan-handheld-input field" id="scanValue" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Escaneo · Enter" />
+        <div class="scan-handheld-fallback">
+          <button type="button" class="btn-secondary btn-compact" data-cancel-task>Cancelar tarea</button>
+          <button type="button" class="btn-secondary btn-compact" id="scanReportDiff" hidden>Reportar diferencia</button>
+          <button type="button" class="scan-manual-link" id="scanManual">Captura manual</button>
         </div>
-        <div id="flowResult"></div>
-        <p class="ops-message">DEMO — no registra movimiento · LOGITEC conserva trazabilidad en el WMS real</p>
-      </div>`;
+        <div id="scanFeedback" class="scan-status idle">Escaneo listo · ${esc(expected)}</div>
+      </div>
+      <div id="flowResult"></div>
+      <p class="ops-message">DEMO — no registra movimiento · LOGITEC conserva trazabilidad en el WMS real</p>
+    </div>`;
   }
 
   function movementsView() {
@@ -852,14 +833,9 @@
         .join("") : `<tr><td colspan="6">Sin tareas en seguimiento activo.</td></tr>`}</tbody></table></div>`;
   }
 
-  function clientSearchInventory() {
-    state.inventoryFilter.q = state.inventoryFilter.q || "";
-    return `<div class="module-screen-header"><h3>Buscar existencias</h3><p class="module-lead">Consulta autorizada · SKU · ubicación · proyecto</p></div>${inventoryTable(true)}`;
-  }
-
   function clientResumen() {
     const projs = aggregateProjects().slice(0, 6);
-    return `<header class="cc-hero"><h2 class="cc-title">Resumen</h2><p class="cc-tagline">Inventario de sus proyectos · consulta autorizada · READ-ONLY</p></header>
+    return `<header class="cc-hero"><h2 class="cc-title">Resumen de inventario</h2><p class="cc-tagline">Inventario autorizado de sus proyectos · consulta READ-ONLY</p></header>
       ${kpis()}
       <div class="card-panel"><h4>Proyectos con existencias</h4>
         <table class="data-table"><thead><tr><th>Proyecto</th><th>Piezas</th><th>Registros</th><th>Ubicaciones</th></tr></thead><tbody>${projs
@@ -911,11 +887,7 @@
       return `<div class="module-screen-header"><h3>Consulta rápida</h3><p class="module-lead">SKU · ubicación · READ-ONLY · sin captura operativa</p></div>${inventoryTable(false)}`;
     }
     if (m === "control") return state.role === "CLIENT" ? clientResumen() : controlCenter();
-    if (m === "inventory") {
-      if (state.role === "CLIENT" && state.tab === "consulta") return inventoryTable(true);
-      return inventoryTable(true);
-    }
-    if (state.role === "CLIENT" && m === "products") return clientSearchInventory();
+    if (m === "inventory") return inventoryTable(true);
     if (m === "locations") {
       const locs = aggregateLocations();
       return `<div class="module-screen-header"><h3>Ubicaciones</h3></div><div class="card-panel"><table class="data-table"><thead><tr><th>Ubicación</th><th>Piezas</th><th>Registros</th><th>Proyectos</th></tr></thead><tbody>${locs
@@ -960,29 +932,27 @@
     return controlCenter();
   }
 
-  function demoTaskForScanFlow(flowId) {
-    const flow = SCAN_FLOWS[flowId];
-    if (!flow) return null;
-    if (flowId === "outbound") {
-      return state.tasks.find((t) => t.type === "outbound" || t.type === "picking") || null;
-    }
-    return state.tasks.find((t) => t.type === flow.taskType) || null;
-  }
-
-  function scanExpectedValue(flowId, step, task) {
-    if (!task) return "";
-    if (step === 0) return String(task.product || "").toUpperCase();
-    if (flowId === "putaway" && step === 1) return String(task.destination || "").toUpperCase();
-    if (flowId === "relocate" && step === 1) return String(task.origin || "").toUpperCase();
-    if (flowId === "relocate" && step === 2) return String(task.destination || "").toUpperCase();
-    if (step === 1) return String(task.reference || task.product || "").toUpperCase();
-    if (step === 2) return String(task.destination || task.origin || "").toUpperCase();
-    return String(task.destination || task.product || "").toUpperCase();
+  function expectedScanForTask(task, step) {
+    const def = taskFlowSteps(task)[step];
+    if (!def) return "";
+    const raw =
+      def.key === "destination"
+        ? task.destination
+        : def.key === "reference"
+          ? task.reference
+          : task.product;
+    return String(raw || "").toUpperCase();
   }
 
   function normalizeScannerRawValue(rawValue) {
     const value = String(rawValue ?? "").trim();
     return value.startsWith("]C1") ? value.slice(3) : value;
+  }
+
+  function scanMatchesExpected(raw, expected) {
+    const val = String(raw || "").trim().toUpperCase();
+    const exp = String(expected || "").trim().toUpperCase();
+    return Boolean(val) && (val === exp || (exp.length >= 6 && val.includes(exp.slice(0, 6))));
   }
 
   function playScanOkFeedback() {
@@ -1054,28 +1024,6 @@
     state.scanProcessing = false;
   }
 
-  function taskStepsForType(taskType) {
-    if (taskType === "receive") return 4;
-    if (taskType === "putaway") return 3;
-    return 4;
-  }
-
-  function expectedScanForTask(task, step) {
-    if (step === 0) return String(task.product || "").toUpperCase();
-    if (task.type === "putaway" && step === 1) return String(task.destination || "").toUpperCase();
-    if (task.type === "relocate" && step === 1) return String(task.origin || "").toUpperCase();
-    if (task.type === "relocate" && step === 2) return String(task.destination || "").toUpperCase();
-    if (step === 1) return String(task.reference || task.product || "").toUpperCase();
-    if (step === 2) return String(task.destination || task.origin || "").toUpperCase();
-    return String(task.destination || task.product || "").toUpperCase();
-  }
-
-  function scanMatchesExpected(raw, expected) {
-    const val = String(raw || "").trim().toUpperCase();
-    const exp = String(expected || "").trim().toUpperCase();
-    return Boolean(val) && (val === exp || (exp.length >= 6 && val.includes(exp.slice(0, 6))));
-  }
-
   async function submitOperatorScan(task) {
     const flow = state.taskFlow || { step: 0 };
     const input = document.getElementById("scanValue");
@@ -1102,224 +1050,26 @@
     playScanOkFeedback();
     input.value = "";
     document.getElementById("scanReportDiff")?.setAttribute("hidden", "");
-    const stepsCount = taskStepsForType(task.type);
-    if (flow.step + 1 >= stepsCount) {
+    const steps = taskFlowSteps(task);
+    if (flow.step + 1 >= steps.length) {
       document.getElementById("flowResult").innerHTML = `<div class="card-panel" style="background:var(--ok-soft)">
         <strong>Tarea completada</strong><br>
         ${task.type === "receive" ? "Destino operativo: Buffer de entrada" : `Destino: ${esc(task.destination)}`}<br>
         <button type="button" class="btn-success btn-compact block-mobile" data-nav-module="tasks" style="margin-top:10px">Volver a Mis tareas</button>
         <p class="ops-message">DEMO — no registra movimiento</p>
       </div>`;
-      state.scanProcessing = false;
+      unlockScanInput();
       return;
     }
     setTimeout(() => {
       flow.step += 1;
       state.taskFlow = flow;
-      state.scanProcessing = false;
+      unlockScanInput();
       renderContent();
     }, 450);
   }
 
-  async function submitScanModeReading() {
-    const flow = SCAN_FLOWS[state.scanFlowId];
-    const task = demoTaskForScanFlow(state.scanFlowId);
-    const input = document.getElementById("scanModeInput");
-    const fb = document.getElementById("scanModeFeedback");
-    if (!flow || !task || !input || !fb || state.scanProcessing) return;
-    const normalized = normalizeScannerRawValue(input.value);
-    if (!normalized) {
-      fb.className = "scan-status warn";
-      fb.textContent = "No leído · escanee código";
-      return;
-    }
-    state.scanProcessing = true;
-    const expected = scanExpectedValue(flow.id, state.scanStep, task);
-    const classify = await classifyScanCodeSoft(normalized);
-    state.scanLastMetrics = classify;
-    if (!scanMatchesExpected(normalized, expected)) {
-      fb.className = "scan-status warn";
-      fb.textContent = `Diferencia · esperado ${expected} · leído ${normalized.toUpperCase()}${classify.available && classify.data?.classification === "NO_ENCONTRADO" ? " · API: no encontrado" : ""}`;
-      document.getElementById("scanModeReportDiff")?.removeAttribute("hidden");
-      state.scanProcessing = false;
-      renderContentScanMetrics();
-      return;
-    }
-    fb.className = "scan-status ok";
-    fb.textContent = `OK · ${flow.steps[state.scanStep]}${classify.available ? ` · API ${classify.data?.classification || "—"}` : ""}`;
-    playScanOkFeedback();
-    input.value = "";
-    document.getElementById("scanModeReportDiff")?.setAttribute("hidden", "");
-    if (state.scanStep + 1 >= flow.steps.length) {
-      fb.textContent += " · Flujo completado (DEMO)";
-      state.scanProcessing = false;
-      return;
-    }
-    setTimeout(() => {
-      state.scanStep += 1;
-      unlockScanInput();
-      state.scanLastMetrics = null;
-      render();
-    }, 450);
-  }
-
-  function renderScanSidebar() {
-    const tabs = Object.values(SCAN_FLOWS)
-      .map(
-        (flow) =>
-          `<button type="button" class="scan-flow-tab${state.scanFlowId === flow.id ? " active" : ""}" data-scan-flow="${esc(flow.id)}">${esc(flow.label)}</button>`
-      )
-      .join("");
-    return `<div class="nav-shell"><p class="nav-section-hint">Handheld · flujo operativo</p><div class="scan-flow-tabs">${tabs}</div></div>`;
-  }
-
-  function renderScanFlowPicker() {
-    return `<div class="scan-mode-shell">
-      <div class="scan-mode-banner"><strong>MODO ESCANEO · REVISIÓN TEMPORAL</strong>
-        Vista handheld/PDA del operador · sin escrituras · reutiliza flujos LOGITEC existentes</div>
-      <div class="module-screen-header"><h3>Seleccione flujo de escaneo</h3>
-        <p class="module-lead">Recepción · Acomodo · Reubicación · Preparar salida</p></div>
-      <div class="scan-flow-picker">${Object.values(SCAN_FLOWS)
-        .map(
-          (flow) =>
-            `<button type="button" class="scan-flow-card" data-scan-flow="${esc(flow.id)}">
-              <h4>${esc(flow.label)}</h4>
-              <p>${esc(flow.steps[0])} → ${esc(flow.steps[flow.steps.length - 1])}</p>
-            </button>`
-        )
-        .join("")}</div>
-      <p class="scan-pending-note">Cámara / BarcodeDetector: PENDIENTE DE INTEGRACIÓN · ver <code>/pda-scanner-lab.html</code> (lab ADMIN).</p>
-    </div>`;
-  }
-
-  function renderScanFlowScreen() {
-    const flow = SCAN_FLOWS[state.scanFlowId];
-    const task = demoTaskForScanFlow(state.scanFlowId);
-    if (!flow || !task) {
-      return `<div class="scan-mode-shell"><div class="card-panel ops-message warn">Sin tarea demo para este flujo.</div></div>`;
-    }
-    const step = state.scanStep;
-    const instruction = flow.steps[step] || "Completar";
-    const expected = scanExpectedValue(flow.id, step, task);
-    const metrics = state.scanLastMetrics;
-    const metricsHtml = metrics
-      ? `<div class="scan-metrics">${metrics.available ? `Clasificación API: ${esc(metrics.data?.classification || "—")} · round-trip ${esc(metrics.roundTripMs)} ms` : `Clasificador API: PENDIENTE DE INTEGRACIÓN (${esc(metrics.reason || "no disponible")})`}${metrics.detectionMs != null ? ` · detección ${esc(metrics.detectionMs)} ms` : ""}</div>`
-      : "";
-    const pipeline = flow.steps
-      .map(
-        (label, i) =>
-          `<div class="scan-mini-step${i < step ? " done" : i === step ? " active" : ""}">${esc(label)}</div>`
-      )
-      .join("");
-    return `<div class="scan-mode-shell">
-      <div class="scan-mode-banner"><strong>${esc(flow.label)}</strong>
-        ${esc(task.id)} · ${esc(task.reference)} · ${esc(fmtQty(task.qty))} pzas · DEMO READ-ONLY</div>
-      <div class="scan-handheld">
-        <p class="scan-handheld-meta">Paso ${step + 1} / ${flow.steps.length}</p>
-        <h2 class="scan-handheld-instruction">${esc(instruction)}</h2>
-        <div class="scan-mini-pipeline">${pipeline}</div>
-        <input id="scanModeInput" class="scan-handheld-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Escaneo · Enter" />
-        <div class="scan-handheld-fallback">
-          <button type="button" class="btn-secondary btn-compact" id="scanModeBack">← Atrás</button>
-          <button type="button" class="btn-secondary btn-compact" id="scanModeReportDiff" hidden>Reportar diferencia</button>
-          <button type="button" class="scan-manual-link" id="scanModeManual">Captura manual</button>
-        </div>
-        <div id="scanModeFeedback" class="scan-status idle">Escaneo listo · esperado demo: ${esc(expected)}</div>
-        ${metricsHtml}
-      </div>
-      <p class="ops-message" style="margin-top:12px">DEMO — no registra movimiento · 0 POST · reutiliza validación de <code>operatorTaskFlow</code> + clasificador PDA si está habilitado</p>
-    </div>`;
-  }
-
-  function renderScanModeContent() {
-    if (!state.scanFlowId) return renderScanFlowPicker();
-    return renderScanFlowScreen();
-  }
-
-  function wireScanModeContent() {
-    app.querySelectorAll("[data-scan-flow]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        state.scanFlowId = btn.getAttribute("data-scan-flow");
-        state.scanStep = 0;
-        unlockScanInput();
-        state.scanLastMetrics = null;
-        render();
-      });
-    });
-    sidebar?.querySelectorAll("[data-scan-flow]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        state.scanFlowId = btn.getAttribute("data-scan-flow");
-        state.scanStep = 0;
-        unlockScanInput();
-        state.scanLastMetrics = null;
-        render();
-      });
-    });
-    const input = document.getElementById("scanModeInput");
-    if (!input) return;
-    input.focus();
-    input.addEventListener("focus", () => {
-      if (!state.scanInputStartedAt) state.scanInputStartedAt = performance.now();
-    });
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        void submitScanModeReading();
-      }
-    });
-    document.getElementById("scanModeBack")?.addEventListener("click", () => {
-      state.scanFlowId = null;
-      state.scanStep = 0;
-      unlockScanInput();
-      state.scanLastMetrics = null;
-      render();
-    });
-    document.getElementById("scanModeReportDiff")?.addEventListener("click", () => {
-      const fb = document.getElementById("scanModeFeedback");
-      if (fb) {
-        fb.className = "scan-status warn";
-        fb.textContent = "Diferencia reportada · DEMO — supervisor notificado";
-      }
-    });
-    document.getElementById("scanModeManual")?.addEventListener("click", () => {
-      input.focus();
-      input.placeholder = "Captura manual · escriba y Enter";
-    });
-  }
-
-  function renderContentScanMetrics() {
-    const host = document.getElementById("scanModeFeedback");
-    if (!host || !state.scanLastMetrics) return;
-    const m = state.scanLastMetrics;
-    const extra = document.createElement("div");
-    extra.className = "scan-metrics";
-    extra.textContent = m.available
-      ? `Clasificación API: ${m.data?.classification || "—"} · round-trip ${m.roundTripMs} ms`
-      : `Clasificador API: PENDIENTE DE INTEGRACIÓN (${m.reason || "no disponible"})`;
-    host.insertAdjacentElement("afterend", extra);
-  }
-
-  function syncScanFlowTheme() {
-    const body = document.body;
-    if (!body || !state.scanMode) return;
-    body.removeAttribute("data-flow-neutral");
-    if (!state.scanFlowId) {
-      body.removeAttribute("data-flow-palette");
-      body.removeAttribute("data-flow-pos");
-      body.setAttribute("data-flow-neutral", "brand");
-      return;
-    }
-    const flow = SCAN_FLOWS[state.scanFlowId];
-    if (!flow) return;
-    body.setAttribute("data-flow-palette", flow.palette);
-    body.setAttribute("data-flow-pos", flow.pos);
-  }
-
   function syncFlowTheme() {
-    if (state.scanMode) {
-      syncScanFlowTheme();
-      return;
-    }
     const body = document.body;
     if (!body) return;
     let palette = null;
@@ -1345,12 +1095,6 @@
   function renderSectionTabs() {
     const bar = document.getElementById("wmsSectionBar");
     if (!bar) return;
-    if (state.scanMode) {
-      bar.innerHTML = "";
-      bar.hidden = true;
-      bar.classList.add("hidden");
-      return;
-    }
     const cfg = NAV[state.role];
     if (!cfg) {
       bar.innerHTML = "";
@@ -1380,19 +1124,6 @@
 
   function renderSidebar() {
     if (!sidebar) return;
-    if (state.scanMode) {
-      sidebar.innerHTML = renderScanSidebar();
-      sidebar.querySelectorAll("[data-scan-flow]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          state.scanFlowId = btn.getAttribute("data-scan-flow");
-          state.scanStep = 0;
-          unlockScanInput();
-          state.scanLastMetrics = null;
-          render();
-        });
-      });
-      return;
-    }
     const cfg = NAV[state.role];
     if (!cfg) return;
     const panels = cfg.tabs
@@ -1435,8 +1166,12 @@
       btn.addEventListener("click", () => {
         state.activeTaskId = btn.getAttribute("data-start-task");
         state.taskFlow = { step: 0 };
+        unlockScanInput();
         renderContent();
       });
+    });
+    app.querySelectorAll("[data-cancel-task]").forEach((btn) => {
+      btn.addEventListener("click", () => cancelActiveTask());
     });
     const runFilter = () => {
       state.inventoryFilter.q = document.getElementById("invQ")?.value?.trim() || "";
@@ -1459,6 +1194,9 @@
       if (!task) return;
       const input = document.getElementById("scanValue");
       input?.focus();
+      input?.addEventListener("focus", () => {
+        if (!state.scanInputStartedAt) state.scanInputStartedAt = performance.now();
+      });
       input?.addEventListener("keydown", (event) => {
         if (event.key === "Enter") {
           event.preventDefault();
@@ -1482,11 +1220,6 @@
   function renderContent() {
     if (!app) return;
     syncFlowTheme();
-    if (state.scanMode) {
-      app.innerHTML = renderScanModeContent();
-      wireScanModeContent();
-      return;
-    }
     app.innerHTML = renderModule();
     wireContent();
   }
@@ -1517,7 +1250,7 @@
     const sidebars = document.querySelectorAll("#sidebar");
     const orphanFocus = document.querySelectorAll("#focusNavSlot *, #focusSubnavSlot *");
 
-    const expectedTabs = state.scanMode ? 0 : NAV[state.role]?.tabs?.length || 0;
+    const expectedTabs = NAV[state.role]?.tabs?.length || 0;
     if (sectionTabs.length !== expectedTabs) {
       issues.push(`tabs horizontales: ${sectionTabs.length} (esperado ${expectedTabs})`);
     }
@@ -1540,7 +1273,6 @@
         role: state.role,
         tab: state.tab,
         module: state.module,
-        scanMode: state.scanMode,
         concentration: state.concentration,
         mobileEmulation: state.mobileEmulation
       }
@@ -1559,7 +1291,6 @@
       () => applyConcentration(false),
       () => applyRoleView("OPERATOR"),
       () => applyRoleView("CLIENT"),
-      () => applyDirectorView("SCAN"),
       () => applyRoleView("ADMIN"),
       () => applyConcentration(true),
       () => applyConcentration(false),

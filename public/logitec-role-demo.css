@@ -38,6 +38,7 @@ body {
   background: var(--bg);
 }
 .demo-env-banner {
+  background-color: #152536;
   background: linear-gradient(90deg, #152536, #1e4a6e);
   color: #e8f2ff;
   text-align: center;
@@ -53,10 +54,12 @@ body {
   justify-content: space-between;
   gap: 8px;
   padding: 7px 14px calc(7px + env(safe-area-inset-bottom));
-  background: rgba(18, 42, 64, 0.96);
+  background-color: #122a40;
+  background: #122a40;
   color: #94a3b8;
   font-size: 0.72rem;
   z-index: 200;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
 }
 .director-view-bar {
   position: fixed;
@@ -80,7 +83,7 @@ body {
 }
 .director-view-bar-actions {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   max-width: 1280px;
   margin: 0 auto;
@@ -900,9 +903,10 @@ body.mobile-emulation-active .mobile-emulation-frame {
 }
 /* ===== /mobile emulation ===== */
 
-/* ===== focus mode (concentración) — solo oculta sidebar/módulos; NO mueve DOM ===== */
+/* ===== focus mode (concentración full-screen) ===== */
 .wms-section-bar {
   width: 100%;
+  background-color: var(--panel-solid);
 }
 .wms-section-bar .nav-section-tabs {
   margin: 0;
@@ -911,30 +915,76 @@ body.mobile-emulation-active .mobile-emulation-frame {
 #wmsSectionBar.hidden {
   display: none !important;
 }
-body.focus-mode .demo-env-banner {
+.concentration-overlay {
   display: none;
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 620;
+  padding: 10px 12px;
 }
-body.focus-mode .app-brand p,
-body.focus-mode .app-datetime,
-body.focus-mode .demo-source-badge,
-body.focus-mode .nav-section-hint,
-body.focus-mode .module-btn-desc {
+.concentration-exit-btn {
+  min-height: 44px;
+  border: 1px solid rgba(16, 117, 189, 0.55);
+  border-radius: 999px;
+  background: var(--panel-solid);
+  color: var(--accent-dark);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+}
+body.focus-mode {
+  overflow: hidden;
+}
+body.focus-mode .concentration-overlay {
+  display: block;
+}
+body.focus-mode .concentration-overlay.hidden {
+  display: block;
+}
+body.focus-mode .demo-env-banner,
+body.focus-mode #wmsSectionBar,
+body.focus-mode #sidebar,
+body.focus-mode #directorViewBar,
+body.focus-mode .demo-readonly-footer,
+body.focus-mode .app-topbar,
+body.focus-mode #focusModeBtn,
+body.focus-mode .mobile-emulation-chrome {
   display: none !important;
 }
-body.focus-mode .app-topbar {
-  padding: 6px 12px 8px;
-  background-color: var(--panel-solid);
+body.focus-mode #mobileEmulationFrame .app-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  min-height: 100vh;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background-color: var(--bg);
 }
-body.focus-mode .sidebar {
-  display: none !important;
+body.focus-mode .app-body {
+  min-height: 100vh;
+  padding-bottom: 0;
 }
 body.focus-mode .content {
   max-width: none;
+  min-height: calc(100vh - 24px);
+  padding: 16px 18px 24px;
 }
 body.mobile-emulation-active #focusModeBtn,
-body.scan-mode-active #focusModeBtn,
 #focusModeBtn.hidden {
   display: none !important;
+}
+.operator-handheld-shell .scan-workspace {
+  margin: 0;
 }
 @media (max-width: 900px) {
   .director-view-bar-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }

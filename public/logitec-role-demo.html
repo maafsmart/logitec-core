@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>LOGITEC CORE WMS · Demo por rol</title>
-    <link rel="stylesheet" href="/logitec-role-demo.css?v=8" />
+    <link rel="stylesheet" href="/logitec-role-demo.css?v=9" />
   </head>
   <body class="workspace-compact sistema-workspace">
     <div id="mobileEmulationStage" class="mobile-emulation-stage">
@@ -15,6 +15,9 @@
       <div id="mobileEmulationFrame" class="mobile-emulation-frame">
         <div class="demo-env-banner" role="status">ENTORNO DEMO · EXCEL OFICIAL · SOLO LECTURA</div>
         <div class="app-shell">
+          <div id="concentrationOverlay" class="concentration-overlay hidden" hidden>
+            <button type="button" id="concentrationExitBtn" class="concentration-exit-btn">Salir de concentración</button>
+          </div>
           <header class="app-topbar">
             <div class="app-topbar-context">
               <div class="app-brand">
@@ -49,7 +52,6 @@
         <button type="button" class="director-view-btn" data-director-role="SUPERVISOR">LO QUE VE SUPERVISOR</button>
         <button type="button" class="director-view-btn" data-director-role="OPERATOR">LO QUE VE OPERADOR</button>
         <button type="button" class="director-view-btn" data-director-role="CLIENT">LO QUE VE CLIENTE</button>
-        <button type="button" class="director-view-btn director-view-btn-scan" data-director-view="SCAN">MODO ESCANEO</button>
         <button type="button" class="director-view-btn director-view-btn-mobile" data-director-mobile="1">MODO CELULAR</button>
         <button type="button" class="director-view-btn director-view-btn-system" data-director-system="1">VER SISTEMA ACTUAL</button>
       </div>
@@ -58,6 +60,6 @@
       <span id="writeGuard">Escrituras bloqueadas: 0</span>
       <span id="dataSourceFooter">Fuente: sin datos</span>
     </footer>
-    <script src="/logitec-role-demo.js?v=8" defer></script>
+    <script src="/logitec-role-demo.js?v=9" defer></script>
   </body>
 </html>
