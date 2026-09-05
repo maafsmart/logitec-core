@@ -1504,12 +1504,22 @@
   }
 
   function authorizedProjectsFromStockRows(rows) {
+    if (!rows.length) return new Set();
     const projects = new Set();
     rows.forEach((row) => {
-      const project = projectLabelFromStockRow(row);
-      if (isAuthorizedClientProject(project)) projects.add(project);
+      projects.add(projectLabelFromStockRow(row));
     });
+    for (const project of projects) {
+      if (!isAuthorizedClientProject(project)) return new Set();
+    }
     return projects;
+  }
+
+  function deriveReadingProjectLabel(reading) {
+    if (readingClassificationKind(reading) === "UBICACIÓN") return null;
+    const projects = authorizedProjectsFromStockRows(stockRowsMatchingReading(reading));
+    if (projects.size === 1) return [...projects][0];
+    return null;
   }
 
   function officialLocationsFromStockRows(rows) {
@@ -1519,13 +1529,6 @@
       if (code) locations.add(code);
     });
     return locations;
-  }
-
-  function deriveReadingProjectLabel(reading) {
-    if (readingClassificationKind(reading) === "UBICACIÓN") return null;
-    const projects = authorizedProjectsFromStockRows(stockRowsMatchingReading(reading));
-    if (projects.size === 1) return [...projects][0];
-    return null;
   }
 
   function deriveCaptureProjectLabel(capture) {

@@ -117,9 +117,9 @@ function authorizedCapture(overrides: Partial<Capture> = {}): Capture {
   };
 }
 
-test("cache-buster v=15.1", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=15\.1/);
-  assert.match(html, /logitec-role-demo\.css\?v=15\.1/);
+test("cache-buster v=15.2", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=15\.2/);
+  assert.match(html, /logitec-role-demo\.css\?v=15\.2/);
 });
 
 test("Cliente conserva Inicio + Consulta", () => {

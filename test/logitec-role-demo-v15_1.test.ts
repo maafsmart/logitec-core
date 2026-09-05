@@ -144,9 +144,9 @@ const sameProjectTwoLocsStock: StockRow[] = [
   { product: { sku: "SKU-SAME" }, location: { code: "AN105" }, project: { code: "PROJ-ALPHA" }, qty: 3 }
 ];
 
-test("cache-buster v=15.1", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=15\.1/);
-  assert.match(html, /logitec-role-demo\.css\?v=15\.1/);
+test("cache-buster v=15.2", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=15\.2/);
+  assert.match(html, /logitec-role-demo\.css\?v=15\.2/);
 });
 
 test("no usa lookupStockRowFromReadingMeta con find arbitrario", () => {
