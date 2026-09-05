@@ -147,9 +147,9 @@ function makeHarness(stock = mockStock): Harness {
   return h;
 }
 
-test("cache-buster v=16.1.1", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=16\.1\.1/);
-  assert.match(html, /logitec-role-demo\.css\?v=16\.1\.1/);
+test("cache-buster v=16.1.2", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=16\.1\.2/);
+  assert.match(html, /logitec-role-demo\.css\?v=16\.1\.2/);
 });
 
 test("POL-004 registrada como APROBADA con resumen técnico", () => {
@@ -256,11 +256,11 @@ test("identificación única expone campos de línea OED", () => {
   const order = h.findDigitalEntryOrder(OED_PROG)!;
   const line = h.findOedLine(order, h.state.preReceptionSession!.identifiedLineId!)!;
   assert.equal(line.sku, "SKU-GRP-C");
-  assert.match(sliceFunction(js, "renderPreReceptionSessionPanel"), /SKU.*Pedido.*SAP.*Lote.*Partida.*Descripción.*Proyecto/s);
+  assert.match(sliceFunction(js, "renderPreReceptionAutocompletePanel"), /SKU.*Pedido.*SAP.*Lote.*Partida.*Descripción.*Proyecto/s);
 });
 
 test("Admin ve diccionario corpus READ-ONLY", () => {
-  assert.match(sliceFunction(js, "preReceptionDocumentalView"), /state\.role === "ADMIN" \? renderIdentificationCorpusPanel\(\)/);
+  assert.match(sliceFunction(js, "preReceptionDocumentalView"), /state\.role === "ADMIN" \? renderIdentificationCorpusPanel\(\{ collapsible: true \}\)/);
   assert.match(sliceFunction(js, "renderIdentificationCorpusPanel"), /Valor.*Tipo.*Proyecto.*Relaciones.*Coincidencias.*Estado/s);
   const h = makeHarness();
   assert.ok(h.buildIdentificationCorpusEntries().length > 0);

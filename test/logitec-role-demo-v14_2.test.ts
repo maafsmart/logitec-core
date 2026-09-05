@@ -7,7 +7,7 @@ const js = readFileSync(new URL("../public/logitec-role-demo.js", import.meta.ur
 const policies = readFileSync(new URL("../docs/POLITICAS_SISTEMA_LOGITEC_CORE_WMS.md", import.meta.url), "utf8");
 
 test("cache-buster v=15.3", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=16.1.1/);
+  assert.match(html, /logitec-role-demo\.js\?v=16.1.2/);
 });
 
 test("POL-003 registrada como APROBADA", () => {

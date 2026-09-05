@@ -801,10 +801,80 @@
     renderContent();
   }
 
-  function renderPreReceptionSessionPanel(oedId, { operator = false } = {}) {
+  function renderPreReceptionAutocompletePanel(oedId) {
     const session = state.preReceptionSession?.oedId === oedId ? state.preReceptionSession : createEmptyPreReceptionSession(oedId);
+    if (session.status !== "IDENTIFICADO" || !session.identifiedLineId) return "";
     const order = findDigitalEntryOrder(oedId);
-    const identifiedLine = session.identifiedLineId ? findOedLine(order, session.identifiedLineId) : null;
+    const identifiedLine = findOedLine(order, session.identifiedLineId);
+    if (!identifiedLine) return "";
+    return `<div class="card-panel pre-reception-autocomplete ok-soft">
+      <h5>IDENTIFICACIÓN INEQUÍVOCA</h5>
+      <p><span class="client-field-label">SKU</span> ${esc(identifiedLine.sku || "—")}</p>
+      <p><span class="client-field-label">Pedido</span> ${esc(identifiedLine.pedido || "—")}</p>
+      <p><span class="client-field-label">SAP</span> ${esc(identifiedLine.sap || "—")}</p>
+      <p><span class="client-field-label">Lote</span> ${esc(identifiedLine.lote || "—")}</p>
+      <p><span class="client-field-label">Partida</span> ${esc(identifiedLine.partida || "—")}</p>
+      <p><span class="client-field-label">Descripción</span> ${esc(identifiedLine.description || "—")}</p>
+      <p><span class="client-field-label">Proyecto</span> ${esc(order?.project || "—")}</p>
+    </div>`;
+  }
+
+  function renderPreReceptionPredictPanel() {
+    return `<div class="card-panel pre-reception-predict-panel">
+      <h4>Motor predictivo documental</h4>
+      <p class="module-lead">Cotejo progresivo · intersección acumulada · fail-closed POL-004</p>
+      <div class="pre-reception-consult-row">
+        <input id="preReceptionConsultInput" class="pre-reception-consult-input" type="text" placeholder="Escanee o escriba SKU · SAP · Pedido · Partida · Serie · Lote" autocomplete="off" />
+        <button type="button" class="btn-primary btn-compact" id="preReceptionConsultRun">Cotejar documentalmente</button>
+      </div>
+      <p class="operational-table-meta">Primera lectura: candidatos OED · siguientes: intersección · RAW conservado</p>
+    </div>`;
+  }
+
+  function renderPreReceptionOedLinesTable(lines) {
+    return `<table class="data-table pre-reception-oed-lines"><thead><tr>
+        <th>Línea</th><th>SKU</th><th>Descripción</th><th>Cant. esp.</th><th>SAP</th><th>Pedido</th><th>Partida</th><th>Lote</th>
+      </tr></thead><tbody>${lines
+        .map(
+          (line) => `<tr>
+            <td>${esc(line.lineId)}</td>
+            <td>${esc(line.sku)}</td>
+            <td>${esc(line.description)}</td>
+            <td>${esc(fmtQty(line.qtyExpected))}</td>
+            <td>${esc(line.sap || "—")}</td>
+            <td>${esc(line.pedido || "—")}</td>
+            <td>${esc(line.partida || "—")}</td>
+            <td>${esc(line.lote || "—")}</td>
+          </tr>`
+        )
+        .join("")}</tbody></table>`;
+  }
+
+  function renderPreReceptionOedSelectorPanel(active, orderOptions) {
+    const lines = active?.lines || [];
+    const linesBlock = lines.length
+      ? `<p class="operational-table-meta pre-reception-oed-summary">${esc(String(lines.length))} líneas documentales · ${esc(
+          active.project || "—"
+        )} · ${esc(active.documentId || "—")}</p>
+        <details class="pre-reception-expand-block">
+          <summary>Ver líneas completas de la OED</summary>
+          ${renderPreReceptionOedLinesTable(lines)}
+        </details>`
+      : `<div class="card-panel ops-message warn">Sin líneas en la OED seleccionada.</div>`;
+    return `<div class="card-panel pre-reception-oed-panel">
+      <h4>Orden de entrada digital</h4>
+      <p class="operational-table-meta">${esc(active?.status || "Sin OED activa")} · ${esc(active?.supplierRef || "—")}</p>
+      <p class="operational-table-meta pre-reception-oed-note">${esc(
+        active?.sourceNote || "Documentación externa digitalizada · LOGITEC no genera administrativamente la OED"
+      )}</p>
+      <label class="client-field-label" for="preReceptionOedSelect">OED activa</label>
+      <select id="preReceptionOedSelect" class="pre-reception-oed-select">${orderOptions}</select>
+      ${linesBlock}
+    </div>`;
+  }
+
+  function renderPreReceptionSessionPanel(oedId, { operator = false, includeAutocomplete = true } = {}) {
+    const session = state.preReceptionSession?.oedId === oedId ? state.preReceptionSession : createEmptyPreReceptionSession(oedId);
     const candidateCount = session.candidateLineIds === null ? "—" : String(session.candidateLineIds.length);
     const readingsTable = session.readings.length
       ? `<table class="data-table pre-reception-session-readings"><thead><tr>
@@ -824,18 +894,7 @@
           )
           .join("")}</tbody></table>`
       : `<p class="operational-table-meta">Sin lecturas en la sesión predictiva actual.</p>`;
-    const autocomplete = identifiedLine
-      ? `<div class="card-panel pre-reception-autocomplete ok-soft">
-          <h5>IDENTIFICACIÓN INEQUÍVOCA</h5>
-          <p><span class="client-field-label">SKU</span> ${esc(identifiedLine.sku || "—")}</p>
-          <p><span class="client-field-label">Pedido</span> ${esc(identifiedLine.pedido || "—")}</p>
-          <p><span class="client-field-label">SAP</span> ${esc(identifiedLine.sap || "—")}</p>
-          <p><span class="client-field-label">Lote</span> ${esc(identifiedLine.lote || "—")}</p>
-          <p><span class="client-field-label">Partida</span> ${esc(identifiedLine.partida || "—")}</p>
-          <p><span class="client-field-label">Descripción</span> ${esc(identifiedLine.description || "—")}</p>
-          <p><span class="client-field-label">Proyecto</span> ${esc(order?.project || "—")}</p>
-        </div>`
-      : "";
+    const autocomplete = includeAutocomplete ? renderPreReceptionAutocompletePanel(oedId) : "";
     const controls = operator
       ? `<p class="operational-table-meta">Operador ejecuta cotejo · no administra OED ni diccionario</p>`
       : `<div class="pre-reception-session-controls">
@@ -864,12 +923,12 @@
     </div>`;
   }
 
-  function renderIdentificationCorpusPanel() {
+  function renderIdentificationCorpusPanel({ collapsible = false } = {}) {
     const entries = state.identificationCorpusEntries || [];
     if (!entries.length) {
       return `<div class="card-panel ops-message">Corpus READ-ONLY vacío · cargue fuente demo para reconocer antecedentes históricos.</div>`;
     }
-    return `<div class="card-panel pre-reception-corpus-panel">
+    const inner = `<div class="card-panel pre-reception-corpus-panel">
       <h4>Diccionario real DEMO · corpus READ-ONLY</h4>
       <p class="module-lead">Construido en memoria desde existencias demo · no persiste · no genera expectativa de recepción</p>
       <table class="data-table"><thead><tr>
@@ -888,6 +947,11 @@
         )
         .join("")}</tbody></table>
     </div>`;
+    if (!collapsible) return inner;
+    return `<details class="pre-reception-expand-block pre-reception-corpus-details">
+      <summary>Ver diccionario técnico / corpus histórico</summary>
+      ${inner}
+    </details>`;
   }
 
   function preReceptionDocumentalView() {
@@ -907,50 +971,18 @@
           )
           .join("")
       : `<option value="">Sin órdenes documentales demo</option>`;
-    const linesTable = active?.lines?.length
-      ? `<table class="data-table pre-reception-oed-lines"><thead><tr>
-          <th>Línea</th><th>SKU</th><th>Descripción</th><th>Cant. esp.</th><th>SAP</th><th>Pedido</th><th>Partida</th><th>Lote</th>
-        </tr></thead><tbody>${active.lines
-          .map(
-            (line) => `<tr>
-              <td>${esc(line.lineId)}</td>
-              <td>${esc(line.sku)}</td>
-              <td>${esc(line.description)}</td>
-              <td>${esc(fmtQty(line.qtyExpected))}</td>
-              <td>${esc(line.sap || "—")}</td>
-              <td>${esc(line.pedido || "—")}</td>
-              <td>${esc(line.partida || "—")}</td>
-              <td>${esc(line.lote || "—")}</td>
-            </tr>`
-          )
-          .join("")}</tbody></table>`
-      : `<div class="card-panel ops-message warn">Sin líneas en la OED seleccionada.</div>`;
-    const corpusPanel = state.role === "ADMIN" ? renderIdentificationCorpusPanel() : "";
+    const corpusPanel = state.role === "ADMIN" ? renderIdentificationCorpusPanel({ collapsible: true }) : "";
     return `<div class="module-screen-header"><h3>Pre-recepción documental</h3>
       <p class="module-lead">Orden de entrada digital · motor predictivo progresivo · cotejo documental · DEMO READ-ONLY</p></div>
       <div class="card-panel ops-message warn pre-reception-banner">
         PRE-RECEPCIÓN DOCUMENTAL · NO REGISTRA ENTRADA FÍSICA · NO CREA MOVIMIENTO OFICIAL · NO MODIFICA INVENTARIO
       </div>
-      <div class="card-panel pre-reception-oed-panel">
-        <h4>Orden de entrada digital</h4>
-        <p class="operational-table-meta">${esc(active?.status || "Sin OED activa")} · ${esc(active?.supplierRef || "—")}</p>
-        <p class="operational-table-meta">${esc(active?.sourceNote || "Documentación externa digitalizada · LOGITEC no genera administrativamente la OED")}</p>
-        <label class="client-field-label" for="preReceptionOedSelect">OED activa</label>
-        <select id="preReceptionOedSelect" class="pre-reception-oed-select">${orderOptions}</select>
-        ${linesTable}
-      </div>
-      ${renderPreReceptionSessionPanel(activeOedId)}
+      ${renderPreReceptionOedSelectorPanel(active, orderOptions)}
+      ${renderPreReceptionPredictPanel()}
+      ${renderPreReceptionSessionPanel(activeOedId, { includeAutocomplete: false })}
+      ${renderPreReceptionAutocompletePanel(activeOedId)}
       ${renderIdentificationDictionaryPanel()}
-      ${corpusPanel}
-      <div class="card-panel pre-reception-predict-panel">
-        <h4>Motor predictivo documental</h4>
-        <p class="module-lead">Cotejo progresivo · intersección acumulada · fail-closed POL-004</p>
-        <div class="pre-reception-consult-row">
-          <input id="preReceptionConsultInput" class="pre-reception-consult-input" type="text" placeholder="Escanee o escriba SKU · SAP · Pedido · Partida · Serie · Lote" autocomplete="off" />
-          <button type="button" class="btn-primary btn-compact" id="preReceptionConsultRun">Cotejar documentalmente</button>
-        </div>
-        <p class="operational-table-meta">Primera lectura: candidatos OED · siguientes: intersección · RAW conservado</p>
-      </div>`;
+      ${corpusPanel}`;
   }
 
   function operatorOedReceptionFlow(task) {
