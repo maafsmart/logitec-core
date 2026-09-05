@@ -619,12 +619,31 @@
     finalizeProvisionalCapture(buildProvisionalCaptureFromSession(session, { validateNow: true }));
   }
 
+  function supervisorReviewTypeForStatusChange(capture, nextStatus) {
+    if (nextStatus === "VALIDADO · PENDIENTE DE REGISTRO") {
+      return capture.executorRole === "SUPERVISOR"
+        ? "Autovalidación de Supervisor"
+        : "Validación de Supervisor";
+    }
+    if (nextStatus === "REQUIERE ACLARACIÓN") {
+      return "Revisión de Supervisor · requiere aclaración";
+    }
+    if (nextStatus === "RECHAZADO ADMINISTRATIVAMENTE") {
+      return "Rechazo administrativo de Supervisor";
+    }
+    return null;
+  }
+
   function updateProvisionalCaptureStatus(captureId, nextStatus) {
     const capture = state.provisionalCaptures.find((c) => c.id === captureId);
     if (!capture || state.role !== "SUPERVISOR" || state.operatorMode) return;
     if (!PROVISIONAL_STATUSES.includes(nextStatus)) return;
+    const now = new Date().toISOString();
     capture.status = nextStatus;
-    capture.adminUpdatedAt = new Date().toISOString();
+    capture.reviewer = "Supervisor";
+    capture.adminUpdatedAt = now;
+    const reviewType = supervisorReviewTypeForStatusChange(capture, nextStatus);
+    if (reviewType) capture.reviewType = reviewType;
     renderContent();
   }
 
