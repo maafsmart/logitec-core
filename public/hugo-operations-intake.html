@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b2742" />
+    <meta http-equiv="Cache-Control" content="no-store" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <title>Levantamiento operativo · LOGITEC Core WMS</title>
+    <link rel="stylesheet" href="/hugo-operations-intake.css?v=7" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOGITEC Core WMS</p>
+        <h1>Levantamiento operativo — Hugo, Ricardo y Alejandro · LOGITEC / AVIAT</h1>
+        <p id="sessionMeta" class="session-meta">Preparando sesión…</p>
+      </div>
+      <div id="progressShell" class="progress-shell" aria-live="polite"></div>
+    </header>
+
+    <main class="shell">
+      <section id="gatePanel" class="card gate-panel">
+        <p id="gateMessage">Cargando definiciones del formulario…</p>
+        <div id="gateActions" class="gate-actions hidden" hidden>
+          <button id="retryBootBtn" type="button" class="btn primary">Reintentar</button>
+          <button id="newSessionBootBtn" type="button" class="btn secondary">Iniciar sesión nueva</button>
+        </div>
+      </section>
+
+      <section id="formPanel" class="card form-panel hidden" hidden>
+        <div class="section-head" id="sectionHead" tabindex="-1">
+          <p id="sectionNavHint" class="section-nav-hint hidden" hidden role="status" aria-live="polite"></p>
+          <p id="sectionCounter" class="eyebrow">Sección</p>
+          <h2 id="sectionTitle">—</h2>
+          <p id="sectionQuestionProgress" class="section-progress hidden" hidden></p>
+          <p id="sectionIntro" class="section-intro"></p>
+          <div id="sectionStatus" class="status-badge draft">Borrador</div>
+        </div>
+
+        <form id="sectionForm" novalidate>
+          <fieldset id="respondentBlock" class="respondent-block">
+            <legend>¿Quién responde esta sección?</legend>
+            <div id="respondentChoices" class="choice-grid"></div>
+            <div id="respondentExtra" class="respondent-extra hidden" hidden></div>
+          </fieldset>
+          <div id="fieldsHost" class="fields-host"></div>
+          <div id="attachmentBlock" class="attachment-block hidden" hidden>
+            <label>Adjuntar evidencia (opcional)
+              <input id="attachmentInput" type="file" accept="image/*,.pdf,.txt,.csv,.xlsx,.xls" />
+            </label>
+            <p id="attachmentHint" class="hint">Fotos, PDF, Excel o capturas. Máx. 8 MB.</p>
+            <ul id="attachmentList" class="attachment-list"></ul>
+          </div>
+        </form>
+
+        <div class="action-bar">
+          <button id="confirmBtn" type="button" class="btn primary">✓ Confirmar correcto y continuar</button>
+          <button id="pendingBtn" type="button" class="btn warn">Dejar pendiente</button>
+        </div>
+        <p id="actionMessage" class="action-message" role="status" aria-live="polite"></p>
+      </section>
+
+      <section id="summaryPanel" class="card summary-panel hidden" hidden>
+        <h2>Resumen de la sesión</h2>
+        <p>Puedes exportar las respuestas para revisión interna. No se publica automáticamente en GitHub.</p>
+        <ul id="summaryList" class="summary-list"></ul>
+        <div class="action-bar">
+          <a id="exportJsonBtn" class="btn secondary" href="#">Exportar JSON</a>
+          <a id="exportMdBtn" class="btn secondary" href="#">Exportar Markdown</a>
+          <button id="restartBtn" type="button" class="btn warn">Nueva sesión</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="/hugo-operations-intake.js?v=7" defer></script>
+  </body>
+</html>

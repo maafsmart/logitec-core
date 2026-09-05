@@ -76,7 +76,12 @@ function isSafeInternalPostLoginPath(candidate) {
 
 function resolvePostLoginPath(search) {
   const fallback = "/dashboard.html";
-  const allowed = new Set(["/pda-scanner-lab.html", "/hugo-buffer-inbound.html"]);
+  const allowed = new Set([
+    "/pda-scanner-lab.html",
+    "/hugo-buffer-inbound.html",
+    "/logitec-simple-demo.html",
+    "/logitec-role-demo.html"
+  ]);
   try {
     const raw = String(new URLSearchParams(String(search || "")).get("next") || "").trim();
     if (!raw) return fallback;

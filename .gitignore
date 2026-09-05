@@ -5,6 +5,7 @@ prisma/dev.db
 prisma/dev.db-journal
 debug.log
 tmp/operational-reset-snapshots/
+data/operations-intake/
 test-results/
 playwright-report/
 test/e2e/evidence/
