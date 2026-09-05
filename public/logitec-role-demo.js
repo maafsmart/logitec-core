@@ -197,7 +197,8 @@
     scanSuccessPlayed: false,
     scanProcessing: false,
     mobileEmulation: false,
-    concentration: false
+    concentration: false,
+    mobileScrollSnapshot: 0
   };
 
   const app = document.getElementById("app");
@@ -235,10 +236,28 @@
   }
 
   function setMobileEmulation(active) {
-    state.mobileEmulation = !!active;
-    if (state.mobileEmulation && state.concentration) applyConcentration(false);
+    const next = !!active;
+    const scrollHost = document.querySelector("main.content") || app;
+    if (next) {
+      state.mobileScrollSnapshot = scrollHost ? scrollHost.scrollTop : window.scrollY || 0;
+      if (state.concentration) applyConcentration(false);
+    }
+    if (state.mobileEmulation === next) {
+      syncDirectorViewUi();
+      syncConcentrationUi();
+      return;
+    }
+    state.mobileEmulation = next;
     syncDirectorViewUi();
     syncConcentrationUi();
+    if (!next) {
+      const top = state.mobileScrollSnapshot || 0;
+      requestAnimationFrame(() => {
+        const host = document.querySelector("main.content") || app;
+        if (host) host.scrollTop = top;
+        else window.scrollTo(0, top);
+      });
+    }
   }
 
   function syncRoleSwitchUi() {
@@ -854,12 +873,12 @@
           <p class="operational-table-meta">Pendientes: ${pending} · En proceso: ${state.tasks.filter((t) => t.status === "in_progress").length}</p>
         </div>
         <div class="card-panel"><h4>Flujo físico Buffer</h4>
-          <div class="pipeline-flow">
-            <div class="pipeline-step done">Recepción</div>
-            <div class="pipeline-step active">Buffer entrada</div>
-            <div class="pipeline-step">Acomodo</div>
-            <div class="pipeline-step">Ubicación final</div>
-          </div>
+          <ol class="pipeline-flow pipeline-flow-static" role="list" aria-label="Etapas del flujo físico Buffer">
+            <li class="pipeline-indicator done" role="listitem">Recepción</li>
+            <li class="pipeline-indicator active" role="listitem" aria-current="step">Buffer entrada</li>
+            <li class="pipeline-indicator" role="listitem">Acomodo</li>
+            <li class="pipeline-indicator" role="listitem">Ubicación final</li>
+          </ol>
         </div>
       </div>
       <div class="grid-2">
