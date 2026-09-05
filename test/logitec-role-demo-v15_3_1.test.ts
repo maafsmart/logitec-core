@@ -87,6 +87,7 @@ const movementHarnessSrc = `
 ${sliceFunction(js, "normalizeScannerRawValue")}
 ${sliceFunction(js, "isAuthorizedClientProject")}
 ${sliceFunction(js, "projectLabelFromStockRow")}
+${sliceFunction(js, "clientAuthorizedProjectSet")}
 ${sliceFunction(js, "movementResolutionKeys")}
 ${sliceFunction(js, "stockRowsMatchingMovement")}
 ${sliceFunction(js, "deriveMovementClientProject")}
@@ -134,8 +135,8 @@ function baseCapture(overrides: Partial<Capture> = {}): Capture {
 }
 
 test("cache-buster v=15.3.1", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=15\.3\.1/);
-  assert.match(html, /logitec-role-demo\.css\?v=15\.3\.1/);
+  assert.match(html, /logitec-role-demo\.js\?v=15\.3\.2/);
+  assert.match(html, /logitec-role-demo\.css\?v=15\.3\.2/);
 });
 
 test("Supervisor aclaración → pendiente registra Reapertura administrativa de Supervisor", () => {

@@ -631,6 +631,7 @@
       const reviewer = demoReviewerLabel(state.role);
       const reviewType = reviewTypeForStatusChange(capture, executorActorId, state.role, status);
       capture.reviewer = reviewer;
+      capture.reviewerRole = state.role;
       capture.reviewerActorId = executorActorId;
       capture.reviewType = reviewType;
       capture.adminUpdatedAt = now;
@@ -1874,8 +1875,10 @@
     for (const project of projects) {
       if (!isAuthorizedClientProject(project)) return null;
     }
-    if (projects.size === 1) return [...projects][0];
-    return null;
+    if (projects.size !== 1) return null;
+    const project = [...projects][0];
+    if (!clientAuthorizedProjectSet().has(project)) return null;
+    return project;
   }
 
   function clientVisibleOfficialMovements() {

@@ -110,8 +110,8 @@ function baseCapture(overrides: Partial<Capture> = {}): Capture {
 }
 
 test("cache-buster v=15.3", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=15\.3\.1/);
-  assert.match(html, /logitec-role-demo\.css\?v=15\.3\.1/);
+  assert.match(html, /logitec-role-demo\.js\?v=15\.3\.2/);
+  assert.match(html, /logitec-role-demo\.css\?v=15\.3\.2/);
 });
 
 test("ADMIN_DEMO en currentDemoActorId", () => {
