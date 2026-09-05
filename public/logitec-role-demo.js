@@ -697,6 +697,9 @@
     if (nextStatus === "RECHAZADO ADMINISTRATIVAMENTE") {
       return `Rechazo administrativo de ${prefix}`;
     }
+    if (nextStatus === "PENDIENTE DE SUPERVISIÓN") {
+      return `Reapertura administrativa de ${prefix}`;
+    }
     return null;
   }
 
@@ -719,21 +722,21 @@
     const reviewerRole = state.role;
     const reviewer = demoReviewerLabel(reviewerRole);
     const reviewType = reviewTypeForStatusChange(capture, reviewerActorId, reviewerRole, nextStatus);
+    if (!reviewType) return;
     capture.status = nextStatus;
     capture.reviewer = reviewer;
+    capture.reviewerRole = reviewerRole;
     capture.reviewerActorId = reviewerActorId;
-    capture.reviewType = reviewType || capture.reviewType;
+    capture.reviewType = reviewType;
     capture.adminUpdatedAt = now;
-    if (reviewType) {
-      appendReviewHistory(capture, {
-        reviewer,
-        reviewerRole,
-        reviewerActorId,
-        reviewType,
-        status: nextStatus,
-        at: now
-      });
-    }
+    appendReviewHistory(capture, {
+      reviewer,
+      reviewerRole,
+      reviewerActorId,
+      reviewType,
+      status: nextStatus,
+      at: now
+    });
     renderContent();
   }
 
@@ -1826,6 +1829,80 @@
     });
   }
 
+  function movementResolutionKeys(movement) {
+    return {
+      project: String(movement?.project || movement?.projectCode || "").trim(),
+      sku: String(movement?.sku || movement?.product || "").trim().toUpperCase(),
+      reference: String(movement?.reference || "").trim().toUpperCase(),
+      sap: String(movement?.sap || "").trim().toUpperCase(),
+      pedido: String(movement?.pedido || "").trim().toUpperCase(),
+      partida: String(movement?.partida || "").trim().toUpperCase()
+    };
+  }
+
+  function stockRowsMatchingMovement(movement) {
+    const keys = movementResolutionKeys(movement);
+    const stock = state.stock || [];
+    const hits = [];
+    const seen = new Set();
+    const add = (row) => {
+      const token = `${row.product?.sku}|${row.location?.code}|${projectLabelFromStockRow(row)}`;
+      if (seen.has(token)) return;
+      seen.add(token);
+      hits.push(row);
+    };
+    if (keys.sku) stock.filter((r) => String(r.product?.sku || "").toUpperCase() === keys.sku).forEach(add);
+    if (keys.sap) stock.filter((r) => String(r.sap || "").toUpperCase() === keys.sap).forEach(add);
+    if (keys.pedido) stock.filter((r) => String(r.pedido || "").toUpperCase() === keys.pedido).forEach(add);
+    if (keys.partida) stock.filter((r) => String(r.partida || "").toUpperCase() === keys.partida).forEach(add);
+    if (keys.reference) {
+      stock.filter((r) => String(r.pedido || "").toUpperCase() === keys.reference).forEach(add);
+      stock.filter((r) => String(r.sap || "").toUpperCase() === keys.reference).forEach(add);
+      stock.filter((r) => String(r.partida || "").toUpperCase() === keys.reference).forEach(add);
+      stock.filter((r) => String(r.product?.sku || "").toUpperCase() === keys.reference).forEach(add);
+    }
+    return hits;
+  }
+
+  function deriveMovementClientProject(movement) {
+    const keys = movementResolutionKeys(movement);
+    const rows = stockRowsMatchingMovement(movement);
+    const projects = new Set();
+    if (keys.project) projects.add(keys.project);
+    rows.forEach((row) => projects.add(projectLabelFromStockRow(row)));
+    if (!projects.size) return null;
+    for (const project of projects) {
+      if (!isAuthorizedClientProject(project)) return null;
+    }
+    if (projects.size === 1) return [...projects][0];
+    return null;
+  }
+
+  function clientVisibleOfficialMovements() {
+    // Production: official movement ownership must be enforced server-side from authenticated client scope.
+    return (state.movements || []).filter((movement) => deriveMovementClientProject(movement) !== null);
+  }
+
+  function renderClientOfficialMovementsTable(movements) {
+    if (!movements.length) {
+      return `<div class="card-panel ops-message warn">Sin movimientos oficiales autorizados inequívocamente para sus proyectos en esta fuente.</div>`;
+    }
+    return `<div class="card-panel"><table class="data-table"><thead><tr>
+        <th>Fecha</th><th>Tipo</th><th>Referencia</th><th>Producto</th><th>Cant.</th>
+      </tr></thead><tbody>${movements
+        .slice(0, 50)
+        .map(
+          (m) => `<tr>
+            <td>${esc(m.date || m.createdAt || "—")}</td>
+            <td>${esc(m.type || "—")}</td>
+            <td>${esc(m.reference || "—")}</td>
+            <td>${esc(m.product || m.sku || "—")}</td>
+            <td>${esc(fmtQty(m.qty))}</td>
+          </tr>`
+        )
+        .join("")}</tbody></table></div>`;
+  }
+
   function clientPhysicalActivityCounts(captures) {
     const counts = {
       total: captures.length,
@@ -1992,20 +2069,7 @@
     const officialBlock =
       state.dataSource === "EXCEL" || !state.movements.length
         ? `<div class="card-panel ops-message warn">La fuente Excel no contiene historial de movimientos.</div>`
-        : `<div class="card-panel"><table class="data-table"><thead><tr>
-            <th>Fecha</th><th>Tipo</th><th>Referencia</th><th>Producto</th><th>Cant.</th>
-          </tr></thead><tbody>${state.movements
-            .slice(0, 50)
-            .map(
-              (m) => `<tr>
-                <td>${esc(m.date || m.createdAt || "—")}</td>
-                <td>${esc(m.type || "—")}</td>
-                <td>${esc(m.reference || "—")}</td>
-                <td>${esc(m.product || m.sku || "—")}</td>
-                <td>${esc(fmtQty(m.qty))}</td>
-              </tr>`
-            )
-            .join("")}</tbody></table></div>`;
+        : renderClientOfficialMovementsTable(clientVisibleOfficialMovements());
     return `<div class="module-screen-header"><h3>Movimientos / Trazabilidad</h3>
       <p class="module-lead">Trazabilidad oficial consultable · separada de actividad física reportada</p></div>
       ${renderClientPhysicalActivitySection({ compact: false })}
@@ -2037,12 +2101,14 @@
           )
           .join("")}</tbody></table>`
       : `<p class="operational-table-meta">Sin existencias autorizadas en la fuente actual.</p>`;
+    const visibleOfficialMovements = clientVisibleOfficialMovements();
     const officialMovements =
       state.dataSource === "EXCEL" || !state.movements.length
         ? `<p class="operational-table-meta">No disponible en la fuente actual de la DEMO.</p>`
-        : `<table class="data-table"><thead><tr>
+        : visibleOfficialMovements.length
+          ? `<table class="data-table"><thead><tr>
             <th>Fecha</th><th>Tipo</th><th>Referencia</th><th>Producto</th><th>Cant.</th>
-          </tr></thead><tbody>${state.movements
+          </tr></thead><tbody>${visibleOfficialMovements
             .slice(0, 50)
             .map(
               (m) => `<tr>
@@ -2053,7 +2119,8 @@
                 <td>${esc(fmtQty(m.qty))}</td>
               </tr>`
             )
-            .join("")}</tbody></table>`;
+            .join("")}</tbody></table>`
+          : `<p class="operational-table-meta">Sin movimientos oficiales autorizados inequívocamente para sus proyectos en esta fuente.</p>`;
     const physicalRows = captures
       .map((capture) => {
         const physicalLocation = clientCapturePhysicalLocation(capture) || "—";
