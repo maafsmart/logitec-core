@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 const html = readFileSync(new URL("../public/logitec-role-demo.html", import.meta.url), "utf8");
 const js = readFileSync(new URL("../public/logitec-role-demo.js", import.meta.url), "utf8");
+const css = readFileSync(new URL("../public/logitec-role-demo.css", import.meta.url), "utf8");
 const pol = readFileSync(new URL("../docs/POLITICAS_SISTEMA_LOGITEC_CORE_WMS.md", import.meta.url), "utf8");
 
 function sliceFunction(source: string, name: string): string {
@@ -148,9 +149,9 @@ function makeHarness(stock = mockStock): Harness {
   return h;
 }
 
-test("cache-buster v=16.1.3", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=16\.1\.3/);
-  assert.match(html, /logitec-role-demo\.css\?v=16\.1\.3/);
+test("cache-buster v=16.1.4", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=16\.1\.4/);
+  assert.match(html, /logitec-role-demo\.css\?v=16\.1\.4/);
 });
 
 test("POL-004 registrada como APROBADA con resumen técnico", () => {
@@ -311,4 +312,50 @@ test("V15.3.3 trazabilidad dual Supervisor intacta", () => {
 
 test("demo bloquea escrituras no-GET", () => {
   assert.match(js, /Demo read-only: \$\{method\} bloqueado/);
+});
+
+test("precios y valuación son consultables por los cuatro roles", () => {
+  const navStart = js.indexOf("const NAV =");
+  const adminStart = js.indexOf("ADMIN:", navStart);
+  const supervisorStart = js.indexOf("SUPERVISOR:", adminStart);
+  const operatorStart = js.indexOf("OPERATOR:", supervisorStart);
+  const clientStart = js.indexOf("CLIENT:", operatorStart);
+  const adminNav = js.slice(adminStart, supervisorStart);
+  const supervisorNav = js.slice(supervisorStart, operatorStart);
+  const operatorNav = js.slice(operatorStart, clientStart);
+  const clientNav = js.slice(clientStart, js.indexOf("const state", clientStart));
+  for (const nav of [adminNav, supervisorNav, operatorNav, clientNav]) {
+    assert.match(nav, /id: "prices"/);
+  }
+  assert.match(sliceFunction(js, "renderModule"), /if \(m === "prices"\) return valuationView\(\)/);
+  assert.match(sliceFunction(js, "valuationView"), /DEMO READ-ONLY/);
+  assert.doesNotMatch(sliceFunction(js, "valuationView"), /guardFetch|POST|PATCH|PUT|DELETE/);
+});
+
+test("agregación económica conserva centavos y cobertura", () => {
+  const src = `
+    ${sliceFunction(js, "normalizedRowValuation")}
+    ${sliceFunction(js, "aggregateValuation")}
+    return { normalizedRowValuation, aggregateValuation };
+  `;
+  const h = new Function(src)() as {
+    aggregateValuation: (rows: unknown[]) => { totalValueMxn: number; qtyValued: number; qtyUnvalued: number; coveragePct: string };
+  };
+  const result = h.aggregateValuation([
+    { qty: 3, valuation: { qtyTotal: 3, qtyValued: 3, qtyUnvalued: 0, totalValueMxn: "1.11", status: "COMPLETE" } },
+    { qty: 2, valuation: { qtyTotal: 2, qtyValued: 1, qtyUnvalued: 1, totalValueMxn: "2.22", status: "PARTIAL" } }
+  ]);
+  assert.equal(result.totalValueMxn, 3.33);
+  assert.equal(result.qtyValued, 4);
+  assert.equal(result.qtyUnvalued, 1);
+  assert.equal(result.coveragePct, "80.00");
+});
+
+test("modo celular alterna y la barra reserva su altura real", () => {
+  assert.match(sliceFunction(js, "syncDirectorViewUi"), /VOLVER A DESKTOP.*MODO CELULAR/);
+  assert.match(sliceFunction(js, "initDirectorViewBar"), /setMobileEmulation\(!state\.mobileEmulation\)/);
+  assert.match(sliceFunction(js, "syncDirectorDockSpacing"), /--director-dock-space/);
+  assert.match(css, /padding-bottom:\s*var\(--director-dock-space, 150px\)/);
+  assert.doesNotMatch(css, /director-view-bar-actions\s*\{\s*grid-template-columns:\s*1fr/);
+  assert.match(css, /@container logitec-mobile[\s\S]*?\.wms-section-bar \.nav-section-tabs[\s\S]*?overflow-x:\s*auto/);
 });

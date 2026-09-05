@@ -31,8 +31,9 @@ test("el formulario de login es compatible con el gestor nativo de contraseñas"
 });
 
 function evalResolvePostLoginPath() {
+  const safetySource = sliceFunction(js, "isSafeInternalPostLoginPath");
   const source = sliceFunction(js, "resolvePostLoginPath");
-  return new Function(`${source}; return resolvePostLoginPath;`)();
+  return new Function(`${safetySource}; ${source}; return resolvePostLoginPath;`)();
 }
 
 test("next permitido redirige al laboratorio PDA; ausente o inseguro cae al dashboard", () => {

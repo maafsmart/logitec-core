@@ -169,7 +169,8 @@
         ],
         inventario: [
           { id: "inventory", label: "Existencias", desc: "Consulta de saldos autorizados" },
-          { id: "locations", label: "Ubicaciones", desc: "Distribución física" }
+          { id: "locations", label: "Ubicaciones", desc: "Distribución física" },
+          { id: "prices", label: "Precios", desc: "Valuación autorizada · solo lectura" }
         ],
         control: [{ id: "movements", label: "Movimientos / Trazabilidad", desc: "Historial físico consultable" }]
       }
@@ -181,7 +182,10 @@
       ],
       modules: {
         operacion: [{ id: "tasks", label: "Mis tareas", desc: "Seleccione tarea · escanee · ejecute", primary: true }],
-        consulta: [{ id: "lookup", label: "Consulta rápida", desc: "SKU · ubicación · READ-ONLY" }]
+        consulta: [
+          { id: "lookup", label: "Consulta rápida", desc: "SKU · ubicación · READ-ONLY" },
+          { id: "prices", label: "Precios", desc: "Valuación autorizada · solo lectura" }
+        ]
       }
     },
     CLIENT: {
@@ -190,6 +194,7 @@
         inicio: [{ id: "control", label: "Resumen de inventario", desc: "Inventario autorizado de sus proyectos", primary: true }],
         consulta: [
           { id: "inventory", label: "Existencias", desc: "Stock con búsqueda integrada" },
+          { id: "prices", label: "Precios", desc: "Valuación autorizada · solo lectura" },
           { id: "movements", label: "Movimientos / Trazabilidad", desc: "Historial consultable" },
           { id: "reports", label: "Reportes", desc: "Reportes autorizados" }
         ]
@@ -258,6 +263,8 @@
     });
     document.querySelectorAll("#directorViewBar [data-director-mobile]").forEach((btn) => {
       btn.classList.toggle("active", state.mobileEmulation);
+      btn.textContent = state.mobileEmulation ? "VOLVER A DESKTOP" : "MODO CELULAR";
+      btn.setAttribute("aria-pressed", state.mobileEmulation ? "true" : "false");
     });
     document.body.classList.toggle("mobile-emulation-active", state.mobileEmulation);
     syncMobileEmulationChrome();
@@ -1446,6 +1453,15 @@
     }
   }
 
+  function syncDirectorDockSpacing() {
+    const bar = document.getElementById("directorViewBar");
+    const footer = document.querySelector(".demo-readonly-footer");
+    if (!bar || bar.hidden) return;
+    const barHeight = Math.ceil(bar.getBoundingClientRect().height || 0);
+    const footerHeight = Math.ceil(footer?.getBoundingClientRect().height || 0);
+    document.documentElement.style.setProperty("--director-dock-space", `${barHeight + footerHeight + 12}px`);
+  }
+
   function initDirectorViewBar() {
     const bar = document.getElementById("directorViewBar");
     const roleSwitch = document.getElementById("roleSwitch");
@@ -1466,11 +1482,20 @@
     bar.hidden = false;
     bar.classList.remove("hidden");
     document.body.classList.add("director-view-mode");
+    syncDirectorDockSpacing();
+    window.addEventListener("resize", syncDirectorDockSpacing, { passive: true });
+    if (typeof ResizeObserver !== "undefined") {
+      const dockObserver = new ResizeObserver(syncDirectorDockSpacing);
+      dockObserver.observe(bar);
+      const footer = document.querySelector(".demo-readonly-footer");
+      if (footer) dockObserver.observe(footer);
+      bar._dockObserver = dockObserver;
+    }
     bar.querySelectorAll("[data-director-role]").forEach((btn) => {
       btn.addEventListener("click", () => applyDirectorView(btn.getAttribute("data-director-role") || "OPERATOR"));
     });
     bar.querySelectorAll("[data-director-mobile]").forEach((btn) => {
-      btn.addEventListener("click", () => setMobileEmulation(true));
+      btn.addEventListener("click", () => setMobileEmulation(!state.mobileEmulation));
     });
     bar.querySelectorAll("[data-director-system]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1487,6 +1512,7 @@
       restoreBtn.addEventListener("click", () => setMobileEmulation(false));
     }
     syncDirectorViewUi();
+    requestAnimationFrame(syncDirectorDockSpacing);
   }
 
   function readAccessToken() {
@@ -1532,6 +1558,87 @@
     if (v == null || v === "") return "—";
     const n = Number(v);
     return Number.isFinite(n) ? n.toLocaleString("es-MX") : String(v);
+  }
+
+  function fmtMxn(v) {
+    if (v == null || v === "") return "Sin valor";
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "Sin valor";
+    return new Intl.NumberFormat("es-MX", {
+      style: "currency",
+      currency: "MXN",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(n);
+  }
+
+  function normalizedRowValuation(row) {
+    const qty = Math.max(0, Number(row?.qty) || 0);
+    const valuation = row?.valuation || null;
+    if (!valuation) {
+      return {
+        qtyTotal: qty,
+        qtyValued: 0,
+        qtyUnvalued: qty,
+        totalValueMxn: 0,
+        avgUnitPriceMxn: null,
+        minUnitPriceMxn: null,
+        maxUnitPriceMxn: null,
+        hasMixedUnitPrices: false,
+        status: qty > 0 ? "NONE" : "COMPLETE"
+      };
+    }
+    const qtyTotal = Math.max(0, Number(valuation.qtyTotal ?? qty) || 0);
+    const qtyValued = Math.max(0, Number(valuation.qtyValued) || 0);
+    const qtyUnvalued = Math.max(0, Number(valuation.qtyUnvalued) || 0);
+    return {
+      qtyTotal,
+      qtyValued,
+      qtyUnvalued,
+      totalValueMxn: Number(valuation.totalValueMxn) || 0,
+      avgUnitPriceMxn: valuation.avgUnitPriceMxn ?? null,
+      minUnitPriceMxn: valuation.minUnitPriceMxn ?? null,
+      maxUnitPriceMxn: valuation.maxUnitPriceMxn ?? null,
+      hasMixedUnitPrices: !!valuation.hasMixedUnitPrices,
+      status: String(valuation.status || (qtyUnvalued > 0 ? "PARTIAL" : "COMPLETE")).toUpperCase()
+    };
+  }
+
+  function aggregateValuation(rows) {
+    const totals = (rows || []).reduce(
+      (acc, row) => {
+        const valuation = normalizedRowValuation(row);
+        acc.qtyTotal += valuation.qtyTotal;
+        acc.qtyValued += valuation.qtyValued;
+        acc.qtyUnvalued += valuation.qtyUnvalued;
+        acc.valueCents += Math.round(valuation.totalValueMxn * 100);
+        return acc;
+      },
+      { qtyTotal: 0, qtyValued: 0, qtyUnvalued: 0, valueCents: 0 }
+    );
+    return {
+      ...totals,
+      totalValueMxn: totals.valueCents / 100,
+      coveragePct: totals.qtyTotal > 0 ? ((totals.qtyValued / totals.qtyTotal) * 100).toFixed(2) : "0.00"
+    };
+  }
+
+  function valuationUnitLabel(valuation) {
+    if (valuation.avgUnitPriceMxn == null || valuation.avgUnitPriceMxn === "") return "Sin valor";
+    if (
+      valuation.hasMixedUnitPrices &&
+      valuation.minUnitPriceMxn != null &&
+      valuation.maxUnitPriceMxn != null
+    ) {
+      return `${fmtMxn(valuation.minUnitPriceMxn)} – ${fmtMxn(valuation.maxUnitPriceMxn)}`;
+    }
+    return fmtMxn(valuation.avgUnitPriceMxn);
+  }
+
+  function valuationStatusLabel(status) {
+    if (status === "COMPLETE") return "Completo";
+    if (status === "PARTIAL") return "Parcial";
+    return "Sin valor";
   }
 
   function statusBadge(status) {
@@ -2854,6 +2961,47 @@
       </div>`;
   }
 
+  function valuationView() {
+    const rows = state.stock || [];
+    const totals = aggregateValuation(rows);
+    const visibleRows = rows.slice(0, 200);
+    const sourceNotice =
+      state.dataSource === "EXCEL"
+        ? "La fuente Excel oficial no contiene precios; los registros se muestran como sin valor."
+        : "Valuación recibida de la base de datos · consulta protegida · sin edición en esta demo.";
+    const tableRows = visibleRows
+      .map((row) => {
+        const valuation = normalizedRowValuation(row);
+        const statusClass = valuation.status === "COMPLETE" ? "complete" : valuation.status === "PARTIAL" ? "partial" : "none";
+        return `<tr>
+          <td>${esc(row.product?.sku || "—")}</td>
+          <td>${esc(row.product?.name || "—")}</td>
+          <td>${esc(row.project?.code || row.project?.name || "Sin proyecto")}</td>
+          <td>${esc(row.location?.code || "—")}</td>
+          <td class="numeric-cell">${esc(fmtQty(valuation.qtyTotal))}</td>
+          <td class="numeric-cell valuation-unit">${esc(valuationUnitLabel(valuation))}</td>
+          <td class="numeric-cell valuation-total">${esc(valuation.qtyValued > 0 ? fmtMxn(valuation.totalValueMxn) : "Sin valor")}</td>
+          <td><span class="valuation-status ${statusClass}">${esc(valuationStatusLabel(valuation.status))}</span></td>
+        </tr>`;
+      })
+      .join("");
+    return `<div class="module-screen-header"><h3>Precios y valuación</h3>
+      <p class="module-lead">Consulta económica autorizada para el rol actual · DEMO READ-ONLY</p></div>
+      <div class="card-panel ops-message${state.dataSource === "EXCEL" ? " warn" : ""}">${esc(sourceNotice)}</div>
+      <div class="valuation-summary-grid">
+        <div class="kpi-card accent valuation-money-card"><span class="kpi-value valuation-money-value">${esc(fmtMxn(totals.totalValueMxn))}</span><span class="kpi-label">Valor inventario MXN</span></div>
+        <div class="kpi-card ok"><span class="kpi-value">${esc(fmtQty(totals.qtyValued))}</span><span class="kpi-label">Piezas valuadas</span></div>
+        <div class="kpi-card warn"><span class="kpi-value">${esc(fmtQty(totals.qtyUnvalued))}</span><span class="kpi-label">Piezas sin valor</span></div>
+        <div class="kpi-card"><span class="kpi-value">${esc(totals.coveragePct)}%</span><span class="kpi-label">Cobertura económica</span></div>
+      </div>
+      <div class="card-panel valuation-table-wrap">
+        <p class="operational-table-meta">${esc(rows.length)} saldos · mostrando ${esc(visibleRows.length)} · valores en MXN</p>
+        <table class="data-table valuation-table"><thead><tr>
+          <th>SKU</th><th>Descripción</th><th>Proyecto</th><th>Ubicación</th><th class="numeric-cell">Piezas</th><th class="numeric-cell">Valor unitario / rango</th><th class="numeric-cell">Valor total</th><th>Estado</th>
+        </tr></thead><tbody>${tableRows || '<tr><td colspan="8">Sin existencias en la fuente actual.</td></tr>'}</tbody></table>
+      </div>`;
+  }
+
   function renderModule() {
     const m = state.module;
     if (state.freeScanActive && state.freeScanAnchor === m && freeScanRoleContext()) {
@@ -2916,7 +3064,7 @@
       return disabledModule(m === "picking" ? "Picking" : "Salidas", "Task-driven desde órdenes existentes. Operador escanea · LOGITEC coteja · buffer salida.");
     if (m === "requisitions") return disabledModule("Órdenes / Requisiciones", "Disponible en sistema oficial · demo muestra tareas derivadas.");
     if (m === "incidents") return disabledModule("Incidencias", "Excepciones operativas · disponible en WMS oficial.");
-    if (m === "prices") return disabledModule("Precios", "Solo lectura en entorno demo.");
+    if (m === "prices") return valuationView();
     if (m === "imports") return disabledModule("Importaciones", "Disponible en sistema oficial · deshabilitado en demo.");
     if (m === "users") return disabledModule("Usuarios", "Administración disponible en sistema oficial.");
     if (m === "reports" && state.role === "CLIENT") return clientReportsView();

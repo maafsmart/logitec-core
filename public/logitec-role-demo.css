@@ -129,7 +129,7 @@ body {
   box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.35);
 }
 body.director-view-mode .app-body {
-  padding-bottom: calc(150px + env(safe-area-inset-bottom));
+  padding-bottom: var(--director-dock-space, 150px);
 }
 body.director-view-mode #roleSwitch {
   display: none !important;
@@ -395,8 +395,45 @@ html[data-visual="industrial-v84"] .kpi-card.warn { border-left-color: var(--war
 @media (max-width: 640px) {
   main.content { padding: 12px 10px 70px; }
   .btn-primary.block-mobile { width: 100%; min-height: 48px; }
-  .director-view-bar-actions { grid-template-columns: 1fr; }
+  .director-view-bar-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .director-view-btn { min-height: 44px; font-size: 0.72rem; }
+}
+
+.valuation-summary-grid {
+  display: grid;
+  grid-template-columns: minmax(210px, 1.35fr) repeat(3, minmax(130px, 1fr));
+  gap: 10px;
+  margin: 0 0 12px;
+}
+.valuation-summary-grid .kpi-card { min-width: 0; }
+.valuation-money-value {
+  display: block;
+  font-size: clamp(1rem, 1.7vw, 1.35rem);
+  white-space: nowrap;
+}
+.valuation-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.valuation-table { min-width: 920px; }
+.valuation-table .numeric-cell { text-align: right; white-space: nowrap; }
+.valuation-unit,
+.valuation-total { font-variant-numeric: tabular-nums; }
+.valuation-status {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.valuation-status.complete { background: var(--ok-soft); color: var(--ok); }
+.valuation-status.partial { background: var(--warn-soft); color: var(--warn); }
+.valuation-status.none { background: #eef2f6; color: var(--muted); }
+@media (max-width: 760px) {
+  .valuation-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .valuation-money-card { grid-column: 1 / -1; }
 }
 
 /* ===== directional flow V2 (eab5fed + 7afacb8) ===== */
@@ -766,7 +803,7 @@ body.scan-mode-active .sidebar {
   .director-view-bar-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
-  .director-view-bar-actions { grid-template-columns: 1fr; }
+  .director-view-bar-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .scan-handheld-instruction { font-size: 1.15rem; }
 }
 /* ===== /director scan mode ===== */
@@ -868,6 +905,20 @@ body.mobile-emulation-active .mobile-emulation-frame {
   .module-btn {
     flex: 1 1 100%;
   }
+  .wms-section-bar .nav-section-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+  .wms-section-bar .nav-section-tab {
+    flex: 0 0 auto;
+    min-width: 116px;
+  }
+  .valuation-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .valuation-money-card { grid-column: 1 / -1; }
   .app-topbar-context {
     flex-direction: column;
     align-items: stretch;
@@ -995,7 +1046,7 @@ body.mobile-emulation-active #focusModeBtn,
   .director-view-bar-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
-  .director-view-bar-actions { grid-template-columns: 1fr; }
+  .director-view-bar-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 /* ===== V14 scanner + provisional capture ===== */
 .scan-active-banner {

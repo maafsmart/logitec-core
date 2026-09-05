@@ -3378,7 +3378,7 @@
         flex: 0 0 auto;
         white-space: nowrap;
       }
-      @media (min-width: 1366px) {
+      @media (min-width: 1200px) {
         html[data-ui-version="compact-workspace-v1"] body.workspace-compact:not(.focus-mode) .app-topbar-context {
           flex-wrap: nowrap;
           align-items: center;
@@ -3582,6 +3582,14 @@
         font-size: 0.75rem;
         margin-top: 2px;
       }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact .summary-card.summary-card-money {
+        min-width: 190px;
+        flex: 1 0 190px;
+      }
+      html[data-ui-version="compact-workspace-v1"] body.workspace-compact .summary-card.summary-card-money .value {
+        font-size: clamp(0.98rem, 1.35vw, 1.12rem);
+        white-space: nowrap;
+      }
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .page-toolbar,
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .grid-toolbar,
       html[data-ui-version="compact-workspace-v1"] body.workspace-compact .inventory-scope-bar,
@@ -3605,7 +3613,7 @@
         max-width: 100%;
         overflow: auto;
       }
-      @media (max-width: 1100px) {
+      @media (max-width: 1535px) {
         html[data-ui-version="compact-workspace-v1"] body.workspace-compact .app-datetime,
         html[data-ui-version="compact-workspace-v1"] body.workspace-compact #sessionEmailInline {
           position: absolute !important;
@@ -3613,6 +3621,16 @@
           height: 1px !important;
           overflow: hidden !important;
           clip: rect(0, 0, 0, 0) !important;
+        }
+      }
+      @media (max-width: 1279px) {
+        html[data-ui-version="compact-workspace-v1"] body.workspace-compact #sessionRoleInline {
+          position: absolute !important;
+          width: 1px !important;
+          height: 1px !important;
+          overflow: hidden !important;
+          clip: rect(0, 0, 0, 0) !important;
+          white-space: nowrap !important;
         }
       }
       @media (max-width: 900px) {
@@ -5558,7 +5576,7 @@
                 <span class="value" id="sumConflicts">—</span>
                 <span class="label">Conflictos</span>
               </div>
-              <div class="summary-card accent js-economic-card hidden">
+              <div class="summary-card summary-card-money accent js-economic-card hidden">
                 <span class="value" id="sumInventoryValue">—</span>
                 <span class="label">Valor inventario MXN</span>
               </div>

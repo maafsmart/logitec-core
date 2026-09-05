@@ -80,11 +80,22 @@ test("no se eliminaron IDs operativos", () => {
 test("cabecera normal no empuja Cerrar sesión a otra línea en escritorio", () => {
   const compact = html.slice(html.indexOf("/* ===== compact-workspace-v1 ===== */"), html.indexOf("/* ===== /compact-workspace-v1 ===== */"));
   assert.match(compact, /body\.workspace-compact:not\(\.focus-mode\) \.nav-announce/);
-  assert.match(compact, /@media \(min-width: 1366px\)/);
+  assert.match(compact, /@media \(min-width: 1200px\)/);
   assert.match(compact, /body\.workspace-compact:not\(\.focus-mode\) \.app-topbar-meta/);
   assert.match(compact, /flex-wrap:\s*nowrap/);
+  assert.match(compact, /@media \(max-width: 1535px\)/);
+  assert.match(compact, /@media \(max-width: 1279px\)/);
+  assert.match(compact, /#sessionRoleInline/);
   assert.match(html, /id="logoutBtn"/);
   assert.match(html, /id="focusModeBtn"/);
+});
+
+test("el valor económico conserva ancho legible en la fila compacta", () => {
+  const compact = html.slice(html.indexOf("/* ===== compact-workspace-v1 ===== */"), html.indexOf("/* ===== /compact-workspace-v1 ===== */"));
+  assert.match(html, /class="summary-card summary-card-money accent js-economic-card hidden"/);
+  assert.match(compact, /\.summary-card\.summary-card-money\s*\{/);
+  assert.match(compact, /min-width:\s*190px/);
+  assert.match(compact, /white-space:\s*nowrap/);
 });
 
 test("contexto AVIAT permanece en el DOM", () => {

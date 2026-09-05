@@ -193,14 +193,17 @@ test("HTML y API usan flag default-OFF antes de exponer el laboratorio", () => {
   assert.match(envSource, /ENABLE_PDA_SCANNER_LAB:[\s\S]*value \?\? "false"/);
   assert.match(envExample, /ENABLE_PDA_SCANNER_LAB=false/);
   const pageRoute = appSource.indexOf('app.get("/pda-scanner-lab.html", pdaScannerLabPageGate');
-  const staticMount = appSource.indexOf('app.use(express.static("public"))');
+  const staticMount = appSource.indexOf("app.use(express.static(publicDir))");
   assert.ok(pageRoute >= 0 && pageRoute < staticMount);
   assert.match(appSource, /isPdaScannerLabEnabled\(env\.ENABLE_PDA_SCANNER_LAB\)/);
   assert.doesNotMatch(dashboardHtml, /pdaScannerLabCard|Abrir laboratorio aislado/);
 });
 
 test("login next funciona en el dominio canónico sin aceptar redirects externos", () => {
-  assert.match(loginJs, /new Set\(\["\/pda-scanner-lab\.html", "\/hugo-buffer-inbound\.html"\]\)/);
+  assert.match(loginJs, /const allowed = new Set\(/);
+  assert.match(loginJs, /"\/pda-scanner-lab\.html"/);
+  assert.match(loginJs, /"\/hugo-buffer-inbound\.html"/);
+  assert.match(loginJs, /"\/logitec-role-demo\.html"/);
   assert.match(loginJs, /window\.location\.href = resolvePostLoginPath\(window\.location\.search\)/);
   assert.match(canonicalHostJs, /"https:\/\/" \+ WWW_HOST \+ pathname \+ search \+ hash/);
   assert.doesNotMatch(loginJs, /https:\/\/www\.control\.logitec\.com\.mx\/pda-scanner-lab/);

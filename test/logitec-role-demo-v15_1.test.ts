@@ -145,8 +145,8 @@ const sameProjectTwoLocsStock: StockRow[] = [
 ];
 
 test("cache-buster v=15.3", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=16.1.3/);
-  assert.match(html, /logitec-role-demo\.css\?v=16.1.3/);
+  assert.match(html, /logitec-role-demo\.js\?v=16.1.4/);
+  assert.match(html, /logitec-role-demo\.css\?v=16.1.4/);
 });
 
 test("no usa lookupStockRowFromReadingMeta con find arbitrario", () => {
