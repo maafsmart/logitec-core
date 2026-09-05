@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>LOGITEC CORE WMS · Demo por rol</title>
-    <link rel="stylesheet" href="/logitec-role-demo.css?v=12" />
+    <link rel="stylesheet" href="/logitec-role-demo.css?v=13" />
   </head>
   <body class="workspace-compact sistema-workspace">
     <div id="mobileEmulationStage" class="mobile-emulation-stage">
@@ -36,6 +36,10 @@
                 <span class="app-datetime" id="appDateTime">—</span>
               </div>
             </div>
+            <div id="supervisorOperatorModeBar" class="supervisor-operator-mode-bar hidden" hidden aria-live="polite">
+              <span class="supervisor-operator-mode-label">Supervisor · trabajando como Operador</span>
+              <button type="button" class="btn-secondary btn-compact" id="exitSupervisorOperatorModeBtn">VOLVER A SUPERVISOR</button>
+            </div>
             <nav id="wmsSectionBar" class="wms-section-bar" aria-label="Secciones WMS"></nav>
           </header>
           <div class="app-body">
@@ -60,6 +64,6 @@
       <span id="writeGuard">Escrituras bloqueadas: 0</span>
       <span id="dataSourceFooter">Fuente: sin datos</span>
     </footer>
-    <script src="/logitec-role-demo.js?v=12" defer></script>
+    <script src="/logitec-role-demo.js?v=13" defer></script>
   </body>
 </html>

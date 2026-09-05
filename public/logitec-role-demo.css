@@ -249,14 +249,38 @@ body.director-view-mode #roleSwitch {
   max-width: 52ch;
 }
 .operator-next-task h4 { margin: 6px 0; color: var(--accent-dark); }
-body[data-role-view="operator"] .sidebar { padding: 10px 12px 14px; }
-body[data-role-view="operator"] .module-btn {
+.supervisor-operator-mode-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 16px 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fff 0%, #f3f7fb 100%);
+  box-shadow: var(--shadow-sm);
+}
+.supervisor-operator-mode-bar.hidden { display: none !important; }
+.supervisor-operator-mode-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--accent-dark);
+  letter-spacing: 0.02em;
+}
+body[data-role-view="operator"] .sidebar,
+body.supervisor-operator-mode-active .sidebar { padding: 10px 12px 14px; }
+body[data-role-view="operator"] .module-btn,
+body.supervisor-operator-mode-active .module-btn {
   min-height: 46px;
   padding: 8px 10px;
   flex: 1 1 100%;
 }
-body[data-role-view="operator"] .module-btn-desc { display: none; }
-body[data-role-view="operator"] .nav-section-tab { padding: 8px 10px; font-size: 0.82rem; }
+body[data-role-view="operator"] .module-btn-desc,
+body.supervisor-operator-mode-active .module-btn-desc { display: none; }
+body[data-role-view="operator"] .nav-section-tab,
+body.supervisor-operator-mode-active .nav-section-tab { padding: 8px 10px; font-size: 0.82rem; }
 body[data-role-view="client"] .sidebar .module-btn { flex: 1 1 100%; }
 .module-btn {
   flex: 1 1 180px; min-height: 56px; text-align: left;

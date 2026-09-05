@@ -16,10 +16,23 @@
 
   function navigateModule(moduleId) {
     state.module = moduleId;
-    state.tab = tabForModule(state.role, moduleId);
+    state.tab = tabForModule(navRoleKey(), moduleId);
     state.activeTaskId = null;
     state.taskFlow = null;
     render();
+  }
+
+  function navRoleKey() {
+    if (state.role === "SUPERVISOR" && state.operatorMode) return "OPERATOR";
+    return state.role;
+  }
+
+  function navConfig() {
+    return NAV[navRoleKey()] || null;
+  }
+
+  function isOperatorExperience() {
+    return state.role === "OPERATOR" || (state.role === "SUPERVISOR" && state.operatorMode);
   }
 
   const FLOW_PALETTE_BY_MODULE = {
@@ -198,7 +211,9 @@
     scanProcessing: false,
     mobileEmulation: false,
     concentration: false,
-    mobileScrollSnapshot: 0
+    mobileScrollSnapshot: 0,
+    operatorMode: false,
+    supervisorReturnContext: null
   };
 
   const app = document.getElementById("app");
@@ -276,8 +291,11 @@
     state.taskFlow = null;
     state.mobileEmulation = false;
     state.concentration = false;
+    state.operatorMode = false;
+    state.supervisorReturnContext = null;
     document.body.classList.remove("focus-mode");
     syncConcentrationOverlay();
+    syncSupervisorOperatorModeUi();
   }
 
   function syncConcentrationOverlay() {
@@ -288,7 +306,7 @@
   }
 
   function canUseConcentration() {
-    if (state.mobileEmulation) return false;
+    if (state.mobileEmulation || state.operatorMode) return false;
     return state.role === "ADMIN" || state.role === "SUPERVISOR";
   }
 
@@ -351,9 +369,71 @@
     render();
   }
 
+  function enterSupervisorOperatorMode() {
+    if (state.role !== "SUPERVISOR" || state.operatorMode) return;
+    const scrollHost = document.querySelector("main.content") || app;
+    state.supervisorReturnContext = {
+      tab: state.tab,
+      module: state.module,
+      scroll: scrollHost ? scrollHost.scrollTop : 0
+    };
+    if (state.concentration) applyConcentration(false);
+    state.operatorMode = true;
+    state.tab = "operacion";
+    state.module = "tasks";
+    syncSupervisorOperatorModeUi();
+    syncConcentrationUi();
+    render();
+  }
+
+  function exitSupervisorOperatorMode() {
+    if (state.role !== "SUPERVISOR" || !state.operatorMode) return;
+    const ctx = state.supervisorReturnContext || {
+      tab: ROLE_TAB_DEFAULT.SUPERVISOR,
+      module: ROLE_DEFAULT.SUPERVISOR,
+      scroll: 0
+    };
+    state.operatorMode = false;
+    state.tab = ctx.tab;
+    state.module = ctx.module;
+    state.supervisorReturnContext = null;
+    syncSupervisorOperatorModeUi();
+    syncConcentrationUi();
+    render();
+    requestAnimationFrame(() => {
+      const host = document.querySelector("main.content") || app;
+      if (host) host.scrollTop = ctx.scroll || 0;
+    });
+  }
+
+  function syncSupervisorOperatorModeUi() {
+    const active = state.role === "SUPERVISOR" && state.operatorMode;
+    document.body.classList.toggle("supervisor-operator-mode-active", active);
+    const bar = document.getElementById("supervisorOperatorModeBar");
+    if (bar) {
+      bar.hidden = !active;
+      bar.classList.toggle("hidden", !active);
+    }
+  }
+
+  function wireSupervisorOperatorMode() {
+    const exitBtn = document.getElementById("exitSupervisorOperatorModeBtn");
+    if (exitBtn && exitBtn.dataset.wired !== "1") {
+      exitBtn.dataset.wired = "1";
+      exitBtn.addEventListener("click", () => exitSupervisorOperatorMode());
+    }
+    syncSupervisorOperatorModeUi();
+  }
+
   function applyRoleView(role) {
     if (!NAV[role]) return;
+    if (state.role === role && state.operatorMode && role === "SUPERVISOR") {
+      exitSupervisorOperatorMode();
+      return;
+    }
     state.role = role;
+    state.operatorMode = false;
+    state.supervisorReturnContext = null;
     state.concentration = false;
     document.body.classList.remove("focus-mode");
     syncConcentrationOverlay();
@@ -364,6 +444,7 @@
     state.scanProcessing = false;
     syncDirectorViewUi();
     syncRoleViewUi();
+    syncSupervisorOperatorModeUi();
     syncConcentrationUi();
     render();
   }
@@ -779,13 +860,13 @@
     return `<div class="module-screen-header"><h3>${esc(title)}</h3></div><div class="card-panel ops-message">${esc(message)}</div>`;
   }
 
-  function supervisorViewAsOperatorBtn() {
+  function supervisorWorkAsOperatorBar() {
     return `<div class="view-as-operator-bar">
       <div>
-        <strong>Vista operador de piso</strong>
-        <p>Revise la experiencia handheld sin cambiar sesión ni permisos reales.</p>
+        <strong>Trabajar en piso</strong>
+        <p>Use la experiencia completa del Operador sin cambiar su sesión ni rol real de Supervisor.</p>
       </div>
-      <button type="button" class="btn-secondary" data-view-as-role="OPERATOR">Ver como Operador</button>
+      <button type="button" class="btn-secondary" data-enter-operator-mode>TRABAJAR COMO OPERADOR</button>
     </div>`;
   }
 
@@ -800,7 +881,7 @@
         : `<div class="card-panel ops-message warn">Movimientos recientes no disponibles en fuente Excel · use Control → Movimientos / Trazabilidad cuando exista historial.</div>`;
     return `<div class="module-screen-header"><h3>Centro de operación</h3>
       <p class="module-lead">Organice la operación del día · delegue al piso · dé seguimiento <span class="badge demo-flow">EJEMPLO DE FLUJO</span></p></div>
-      ${supervisorViewAsOperatorBtn()}
+      ${supervisorWorkAsOperatorBar()}
       <div class="kpi-grid">
         <div class="kpi-card warn"><span class="kpi-value">${esc(pending.length)}</span><span class="kpi-label">Pendientes</span></div>
         <div class="kpi-card accent"><span class="kpi-value">${esc(inProgress.length)}</span><span class="kpi-label">En proceso</span></div>
@@ -883,11 +964,11 @@
 
   function renderModule() {
     const m = state.module;
-    if (state.role === "OPERATOR" && state.activeTaskId) {
+    if (isOperatorExperience() && state.activeTaskId) {
       const task = state.tasks.find((t) => t.id === state.activeTaskId);
       return task ? operatorTaskFlow(task) : operatorTasksLanding();
     }
-    if (state.role === "OPERATOR" && m === "lookup") {
+    if (isOperatorExperience() && m === "lookup") {
       return `<div class="module-screen-header"><h3>Consulta rápida</h3><p class="module-lead">SKU · ubicación · READ-ONLY · sin captura operativa</p></div>${inventoryTable(false)}`;
     }
     if (m === "control") return state.role === "CLIENT" ? clientResumen() : controlCenter();
@@ -913,18 +994,18 @@
         .join("")}</tbody></table></div>`;
     }
     if (m === "tasks") {
-      if (state.role === "SUPERVISOR") return supervisorOperationCenter();
-      if (state.role === "OPERATOR") return operatorTasksLanding();
+      if (state.role === "SUPERVISOR" && !state.operatorMode) return supervisorOperationCenter();
+      if (isOperatorExperience()) return operatorTasksLanding();
       return tasksTable(false);
     }
     if (m === "tracking") return tasksTable(false);
-    if (m === "requisitions" && state.role === "SUPERVISOR") return seguimientoView();
+    if (m === "requisitions" && state.role === "SUPERVISOR" && !state.operatorMode) return seguimientoView();
     if (m === "movements") return movementsView();
     if (m === "inbound")
       return disabledModule("Recepciones", "Flujo operador: recepción esperada → escaneo → cotejo → Buffer de entrada. Sin captura manual de proyecto/pedido.");
     if (m === "relocate")
       return disabledModule("Reubicaciones", "Reutiliza flujo LOGITEC de movimiento interno: escaneo producto · origen · destino · validación.");
-    if ((m === "picking" || m === "outbound") && state.role !== "OPERATOR")
+    if ((m === "picking" || m === "outbound") && !isOperatorExperience())
       return disabledModule(m === "picking" ? "Picking" : "Salidas", "Task-driven desde órdenes existentes. Operador escanea · LOGITEC coteja · buffer salida.");
     if (m === "requisitions") return disabledModule("Órdenes / Requisiciones", "Disponible en sistema oficial · demo muestra tareas derivadas.");
     if (m === "incidents") return disabledModule("Incidencias", "Excepciones operativas · disponible en WMS oficial.");
@@ -1077,7 +1158,7 @@
     const body = document.body;
     if (!body) return;
     let palette = null;
-    if (state.role === "OPERATOR" && state.activeTaskId) {
+    if (isOperatorExperience() && state.activeTaskId) {
       const task = state.tasks.find((t) => t.id === state.activeTaskId);
       palette = task ? TASK_TYPE_PALETTE[task.type] || "mover" : "mover";
     } else if (NEUTRAL_BRAND_MODULES.has(state.module)) {
@@ -1099,7 +1180,7 @@
   function renderSectionTabs() {
     const bar = document.getElementById("wmsSectionBar");
     if (!bar) return;
-    const cfg = NAV[state.role];
+    const cfg = navConfig();
     if (!cfg) {
       bar.innerHTML = "";
       bar.hidden = true;
@@ -1128,7 +1209,7 @@
 
   function renderSidebar() {
     if (!sidebar) return;
-    const cfg = NAV[state.role];
+    const cfg = navConfig();
     if (!cfg) return;
     const panels = cfg.tabs
       .map((t) => {
@@ -1154,17 +1235,14 @@
         navigateModule(btn.getAttribute("data-nav-module") || state.module);
       });
     });
-    sidebar.querySelectorAll("[data-view-as-role]").forEach((btn) => {
-      btn.addEventListener("click", () => applyRoleView(btn.getAttribute("data-view-as-role") || "OPERATOR"));
-    });
   }
 
   function wireContent() {
     app.querySelectorAll("[data-nav-module]").forEach((btn) => {
       btn.addEventListener("click", () => navigateModule(btn.getAttribute("data-nav-module") || state.module));
     });
-    app.querySelectorAll("[data-view-as-role]").forEach((btn) => {
-      btn.addEventListener("click", () => applyRoleView(btn.getAttribute("data-view-as-role") || "OPERATOR"));
+    app.querySelectorAll("[data-enter-operator-mode]").forEach((btn) => {
+      btn.addEventListener("click", () => enterSupervisorOperatorMode());
     });
     app.querySelectorAll("[data-start-task]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1234,6 +1312,7 @@
 
   function render() {
     syncRoleViewUi();
+    syncSupervisorOperatorModeUi();
     syncFlowTheme();
     syncConcentrationUi();
     renderSectionTabs();
@@ -1258,7 +1337,7 @@
     const sidebars = document.querySelectorAll("#sidebar");
     const orphanFocus = document.querySelectorAll("#focusNavSlot *, #focusSubnavSlot *");
 
-    const expectedTabs = NAV[state.role]?.tabs?.length || 0;
+    const expectedTabs = navConfig()?.tabs?.length || 0;
     if (sectionTabs.length !== expectedTabs) {
       issues.push(`tabs horizontales: ${sectionTabs.length} (esperado ${expectedTabs})`);
     }
@@ -1281,6 +1360,7 @@
         role: state.role,
         tab: state.tab,
         module: state.module,
+        operatorMode: state.operatorMode,
         concentration: state.concentration,
         mobileEmulation: state.mobileEmulation
       }
@@ -1353,6 +1433,7 @@
     resetDemoStartupView();
     initDirectorViewBar();
     wireConcentration();
+    wireSupervisorOperatorMode();
     syncConcentrationUi();
     syncRoleViewUi();
     try {
