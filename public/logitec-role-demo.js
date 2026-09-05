@@ -19,6 +19,10 @@
     state.tab = tabForModule(navRoleKey(), moduleId);
     state.activeTaskId = null;
     state.taskFlow = null;
+    if (moduleId !== "tasks") {
+      state.freeScanActive = false;
+      state.freeScanSession = null;
+    }
     render();
   }
 
@@ -153,6 +157,7 @@
       modules: {
         operacion: [
           { id: "tasks", label: "Centro de operación", desc: "Operación del día · tareas y seguimiento", primary: true },
+          { id: "pending_supervision", label: "Pendientes de supervisión", desc: "Capturas provisionales de piso · revisión DEMO" },
           { id: "tracking", label: "Tareas", desc: "Trabajo asignado al piso" },
           { id: "requisitions", label: "Seguimiento", desc: "Estados · avance · diferencias" },
           { id: "picking", label: "Picking / Surtido", desc: "Órdenes de surtido de salida" },
@@ -213,7 +218,11 @@
     concentration: false,
     mobileScrollSnapshot: 0,
     operatorMode: false,
-    supervisorReturnContext: null
+    supervisorReturnContext: null,
+    freeScanActive: false,
+    freeScanSession: null,
+    provisionalCaptures: [],
+    provisionalCaptureSeq: 0
   };
 
   const app = document.getElementById("app");
@@ -293,6 +302,10 @@
     state.concentration = false;
     state.operatorMode = false;
     state.supervisorReturnContext = null;
+    state.freeScanActive = false;
+    state.freeScanSession = null;
+    state.provisionalCaptures = [];
+    state.provisionalCaptureSeq = 0;
     document.body.classList.remove("focus-mode");
     syncConcentrationOverlay();
     syncSupervisorOperatorModeUi();
@@ -362,11 +375,219 @@
   function cancelActiveTask() {
     state.activeTaskId = null;
     state.taskFlow = null;
+    state.freeScanActive = false;
+    state.freeScanSession = null;
     unlockScanInput();
     state.scanLastMetrics = null;
     state.module = "tasks";
     state.tab = "operacion";
     render();
+  }
+
+  const PROVISIONAL_STATUSES = [
+    "PENDIENTE DE SUPERVISIÓN",
+    "REQUIERE ACLARACIÓN",
+    "VALIDADO · PENDIENTE DE REGISTRO",
+    "RECHAZADO ADMINISTRATIVAMENTE"
+  ];
+
+  const DECLARED_FLOOR_ACTIONS = [
+    { id: "consulta", label: "Consulta" },
+    { id: "traslado", label: "Traslado / reubicación física" },
+    { id: "acomodo", label: "Acomodo" },
+    { id: "salida", label: "Preparar salida" },
+    { id: "recepcion", label: "Recepción física" },
+    { id: "etiquetado", label: "Etiquetado" },
+    { id: "incidencia", label: "Incidencia / otro" }
+  ];
+
+  function demoExecutorLabel() {
+    if (state.role === "SUPERVISOR" && state.operatorMode) return "Supervisor trabajando como Operador";
+    if (state.role === "OPERATOR") return "Operador";
+    return state.role;
+  }
+
+  function normalizeForClassification(rawValue) {
+    return String(normalizeScannerRawValue(rawValue) || "").trim().toUpperCase();
+  }
+
+  function isPureNumericToken(value) {
+    return /^\d+$/.test(String(value || "").trim());
+  }
+
+  function classifyScanCodeLocal(rawValue) {
+    const raw = String(rawValue ?? "");
+    const normalized = normalizeForClassification(raw);
+    if (!normalized) {
+      return { raw, normalized: "", classification: "SIN CLASIFICAR", match: null };
+    }
+    if (isPureNumericToken(normalized)) {
+      return { raw, normalized, classification: "SIN CLASIFICAR", match: null, reason: "Valor numérico aislado" };
+    }
+    const stock = state.stock || [];
+    const skuHit = stock.find((r) => String(r.product?.sku || "").toUpperCase() === normalized);
+    if (skuHit) {
+      return {
+        raw,
+        normalized,
+        classification: "SKU",
+        match: { type: "SKU", value: skuHit.product.sku, label: skuHit.product?.name || skuHit.product.sku }
+      };
+    }
+    const locHit = stock.find((r) => String(r.location?.code || "").toUpperCase() === normalized);
+    if (locHit) {
+      return { raw, normalized, classification: "UBICACIÓN", match: { type: "UBICACIÓN", value: locHit.location.code } };
+    }
+    const sapHit = stock.find((r) => String(r.sap || "").toUpperCase() === normalized);
+    if (sapHit) {
+      return { raw, normalized, classification: "SAP", match: { type: "SAP", value: sapHit.sap } };
+    }
+    const pedidoHit = stock.find((r) => String(r.pedido || "").toUpperCase() === normalized);
+    if (pedidoHit) {
+      return { raw, normalized, classification: "PEDIDO", match: { type: "PEDIDO", value: pedidoHit.pedido } };
+    }
+    const partidaHit = stock.find((r) => String(r.partida || "").toUpperCase() === normalized);
+    if (partidaHit) {
+      return { raw, normalized, classification: "PARTIDA", match: { type: "PARTIDA", value: partidaHit.partida } };
+    }
+    const serialHit = stock.find((r) => String(r.serialNumber || "").toUpperCase() === normalized);
+    if (serialHit) {
+      return { raw, normalized, classification: "SERIE", match: { type: "SERIE", value: serialHit.serialNumber } };
+    }
+    return { raw, normalized, classification: "SIN CLASIFICAR", match: null };
+  }
+
+  function classificationDisplay(result) {
+    if (!result || result.classification === "SIN CLASIFICAR") return "SIN CLASIFICAR";
+    if (result.match?.value) return `${result.classification} · ${result.match.value}`;
+    return result.classification;
+  }
+
+  function matchDisplay(result) {
+    if (!result?.match) return "—";
+    if (result.match.label) return `${result.match.type}: ${result.match.value} · ${result.match.label}`;
+    return `${result.match.type}: ${result.match.value}`;
+  }
+
+  function nextProvisionalCaptureId() {
+    state.provisionalCaptureSeq += 1;
+    return `CP-${String(state.provisionalCaptureSeq).padStart(4, "0")}`;
+  }
+
+  function ensureFreeScanSession() {
+    if (!state.freeScanSession) {
+      state.freeScanSession = {
+        startedAt: new Date().toISOString(),
+        readings: [],
+        declaredAction: "consulta",
+        observation: ""
+      };
+    }
+    return state.freeScanSession;
+  }
+
+  function startFreeScanMode() {
+    if (state.activeTaskId) return;
+    state.freeScanActive = true;
+    state.freeScanSession = {
+      startedAt: new Date().toISOString(),
+      readings: [],
+      declaredAction: "consulta",
+      observation: ""
+    };
+    unlockScanInput();
+    renderContent();
+  }
+
+  function discardFreeScanSession() {
+    state.freeScanActive = false;
+    state.freeScanSession = null;
+    unlockScanInput();
+    renderContent();
+  }
+
+  function sendProvisionalCapture() {
+    const session = state.freeScanSession;
+    if (!session || !session.readings.length) return;
+    const action = DECLARED_FLOOR_ACTIONS.find((a) => a.id === session.declaredAction) || DECLARED_FLOOR_ACTIONS[0];
+    const capture = {
+      id: nextProvisionalCaptureId(),
+      status: "PENDIENTE DE SUPERVISIÓN",
+      declaredAction: action.label,
+      declaredActionId: action.id,
+      executor: demoExecutorLabel(),
+      executorRole: state.role,
+      executorOperatorMode: Boolean(state.operatorMode),
+      device: "Dispositivo demo",
+      physicalStartedAt: session.startedAt,
+      physicalEndedAt: new Date().toISOString(),
+      observation: String(session.observation || "").trim(),
+      readings: session.readings.map((r) => ({ ...r })),
+      adminUpdatedAt: null
+    };
+    state.provisionalCaptures.unshift(capture);
+    state.freeScanActive = false;
+    state.freeScanSession = null;
+    unlockScanInput();
+    renderContent();
+  }
+
+  function updateProvisionalCaptureStatus(captureId, nextStatus) {
+    const capture = state.provisionalCaptures.find((c) => c.id === captureId);
+    if (!capture || state.role !== "SUPERVISOR" || state.operatorMode) return;
+    if (!PROVISIONAL_STATUSES.includes(nextStatus)) return;
+    capture.status = nextStatus;
+    capture.adminUpdatedAt = new Date().toISOString();
+    renderContent();
+  }
+
+  function renderScannerWorkspace({ mode, meta, instruction }) {
+    const banner =
+      mode === "task" ? "ESCÁNER ACTIVO · ESPERANDO LECTURA" : "ESCÁNER ACTIVO · MODO LIBRE CONTROLADO";
+    const help =
+      mode === "task"
+        ? "Use el gatillo del lector · Captura manual solo como contingencia"
+        : "Esta captura no modifica inventario";
+    return `<div class="scan-workspace operator-scan-active scan-engine-shell" data-scan-mode="${esc(mode)}">
+      <p class="scan-active-banner">${esc(banner)}</p>
+      ${meta ? `<p class="scan-handheld-meta">${meta}</p>` : ""}
+      ${instruction ? `<h2 class="scan-handheld-instruction">${esc(instruction)}</h2>` : ""}
+      <p class="scan-handheld-help">${esc(help)}</p>
+      <input class="scan-input scan-handheld-input field" id="scanValue" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Escaneo · Enter" />
+      <div class="scan-handheld-fallback">
+        ${
+          mode === "task"
+            ? `<button type="button" class="btn-secondary btn-compact" data-cancel-task>Cancelar tarea</button>
+          <button type="button" class="btn-secondary btn-compact" id="scanReportDiff" hidden>Reportar diferencia</button>`
+            : `<button type="button" class="btn-secondary btn-compact" data-discard-free-scan>DESCARTAR CAPTURA</button>`
+        }
+        <button type="button" class="scan-manual-link" id="scanManual">Captura manual</button>
+      </div>
+      <div id="scanFeedback" class="scan-status idle">${mode === "task" ? "Listo para lectura" : "Escaneo libre listo"}</div>
+    </div>`;
+  }
+
+  function wireScannerInput(onSubmit, manualPlaceholder) {
+    const input = document.getElementById("scanValue");
+    if (!input || typeof onSubmit !== "function") return;
+    input.focus();
+    input.select();
+    const submitScan = () => {
+      void onSubmit(input);
+    };
+    input.addEventListener("focus", () => {
+      if (!state.scanInputStartedAt) state.scanInputStartedAt = performance.now();
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitScan();
+      }
+    });
+    document.getElementById("scanManual")?.addEventListener("click", () => {
+      input.focus();
+      input.placeholder = manualPlaceholder || "Captura manual · escriba y Enter";
+    });
   }
 
   function enterSupervisorOperatorMode() {
@@ -830,22 +1051,99 @@
     const flow = state.taskFlow || { step: 0 };
     const steps = taskFlowSteps(task);
     const current = steps[flow.step] || steps[steps.length - 1];
-    const expected = expectedScanForTask(task, flow.step);
     return `<div class="operator-handheld-shell">
-      <div class="scan-workspace operator-scan-active">
-        <p class="scan-handheld-meta">${esc(task.id)} · ${esc(task.typeLabel)} · paso ${flow.step + 1}/${steps.length}</p>
-        <h2 class="scan-handheld-instruction">${esc(current.label)}</h2>
-        <input class="scan-input scan-handheld-input field" id="scanValue" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Escaneo · Enter" />
-        <div class="scan-handheld-fallback">
-          <button type="button" class="btn-secondary btn-compact" data-cancel-task>Cancelar tarea</button>
-          <button type="button" class="btn-secondary btn-compact" id="scanReportDiff" hidden>Reportar diferencia</button>
-          <button type="button" class="scan-manual-link" id="scanManual">Captura manual</button>
-        </div>
-        <div id="scanFeedback" class="scan-status idle">Escaneo listo · ${esc(expected)}</div>
-      </div>
+      ${renderScannerWorkspace({
+        mode: "task",
+        meta: `${task.id} · ${task.typeLabel} · paso ${flow.step + 1}/${steps.length}`,
+        instruction: current.label
+      })}
       <div id="flowResult"></div>
       <p class="ops-message">DEMO — no registra movimiento · LOGITEC conserva trazabilidad en el WMS real</p>
     </div>`;
+  }
+
+  function operatorFreeScanView() {
+    const session = ensureFreeScanSession();
+    const readings = session.readings
+      .slice()
+      .reverse()
+      .map(
+        (r) => `<tr>
+          <td>${esc(new Date(r.at).toLocaleTimeString("es-MX"))}</td>
+          <td><code>${esc(r.raw)}</code></td>
+          <td>${esc(r.classification)}</td>
+          <td>${esc(r.matchLabel || "—")}</td>
+        </tr>`
+      )
+      .join("");
+    const actionOptions = DECLARED_FLOOR_ACTIONS.map(
+      (a) =>
+        `<option value="${esc(a.id)}"${session.declaredAction === a.id ? " selected" : ""}>${esc(a.label)}</option>`
+    ).join("");
+    return `<div class="operator-handheld-shell free-scan-shell">
+      ${renderScannerWorkspace({ mode: "free" })}
+      <div class="card-panel free-scan-evidence">
+        <h4>Lecturas acumuladas (${esc(session.readings.length)})</h4>
+        ${
+          session.readings.length
+            ? `<div class="free-scan-readings-wrap"><table class="data-table free-scan-readings"><thead><tr>
+              <th>Hora</th><th>RAW</th><th>Clasificación</th><th>Coincidencia</th>
+            </tr></thead><tbody>${readings}</tbody></table></div>`
+            : `<p class="operational-table-meta">Escanee códigos · la evidencia RAW se conserva sin modificar inventario.</p>`
+        }
+      </div>
+      <div class="card-panel free-scan-actions-panel">
+        <div class="free-scan-declare-grid">
+          <label class="field compact-field"><span>Acción declarada</span>
+            <select id="freeScanDeclaredAction">${actionOptions}</select>
+          </label>
+          <label class="field compact-field field-grow"><span>Observación (opcional)</span>
+            <input id="freeScanObservation" type="text" value="${esc(session.observation)}" placeholder="Contexto de piso · contingencia" />
+          </label>
+        </div>
+        <div class="free-scan-submit-row">
+          <button type="button" class="btn-primary btn-compact" data-send-provisional${session.readings.length ? "" : " disabled"}>ENVIAR A SUPERVISIÓN</button>
+          <button type="button" class="btn-secondary btn-compact" data-discard-free-scan>DESCARTAR CAPTURA</button>
+        </div>
+      </div>
+      <p class="ops-message">DEMO READ-ONLY · captura provisional en memoria · no modifica inventario</p>
+    </div>`;
+  }
+
+  function supervisorPendingSupervisionView() {
+    const rows = state.provisionalCaptures;
+    const table = rows.length
+      ? rows
+          .map((c) => {
+            const statusOptions = PROVISIONAL_STATUSES.map(
+              (s) => `<option value="${esc(s)}"${c.status === s ? " selected" : ""}>${esc(s)}</option>`
+            ).join("");
+            const evidence = c.readings
+              .map(
+                (r) =>
+                  `<li><code>${esc(r.raw)}</code> · ${esc(r.classification)} · ${esc(
+                    new Date(r.at).toLocaleTimeString("es-MX")
+                  )}</li>`
+              )
+              .join("");
+            return `<tr>
+              <td><strong>${esc(c.id)}</strong></td>
+              <td>${esc(c.declaredAction)}</td>
+              <td>${esc(c.executor)}</td>
+              <td>${esc(new Date(c.physicalStartedAt).toLocaleString("es-MX"))}</td>
+              <td>${esc(c.readings.length)}</td>
+              <td><ul class="provisional-evidence-list">${evidence}</ul></td>
+              <td><select class="provisional-status-select" data-provisional-status="${esc(c.id)}">${statusOptions}</select></td>
+            </tr>`;
+          })
+          .join("")
+      : `<tr><td colspan="7">Sin capturas provisionales en esta sesión DEMO.</td></tr>`;
+    return `<div class="module-screen-header"><h3>Pendientes de supervisión</h3>
+      <p class="module-lead">Capturas provisionales de piso · revisión local DEMO · evidencia RAW conservada</p></div>
+      <div class="card-panel ops-message warn">DEMO READ-ONLY · la validación no modifica inventario</div>
+      <div class="card-panel"><table class="data-table provisional-captures-table"><thead><tr>
+        <th>ID</th><th>Acción</th><th>Ejecutor</th><th>Hora física</th><th>Lecturas</th><th>Evidencia RAW</th><th>Estado</th>
+      </tr></thead><tbody>${table}</tbody></table></div>`;
   }
 
   function movementsView() {
@@ -911,8 +1209,15 @@
           <button type="button" class="btn-primary block-mobile" data-start-task="${esc(next.id)}">Iniciar tarea</button>
         </div>`
       : `<div class="card-panel ops-message">No hay tareas pendientes en la demo.</div>`;
+    const freeScanHint = open.length
+      ? `<p class="operational-table-meta">Herramienta secundaria · no interfiere con tareas activas</p>`
+      : `<p class="operational-table-meta">Sin tareas abiertas · use escaneo libre controlado para contingencias de piso</p>`;
     return `<div class="module-screen-header"><h3>Mis tareas</h3>
       <p class="module-lead">LOGITEC dirige · usted escanea y ejecuta · interfaz handheld</p></div>
+      <div class="card-panel operator-free-scan-entry">
+        ${freeScanHint}
+        <button type="button" class="btn-secondary btn-compact" data-start-free-scan>ESCANEO LIBRE</button>
+      </div>
       ${nextBlock}
       <div class="card-panel"><h4>Tareas abiertas (${esc(open.length)})</h4>${tasksTable(true, null, true)}</div>`;
   }
@@ -964,6 +1269,7 @@
 
   function renderModule() {
     const m = state.module;
+    if (isOperatorExperience() && state.freeScanActive && m === "tasks") return operatorFreeScanView();
     if (isOperatorExperience() && state.activeTaskId) {
       const task = state.tasks.find((t) => t.id === state.activeTaskId);
       return task ? operatorTaskFlow(task) : operatorTasksLanding();
@@ -997,6 +1303,9 @@
       if (state.role === "SUPERVISOR" && !state.operatorMode) return supervisorOperationCenter();
       if (isOperatorExperience()) return operatorTasksLanding();
       return tasksTable(false);
+    }
+    if (m === "pending_supervision" && state.role === "SUPERVISOR" && !state.operatorMode) {
+      return supervisorPendingSupervisionView();
     }
     if (m === "tracking") return tasksTable(false);
     if (m === "requisitions" && state.role === "SUPERVISOR" && !state.operatorMode) return seguimientoView();
@@ -1035,9 +1344,9 @@
   }
 
   function scanMatchesExpected(raw, expected) {
-    const val = String(raw || "").trim().toUpperCase();
+    const val = normalizeForClassification(raw);
     const exp = String(expected || "").trim().toUpperCase();
-    return Boolean(val) && (val === exp || (exp.length >= 6 && val.includes(exp.slice(0, 6))));
+    return Boolean(val) && val === exp;
   }
 
   function playScanOkFeedback() {
@@ -1077,32 +1386,6 @@
     }
   }
 
-  async function classifyScanCodeSoft(code) {
-    const startedAt = performance.now();
-    try {
-      const payload = await apiGet(
-        `/api/admin/pda-scanner-diagnostic/classify?code=${encodeURIComponent(code)}`,
-        true
-      );
-      const roundTripMs = Math.round(performance.now() - startedAt);
-      if (!payload.ok) {
-        return {
-          available: false,
-          reason: payload.status === 404 ? "Lab PDA no habilitado" : `HTTP ${payload.status}`,
-          roundTripMs
-        };
-      }
-      return {
-        available: true,
-        data: payload.data,
-        roundTripMs,
-        detectionMs: state.scanInputStartedAt ? Math.round(performance.now() - state.scanInputStartedAt) : null
-      };
-    } catch (_e) {
-      return { available: false, reason: "Clasificador no disponible", roundTripMs: null };
-    }
-  }
-
   function unlockScanInput() {
     state.scanSuccessPlayed = false;
     state.scanInputStartedAt = null;
@@ -1114,7 +1397,8 @@
     const input = document.getElementById("scanValue");
     const fb = document.getElementById("scanFeedback");
     if (!input || !fb || state.scanProcessing) return;
-    const normalized = normalizeScannerRawValue(input.value);
+    const raw = String(input.value ?? "");
+    const normalized = normalizeScannerRawValue(raw);
     if (!normalized) {
       fb.className = "scan-status warn";
       fb.textContent = "No leído · escanee código";
@@ -1122,16 +1406,15 @@
     }
     state.scanProcessing = true;
     const expected = expectedScanForTask(task, flow.step);
-    const classify = await classifyScanCodeSoft(normalized);
-    if (!scanMatchesExpected(normalized, expected)) {
+    if (!scanMatchesExpected(raw, expected)) {
       fb.className = "scan-status warn";
-      fb.textContent = `Diferencia · esperado ${expected} · leído ${normalized.toUpperCase()}`;
+      fb.textContent = "DIFERENCIA · lectura no coincide";
       document.getElementById("scanReportDiff")?.removeAttribute("hidden");
       state.scanProcessing = false;
       return;
     }
     fb.className = "scan-status ok";
-    fb.textContent = `OK · validación demo${classify.available ? ` · API ${classify.data?.classification || "—"}` : ""}`;
+    fb.textContent = "OK · cotejo exacto";
     playScanOkFeedback();
     input.value = "";
     document.getElementById("scanReportDiff")?.setAttribute("hidden", "");
@@ -1154,12 +1437,41 @@
     }, 450);
   }
 
+  function submitFreeScanReading(inputEl) {
+    const input = inputEl || document.getElementById("scanValue");
+    const fb = document.getElementById("scanFeedback");
+    if (!input || !fb || state.scanProcessing || !state.freeScanActive) return;
+    const raw = String(input.value ?? "");
+    if (!String(raw).trim()) {
+      fb.className = "scan-status warn";
+      fb.textContent = "No leído · escanee código";
+      return;
+    }
+    state.scanProcessing = true;
+    const classified = classifyScanCodeLocal(raw);
+    const session = ensureFreeScanSession();
+    session.readings.push({
+      at: new Date().toISOString(),
+      raw: classified.raw,
+      normalized: classified.normalized,
+      classification: classificationDisplay(classified),
+      matchLabel: matchDisplay(classified)
+    });
+    fb.className = "scan-status ok";
+    fb.textContent = `OK · ${classificationDisplay(classified)}`;
+    playScanOkFeedback();
+    input.value = "";
+    state.scanProcessing = false;
+    state.scanSuccessPlayed = false;
+    renderContent();
+  }
+
   function syncFlowTheme() {
     const body = document.body;
     if (!body) return;
     let palette = null;
-    if (isOperatorExperience() && state.activeTaskId) {
-      const task = state.tasks.find((t) => t.id === state.activeTaskId);
+    if (isOperatorExperience() && (state.activeTaskId || state.freeScanActive)) {
+      const task = state.activeTaskId ? state.tasks.find((t) => t.id === state.activeTaskId) : null;
       palette = task ? TASK_TYPE_PALETTE[task.type] || "mover" : "mover";
     } else if (NEUTRAL_BRAND_MODULES.has(state.module)) {
       palette = null;
@@ -1202,6 +1514,8 @@
         if (first) state.module = first.id;
         state.activeTaskId = null;
         state.taskFlow = null;
+        state.freeScanActive = false;
+        state.freeScanSession = null;
         render();
       });
     });
@@ -1246,11 +1560,35 @@
     });
     app.querySelectorAll("[data-start-task]").forEach((btn) => {
       btn.addEventListener("click", () => {
+        state.freeScanActive = false;
+        state.freeScanSession = null;
         state.activeTaskId = btn.getAttribute("data-start-task");
         state.taskFlow = { step: 0 };
         unlockScanInput();
         renderContent();
       });
+    });
+    app.querySelectorAll("[data-start-free-scan]").forEach((btn) => {
+      btn.addEventListener("click", () => startFreeScanMode());
+    });
+    app.querySelectorAll("[data-discard-free-scan]").forEach((btn) => {
+      btn.addEventListener("click", () => discardFreeScanSession());
+    });
+    app.querySelectorAll("[data-send-provisional]").forEach((btn) => {
+      btn.addEventListener("click", () => sendProvisionalCapture());
+    });
+    app.querySelectorAll("[data-provisional-status]").forEach((sel) => {
+      sel.addEventListener("change", () => {
+        updateProvisionalCaptureStatus(sel.getAttribute("data-provisional-status"), sel.value);
+      });
+    });
+    document.getElementById("freeScanDeclaredAction")?.addEventListener("change", (event) => {
+      const session = ensureFreeScanSession();
+      session.declaredAction = event.target.value;
+    });
+    document.getElementById("freeScanObservation")?.addEventListener("input", (event) => {
+      const session = ensureFreeScanSession();
+      session.observation = event.target.value;
     });
     app.querySelectorAll("[data-cancel-task]").forEach((btn) => {
       btn.addEventListener("click", () => cancelActiveTask());
@@ -1274,25 +1612,7 @@
     if (state.activeTaskId) {
       const task = state.tasks.find((t) => t.id === state.activeTaskId);
       if (!task) return;
-      const input = document.getElementById("scanValue");
-      input?.focus();
-      input?.select();
-      const submitScan = () => {
-        void submitOperatorScan(task);
-      };
-      input?.addEventListener("focus", () => {
-        if (!state.scanInputStartedAt) state.scanInputStartedAt = performance.now();
-      });
-      input?.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          submitScan();
-        }
-      });
-      document.getElementById("scanManual")?.addEventListener("click", () => {
-        input?.focus();
-        if (input) input.placeholder = "Captura manual · escriba y Enter";
-      });
+      wireScannerInput(() => submitOperatorScan(task), "Captura manual · escriba y Enter");
       document.getElementById("scanReportDiff")?.addEventListener("click", () => {
         const fb = document.getElementById("scanFeedback");
         if (fb) {
@@ -1300,6 +1620,10 @@
           fb.textContent = "Diferencia reportada · DEMO — supervisor notificado";
         }
       });
+      return;
+    }
+    if (state.freeScanActive) {
+      wireScannerInput((input) => submitFreeScanReading(input), "Captura manual · escriba y Enter");
     }
   }
 

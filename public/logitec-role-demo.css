@@ -997,4 +997,79 @@ body.mobile-emulation-active #focusModeBtn,
 @media (max-width: 640px) {
   .director-view-bar-actions { grid-template-columns: 1fr; }
 }
+/* ===== V14 scanner + provisional capture ===== */
+.scan-active-banner {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-dark);
+}
+.scan-handheld-help {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.scan-engine-shell {
+  display: flex;
+  flex-direction: column;
+}
+.operator-free-scan-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.free-scan-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.free-scan-declare-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 2fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.compact-field span {
+  font-size: 0.74rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.field-grow { min-width: 0; }
+.free-scan-submit-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.free-scan-readings-wrap { overflow-x: auto; }
+.free-scan-readings code {
+  font-size: 0.78rem;
+  word-break: break-all;
+}
+.provisional-evidence-list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 0.76rem;
+}
+.provisional-captures-table td { vertical-align: top; }
+.provisional-status-select {
+  min-width: 190px;
+  min-height: 34px;
+  font-size: 0.76rem;
+}
+body.mobile-emulation-active .free-scan-shell,
+body.mobile-emulation-active .operator-handheld-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+body.mobile-emulation-active .scan-engine-shell { order: 1; }
+body.mobile-emulation-active .free-scan-evidence { order: 2; }
+body.mobile-emulation-active .free-scan-actions-panel { order: 3; }
+body.mobile-emulation-active .free-scan-declare-grid {
+  grid-template-columns: 1fr;
+}
 /* ===== /focus mode ===== */
