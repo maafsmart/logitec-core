@@ -865,22 +865,8 @@
   function controlCenter() {
     const locs = aggregateLocations().slice(0, 5);
     const projs = aggregateProjects().slice(0, 5);
-    const pending = state.tasks.filter((t) => t.status === "pending").length;
-    return `<header class="cc-hero"><h2 class="cc-title">Modo concentración · Centro de Control</h2><p class="cc-tagline">Vista ejecutiva · clientes/proyectos principales · operación general</p></header>
+    return `<header class="cc-hero"><h2 class="cc-title">Centro de Control</h2><p class="cc-tagline">Resumen del inventario demo · READ-ONLY</p></header>
       ${kpis()}
-      <div class="grid-2">
-        <div class="card-panel"><h4>Operación <span class="badge demo-flow">EJEMPLO DE FLUJO</span></h4>
-          <p class="operational-table-meta">Pendientes: ${pending} · En proceso: ${state.tasks.filter((t) => t.status === "in_progress").length}</p>
-        </div>
-        <div class="card-panel"><h4>Flujo físico Buffer</h4>
-          <ol class="pipeline-flow pipeline-flow-static" role="list" aria-label="Etapas del flujo físico Buffer">
-            <li class="pipeline-indicator done" role="listitem">Recepción</li>
-            <li class="pipeline-indicator active" role="listitem" aria-current="step">Buffer entrada</li>
-            <li class="pipeline-indicator" role="listitem">Acomodo</li>
-            <li class="pipeline-indicator" role="listitem">Ubicación final</li>
-          </ol>
-        </div>
-      </div>
       <div class="grid-2">
         <div class="card-panel"><h4>Principales ubicaciones</h4>
           <table class="data-table"><thead><tr><th>Ubicación</th><th>Piezas</th><th>Registros</th></tr></thead><tbody>${locs
