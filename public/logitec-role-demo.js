@@ -1451,6 +1451,7 @@
   function movementsView() {
     if (state.role === "CLIENT") return clientMovementsView();
     if (state.role === "ADMIN") return adminMovementsView();
+    if (state.role === "SUPERVISOR") return supervisorMovementsView();
     if (state.dataSource === "EXCEL" || !state.movements.length) {
       return `<div class="module-screen-header"><h3>Movimientos / Trazabilidad</h3><p class="module-lead">Consulta de historial físico</p></div>
         <div class="card-panel ops-message warn">La fuente Excel no contiene historial de movimientos.</div>`;
@@ -1511,19 +1512,48 @@
       .join("")}</ol>`;
   }
 
-  function renderAdminProvisionalReviewControls(capture) {
+  function renderDualTraceFilterBar(currentFilter) {
+    const filterButtons = ["all", "official", "physical"]
+      .map(
+        (id) =>
+          `<button type="button" class="btn-secondary btn-compact admin-trace-filter-btn${
+            currentFilter === id ? " active" : ""
+          }" data-admin-trace-filter="${esc(id)}">${
+            id === "all" ? "TODO" : id === "official" ? "OFICIAL" : "FÍSICA REPORTADA"
+          }</button>`
+      )
+      .join("");
+    return `<div class="card-panel admin-trace-filter-bar dual-trace-filter-bar">
+      <span class="client-field-label">Mostrar</span>
+      <div class="admin-trace-filter-buttons">${filterButtons}</div>
+    </div>`;
+  }
+
+  function renderProvisionalReviewControls(
+    capture,
+    {
+      controlLabel = "Resolver captura",
+      controlMeta = "Autoridad operativa · validación ≠ registro oficial · misma captura en Pendientes de supervisión"
+    } = {}
+  ) {
     if (!canReviewProvisionalCapture()) return "";
     const statusOptions = PROVISIONAL_STATUSES.map(
       (s) => `<option value="${esc(s)}"${capture.status === s ? " selected" : ""}>${esc(s)}</option>`
     ).join("");
-    return `<div class="admin-provisional-review-controls">
-      <span class="client-field-label">Resolver administrativamente</span>
+    return `<div class="admin-provisional-review-controls provisional-review-controls">
+      <span class="client-field-label">${esc(controlLabel)}</span>
       <select class="provisional-status-select" data-provisional-status="${esc(capture.id)}">${statusOptions}</select>
-      <p class="operational-table-meta">PENDIENTE DE SUPERVISIÓN · resoluble por Supervisor o Administrador · validación ≠ registro oficial</p>
+      <p class="operational-table-meta">${esc(controlMeta)}</p>
     </div>`;
   }
 
-  function renderAdminProvisionalCaptureCard(capture) {
+  function renderProvisionalCaptureCard(
+    capture,
+    {
+      reviewControlLabel,
+      reviewControlMeta
+    } = {}
+  ) {
     const meta = captureReadingMetadataSummary(capture);
     const physicalLocation = clientCapturePhysicalLocation(capture);
     const officialLocation = clientCaptureOfficialLocation(capture);
@@ -1569,8 +1599,27 @@
         <span class="client-field-label">Historial de revisiones</span>
         ${renderReviewHistoryList(capture)}
       </div>
-      ${renderAdminProvisionalReviewControls(capture)}
+      ${renderProvisionalReviewControls(capture, {
+        controlLabel: reviewControlLabel,
+        controlMeta: reviewControlMeta
+      })}
     </article>`;
+  }
+
+  function renderAdminProvisionalCaptureCard(capture) {
+    return renderProvisionalCaptureCard(capture, {
+      reviewControlLabel: "Resolver administrativamente",
+      reviewControlMeta:
+        "PENDIENTE DE SUPERVISIÓN · resoluble por Supervisor o Administrador · validación ≠ registro oficial"
+    });
+  }
+
+  function renderSupervisorProvisionalCaptureCard(capture) {
+    return renderProvisionalCaptureCard(capture, {
+      reviewControlLabel: "Resolver captura",
+      reviewControlMeta:
+        "Autoridad operativa Supervisor · validación ≠ registro oficial · misma captura que Pendientes de supervisión"
+    });
   }
 
   function renderAdminOfficialTraceBlock() {
@@ -1593,21 +1642,40 @@
         .join("")}</tbody></table></div>`;
   }
 
+  function supervisorMovementsView() {
+    const filter = state.adminTraceFilter || "all";
+    const captures = state.provisionalCaptures;
+    const showOfficial = filter === "all" || filter === "official";
+    const showPhysical = filter === "all" || filter === "physical";
+    const physicalBlock = showPhysical
+      ? `<div class="module-screen-header supervisor-physical-trace-header"><h4>Realidad física reportada</h4>
+          <p class="module-lead">Capturas provisionales operativas · consulta transversal · no constituye movimiento oficial</p></div>
+        ${
+          captures.length
+            ? `<div class="client-provisional-cards">${captures
+                .map((capture) => renderSupervisorProvisionalCaptureCard(capture))
+                .join("")}</div>`
+            : `<div class="card-panel ops-message">Sin capturas provisionales en esta sesión DEMO.</div>`
+        }`
+      : "";
+    const officialBlock = showOfficial
+      ? `<div class="module-screen-header supervisor-official-trace-header"><h4>Trazabilidad oficial</h4>
+          <p class="module-lead">Movimientos registrados oficialmente cuando la fuente los contenga · rol interno LOGITEC</p></div>
+        ${renderAdminOfficialTraceBlock()}`
+      : "";
+    return `<div class="module-screen-header"><h3>Movimientos / Trazabilidad</h3>
+      <p class="module-lead">Consulta transversal · trazabilidad dual · autoridad operativa Supervisor · DEMO READ-ONLY</p></div>
+      <div class="card-panel ops-message warn">DEMO READ-ONLY · la validación no modifica inventario</div>
+      ${renderDualTraceFilterBar(filter)}
+      ${physicalBlock}
+      ${officialBlock}`;
+  }
+
   function adminMovementsView() {
     const filter = state.adminTraceFilter || "all";
     const captures = state.provisionalCaptures;
     const showOfficial = filter === "all" || filter === "official";
     const showPhysical = filter === "all" || filter === "physical";
-    const filterButtons = ["all", "official", "physical"]
-      .map(
-        (id) =>
-          `<button type="button" class="btn-secondary btn-compact admin-trace-filter-btn${
-            filter === id ? " active" : ""
-          }" data-admin-trace-filter="${esc(id)}">${
-            id === "all" ? "TODO" : id === "official" ? "OFICIAL" : "FÍSICA REPORTADA"
-          }</button>`
-      )
-      .join("");
     const physicalBlock = showPhysical
       ? `<div class="module-screen-header admin-physical-trace-header"><h4>Realidad física reportada</h4>
           <p class="module-lead">Alcance global · incluye ambiguas · FREE_TO_SALE · Sin proyecto · no constituye movimiento oficial</p></div>
@@ -1626,10 +1694,7 @@
       : "";
     return `<div class="module-screen-header"><h3>Movimientos / Trazabilidad</h3>
       <p class="module-lead">Centro administrativo superior · trazabilidad dual · validación jerárquica · DEMO READ-ONLY</p></div>
-      <div class="card-panel admin-trace-filter-bar">
-        <span class="client-field-label">Mostrar</span>
-        <div class="admin-trace-filter-buttons">${filterButtons}</div>
-      </div>
+      ${renderDualTraceFilterBar(filter)}
       ${physicalBlock}
       ${officialBlock}`;
   }
