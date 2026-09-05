@@ -225,7 +225,9 @@
     freeScanAnchor: null,
     provisionalCaptures: [],
     provisionalCaptureSeq: 0,
-    demoSupervisorActorId: "SUPERVISOR_DEMO"
+    demoSupervisorActorId: "SUPERVISOR_DEMO",
+    demoAdminActorId: "ADMIN_DEMO",
+    adminTraceFilter: "all"
   };
 
   const app = document.getElementById("app");
@@ -312,6 +314,8 @@
     state.provisionalCaptures = [];
     state.provisionalCaptureSeq = 0;
     state.demoSupervisorActorId = "SUPERVISOR_DEMO";
+    state.demoAdminActorId = "ADMIN_DEMO";
+    state.adminTraceFilter = "all";
     document.body.classList.remove("focus-mode");
     syncConcentrationOverlay();
     syncSupervisorOperatorModeUi();
@@ -412,13 +416,21 @@
     if (state.role === "SUPERVISOR" && state.operatorMode) return "Supervisor trabajando como Operador";
     if (state.role === "SUPERVISOR") return "Supervisor";
     if (state.role === "OPERATOR") return "Operador";
+    if (state.role === "ADMIN") return "Administrador";
     return state.role;
+  }
+
+  function demoReviewerLabel(role) {
+    if (role === "ADMIN") return "Administrador";
+    if (role === "SUPERVISOR") return "Supervisor";
+    return role;
   }
 
   function currentDemoActorId() {
     // Production: actor identity must come from authenticated user id
     if (state.role === "OPERATOR") return "OPERATOR_DEMO";
     if (state.role === "SUPERVISOR") return state.demoSupervisorActorId || "SUPERVISOR_DEMO";
+    if (state.role === "ADMIN") return state.demoAdminActorId || "ADMIN_DEMO";
     return null;
   }
 
@@ -589,31 +601,49 @@
     const executor = demoExecutorLabel();
     const executorActorId = currentDemoActorId();
     const now = new Date().toISOString();
-    const supervisorSelf =
-      validateNow && state.role === "SUPERVISOR" && !state.operatorMode && executorActorId;
-    const reviewerActorId = supervisorSelf ? executorActorId : null;
-    return {
+    const canSelfValidateNow =
+      validateNow &&
+      (state.role === "SUPERVISOR" || state.role === "ADMIN") &&
+      !state.operatorMode &&
+      executorActorId;
+    const status = validateNow ? "VALIDADO · PENDIENTE DE REGISTRO" : "PENDIENTE DE SUPERVISIÓN";
+    const capture = {
       id: nextProvisionalCaptureId(),
-      status: validateNow ? "VALIDADO · PENDIENTE DE REGISTRO" : "PENDIENTE DE SUPERVISIÓN",
+      status,
       declaredAction: action.label,
       declaredActionId: action.id,
       executor,
       executorRole: state.role,
       executorActorId,
       executorOperatorMode: Boolean(state.operatorMode),
-      reviewer: supervisorSelf ? "Supervisor" : null,
-      reviewerActorId,
-      reviewType:
-        supervisorSelf && executorActorId === reviewerActorId
-          ? "Autovalidación de Supervisor"
-          : null,
+      reviewer: null,
+      reviewerActorId: null,
+      reviewType: null,
+      reviewHistory: [],
       device: "Dispositivo demo",
       physicalStartedAt: session.startedAt,
       physicalEndedAt: now,
       observation: String(session.observation || "").trim(),
       readings: session.readings.map((r) => ({ ...r })),
-      adminUpdatedAt: validateNow ? now : null
+      adminUpdatedAt: null
     };
+    if (canSelfValidateNow) {
+      const reviewer = demoReviewerLabel(state.role);
+      const reviewType = reviewTypeForStatusChange(capture, executorActorId, state.role, status);
+      capture.reviewer = reviewer;
+      capture.reviewerActorId = executorActorId;
+      capture.reviewType = reviewType;
+      capture.adminUpdatedAt = now;
+      appendReviewHistory(capture, {
+        reviewer,
+        reviewerRole: state.role,
+        reviewerActorId: executorActorId,
+        reviewType,
+        status,
+        at: now
+      });
+    }
+    return capture;
   }
 
   function finalizeProvisionalCapture(capture) {
@@ -628,6 +658,7 @@
   function sendProvisionalCapture() {
     const session = state.freeScanSession;
     if (!session || !session.readings.length) return;
+    if (state.role === "ADMIN" && !isPhysicalFloorAction(session.declaredAction)) return;
     if (state.role === "SUPERVISOR" && !state.operatorMode && !isPhysicalFloorAction(session.declaredAction)) {
       return;
     }
@@ -637,39 +668,72 @@
   function validateProvisionalCaptureNow() {
     const session = state.freeScanSession;
     if (!session || !session.readings.length) return;
-    if (state.role !== "SUPERVISOR" || state.operatorMode) return;
+    if (state.operatorMode) return;
+    if (state.role !== "SUPERVISOR" && state.role !== "ADMIN") return;
     if (!isPhysicalFloorAction(session.declaredAction)) return;
     finalizeProvisionalCapture(buildProvisionalCaptureFromSession(session, { validateNow: true }));
   }
 
-  function supervisorReviewTypeForStatusChange(capture, reviewerActorId, nextStatus) {
+  function ensureReviewHistory(capture) {
+    if (!Array.isArray(capture.reviewHistory)) capture.reviewHistory = [];
+  }
+
+  function appendReviewHistory(capture, event) {
+    ensureReviewHistory(capture);
+    capture.reviewHistory.push({ ...event });
+  }
+
+  function reviewTypeForStatusChange(capture, reviewerActorId, reviewerRole, nextStatus) {
+    const isSelf =
+      capture.executorActorId && reviewerActorId && capture.executorActorId === reviewerActorId;
+    const prefix = reviewerRole === "ADMIN" ? "Administrador" : "Supervisor";
     if (nextStatus === "VALIDADO · PENDIENTE DE REGISTRO") {
       // Production: actor identity must come from authenticated user id
-      return capture.executorActorId && reviewerActorId && capture.executorActorId === reviewerActorId
-        ? "Autovalidación de Supervisor"
-        : "Validación de Supervisor";
+      return isSelf ? `Autovalidación de ${prefix}` : `Validación de ${prefix}`;
     }
     if (nextStatus === "REQUIERE ACLARACIÓN") {
-      return "Revisión de Supervisor · requiere aclaración";
+      return `Revisión de ${prefix} · requiere aclaración`;
     }
     if (nextStatus === "RECHAZADO ADMINISTRATIVAMENTE") {
-      return "Rechazo administrativo de Supervisor";
+      return `Rechazo administrativo de ${prefix}`;
     }
     return null;
   }
 
+  function supervisorReviewTypeForStatusChange(capture, reviewerActorId, nextStatus) {
+    return reviewTypeForStatusChange(capture, reviewerActorId, "SUPERVISOR", nextStatus);
+  }
+
+  function canReviewProvisionalCapture() {
+    if (state.operatorMode) return false;
+    return state.role === "SUPERVISOR" || state.role === "ADMIN";
+  }
+
   function updateProvisionalCaptureStatus(captureId, nextStatus) {
     const capture = state.provisionalCaptures.find((c) => c.id === captureId);
-    if (!capture || state.role !== "SUPERVISOR" || state.operatorMode) return;
+    if (!capture || !canReviewProvisionalCapture()) return;
     if (!PROVISIONAL_STATUSES.includes(nextStatus)) return;
+    if (capture.status === nextStatus) return;
     const now = new Date().toISOString();
     const reviewerActorId = currentDemoActorId();
+    const reviewerRole = state.role;
+    const reviewer = demoReviewerLabel(reviewerRole);
+    const reviewType = reviewTypeForStatusChange(capture, reviewerActorId, reviewerRole, nextStatus);
     capture.status = nextStatus;
-    capture.reviewer = "Supervisor";
+    capture.reviewer = reviewer;
     capture.reviewerActorId = reviewerActorId;
+    capture.reviewType = reviewType || capture.reviewType;
     capture.adminUpdatedAt = now;
-    const reviewType = supervisorReviewTypeForStatusChange(capture, reviewerActorId, nextStatus);
-    if (reviewType) capture.reviewType = reviewType;
+    if (reviewType) {
+      appendReviewHistory(capture, {
+        reviewer,
+        reviewerRole,
+        reviewerActorId,
+        reviewType,
+        status: nextStatus,
+        at: now
+      });
+    }
     renderContent();
   }
 
@@ -1244,13 +1308,40 @@
   }
 
   function renderFreeScanActionsPanel(session, ctx) {
-    if (ctx === "admin") return "";
     const actionOptions = DECLARED_FLOOR_ACTIONS.map(
       (a) =>
         `<option value="${esc(a.id)}"${session.declaredAction === a.id ? " selected" : ""}>${esc(a.label)}</option>`
     ).join("");
     const hasReadings = session.readings.length > 0;
     const physical = isPhysicalFloorAction(session.declaredAction);
+    if (ctx === "admin") {
+      if (!physical) {
+        return `<div class="card-panel free-scan-actions-panel">
+          <div class="free-scan-declare-grid">
+            <label class="field compact-field"><span>Acción declarada</span>
+              <select id="freeScanDeclaredAction">${actionOptions}</select>
+            </label>
+          </div>
+          <p class="operational-table-meta">Modo consulta · identificación READ-ONLY · no genera captura operativa.</p>
+        </div>`;
+      }
+      return `<div class="card-panel free-scan-actions-panel">
+        <div class="free-scan-declare-grid">
+          <label class="field compact-field"><span>Acción declarada</span>
+            <select id="freeScanDeclaredAction">${actionOptions}</select>
+          </label>
+          <label class="field compact-field field-grow"><span>Observación (opcional)</span>
+            <input id="freeScanObservation" type="text" value="${esc(session.observation)}" placeholder="Contexto administrativo · contingencia" />
+          </label>
+        </div>
+        <div class="free-scan-submit-row">
+          <button type="button" class="btn-primary btn-compact" data-send-provisional${hasReadings ? "" : " disabled"}>GUARDAR PENDIENTE</button>
+          <button type="button" class="btn-success btn-compact" data-validate-provisional-now${hasReadings ? "" : " disabled"}>VALIDAR AHORA</button>
+          <button type="button" class="btn-secondary btn-compact" data-discard-free-scan>DESCARTAR CAPTURA</button>
+        </div>
+        <p class="operational-table-meta">VALIDAR AHORA · DEMO READ-ONLY · validación administrativa · no registra movimiento oficial</p>
+      </div>`;
+    }
     if (ctx === "supervisor" && !physical) {
       return `<div class="card-panel free-scan-actions-panel">
         <div class="free-scan-declare-grid">
@@ -1293,15 +1384,17 @@
   function roleFreeScanView() {
     const ctx = freeScanRoleContext();
     const session = ensureFreeScanSession();
-    const scannerMode = ctx === "admin" ? "admin-consult" : "free";
-    const footer =
-      ctx === "admin"
-        ? `<p class="ops-message">DEMO READ-ONLY · consulta administrativa · no modifica inventario</p>`
+    const adminConsult = ctx === "admin" && !isPhysicalFloorAction(session.declaredAction);
+    const scannerMode = adminConsult ? "admin-consult" : "free";
+    const footer = adminConsult
+      ? `<p class="ops-message">DEMO READ-ONLY · consulta administrativa · no modifica inventario</p>`
+      : ctx === "admin"
+        ? `<p class="ops-message">DEMO READ-ONLY · captura provisional en memoria · validación administrativa · no registra movimiento oficial</p>`
         : `<p class="ops-message">DEMO READ-ONLY · captura provisional en memoria · no modifica inventario</p>`;
     return `<div class="operator-handheld-shell free-scan-shell">
       ${renderScannerWorkspace({ mode: scannerMode })}
       <div class="card-panel free-scan-evidence">
-        <h4>${ctx === "admin" ? "Identificaciones de sesión" : `Lecturas acumuladas (${esc(session.readings.length)})`}</h4>
+        <h4>${adminConsult ? "Identificaciones de sesión" : `Lecturas acumuladas (${esc(session.readings.length)})`}</h4>
         ${renderFreeScanReadingsTable(session, ctx)}
       </div>
       ${renderFreeScanActionsPanel(session, ctx)}
@@ -1353,11 +1446,188 @@
 
   function movementsView() {
     if (state.role === "CLIENT") return clientMovementsView();
+    if (state.role === "ADMIN") return adminMovementsView();
     if (state.dataSource === "EXCEL" || !state.movements.length) {
       return `<div class="module-screen-header"><h3>Movimientos / Trazabilidad</h3><p class="module-lead">Consulta de historial físico</p></div>
         <div class="card-panel ops-message warn">La fuente Excel no contiene historial de movimientos.</div>`;
     }
     return `<div class="module-screen-header"><h3>Movimientos / Trazabilidad</h3></div><div class="card-panel"><table class="data-table">...</table></div>`;
+  }
+
+  function adminCaptureProjectDisplay(capture) {
+    const resolved = deriveCaptureProjectLabel(capture);
+    if (resolved) return resolved;
+    const labels = new Set();
+    (capture.readings || []).forEach((reading) => {
+      const readingProject = deriveReadingProjectLabel(reading);
+      if (readingProject) labels.add(readingProject);
+      stockRowsMatchingReading(reading).forEach((row) => {
+        labels.add(projectLabelFromStockRow(row) || "Sin proyecto");
+      });
+    });
+    if (labels.size === 1) return [...labels][0];
+    if (labels.size > 1) return `Ambiguo · ${[...labels].join(" · ")}`;
+    return "Sin proyecto identificable";
+  }
+
+  function captureReadingMetadataSummary(capture) {
+    const sku = new Set();
+    const sap = new Set();
+    const pedido = new Set();
+    const partida = new Set();
+    const serie = new Set();
+    (capture.readings || []).forEach((reading) => {
+      if (reading.product) sku.add(String(reading.product));
+      if (reading.sap) sap.add(String(reading.sap));
+      if (reading.pedido) pedido.add(String(reading.pedido));
+      if (reading.partida) partida.add(String(reading.partida));
+      if (String(reading.classification || "").toUpperCase().startsWith("SERIE")) {
+        serie.add(String(reading.normalized || reading.raw || ""));
+      }
+    });
+    return {
+      sku: sku.size ? [...sku].join(" · ") : "—",
+      sap: sap.size ? [...sap].join(" · ") : "—",
+      pedido: pedido.size ? [...pedido].join(" · ") : "—",
+      partida: partida.size ? [...partida].join(" · ") : "—",
+      serie: serie.size ? [...serie].join(" · ") : "—"
+    };
+  }
+
+  function renderReviewHistoryList(capture) {
+    ensureReviewHistory(capture);
+    if (!capture.reviewHistory.length) return `<p class="operational-table-meta">Sin revisiones administrativas registradas.</p>`;
+    return `<ol class="review-history-list">${capture.reviewHistory
+      .map(
+        (event) =>
+          `<li>${esc(new Date(event.at).toLocaleString("es-MX"))} · ${esc(event.reviewer)} · ${esc(
+            event.reviewType
+          )} · ${esc(event.status)}</li>`
+      )
+      .join("")}</ol>`;
+  }
+
+  function renderAdminProvisionalReviewControls(capture) {
+    if (!canReviewProvisionalCapture()) return "";
+    const statusOptions = PROVISIONAL_STATUSES.map(
+      (s) => `<option value="${esc(s)}"${capture.status === s ? " selected" : ""}>${esc(s)}</option>`
+    ).join("");
+    return `<div class="admin-provisional-review-controls">
+      <span class="client-field-label">Resolver administrativamente</span>
+      <select class="provisional-status-select" data-provisional-status="${esc(capture.id)}">${statusOptions}</select>
+      <p class="operational-table-meta">PENDIENTE DE SUPERVISIÓN · resoluble por Supervisor o Administrador · validación ≠ registro oficial</p>
+    </div>`;
+  }
+
+  function renderAdminProvisionalCaptureCard(capture) {
+    const meta = captureReadingMetadataSummary(capture);
+    const physicalLocation = clientCapturePhysicalLocation(capture);
+    const officialLocation = clientCaptureOfficialLocation(capture);
+    const locationBlock =
+      physicalLocation && officialLocation && physicalLocation !== officialLocation
+        ? `<p><span class="client-field-label">Ubicación física reportada</span> ${esc(physicalLocation)}</p>
+           <p><span class="client-field-label">Ubicación oficial</span> ${esc(officialLocation)}</p>`
+        : physicalLocation
+          ? `<p><span class="client-field-label">Ubicación física reportada</span> ${esc(physicalLocation)}</p>`
+          : officialLocation
+            ? `<p><span class="client-field-label">Ubicación oficial</span> ${esc(officialLocation)}</p>`
+            : "";
+    return `<article class="admin-provisional-card client-provisional-card">
+      <header class="client-provisional-card-head">
+        <strong>${esc(capture.id)}</strong>
+        <span class="badge client-provisional-badge">${esc(capture.status)}</span>
+      </header>
+      <p class="client-pol002-disclaimer">REALIDAD FÍSICA REPORTADA · NO CONSTITUYE MOVIMIENTO OFICIAL</p>
+      <div class="admin-provisional-meta-grid">
+        <p><span class="client-field-label">Acción</span> ${esc(capture.declaredAction)}</p>
+        <p><span class="client-field-label">Proyecto</span> ${esc(adminCaptureProjectDisplay(capture))}</p>
+        <p><span class="client-field-label">Ejecutor</span> ${esc(capture.executor)} · ${esc(capture.executorRole)}</p>
+        <p><span class="client-field-label">Hora física</span> ${esc(
+          new Date(capture.physicalStartedAt).toLocaleString("es-MX")
+        )} → ${esc(new Date(capture.physicalEndedAt).toLocaleString("es-MX"))}</p>
+        <p><span class="client-field-label">SKU</span> ${esc(meta.sku)}</p>
+        <p><span class="client-field-label">SAP</span> ${esc(meta.sap)}</p>
+        <p><span class="client-field-label">Pedido</span> ${esc(meta.pedido)}</p>
+        <p><span class="client-field-label">Partida</span> ${esc(meta.partida)}</p>
+        <p><span class="client-field-label">Serie</span> ${esc(meta.serie)}</p>
+        ${locationBlock}
+        <p><span class="client-field-label">Último revisor</span> ${esc(capture.reviewer || "—")}</p>
+        <p><span class="client-field-label">Tipo de revisión</span> ${esc(capture.reviewType || "—")}</p>
+        <p><span class="client-field-label">Hora administrativa</span> ${
+          capture.adminUpdatedAt ? esc(new Date(capture.adminUpdatedAt).toLocaleString("es-MX")) : "—"
+        }</p>
+      </div>
+      <div class="client-reading-block">
+        <span class="client-field-label">RAW / evidencia</span>
+        ${renderClientReadingEvidence(capture.readings)}
+      </div>
+      <div class="review-history-block">
+        <span class="client-field-label">Historial de revisiones</span>
+        ${renderReviewHistoryList(capture)}
+      </div>
+      ${renderAdminProvisionalReviewControls(capture)}
+    </article>`;
+  }
+
+  function renderAdminOfficialTraceBlock() {
+    if (state.dataSource === "EXCEL" || !state.movements.length) {
+      return `<div class="card-panel ops-message warn">La fuente Excel no contiene historial de movimientos oficiales.</div>`;
+    }
+    return `<div class="card-panel"><table class="data-table"><thead><tr>
+        <th>Fecha</th><th>Tipo</th><th>Referencia</th><th>Producto</th><th>Cant.</th>
+      </tr></thead><tbody>${state.movements
+        .slice(0, 50)
+        .map(
+          (m) => `<tr>
+            <td>${esc(m.date || m.createdAt || "—")}</td>
+            <td>${esc(m.type || "—")}</td>
+            <td>${esc(m.reference || "—")}</td>
+            <td>${esc(m.product || m.sku || "—")}</td>
+            <td>${esc(fmtQty(m.qty))}</td>
+          </tr>`
+        )
+        .join("")}</tbody></table></div>`;
+  }
+
+  function adminMovementsView() {
+    const filter = state.adminTraceFilter || "all";
+    const captures = state.provisionalCaptures;
+    const showOfficial = filter === "all" || filter === "official";
+    const showPhysical = filter === "all" || filter === "physical";
+    const filterButtons = ["all", "official", "physical"]
+      .map(
+        (id) =>
+          `<button type="button" class="btn-secondary btn-compact admin-trace-filter-btn${
+            filter === id ? " active" : ""
+          }" data-admin-trace-filter="${esc(id)}">${
+            id === "all" ? "TODO" : id === "official" ? "OFICIAL" : "FÍSICA REPORTADA"
+          }</button>`
+      )
+      .join("");
+    const physicalBlock = showPhysical
+      ? `<div class="module-screen-header admin-physical-trace-header"><h4>Realidad física reportada</h4>
+          <p class="module-lead">Alcance global · incluye ambiguas · FREE_TO_SALE · Sin proyecto · no constituye movimiento oficial</p></div>
+        ${
+          captures.length
+            ? `<div class="client-provisional-cards">${captures
+                .map((capture) => renderAdminProvisionalCaptureCard(capture))
+                .join("")}</div>`
+            : `<div class="card-panel ops-message">Sin capturas provisionales en esta sesión DEMO.</div>`
+        }`
+      : "";
+    const officialBlock = showOfficial
+      ? `<div class="module-screen-header admin-official-trace-header"><h4>Trazabilidad oficial</h4>
+          <p class="module-lead">Movimientos registrados oficialmente cuando la fuente los contenga</p></div>
+        ${renderAdminOfficialTraceBlock()}`
+      : "";
+    return `<div class="module-screen-header"><h3>Movimientos / Trazabilidad</h3>
+      <p class="module-lead">Centro administrativo superior · trazabilidad dual · validación jerárquica · DEMO READ-ONLY</p></div>
+      <div class="card-panel admin-trace-filter-bar">
+        <span class="client-field-label">Mostrar</span>
+        <div class="admin-trace-filter-buttons">${filterButtons}</div>
+      </div>
+      ${physicalBlock}
+      ${officialBlock}`;
   }
 
   function disabledModule(title, message) {
@@ -1670,6 +1940,13 @@
           <p><span class="client-field-label">Supervisor / revisor</span> ${esc(capture.reviewer || "—")}</p>
           <p><span class="client-field-label">Tipo de revisión</span> ${esc(capture.reviewType || "—")}</p>
           ${adminTime}
+          ${
+            (capture.reviewHistory || []).length > 1
+              ? `<div class="review-history-block"><span class="client-field-label">Historial de revisiones</span>${renderReviewHistoryList(
+                  capture
+                )}</div>`
+              : ""
+          }
         </section>
       </div>
     </article>`;
@@ -1736,6 +2013,103 @@
       ${officialBlock}`;
   }
 
+  function clientReportsView() {
+    // Production: report scope and exports must be enforced server-side from authenticated client ownership.
+    const captures = clientVisibleProvisionalCaptures();
+    const inventoryRows = filteredStock().slice(0, 100);
+    const exportDisabled =
+      '<button type="button" class="btn-secondary btn-compact" disabled title="Disponible en integración oficial">EXPORTAR · disponible en integración oficial</button>';
+    const inventoryTable = inventoryRows.length
+      ? `<table class="data-table"><thead><tr>
+          <th>Proyecto</th><th>SKU</th><th>Descripción</th><th>Piezas</th><th>Ubicación</th><th>Pedido</th><th>SAP</th><th>Partida</th>
+        </tr></thead><tbody>${inventoryRows
+          .map(
+            (r) => `<tr>
+              <td>${esc(r.project?.code || r.project?.name || "—")}</td>
+              <td>${esc(r.product?.sku)}</td>
+              <td>${esc(r.product?.name)}</td>
+              <td>${esc(fmtQty(r.qty))}</td>
+              <td>${esc(r.location?.code)}</td>
+              <td>${esc(r.pedido || "—")}</td>
+              <td>${esc(r.sap || "—")}</td>
+              <td>${esc(r.partida || "—")}</td>
+            </tr>`
+          )
+          .join("")}</tbody></table>`
+      : `<p class="operational-table-meta">Sin existencias autorizadas en la fuente actual.</p>`;
+    const officialMovements =
+      state.dataSource === "EXCEL" || !state.movements.length
+        ? `<p class="operational-table-meta">No disponible en la fuente actual de la DEMO.</p>`
+        : `<table class="data-table"><thead><tr>
+            <th>Fecha</th><th>Tipo</th><th>Referencia</th><th>Producto</th><th>Cant.</th>
+          </tr></thead><tbody>${state.movements
+            .slice(0, 50)
+            .map(
+              (m) => `<tr>
+                <td>${esc(m.date || m.createdAt || "—")}</td>
+                <td>${esc(m.type || "—")}</td>
+                <td>${esc(m.reference || "—")}</td>
+                <td>${esc(m.product || m.sku || "—")}</td>
+                <td>${esc(fmtQty(m.qty))}</td>
+              </tr>`
+            )
+            .join("")}</tbody></table>`;
+    const physicalRows = captures
+      .map((capture) => {
+        const physicalLocation = clientCapturePhysicalLocation(capture) || "—";
+        const officialLocation = clientCaptureOfficialLocation(capture) || "—";
+        return `<tr>
+          <td>${esc(capture.declaredAction)}</td>
+          <td>${esc(physicalLocation)}</td>
+          <td>${esc(officialLocation)}</td>
+          <td>${esc(capture.status)}</td>
+          <td>${esc(capture.executor)}</td>
+          <td>${esc(capture.reviewer || "—")}</td>
+          <td>${esc(new Date(capture.physicalStartedAt).toLocaleString("es-MX"))}</td>
+          <td>${capture.adminUpdatedAt ? esc(new Date(capture.adminUpdatedAt).toLocaleString("es-MX")) : "—"}</td>
+        </tr>`;
+      })
+      .join("");
+    const physicalTable = captures.length
+      ? `<table class="data-table"><thead><tr>
+          <th>Acción</th><th>Ubic. física</th><th>Ubic. oficial</th><th>Estado</th><th>Ejecutor</th><th>Revisor</th><th>Hora física</th><th>Hora admin.</th>
+        </tr></thead><tbody>${physicalRows}</tbody></table>`
+      : `<p class="operational-table-meta">Sin actividad física provisional autorizada en esta sesión.</p>`;
+    const pending = captures.filter((c) => c.status === "PENDIENTE DE SUPERVISIÓN");
+    const clarification = captures.filter((c) => c.status === "REQUIERE ACLARACIÓN");
+    const validated = captures.filter((c) => c.status === "VALIDADO · PENDIENTE DE REGISTRO");
+    const rejected = captures.filter((c) => c.status === "RECHAZADO ADMINISTRATIVAMENTE");
+    return `<div class="module-screen-header"><h3>Centro de reportes</h3>
+      <p class="module-lead">Reportes autorizados · alcance Cliente · READ-ONLY · exportación en integración oficial</p></div>
+      <div class="client-reports-grid">
+        <section class="card-panel client-report-section">
+          <h4>Inventario actual</h4>
+          ${inventoryTable}
+          <div class="client-report-export-row">${exportDisabled}</div>
+        </section>
+        <section class="card-panel client-report-section">
+          <h4>Movimientos oficiales</h4>
+          ${officialMovements}
+          <div class="client-report-export-row">${exportDisabled}</div>
+        </section>
+        <section class="card-panel client-report-section">
+          <h4>Trazabilidad física reportada</h4>
+          ${physicalTable}
+          <div class="client-report-export-row">${exportDisabled}</div>
+        </section>
+        <section class="card-panel client-report-section">
+          <h4>Diferencias y pendientes</h4>
+          <ul class="client-report-pending-list">
+            <li>Pendiente de supervisión: ${esc(pending.length)}</li>
+            <li>Requiere aclaración: ${esc(clarification.length)}</li>
+            <li>Validado pendiente de registro: ${esc(validated.length)}</li>
+            <li>Rechazado administrativamente: ${esc(rejected.length)}</li>
+          </ul>
+          <div class="client-report-export-row">${exportDisabled}</div>
+        </section>
+      </div>`;
+  }
+
   function clientResumen() {
     const projs = aggregateProjects().slice(0, 6);
     return `<header class="cc-hero"><h2 class="cc-title">Resumen de inventario</h2><p class="cc-tagline">Inventario autorizado de sus proyectos · consulta READ-ONLY</p></header>
@@ -1753,7 +2127,7 @@
     const projs = aggregateProjects().slice(0, 5);
     return `<header class="cc-hero"><h2 class="cc-title">Centro de Control</h2><p class="cc-tagline">Resumen del inventario demo · READ-ONLY</p></header>
       <div class="card-panel operator-free-scan-entry">
-        <p class="operational-table-meta">Scanner libre de consulta · identificación READ-ONLY · sin captura operativa</p>
+        <p class="operational-table-meta">Scanner transversal · consulta READ-ONLY o documentación física provisional · validación administrativa</p>
         <button type="button" class="btn-secondary btn-compact" data-start-free-scan>ESCANEO LIBRE</button>
       </div>
       ${kpis()}
@@ -1827,6 +2201,7 @@
     if (m === "prices") return disabledModule("Precios", "Solo lectura en entorno demo.");
     if (m === "imports") return disabledModule("Importaciones", "Disponible en sistema oficial · deshabilitado en demo.");
     if (m === "users") return disabledModule("Usuarios", "Administración disponible en sistema oficial.");
+    if (m === "reports" && state.role === "CLIENT") return clientReportsView();
     if (m === "reports" || m === "exports") return disabledModule(m === "reports" ? "Reportes" : "Exportaciones", "Exportes y reportes del WMS real · READ-ONLY en demo.");
     if (m === "config") return disabledModule("Configuración", "Reglas operativas LOGITEC · no editable en demo.");
     return controlCenter();
@@ -2087,6 +2462,12 @@
     app.querySelectorAll("[data-provisional-status]").forEach((sel) => {
       sel.addEventListener("change", () => {
         updateProvisionalCaptureStatus(sel.getAttribute("data-provisional-status"), sel.value);
+      });
+    });
+    app.querySelectorAll("[data-admin-trace-filter]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.adminTraceFilter = btn.getAttribute("data-admin-trace-filter") || "all";
+        renderContent();
       });
     });
     document.getElementById("freeScanDeclaredAction")?.addEventListener("change", (event) => {

@@ -51,12 +51,22 @@ type Capture = {
 };
 
 const actorIdSrc = sliceFunction(js, "currentDemoActorId");
-const reviewTypeSrc = sliceFunction(js, "supervisorReviewTypeForStatusChange");
+const demoReviewerLabelSrc = sliceFunction(js, "demoReviewerLabel");
+const ensureReviewHistorySrc = sliceFunction(js, "ensureReviewHistory");
+const appendReviewHistorySrc = sliceFunction(js, "appendReviewHistory");
+const reviewTypeSrc = sliceFunction(js, "reviewTypeForStatusChange");
+const canReviewSrc = sliceFunction(js, "canReviewProvisionalCapture");
+const supervisorReviewTypeSrc = sliceFunction(js, "supervisorReviewTypeForStatusChange");
 const updateSrc = sliceFunction(js, "updateProvisionalCaptureStatus");
 
 const makeApply = new Function(
   `${actorIdSrc}
+${demoReviewerLabelSrc}
+${ensureReviewHistorySrc}
+${appendReviewHistorySrc}
 ${reviewTypeSrc}
+${canReviewSrc}
+${supervisorReviewTypeSrc}
 ${updateSrc}
 const PROVISIONAL_STATUSES = [
   "PENDIENTE DE SUPERVISIÓN",
@@ -68,11 +78,13 @@ var state = {
   role: "SUPERVISOR",
   operatorMode: false,
   provisionalCaptures: [],
-  demoSupervisorActorId: "SUPERVISOR_DEMO"
+  demoSupervisorActorId: "SUPERVISOR_DEMO",
+  demoAdminActorId: "ADMIN_DEMO"
 };
 function renderContent() {}
 return function apply(capture, nextStatus, reviewerActorOverride) {
   if (reviewerActorOverride) state.demoSupervisorActorId = reviewerActorOverride;
+  if (!capture.reviewHistory) capture.reviewHistory = [];
   state.provisionalCaptures = [structuredClone(capture)];
   updateProvisionalCaptureStatus(capture.id, nextStatus);
   return state.provisionalCaptures[0];
@@ -99,8 +111,8 @@ function baseCapture(overrides: Partial<Capture> = {}): Capture {
   };
 }
 
-test("cache-buster v=15.2", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=15\.2/);
+test("cache-buster v=15.3", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=15\.3/);
 });
 
 test("Supervisor A ejecuta + Supervisor A valida → Autovalidación", () => {

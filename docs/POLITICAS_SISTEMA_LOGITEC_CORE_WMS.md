@@ -120,12 +120,18 @@ El motor de escaneo es una capacidad transversal de LOGITEC CORE WMS. La posibil
 
 ### Matriz por rol
 
-| Rol | Leer / identificar | Captura provisional | Autorizar / validar | Inventario |
-|-----|-------------------|---------------------|---------------------|------------|
-| **Operador** | sí | sí | no | solo mediante tarea autorizada |
-| **Supervisor** | sí | sí | sí (regularizar conforme permisos) | no modifica stock en demo |
-| **Admin** | sí | no (consulta libre) | no | lectura no convierte en movimiento |
-| **Cliente** | no (scanner no disponible) | no | no | consulta READ-ONLY sin scanner |
+| Rol | Leer / identificar | Captura provisional | Validar | Autovalidar | Inventario |
+|-----|-------------------|---------------------|---------|-------------|------------|
+| **Operador** | sí | sí | no | no | solo mediante tarea autorizada |
+| **Supervisor** | sí | sí | sí | sí | conforme permisos/reglas |
+| **Admin** | sí | sí | sí | sí | autoridad administrativa; registro oficial en backend |
+| **Cliente** | no | no | no | no | consulta READ-ONLY |
+
+Supervisor o Administrador pueden validar una captura provisional ordinaria. No se requiere doble validación salvo política específica.
+
+La autovalidación se determina por identidad del actor, no por rol.
+
+Validación administrativa no equivale por sí misma a registro oficial de inventario.
 
 ### Autovalidación de Supervisor
 

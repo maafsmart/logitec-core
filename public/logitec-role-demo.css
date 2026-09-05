@@ -1184,4 +1184,40 @@ body.mobile-emulation-active .free-scan-declare-grid {
 }
 body.mobile-emulation-active .client-provisional-dual { grid-template-columns: 1fr; }
 body.mobile-emulation-active .client-physical-summary-grid { grid-template-columns: 1fr 1fr; }
+
+/* ===== V15.3 Admin trace + client reports ===== */
+.admin-trace-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.admin-trace-filter-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-trace-filter-btn.active { background: var(--accent-soft, #dbeafe); border-color: var(--accent, #2563eb); }
+.admin-provisional-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px 12px;
+  margin: 10px 0;
+}
+.review-history-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.76rem;
+}
+.review-history-block { margin-top: 10px; }
+.admin-provisional-review-controls { margin-top: 12px; }
+.client-reports-grid {
+  display: grid;
+  gap: 14px;
+}
+.client-report-section h4 { margin: 0 0 10px; }
+.client-report-export-row { margin-top: 10px; }
+.client-report-pending-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.84rem;
+}
+body.mobile-emulation-active .admin-provisional-meta-grid { grid-template-columns: 1fr; }
 /* ===== /focus mode ===== */

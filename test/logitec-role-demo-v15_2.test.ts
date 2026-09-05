@@ -100,9 +100,9 @@ function capture(readings: Capture["readings"]): Capture {
   };
 }
 
-test("cache-buster v=15.2", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=15\.2/);
-  assert.match(html, /logitec-role-demo\.css\?v=15\.2/);
+test("cache-buster v=15.3", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=15\.3/);
+  assert.match(html, /logitec-role-demo\.css\?v=15\.3/);
 });
 
 test("fail-closed evalúa todas las coincidencias antes de filtrar autorizables", () => {

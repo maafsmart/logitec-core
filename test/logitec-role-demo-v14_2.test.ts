@@ -6,8 +6,8 @@ const html = readFileSync(new URL("../public/logitec-role-demo.html", import.met
 const js = readFileSync(new URL("../public/logitec-role-demo.js", import.meta.url), "utf8");
 const policies = readFileSync(new URL("../docs/POLITICAS_SISTEMA_LOGITEC_CORE_WMS.md", import.meta.url), "utf8");
 
-test("cache-buster v=15.2", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=15\.2/);
+test("cache-buster v=15.3", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=15\.3/);
 });
 
 test("POL-003 registrada como APROBADA", () => {
@@ -29,10 +29,11 @@ test("Supervisor centro operacion expone ESCANEO LIBRE directo", () => {
   assert.match(js, /function supervisorOperationCenter\([\s\S]*data-start-free-scan>ESCANEO LIBRE/);
 });
 
-test("Admin centro control expone scanner consulta READ-ONLY", () => {
+test("Admin centro control expone scanner consulta y captura física", () => {
   assert.match(js, /function controlCenter\([\s\S]*data-start-free-scan>ESCANEO LIBRE/);
   assert.match(js, /ESCÁNER LIBRE · CONSULTA ADMINISTRATIVA · READ-ONLY/);
-  assert.match(js, /function renderFreeScanActionsPanel\(session, ctx\) \{[\s\S]*if \(ctx === "admin"\) return "";/);
+  assert.match(js, /function renderFreeScanActionsPanel\(session, ctx\) \{[\s\S]*ctx === "admin"/);
+  assert.match(js, /GUARDAR PENDIENTE/);
 });
 
 test("Supervisor validar ahora registra autovalidacion", () => {
