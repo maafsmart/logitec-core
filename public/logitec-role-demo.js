@@ -19,9 +19,10 @@
     state.tab = tabForModule(navRoleKey(), moduleId);
     state.activeTaskId = null;
     state.taskFlow = null;
-    if (moduleId !== "tasks") {
+    if (state.freeScanActive && state.freeScanAnchor !== moduleId) {
       state.freeScanActive = false;
       state.freeScanSession = null;
+      state.freeScanAnchor = null;
     }
     render();
   }
@@ -221,6 +222,7 @@
     supervisorReturnContext: null,
     freeScanActive: false,
     freeScanSession: null,
+    freeScanAnchor: null,
     provisionalCaptures: [],
     provisionalCaptureSeq: 0
   };
@@ -304,6 +306,7 @@
     state.supervisorReturnContext = null;
     state.freeScanActive = false;
     state.freeScanSession = null;
+    state.freeScanAnchor = null;
     state.provisionalCaptures = [];
     state.provisionalCaptureSeq = 0;
     document.body.classList.remove("focus-mode");
@@ -377,6 +380,7 @@
     state.taskFlow = null;
     state.freeScanActive = false;
     state.freeScanSession = null;
+    state.freeScanAnchor = null;
     unlockScanInput();
     state.scanLastMetrics = null;
     state.module = "tasks";
@@ -403,6 +407,7 @@
 
   function demoExecutorLabel() {
     if (state.role === "SUPERVISOR" && state.operatorMode) return "Supervisor trabajando como Operador";
+    if (state.role === "SUPERVISOR") return "Supervisor";
     if (state.role === "OPERATOR") return "Operador";
     return state.role;
   }
@@ -480,6 +485,54 @@
     return `CP-${String(state.provisionalCaptureSeq).padStart(4, "0")}`;
   }
 
+  function freeScanRoleContext() {
+    if (state.role === "ADMIN" && state.module === "control") return "admin";
+    if (state.role === "SUPERVISOR" && !state.operatorMode && state.module === "tasks") return "supervisor";
+    if (isOperatorExperience() && state.module === "tasks") return "operator";
+    return null;
+  }
+
+  function isPhysicalFloorAction(actionId) {
+    return Boolean(actionId) && actionId !== "consulta";
+  }
+
+  function lookupStockRow(classified) {
+    const norm = classified?.normalized;
+    if (!norm) return null;
+    const stock = state.stock || [];
+    switch (classified.classification) {
+      case "SKU":
+        return stock.find((r) => String(r.product?.sku || "").toUpperCase() === norm) || null;
+      case "UBICACIÓN":
+        return stock.find((r) => String(r.location?.code || "").toUpperCase() === norm) || null;
+      case "SAP":
+        return stock.find((r) => String(r.sap || "").toUpperCase() === norm) || null;
+      case "PEDIDO":
+        return stock.find((r) => String(r.pedido || "").toUpperCase() === norm) || null;
+      case "PARTIDA":
+        return stock.find((r) => String(r.partida || "").toUpperCase() === norm) || null;
+      case "SERIE":
+        return stock.find((r) => String(r.serialNumber || "").toUpperCase() === norm) || null;
+      default:
+        return null;
+    }
+  }
+
+  function enrichReadingFromClassification(classified) {
+    const row = lookupStockRow(classified);
+    return {
+      at: new Date().toISOString(),
+      raw: classified.raw,
+      normalized: classified.normalized,
+      classification: classificationDisplay(classified),
+      matchLabel: matchDisplay(classified),
+      product: row?.product?.sku || null,
+      productName: row?.product?.name || null,
+      location: row?.location?.code || null,
+      project: row?.project?.code || row?.project?.name || null
+    };
+  }
+
   function ensureFreeScanSession() {
     if (!state.freeScanSession) {
       state.freeScanSession = {
@@ -494,11 +547,13 @@
 
   function startFreeScanMode() {
     if (state.activeTaskId) return;
+    if (!freeScanRoleContext()) return;
     state.freeScanActive = true;
+    state.freeScanAnchor = state.module;
     state.freeScanSession = {
       startedAt: new Date().toISOString(),
       readings: [],
-      declaredAction: "consulta",
+      declaredAction: freeScanRoleContext() === "admin" ? "consulta" : "consulta",
       observation: ""
     };
     unlockScanInput();
@@ -508,6 +563,41 @@
   function discardFreeScanSession() {
     state.freeScanActive = false;
     state.freeScanSession = null;
+    state.freeScanAnchor = null;
+    unlockScanInput();
+    renderContent();
+  }
+
+  function buildProvisionalCaptureFromSession(session, { validateNow = false } = {}) {
+    const action = DECLARED_FLOOR_ACTIONS.find((a) => a.id === session.declaredAction) || DECLARED_FLOOR_ACTIONS[0];
+    const executor = demoExecutorLabel();
+    const now = new Date().toISOString();
+    const supervisorSelf =
+      validateNow && state.role === "SUPERVISOR" && !state.operatorMode;
+    return {
+      id: nextProvisionalCaptureId(),
+      status: validateNow ? "VALIDADO · PENDIENTE DE REGISTRO" : "PENDIENTE DE SUPERVISIÓN",
+      declaredAction: action.label,
+      declaredActionId: action.id,
+      executor,
+      executorRole: state.role,
+      executorOperatorMode: Boolean(state.operatorMode),
+      reviewer: supervisorSelf ? "Supervisor" : null,
+      reviewType: supervisorSelf ? "Autovalidación de Supervisor" : null,
+      device: "Dispositivo demo",
+      physicalStartedAt: session.startedAt,
+      physicalEndedAt: now,
+      observation: String(session.observation || "").trim(),
+      readings: session.readings.map((r) => ({ ...r })),
+      adminUpdatedAt: validateNow ? now : null
+    };
+  }
+
+  function finalizeProvisionalCapture(capture) {
+    state.provisionalCaptures.unshift(capture);
+    state.freeScanActive = false;
+    state.freeScanSession = null;
+    state.freeScanAnchor = null;
     unlockScanInput();
     renderContent();
   }
@@ -515,27 +605,18 @@
   function sendProvisionalCapture() {
     const session = state.freeScanSession;
     if (!session || !session.readings.length) return;
-    const action = DECLARED_FLOOR_ACTIONS.find((a) => a.id === session.declaredAction) || DECLARED_FLOOR_ACTIONS[0];
-    const capture = {
-      id: nextProvisionalCaptureId(),
-      status: "PENDIENTE DE SUPERVISIÓN",
-      declaredAction: action.label,
-      declaredActionId: action.id,
-      executor: demoExecutorLabel(),
-      executorRole: state.role,
-      executorOperatorMode: Boolean(state.operatorMode),
-      device: "Dispositivo demo",
-      physicalStartedAt: session.startedAt,
-      physicalEndedAt: new Date().toISOString(),
-      observation: String(session.observation || "").trim(),
-      readings: session.readings.map((r) => ({ ...r })),
-      adminUpdatedAt: null
-    };
-    state.provisionalCaptures.unshift(capture);
-    state.freeScanActive = false;
-    state.freeScanSession = null;
-    unlockScanInput();
-    renderContent();
+    if (state.role === "SUPERVISOR" && !state.operatorMode && !isPhysicalFloorAction(session.declaredAction)) {
+      return;
+    }
+    finalizeProvisionalCapture(buildProvisionalCaptureFromSession(session));
+  }
+
+  function validateProvisionalCaptureNow() {
+    const session = state.freeScanSession;
+    if (!session || !session.readings.length) return;
+    if (state.role !== "SUPERVISOR" || state.operatorMode) return;
+    if (!isPhysicalFloorAction(session.declaredAction)) return;
+    finalizeProvisionalCapture(buildProvisionalCaptureFromSession(session, { validateNow: true }));
   }
 
   function updateProvisionalCaptureStatus(captureId, nextStatus) {
@@ -548,12 +629,18 @@
   }
 
   function renderScannerWorkspace({ mode, meta, instruction }) {
-    const banner =
-      mode === "task" ? "ESCÁNER ACTIVO · ESPERANDO LECTURA" : "ESCÁNER ACTIVO · MODO LIBRE CONTROLADO";
-    const help =
-      mode === "task"
-        ? "Use el gatillo del lector · Captura manual solo como contingencia"
-        : "Esta captura no modifica inventario";
+    let banner;
+    let help;
+    if (mode === "task") {
+      banner = "ESCÁNER ACTIVO · ESPERANDO LECTURA";
+      help = "Use el gatillo del lector · Captura manual solo como contingencia";
+    } else if (mode === "admin-consult") {
+      banner = "ESCÁNER LIBRE · CONSULTA ADMINISTRATIVA · READ-ONLY";
+      help = "Identificación de códigos · no modifica inventario · sin captura operativa";
+    } else {
+      banner = "ESCÁNER ACTIVO · MODO LIBRE CONTROLADO";
+      help = "Esta captura no modifica inventario";
+    }
     return `<div class="scan-workspace operator-scan-active scan-engine-shell" data-scan-mode="${esc(mode)}">
       <p class="scan-active-banner">${esc(banner)}</p>
       ${meta ? `<p class="scan-handheld-meta">${meta}</p>` : ""}
@@ -565,11 +652,11 @@
           mode === "task"
             ? `<button type="button" class="btn-secondary btn-compact" data-cancel-task>Cancelar tarea</button>
           <button type="button" class="btn-secondary btn-compact" id="scanReportDiff" hidden>Reportar diferencia</button>`
-            : `<button type="button" class="btn-secondary btn-compact" data-discard-free-scan>DESCARTAR CAPTURA</button>`
+            : `<button type="button" class="btn-secondary btn-compact" data-discard-free-scan>${mode === "admin-consult" ? "CERRAR CONSULTA" : "DESCARTAR CAPTURA"}</button>`
         }
         <button type="button" class="scan-manual-link" id="scanManual">Captura manual</button>
       </div>
-      <div id="scanFeedback" class="scan-status idle">${mode === "task" ? "Listo para lectura" : "Escaneo libre listo"}</div>
+      <div id="scanFeedback" class="scan-status idle">${mode === "task" ? "Listo para lectura" : mode === "admin-consult" ? "Consulta lista" : "Escaneo libre listo"}</div>
     </div>`;
   }
 
@@ -605,6 +692,9 @@
       scroll: scrollHost ? scrollHost.scrollTop : 0
     };
     if (state.concentration) applyConcentration(false);
+    state.freeScanActive = false;
+    state.freeScanSession = null;
+    state.freeScanAnchor = null;
     state.operatorMode = true;
     state.tab = "operacion";
     state.module = "tasks";
@@ -1068,51 +1158,107 @@
     </div>`;
   }
 
-  function operatorFreeScanView() {
-    const session = ensureFreeScanSession();
-    const readings = session.readings
+  function renderFreeScanReadingsTable(session, ctx) {
+    const rows = session.readings
       .slice()
       .reverse()
-      .map(
-        (r) => `<tr>
+      .map((r) => {
+        if (ctx === "admin") {
+          return `<tr>
+            <td>${esc(new Date(r.at).toLocaleTimeString("es-MX"))}</td>
+            <td><code>${esc(r.raw)}</code></td>
+            <td>${esc(r.classification)}</td>
+            <td>${esc(r.matchLabel || "—")}</td>
+            <td>${esc(r.productName || r.product || "—")}</td>
+            <td>${esc(r.location || "—")}</td>
+            <td>${esc(r.project || "—")}</td>
+          </tr>`;
+        }
+        return `<tr>
           <td>${esc(new Date(r.at).toLocaleTimeString("es-MX"))}</td>
           <td><code>${esc(r.raw)}</code></td>
           <td>${esc(r.classification)}</td>
           <td>${esc(r.matchLabel || "—")}</td>
-        </tr>`
-      )
+        </tr>`;
+      })
       .join("");
+    if (ctx === "admin") {
+      return session.readings.length
+        ? `<div class="free-scan-readings-wrap"><table class="data-table free-scan-readings"><thead><tr>
+            <th>Hora</th><th>RAW</th><th>Clasificación</th><th>Coincidencia</th><th>Producto</th><th>Ubicación</th><th>Proyecto</th>
+          </tr></thead><tbody>${rows}</tbody></table></div>`
+        : `<p class="operational-table-meta">Escanee códigos · identificación READ-ONLY · sesión en memoria.</p>`;
+    }
+    return session.readings.length
+      ? `<div class="free-scan-readings-wrap"><table class="data-table free-scan-readings"><thead><tr>
+          <th>Hora</th><th>RAW</th><th>Clasificación</th><th>Coincidencia</th>
+        </tr></thead><tbody>${rows}</tbody></table></div>`
+      : `<p class="operational-table-meta">Escanee códigos · la evidencia RAW se conserva sin modificar inventario.</p>`;
+  }
+
+  function renderFreeScanActionsPanel(session, ctx) {
+    if (ctx === "admin") return "";
     const actionOptions = DECLARED_FLOOR_ACTIONS.map(
       (a) =>
         `<option value="${esc(a.id)}"${session.declaredAction === a.id ? " selected" : ""}>${esc(a.label)}</option>`
     ).join("");
-    return `<div class="operator-handheld-shell free-scan-shell">
-      ${renderScannerWorkspace({ mode: "free" })}
-      <div class="card-panel free-scan-evidence">
-        <h4>Lecturas acumuladas (${esc(session.readings.length)})</h4>
-        ${
-          session.readings.length
-            ? `<div class="free-scan-readings-wrap"><table class="data-table free-scan-readings"><thead><tr>
-              <th>Hora</th><th>RAW</th><th>Clasificación</th><th>Coincidencia</th>
-            </tr></thead><tbody>${readings}</tbody></table></div>`
-            : `<p class="operational-table-meta">Escanee códigos · la evidencia RAW se conserva sin modificar inventario.</p>`
-        }
-      </div>
-      <div class="card-panel free-scan-actions-panel">
+    const hasReadings = session.readings.length > 0;
+    const physical = isPhysicalFloorAction(session.declaredAction);
+    if (ctx === "supervisor" && !physical) {
+      return `<div class="card-panel free-scan-actions-panel">
         <div class="free-scan-declare-grid">
           <label class="field compact-field"><span>Acción declarada</span>
             <select id="freeScanDeclaredAction">${actionOptions}</select>
           </label>
-          <label class="field compact-field field-grow"><span>Observación (opcional)</span>
-            <input id="freeScanObservation" type="text" value="${esc(session.observation)}" placeholder="Contexto de piso · contingencia" />
-          </label>
         </div>
-        <div class="free-scan-submit-row">
-          <button type="button" class="btn-primary btn-compact" data-send-provisional${session.readings.length ? "" : " disabled"}>ENVIAR A SUPERVISIÓN</button>
-          <button type="button" class="btn-secondary btn-compact" data-discard-free-scan>DESCARTAR CAPTURA</button>
-        </div>
+        <p class="operational-table-meta">Modo consulta · identifique etiquetas sin generar captura operativa.</p>
+      </div>`;
+    }
+    const operatorSend =
+      ctx === "operator"
+        ? `<button type="button" class="btn-primary btn-compact" data-send-provisional${hasReadings ? "" : " disabled"}>ENVIAR A SUPERVISIÓN</button>`
+        : "";
+    const supervisorSend = ctx === "supervisor"
+      ? `<button type="button" class="btn-primary btn-compact" data-send-provisional${hasReadings ? "" : " disabled"}>ENVIAR A PENDIENTES</button>
+         <button type="button" class="btn-success btn-compact" data-validate-provisional-now${hasReadings ? "" : " disabled"}>VALIDAR AHORA</button>`
+      : "";
+    return `<div class="card-panel free-scan-actions-panel">
+      <div class="free-scan-declare-grid">
+        <label class="field compact-field"><span>Acción declarada</span>
+          <select id="freeScanDeclaredAction">${actionOptions}</select>
+        </label>
+        <label class="field compact-field field-grow"><span>Observación (opcional)</span>
+          <input id="freeScanObservation" type="text" value="${esc(session.observation)}" placeholder="Contexto de piso · contingencia" />
+        </label>
       </div>
-      <p class="ops-message">DEMO READ-ONLY · captura provisional en memoria · no modifica inventario</p>
+      <div class="free-scan-submit-row">
+        ${operatorSend}${supervisorSend}
+        <button type="button" class="btn-secondary btn-compact" data-discard-free-scan>DESCARTAR CAPTURA</button>
+      </div>
+      ${
+        ctx === "supervisor"
+          ? `<p class="operational-table-meta">VALIDAR AHORA · DEMO READ-ONLY · no modifica inventario</p>`
+          : ""
+      }
+    </div>`;
+  }
+
+  function roleFreeScanView() {
+    const ctx = freeScanRoleContext();
+    const session = ensureFreeScanSession();
+    const scannerMode = ctx === "admin" ? "admin-consult" : "free";
+    const footer =
+      ctx === "admin"
+        ? `<p class="ops-message">DEMO READ-ONLY · consulta administrativa · no modifica inventario</p>`
+        : `<p class="ops-message">DEMO READ-ONLY · captura provisional en memoria · no modifica inventario</p>`;
+    return `<div class="operator-handheld-shell free-scan-shell">
+      ${renderScannerWorkspace({ mode: scannerMode })}
+      <div class="card-panel free-scan-evidence">
+        <h4>${ctx === "admin" ? "Identificaciones de sesión" : `Lecturas acumuladas (${esc(session.readings.length)})`}</h4>
+        ${renderFreeScanReadingsTable(session, ctx)}
+      </div>
+      ${renderFreeScanActionsPanel(session, ctx)}
+      ${footer}
     </div>`;
   }
 
@@ -1132,10 +1278,16 @@
                   )}</li>`
               )
               .join("");
+            const executorCell =
+              c.reviewType === "Autovalidación de Supervisor"
+                ? `<strong>${esc(c.executor)}</strong><br><span class="badge review self-validated-badge">Ejecutado y validado por el mismo Supervisor</span>`
+                : `<strong>${esc(c.executor)}</strong>`;
             return `<tr>
               <td><strong>${esc(c.id)}</strong></td>
               <td>${esc(c.declaredAction)}</td>
-              <td>${esc(c.executor)}</td>
+              <td>${executorCell}</td>
+              <td>${esc(c.reviewer || "—")}</td>
+              <td>${esc(c.reviewType || "—")}</td>
               <td>${esc(new Date(c.physicalStartedAt).toLocaleString("es-MX"))}</td>
               <td>${esc(c.readings.length)}</td>
               <td><ul class="provisional-evidence-list">${evidence}</ul></td>
@@ -1143,12 +1295,12 @@
             </tr>`;
           })
           .join("")
-      : `<tr><td colspan="7">Sin capturas provisionales en esta sesión DEMO.</td></tr>`;
+      : `<tr><td colspan="9">Sin capturas provisionales en esta sesión DEMO.</td></tr>`;
     return `<div class="module-screen-header"><h3>Pendientes de supervisión</h3>
       <p class="module-lead">Capturas provisionales de piso · revisión local DEMO · evidencia RAW conservada</p></div>
       <div class="card-panel ops-message warn">DEMO READ-ONLY · la validación no modifica inventario</div>
       <div class="card-panel"><table class="data-table provisional-captures-table"><thead><tr>
-        <th>ID</th><th>Acción</th><th>Ejecutor</th><th>Hora física</th><th>Lecturas</th><th>Evidencia RAW</th><th>Estado</th>
+        <th>ID</th><th>Acción</th><th>Ejecutor</th><th>Revisor</th><th>Revisión</th><th>Hora física</th><th>Lecturas</th><th>Evidencia RAW</th><th>Estado</th>
       </tr></thead><tbody>${table}</tbody></table></div>`;
   }
 
@@ -1186,6 +1338,10 @@
     return `<div class="module-screen-header"><h3>Centro de operación</h3>
       <p class="module-lead">Organice la operación del día · delegue al piso · dé seguimiento <span class="badge demo-flow">EJEMPLO DE FLUJO</span></p></div>
       ${supervisorWorkAsOperatorBar()}
+      <div class="card-panel operator-free-scan-entry">
+        <p class="operational-table-meta">Scanner transversal · identifique o capture desde supervisión directa</p>
+        <button type="button" class="btn-secondary btn-compact" data-start-free-scan>ESCANEO LIBRE</button>
+      </div>
       <div class="kpi-grid">
         <div class="kpi-card warn"><span class="kpi-value">${esc(pending.length)}</span><span class="kpi-label">Pendientes</span></div>
         <div class="kpi-card accent"><span class="kpi-value">${esc(inProgress.length)}</span><span class="kpi-label">En proceso</span></div>
@@ -1258,6 +1414,10 @@
     const locs = aggregateLocations().slice(0, 5);
     const projs = aggregateProjects().slice(0, 5);
     return `<header class="cc-hero"><h2 class="cc-title">Centro de Control</h2><p class="cc-tagline">Resumen del inventario demo · READ-ONLY</p></header>
+      <div class="card-panel operator-free-scan-entry">
+        <p class="operational-table-meta">Scanner libre de consulta · identificación READ-ONLY · sin captura operativa</p>
+        <button type="button" class="btn-secondary btn-compact" data-start-free-scan>ESCANEO LIBRE</button>
+      </div>
       ${kpis()}
       <div class="grid-2">
         <div class="card-panel"><h4>Principales ubicaciones</h4>
@@ -1275,7 +1435,9 @@
 
   function renderModule() {
     const m = state.module;
-    if (isOperatorExperience() && state.freeScanActive && m === "tasks") return operatorFreeScanView();
+    if (state.freeScanActive && state.freeScanAnchor === m && freeScanRoleContext()) {
+      return roleFreeScanView();
+    }
     if (isOperatorExperience() && state.activeTaskId) {
       const task = state.tasks.find((t) => t.id === state.activeTaskId);
       return task ? operatorTaskFlow(task) : operatorTasksLanding();
@@ -1456,13 +1618,7 @@
     state.scanProcessing = true;
     const classified = classifyScanCodeLocal(raw);
     const session = ensureFreeScanSession();
-    session.readings.push({
-      at: new Date().toISOString(),
-      raw: classified.raw,
-      normalized: classified.normalized,
-      classification: classificationDisplay(classified),
-      matchLabel: matchDisplay(classified)
-    });
+    session.readings.push(enrichReadingFromClassification(classified));
     fb.className = "scan-status ok";
     fb.textContent = `OK · ${classificationDisplay(classified)}`;
     playScanOkFeedback();
@@ -1479,6 +1635,8 @@
     if (isOperatorExperience() && (state.activeTaskId || state.freeScanActive)) {
       const task = state.activeTaskId ? state.tasks.find((t) => t.id === state.activeTaskId) : null;
       palette = task ? TASK_TYPE_PALETTE[task.type] || "mover" : "mover";
+    } else if (state.freeScanActive && (state.role === "ADMIN" || state.role === "SUPERVISOR")) {
+      palette = "mover";
     } else if (NEUTRAL_BRAND_MODULES.has(state.module)) {
       palette = null;
     } else {
@@ -1522,6 +1680,7 @@
         state.taskFlow = null;
         state.freeScanActive = false;
         state.freeScanSession = null;
+        state.freeScanAnchor = null;
         render();
       });
     });
@@ -1568,6 +1727,7 @@
       btn.addEventListener("click", () => {
         state.freeScanActive = false;
         state.freeScanSession = null;
+        state.freeScanAnchor = null;
         state.activeTaskId = btn.getAttribute("data-start-task");
         state.taskFlow = { step: 0 };
         unlockScanInput();
@@ -1583,6 +1743,9 @@
     app.querySelectorAll("[data-send-provisional]").forEach((btn) => {
       btn.addEventListener("click", () => sendProvisionalCapture());
     });
+    app.querySelectorAll("[data-validate-provisional-now]").forEach((btn) => {
+      btn.addEventListener("click", () => validateProvisionalCaptureNow());
+    });
     app.querySelectorAll("[data-provisional-status]").forEach((sel) => {
       sel.addEventListener("change", () => {
         updateProvisionalCaptureStatus(sel.getAttribute("data-provisional-status"), sel.value);
@@ -1591,6 +1754,7 @@
     document.getElementById("freeScanDeclaredAction")?.addEventListener("change", (event) => {
       const session = ensureFreeScanSession();
       session.declaredAction = event.target.value;
+      renderContent();
     });
     document.getElementById("freeScanObservation")?.addEventListener("input", (event) => {
       const session = ensureFreeScanSession();

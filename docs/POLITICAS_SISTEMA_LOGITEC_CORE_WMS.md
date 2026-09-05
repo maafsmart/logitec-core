@@ -107,3 +107,34 @@ El Cliente solo podrá consultar datos correspondientes a sus proyectos/pedidos 
 ### Nota de implementación
 
 No implementar todavía Modo Cliente V15. POL-002 se documenta ahora para utilizarla al diseñar Cliente después de aprobar V14.
+
+---
+
+## POL-003 · Escáner transversal y autoridad por rol
+
+**Estado:** APROBADA
+
+### Principio
+
+El motor de escaneo es una capacidad transversal de LOGITEC CORE WMS. La posibilidad de leer e identificar un código no implica automáticamente autoridad para modificar inventario. Las acciones disponibles después de una lectura dependen del rol, contexto y política aplicable.
+
+### Matriz por rol
+
+| Rol | Leer / identificar | Captura provisional | Autorizar / validar | Inventario |
+|-----|-------------------|---------------------|---------------------|------------|
+| **Operador** | sí | sí | no | solo mediante tarea autorizada |
+| **Supervisor** | sí | sí | sí (regularizar conforme permisos) | no modifica stock en demo |
+| **Admin** | sí | no (consulta libre) | no | lectura no convierte en movimiento |
+| **Cliente** | no (scanner no disponible) | no | no | consulta READ-ONLY sin scanner |
+
+### Autovalidación de Supervisor
+
+Cuando un Supervisor ejecuta y valida su propia acción física, LOGITEC debe conservar explícitamente que:
+
+- **ejecutor** = Supervisor
+- **revisor** = mismo Supervisor
+- **tipo de revisión** = Autovalidación de Supervisor
+- **hora física**
+- **hora administrativa**
+
+**Nunca simular una segunda persona.**

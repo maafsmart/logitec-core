@@ -1060,6 +1060,14 @@ body.mobile-emulation-active #focusModeBtn,
   min-height: 34px;
   font-size: 0.76rem;
 }
+.self-validated-badge {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+}
 body.mobile-emulation-active .free-scan-shell,
 body.mobile-emulation-active .operator-handheld-shell {
   display: flex;
