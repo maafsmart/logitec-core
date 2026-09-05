@@ -106,7 +106,7 @@ El Cliente solo podrá consultar datos correspondientes a sus proyectos/pedidos 
 
 ### Nota de implementación
 
-No implementar todavía Modo Cliente V15. POL-002 se documenta ahora para utilizarla al diseñar Cliente después de aprobar V14.
+V15 implementa en DEMO READ-ONLY la separación visual entre realidad física reportada y estado administrativo. La persistencia oficial, registro de movimientos y aislamiento por identidad autenticada corresponden a la fase de integración con backend.
 
 ---
 

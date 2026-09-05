@@ -1080,4 +1080,108 @@ body.mobile-emulation-active .free-scan-actions-panel { order: 3; }
 body.mobile-emulation-active .free-scan-declare-grid {
   grid-template-columns: 1fr;
 }
+
+/* ===== V15 Client POL-002 physical vs administrative ===== */
+.client-physical-activity { margin-top: 12px; }
+.client-physical-activity-compact { margin-top: 16px; }
+.client-pol002-note,
+.client-pol002-disclaimer {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  color: var(--muted, #64748b);
+}
+.client-pol002-disclaimer {
+  font-weight: 600;
+  color: var(--warn, #b45309);
+}
+.client-physical-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 10px 0 0;
+}
+.client-summary-value {
+  display: block;
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.client-summary-label {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted, #64748b);
+  margin-top: 4px;
+}
+.client-provisional-cards {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.client-provisional-card {
+  border: 1px solid var(--border, #dbe3ef);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--surface, #fff);
+}
+.client-provisional-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.client-provisional-badge {
+  font-size: 0.68rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.client-provisional-dual {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.client-provisional-physical,
+.client-provisional-admin {
+  border-radius: 8px;
+  padding: 10px;
+}
+.client-provisional-physical {
+  background: var(--ok-soft, #ecfdf5);
+  border: 1px solid #a7f3d0;
+}
+.client-provisional-admin {
+  background: var(--warn-soft, #fffbeb);
+  border: 1px solid #fde68a;
+}
+.client-provisional-physical h5,
+.client-provisional-admin h5 {
+  margin: 0 0 8px;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+}
+.client-field-label {
+  display: inline-block;
+  min-width: 118px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted, #64748b);
+}
+.client-admin-status-msg {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.client-reading-evidence {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 0.76rem;
+}
+.client-reading-evidence code { word-break: break-all; }
+.client-official-trace-header { margin-top: 18px; }
+@media (max-width: 720px) {
+  .client-provisional-dual { grid-template-columns: 1fr; }
+}
+body.mobile-emulation-active .client-provisional-dual { grid-template-columns: 1fr; }
+body.mobile-emulation-active .client-physical-summary-grid { grid-template-columns: 1fr 1fr; }
 /* ===== /focus mode ===== */

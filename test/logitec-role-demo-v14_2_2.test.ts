@@ -99,8 +99,8 @@ function baseCapture(overrides: Partial<Capture> = {}): Capture {
   };
 }
 
-test("cache-buster v=14.2.2", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=14\.2\.2/);
+test("cache-buster v=15", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=15/);
 });
 
 test("Supervisor A ejecuta + Supervisor A valida → Autovalidación", () => {

@@ -308,6 +308,7 @@
     state.freeScanActive = false;
     state.freeScanSession = null;
     state.freeScanAnchor = null;
+    // Demo session only. Production provisional activity must be server-persisted and ownership-filtered.
     state.provisionalCaptures = [];
     state.provisionalCaptureSeq = 0;
     state.demoSupervisorActorId = "SUPERVISOR_DEMO";
@@ -529,6 +530,7 @@
 
   function enrichReadingFromClassification(classified) {
     const row = lookupStockRow(classified);
+    const isLocationScan = classified.classification === "UBICACIÓN";
     return {
       at: new Date().toISOString(),
       raw: classified.raw,
@@ -538,7 +540,12 @@
       product: row?.product?.sku || null,
       productName: row?.product?.name || null,
       location: row?.location?.code || null,
-      project: row?.project?.code || row?.project?.name || null
+      officialLocation: row?.location?.code || null,
+      scannedLocation: isLocationScan ? classified.match?.value || null : null,
+      project: row?.project?.code || row?.project?.name || null,
+      pedido: row?.pedido || null,
+      sap: row?.sap || null,
+      partida: row?.partida || null
     };
   }
 
@@ -797,6 +804,8 @@
     state.activeTaskId = null;
     state.taskFlow = null;
     state.scanProcessing = false;
+    // Demo session only. Production provisional activity must be server-persisted and ownership-filtered.
+    // provisionalCaptures survive role switches within the same browser session (cleared only on full page init).
     syncDirectorViewUi();
     syncRoleViewUi();
     syncSupervisorOperatorModeUi();
@@ -1343,6 +1352,7 @@
   }
 
   function movementsView() {
+    if (state.role === "CLIENT") return clientMovementsView();
     if (state.dataSource === "EXCEL" || !state.movements.length) {
       return `<div class="module-screen-header"><h3>Movimientos / Trazabilidad</h3><p class="module-lead">Consulta de historial físico</p></div>
         <div class="card-panel ops-message warn">La fuente Excel no contiene historial de movimientos.</div>`;
@@ -1437,6 +1447,242 @@
         .join("") : `<tr><td colspan="6">Sin tareas en seguimiento activo.</td></tr>`}</tbody></table></div>`;
   }
 
+  function isAuthorizedClientProject(projectLabel) {
+    const p = String(projectLabel || "").trim();
+    if (!p) return false;
+    if (/^sin proyecto$/i.test(p)) return false;
+    if (/^free[_\s-]*to[_\s-]*sale$/i.test(p)) return false;
+    return true;
+  }
+
+  function clientAuthorizedProjectSet() {
+    // Production: client ownership must be enforced server-side from authenticated client scope.
+    const set = new Set();
+    state.stock.forEach((r) => {
+      const p = String(r.project?.code || r.project?.name || "").trim();
+      if (isAuthorizedClientProject(p)) set.add(p);
+    });
+    return set;
+  }
+
+  function lookupStockRowFromReadingMeta(reading) {
+    const norm = String(reading?.normalized || normalizeScannerRawValue(reading?.raw) || "")
+      .trim()
+      .toUpperCase();
+    if (!norm) return null;
+    const stock = state.stock || [];
+    return (
+      stock.find((r) => String(r.product?.sku || "").toUpperCase() === norm) ||
+      stock.find((r) => String(r.location?.code || "").toUpperCase() === norm) ||
+      stock.find((r) => String(r.sap || "").toUpperCase() === norm) ||
+      stock.find((r) => String(r.pedido || "").toUpperCase() === norm) ||
+      stock.find((r) => String(r.partida || "").toUpperCase() === norm) ||
+      stock.find((r) => String(r.serialNumber || "").toUpperCase() === norm) ||
+      null
+    );
+  }
+
+  function deriveCaptureProjectLabel(capture) {
+    for (const reading of capture.readings || []) {
+      const direct = String(reading.project || "").trim();
+      if (isAuthorizedClientProject(direct)) return direct;
+    }
+    for (const reading of capture.readings || []) {
+      const row = lookupStockRowFromReadingMeta(reading);
+      const linked = String(row?.project?.code || row?.project?.name || "").trim();
+      if (isAuthorizedClientProject(linked)) return linked;
+    }
+    return null;
+  }
+
+  function clientVisibleProvisionalCaptures() {
+    const authorized = clientAuthorizedProjectSet();
+    return state.provisionalCaptures.filter((capture) => {
+      const project = deriveCaptureProjectLabel(capture);
+      return Boolean(project && authorized.has(project));
+    });
+  }
+
+  function clientPhysicalActivityCounts(captures) {
+    const counts = {
+      total: captures.length,
+      pending: 0,
+      validated: 0,
+      clarification: 0,
+      rejected: 0
+    };
+    captures.forEach((capture) => {
+      if (capture.status === "PENDIENTE DE SUPERVISIÓN") counts.pending += 1;
+      else if (capture.status === "VALIDADO · PENDIENTE DE REGISTRO") counts.validated += 1;
+      else if (capture.status === "REQUIERE ACLARACIÓN") counts.clarification += 1;
+      else if (capture.status === "RECHAZADO ADMINISTRATIVAMENTE") counts.rejected += 1;
+    });
+    return counts;
+  }
+
+  function clientAdminStatusMessage(status) {
+    if (status === "PENDIENTE DE SUPERVISIÓN") {
+      return "Pendiente de supervisión · no registrado en inventario oficial";
+    }
+    if (status === "REQUIERE ACLARACIÓN") {
+      return "Requiere aclaración · no registrado en inventario oficial";
+    }
+    if (status === "VALIDADO · PENDIENTE DE REGISTRO") {
+      return "Validado administrativamente · todavía no registrado en inventario oficial";
+    }
+    if (status === "RECHAZADO ADMINISTRATIVAMENTE") {
+      return "Rechazado administrativamente · no registrado en inventario oficial";
+    }
+    return "Estado administrativo · no registrado en inventario oficial";
+  }
+
+  function clientCapturePhysicalLocation(capture) {
+    const scanned = new Set();
+    (capture.readings || []).forEach((reading) => {
+      const fromScan = String(reading.scannedLocation || "").trim();
+      if (fromScan) scanned.add(fromScan);
+      else if (String(reading.classification || "").toUpperCase().startsWith("UBICACIÓN")) {
+        const code = String(reading.normalized || "").trim();
+        if (code) scanned.add(code);
+      }
+    });
+    return scanned.size ? [...scanned].join(" · ") : null;
+  }
+
+  function clientCaptureOfficialLocation(capture) {
+    const official = new Set();
+    (capture.readings || []).forEach((reading) => {
+      const row = lookupStockRowFromReadingMeta(reading);
+      const code = String(reading.officialLocation || row?.location?.code || "").trim();
+      if (code) official.add(code);
+    });
+    return official.size === 1 ? [...official][0] : official.size > 1 ? [...official].join(" · ") : null;
+  }
+
+  function renderClientReadingEvidence(readings) {
+    if (!readings?.length) return `<p class="operational-table-meta">Sin lecturas identificables.</p>`;
+    return `<ul class="client-reading-evidence">${readings
+      .map(
+        (reading) =>
+          `<li><code>${esc(reading.raw)}</code> · ${esc(reading.classification || "—")} · ${esc(
+            new Date(reading.at).toLocaleString("es-MX")
+          )}</li>`
+      )
+      .join("")}</ul>`;
+  }
+
+  function renderClientProvisionalCaptureCard(capture) {
+    const project = deriveCaptureProjectLabel(capture);
+    const physicalLocation = clientCapturePhysicalLocation(capture);
+    const officialLocation = clientCaptureOfficialLocation(capture);
+    const locationBlock =
+      physicalLocation && officialLocation && physicalLocation !== officialLocation
+        ? `<p><span class="client-field-label">Ubicación física reportada</span> ${esc(physicalLocation)}</p>
+           <p><span class="client-field-label">Ubicación oficial</span> ${esc(officialLocation)}</p>`
+        : physicalLocation
+          ? `<p><span class="client-field-label">Ubicación física reportada</span> ${esc(physicalLocation)}</p>`
+          : officialLocation
+            ? `<p><span class="client-field-label">Ubicación oficial</span> ${esc(officialLocation)}</p>`
+            : "";
+    const adminTime = capture.adminUpdatedAt
+      ? `<p><span class="client-field-label">Hora administrativa</span> ${esc(
+          new Date(capture.adminUpdatedAt).toLocaleString("es-MX")
+        )}</p>`
+      : "";
+    return `<article class="client-provisional-card status-${esc(capture.status.replace(/[^a-z0-9]+/gi, "-").toLowerCase())}">
+      <header class="client-provisional-card-head">
+        <strong>${esc(capture.id)}</strong>
+        <span class="badge client-provisional-badge">${esc(capture.status)}</span>
+      </header>
+      <div class="client-provisional-dual">
+        <section class="client-provisional-physical">
+          <h5>REALIDAD FÍSICA REPORTADA</h5>
+          <p class="client-pol002-disclaimer">Ejecutado físicamente · no constituye movimiento oficial</p>
+          <p><span class="client-field-label">Acción declarada</span> ${esc(capture.declaredAction)}</p>
+          <p><span class="client-field-label">Ejecutor</span> ${esc(capture.executor)}</p>
+          <p><span class="client-field-label">Hora física</span> ${esc(
+            new Date(capture.physicalStartedAt).toLocaleString("es-MX")
+          )} → ${esc(new Date(capture.physicalEndedAt).toLocaleString("es-MX"))}</p>
+          ${project ? `<p><span class="client-field-label">Proyecto</span> ${esc(project)}</p>` : ""}
+          ${locationBlock}
+          <div class="client-reading-block">
+            <span class="client-field-label">Lecturas / evidencia</span>
+            ${renderClientReadingEvidence(capture.readings)}
+          </div>
+        </section>
+        <section class="client-provisional-admin">
+          <h5>ESTADO ADMINISTRATIVO · NO REGISTRADO EN INVENTARIO</h5>
+          <p class="client-admin-status-msg">${esc(clientAdminStatusMessage(capture.status))}</p>
+          <p><span class="client-field-label">Estado actual</span> ${esc(capture.status)}</p>
+          <p><span class="client-field-label">Supervisor / revisor</span> ${esc(capture.reviewer || "—")}</p>
+          <p><span class="client-field-label">Tipo de revisión</span> ${esc(capture.reviewType || "—")}</p>
+          ${adminTime}
+        </section>
+      </div>
+    </article>`;
+  }
+
+  function renderClientPhysicalActivitySection({ compact = false } = {}) {
+    const captures = clientVisibleProvisionalCaptures();
+    if (!captures.length) {
+      return `<div class="card-panel client-physical-activity${compact ? " client-physical-activity-compact" : ""}">
+        <h4>Actividad física reportada</h4>
+        <p class="operational-table-meta">Sin actividad física provisional reportada para sus proyectos en esta sesión.</p>
+        <p class="client-pol002-note">Fuente distinta de trazabilidad oficial · DEMO READ-ONLY · sesión en memoria</p>
+      </div>`;
+    }
+    const counts = clientPhysicalActivityCounts(captures);
+    const summary = `<div class="client-physical-summary-grid">
+      <div><span class="client-summary-value">${esc(counts.total)}</span><span class="client-summary-label">acciones físicas reportadas</span></div>
+      <div><span class="client-summary-value">${esc(counts.pending)}</span><span class="client-summary-label">pendientes de supervisión</span></div>
+      <div><span class="client-summary-value">${esc(counts.validated)}</span><span class="client-summary-label">validadas pendientes de registro</span></div>
+      <div><span class="client-summary-value">${esc(counts.clarification)}</span><span class="client-summary-label">requieren aclaración</span></div>
+      ${
+        counts.rejected
+          ? `<div><span class="client-summary-value">${esc(counts.rejected)}</span><span class="client-summary-label">rechazadas administrativamente</span></div>`
+          : ""
+      }
+    </div>`;
+    if (compact) {
+      return `<div class="card-panel client-physical-activity client-physical-activity-compact">
+        <h4>Actividad física reportada</h4>
+        <p class="client-pol002-note">Ejecutado físicamente ≠ registrado oficialmente · no modifica inventario</p>
+        ${summary}
+      </div>`;
+    }
+    return `<div class="card-panel client-physical-activity">
+      <h4>Actividad física reportada</h4>
+      <p class="client-pol002-note">Fuente distinta de la trazabilidad oficial · capturas provisionales · DEMO READ-ONLY</p>
+      ${summary}
+      <div class="client-provisional-cards">${captures.map((capture) => renderClientProvisionalCaptureCard(capture)).join("")}</div>
+    </div>`;
+  }
+
+  function clientMovementsView() {
+    const officialBlock =
+      state.dataSource === "EXCEL" || !state.movements.length
+        ? `<div class="card-panel ops-message warn">La fuente Excel no contiene historial de movimientos.</div>`
+        : `<div class="card-panel"><table class="data-table"><thead><tr>
+            <th>Fecha</th><th>Tipo</th><th>Referencia</th><th>Producto</th><th>Cant.</th>
+          </tr></thead><tbody>${state.movements
+            .slice(0, 50)
+            .map(
+              (m) => `<tr>
+                <td>${esc(m.date || m.createdAt || "—")}</td>
+                <td>${esc(m.type || "—")}</td>
+                <td>${esc(m.reference || "—")}</td>
+                <td>${esc(m.product || m.sku || "—")}</td>
+                <td>${esc(fmtQty(m.qty))}</td>
+              </tr>`
+            )
+            .join("")}</tbody></table></div>`;
+    return `<div class="module-screen-header"><h3>Movimientos / Trazabilidad</h3>
+      <p class="module-lead">Trazabilidad oficial consultable · separada de actividad física reportada</p></div>
+      ${renderClientPhysicalActivitySection({ compact: false })}
+      <div class="module-screen-header client-official-trace-header"><h4>Trazabilidad oficial</h4></div>
+      ${officialBlock}`;
+  }
+
   function clientResumen() {
     const projs = aggregateProjects().slice(0, 6);
     return `<header class="cc-hero"><h2 class="cc-title">Resumen de inventario</h2><p class="cc-tagline">Inventario autorizado de sus proyectos · consulta READ-ONLY</p></header>
@@ -1445,7 +1691,8 @@
         <table class="data-table"><thead><tr><th>Proyecto</th><th>Piezas</th><th>Registros</th><th>Ubicaciones</th></tr></thead><tbody>${projs
           .map((p) => `<tr><td>${esc(p.project)}</td><td>${esc(fmtQty(p.pieces))}</td><td>${esc(p.rows)}</td><td>${esc(p.locations.size)}</td></tr>`)
           .join("")}</tbody></table>
-      </div>`;
+      </div>
+      ${renderClientPhysicalActivitySection({ compact: true })}`;
   }
 
   function controlCenter() {
