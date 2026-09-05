@@ -1231,6 +1231,10 @@ body.mobile-emulation-active .client-physical-summary-grid { grid-template-colum
 }
 .pre-reception-dictionary-table td:first-child { width: 72px; }
 .pre-reception-log-header { margin-top: 8px; }
+.pre-reception-session-panel { margin: 12px 0; }
+.pre-reception-session-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.pre-reception-autocomplete.ok-soft { background: var(--ok-soft, #e8f7ef); margin-top: 10px; }
+.pre-reception-corpus-panel { margin-top: 12px; }
 .client-report-section h4 { margin: 0 0 10px; }
 .client-report-export-row { margin-top: 10px; }
 .client-report-pending-list {

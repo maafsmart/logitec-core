@@ -144,3 +144,16 @@ Cuando un Supervisor ejecuta y valida su propia acción física, LOGITEC debe co
 - **hora administrativa**
 
 **Nunca simular una segunda persona.**
+
+---
+
+## POL-004 — APROBADA
+
+**Pre-recepción documental y cotejo progresivo (OED)**
+
+- La Orden de Entrada Digital (OED) es representación digital de documentación externa recibida; LOGITEC CORE WMS no genera administrativamente la Orden de Entrada.
+- El stock histórico y diccionario de identificación son corpus READ-ONLY para reconocer antecedentes; no fabrican la expectativa de recepción.
+- Cada sesión de cotejo mantiene lecturas acumuladas y candidatos por intersección progresiva entre líneas OED compatibles; nunca se reinicia silenciosamente por lectura.
+- Resultados normativos: IDENTIFICADO, AMBIGUO, DESCONOCIDO, CONOCIDO_NO_ESPERADO, CONTRADICTORIO, INSUFICIENTE.
+- Cada lectura conserva evidencia RAW intacta con conteos before/after de candidatos.
+- Operador ejecuta recepción/cotejo de OED asignada; no administra documentos ni diccionario.

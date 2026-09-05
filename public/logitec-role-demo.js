@@ -232,8 +232,8 @@
     adminTraceFilter: "all",
     digitalEntryOrders: [],
     activeDigitalEntryOrderId: null,
-    preReceptionConsultLog: [],
-    preReceptionConsultSeq: 0
+    preReceptionSession: null,
+    identificationCorpusEntries: []
   };
 
   const app = document.getElementById("app");
@@ -324,8 +324,8 @@
     state.adminTraceFilter = "all";
     state.digitalEntryOrders = [];
     state.activeDigitalEntryOrderId = null;
-    state.preReceptionConsultLog = [];
-    state.preReceptionConsultSeq = 0;
+    state.preReceptionSession = null;
+    state.identificationCorpusEntries = [];
     document.body.classList.remove("focus-mode");
     syncConcentrationOverlay();
     syncSupervisorOperatorModeUi();
@@ -521,43 +521,69 @@
     return { ...classified, dictionary };
   }
 
-  function buildDigitalEntryOrdersFromStock(stock) {
-    // Production: digital entry orders must be issued server-side from authenticated inbound documents.
-    const byProject = new Map();
-    (stock || []).forEach((row) => {
-      const project = String(row.project?.code || row.project?.name || "").trim();
-      if (!project || /^sin proyecto$/i.test(project) || /^free[_\s-]*to[_\s-]*sale$/i.test(project)) return;
-      if (!byProject.has(project)) byProject.set(project, []);
-      const sku = String(row.product?.sku || "").trim();
-      if (!sku) return;
-      const lines = byProject.get(project);
-      const pedido = String(row.pedido || "").trim();
-      const sap = String(row.sap || "").trim();
-      if (lines.some((line) => line.sku === sku && line.pedido === pedido && line.sap === sap)) return;
-      lines.push({
-        lineId: `${project.replace(/[^A-Z0-9]+/gi, "-").slice(0, 12)}-${String(lines.length + 1).padStart(3, "0")}`,
-        sku,
-        description: row.product?.name || sku,
-        qtyExpected: Number(row.qty || 0) || 1,
-        sap,
-        pedido,
-        partida: String(row.partida || "").trim(),
-        serialHint: String(row.serialNumber || "").trim()
-      });
-    });
-    return [...byProject.entries()].slice(0, 8).map(([project, lines], idx) => ({
-      id: `OED-DEMO-${String(idx + 1).padStart(3, "0")}`,
-      project,
-      status: "DOCUMENTAL · PENDIENTE DE RECEPCIÓN FÍSICA",
-      supplierRef: `DOC-${project.replace(/\s+/g, "-").slice(0, 16)}`,
-      lines: lines.slice(0, 16)
+  const DEMO_INBOUND_DOCUMENTS = [
+    {
+      oedId: "OED-DEMO-PROG-001",
+      documentId: "DOC-EXT-PROG",
+      supplierRef: "SUP-AVIAT-PROG-DEMO",
+      project: "AVIAT NETWORKS",
+      note: "Documentación externa recibida · digitalización DEMO · cotejo progresivo 8 → 3 → 1",
+      lines: [
+        { lineId: "L-01", sku: "SKU-GRP-A", description: "Radio enlace A1", qtyExpected: 10, sap: "SAP-COMMON", pedido: "PO-PROG-8", partida: "00010", lote: "LOT-A1" },
+        { lineId: "L-02", sku: "SKU-GRP-B", description: "Radio enlace B1", qtyExpected: 10, sap: "SAP-COMMON", pedido: "PO-PROG-8", partida: "00010", lote: "LOT-B1" },
+        { lineId: "L-03", sku: "SKU-GRP-C", description: "Radio enlace C1", qtyExpected: 8, sap: "SAP-COMMON", pedido: "PO-PROG-8", partida: "00020", lote: "LOT-C1" },
+        { lineId: "L-04", sku: "SKU-GRP-D", description: "Radio enlace D1", qtyExpected: 8, sap: "SAP-COMMON", pedido: "PO-PROG-8", partida: "00020", lote: "LOT-D1" },
+        { lineId: "L-05", sku: "SKU-GRP-E", description: "Radio enlace E1", qtyExpected: 6, sap: "SAP-COMMON", pedido: "PO-PROG-8", partida: "00020", lote: "LOT-E1" },
+        { lineId: "L-06", sku: "SKU-GRP-F", description: "Radio enlace F1", qtyExpected: 4, sap: "SAP-COMMON", pedido: "PO-PROG-8", partida: "00030", lote: "LOT-F1" },
+        { lineId: "L-07", sku: "SKU-GRP-G", description: "Radio enlace G1", qtyExpected: 4, sap: "SAP-COMMON", pedido: "PO-PROG-8", partida: "00030", lote: "LOT-G1" },
+        { lineId: "L-08", sku: "SKU-GRP-H", description: "Radio enlace H1", qtyExpected: 2, sap: "SAP-COMMON", pedido: "PO-PROG-8", partida: "00040", lote: "LOT-H1" }
+      ]
+    },
+    {
+      oedId: "OED-DEMO-002",
+      documentId: "DOC-EXT-002",
+      supplierRef: "SUP-BETA-2409",
+      project: "PROJ-BETA",
+      note: "Documentación externa · segundo embarque DEMO",
+      lines: [
+        { lineId: "B-01", sku: "SKU-BETA-01", description: "Componente beta 01", qtyExpected: 12, sap: "SAP-BETA-01", pedido: "PO-BETA-01", partida: "00010", lote: "LOT-B01" },
+        { lineId: "B-02", sku: "SKU-BETA-02", description: "Componente beta 02", qtyExpected: 6, sap: "SAP-BETA-02", pedido: "PO-BETA-01", partida: "00020", lote: "LOT-B02" }
+      ]
+    },
+    {
+      oedId: "OED-DEMO-003",
+      documentId: "DOC-EXT-003",
+      supplierRef: "SUP-GAMMA-2409",
+      project: "PROJ-GAMMA",
+      note: "Documentación externa · tercer embarque DEMO",
+      lines: [
+        { lineId: "G-01", sku: "SKU-GAMMA-01", description: "Equipo gamma", qtyExpected: 3, sap: "SAP-GAMMA", pedido: "PO-GAMMA-01", partida: "00010", lote: "LOT-G01" }
+      ]
+    }
+  ];
+
+  function digitalizeInboundDocuments() {
+    // Production: OED must represent externally issued inbound documentation; LOGITEC does not administratively generate it.
+    return DEMO_INBOUND_DOCUMENTS.map((doc) => ({
+      id: doc.oedId,
+      documentId: doc.documentId,
+      project: doc.project,
+      status: "DOCUMENTAL · REPRESENTACIÓN DIGITAL EXTERNA",
+      supplierRef: doc.supplierRef,
+      sourceNote:
+        "Digitalización de documentación externa · LOGITEC CORE WMS no genera administrativamente la Orden de Entrada",
+      lines: doc.lines.map((line) => ({ ...line }))
     }));
   }
 
   function syncDigitalEntryOrders() {
-    state.digitalEntryOrders = buildDigitalEntryOrdersFromStock(state.stock || []);
+    state.digitalEntryOrders = digitalizeInboundDocuments();
+    state.identificationCorpusEntries = buildIdentificationCorpusEntries();
     if (!state.digitalEntryOrders.some((order) => order.id === state.activeDigitalEntryOrderId)) {
       state.activeDigitalEntryOrderId = state.digitalEntryOrders[0]?.id || null;
+    }
+    if (state.preReceptionSession && !state.digitalEntryOrders.some((order) => order.id === state.preReceptionSession.oedId)) {
+      state.preReceptionSession = createEmptyPreReceptionSession(state.activeDigitalEntryOrderId);
     }
   }
 
@@ -565,86 +591,270 @@
     return (state.digitalEntryOrders || []).find((order) => order.id === state.activeDigitalEntryOrderId) || null;
   }
 
-  function oedLineMatchesClassification(line, classified) {
-    const norm = String(classified?.normalized || "").trim().toUpperCase();
-    if (!norm || classified.classification === "SIN CLASIFICAR" || classified.classification === "UBICACIÓN") {
-      return false;
-    }
-    switch (classified.classification) {
-      case "SKU":
-        return String(line.sku || "").toUpperCase() === norm;
-      case "SAP":
-        return String(line.sap || "").toUpperCase() === norm;
-      case "PEDIDO":
-        return String(line.pedido || "").toUpperCase() === norm;
-      case "PARTIDA":
-        return String(line.partida || "").toUpperCase() === norm;
-      case "SERIE":
-        return String(line.serialHint || "").toUpperCase() === norm;
-      default:
-        return false;
-    }
+  function findDigitalEntryOrder(oedId) {
+    return (state.digitalEntryOrders || []).find((order) => order.id === oedId) || null;
   }
 
-  function predictDigitalEntryLineMatches(order, classified) {
-    // Production: predictive document matching must be enforced server-side from inbound document scope.
-    if (!order) {
-      return { status: "insufficient", matches: [], message: "Sin orden de entrada digital activa" };
+  function findOedLine(order, lineId) {
+    return (order?.lines || []).find((line) => line.lineId === lineId) || null;
+  }
+
+  function normalizedToken(rawValue) {
+    return String(normalizeForClassification(rawValue) || "").trim().toUpperCase();
+  }
+
+  function oedLineMatchesToken(line, normalized) {
+    const norm = String(normalized || "").trim().toUpperCase();
+    if (!norm) return false;
+    return [line.sku, line.sap, line.pedido, line.partida, line.serialHint, line.lote].some(
+      (value) => String(value || "").trim().toUpperCase() === norm
+    );
+  }
+
+  function oedCompatibleLineIds(order, normalized) {
+    if (!order || !normalized) return [];
+    return (order.lines || []).filter((line) => oedLineMatchesToken(line, normalized)).map((line) => line.lineId);
+  }
+
+  function corpusRowsMatchingToken(normalized) {
+    const norm = String(normalized || "").trim().toUpperCase();
+    if (!norm) return [];
+    return (state.stock || []).filter((row) =>
+      [row.product?.sku, row.sap, row.pedido, row.partida, row.serialNumber, row.location?.code].some(
+        (value) => String(value || "").trim().toUpperCase() === norm
+      )
+    );
+  }
+
+  function isKnownInCorpus(normalized) {
+    return corpusRowsMatchingToken(normalized).length > 0;
+  }
+
+  function corpusEntryStatus(rows) {
+    if (!rows.length) return "DESCONOCIDA";
+    const projects = new Set(rows.map((row) => String(row.project?.code || row.project?.name || "").trim()).filter(Boolean));
+    if (projects.size > 1) return "AMBIGUA";
+    if (rows.length > 1) return "REFERENCIA SIMPLE";
+    return "REFERENCIA CONSISTENTE";
+  }
+
+  function buildIdentificationCorpusEntries() {
+    // Production: identification corpus must be enforced server-side from authenticated read-only master data.
+    const seen = new Set();
+    const entries = [];
+    (state.stock || []).forEach((row) => {
+      const project = String(row.project?.code || row.project?.name || "—").trim() || "—";
+      const pairs = [
+        ["SKU", row.product?.sku],
+        ["SAP", row.sap],
+        ["PEDIDO", row.pedido],
+        ["PARTIDA", row.partida],
+        ["SERIE", row.serialNumber],
+        ["UBICACIÓN", row.location?.code]
+      ];
+      pairs.forEach(([type, value]) => {
+        const norm = String(value || "").trim().toUpperCase();
+        if (!norm) return;
+        const token = `${type}|${norm}`;
+        if (seen.has(token)) return;
+        seen.add(token);
+        const matches = corpusRowsMatchingToken(norm);
+        entries.push({
+          value: norm,
+          type,
+          project,
+          relations: matches.length,
+          matches: matches.length,
+          status: corpusEntryStatus(matches)
+        });
+      });
+    });
+    return entries.sort((a, b) => a.type.localeCompare(b.type) || a.value.localeCompare(b.value));
+  }
+
+  function createEmptyPreReceptionSession(oedId) {
+    return {
+      oedId: oedId || null,
+      readings: [],
+      candidateLineIds: null,
+      status: "ESPERANDO",
+      identifiedLineId: null
+    };
+  }
+
+  function ensurePreReceptionSession(oedId) {
+    if (!state.preReceptionSession || state.preReceptionSession.oedId !== oedId) {
+      state.preReceptionSession = createEmptyPreReceptionSession(oedId);
     }
-    if (!classified?.normalized) {
-      return { status: "insufficient", matches: [], message: "Evidencia insuficiente para vincular línea documental" };
+    return state.preReceptionSession;
+  }
+
+  function resolveProgressiveStatus(candidateLineIds) {
+    if (candidateLineIds === null) return "ESPERANDO";
+    if (candidateLineIds.length === 1) return "IDENTIFICADO";
+    if (candidateLineIds.length > 1) return "AMBIGUO";
+    return "INSUFICIENTE";
+  }
+
+  function applyPreReceptionReading(rawValue, oedId) {
+    const order = findDigitalEntryOrder(oedId);
+    const session = ensurePreReceptionSession(oedId);
+    const identified = identifyWithLogitecDictionary(rawValue);
+    const normalized = normalizedToken(rawValue);
+    const candidateCountBefore = session.candidateLineIds === null ? null : session.candidateLineIds.length;
+    let resultStatus = "INSUFICIENTE";
+    let message = "Evidencia insuficiente para identificación documental segura";
+
+    if (!normalized) {
+      resultStatus = "INSUFICIENTE";
+      message = "Token vacío · no se infiere línea OED";
+    } else if (identified.classification === "UBICACIÓN") {
+      resultStatus = "INSUFICIENTE";
+      message = "Ubicación no vincula línea OED sin contexto adicional";
+    } else {
+      const compatible = oedCompatibleLineIds(order, normalized);
+      const numericWithoutContext =
+        isPureNumericToken(normalized) &&
+        identified.classification === "SIN CLASIFICAR" &&
+        !compatible.length &&
+        !isKnownInCorpus(normalized);
+      if (numericWithoutContext) {
+        resultStatus = "INSUFICIENTE";
+        message = identified.reason || "Valor numérico sin contexto · no se infiere como cantidad";
+      } else if (session.candidateLineIds === null) {
+        if (!compatible.length) {
+          resultStatus = isKnownInCorpus(normalized) ? "CONOCIDO_NO_ESPERADO" : "DESCONOCIDO";
+          message = resultStatus === "CONOCIDO_NO_ESPERADO"
+            ? "Referencia conocida históricamente · no pertenece a la OED activa"
+            : "Referencia desconocida en diccionario/corpus y OED";
+        } else {
+          session.candidateLineIds = compatible;
+          resultStatus = resolveProgressiveStatus(session.candidateLineIds);
+          message =
+            resultStatus === "IDENTIFICADO"
+              ? "IDENTIFICACIÓN INEQUÍVOCA"
+              : `${compatible.length} coincidencias documentales`;
+        }
+      } else if (!compatible.length) {
+        resultStatus = isKnownInCorpus(normalized) ? "CONOCIDO_NO_ESPERADO" : "DESCONOCIDO";
+        message = resultStatus === "CONOCIDO_NO_ESPERADO"
+          ? "Referencia conocida históricamente · no pertenece a la OED activa"
+          : "Referencia desconocida en diccionario/corpus y OED";
+      } else {
+        const intersection = session.candidateLineIds.filter((lineId) => compatible.includes(lineId));
+        if (!intersection.length) {
+          resultStatus = "CONTRADICTORIO";
+          message = "Nueva lectura incompatible con candidatos acumulados";
+        } else {
+          session.candidateLineIds = intersection;
+          resultStatus = resolveProgressiveStatus(session.candidateLineIds);
+          message =
+            resultStatus === "IDENTIFICADO"
+              ? "IDENTIFICACIÓN INEQUÍVOCA"
+              : `${intersection.length} coincidencias documentales`;
+        }
+      }
     }
-    if (classified.classification === "SIN CLASIFICAR") {
-      return {
-        status: "insufficient",
-        matches: [],
-        message: classified.reason || "Sin clasificación · no se infiere línea OED"
-      };
-    }
-    if (classified.classification === "UBICACIÓN") {
-      return {
-        status: "insufficient",
-        matches: [],
-        message: "Ubicación no vincula línea OED sin contexto adicional"
-      };
-    }
-    const matches = (order.lines || []).filter((line) => oedLineMatchesClassification(line, classified));
-    if (matches.length === 1) {
-      return { status: "matched", matches, message: "Coincidencia inequívoca con línea documental" };
-    }
-    if (matches.length > 1) {
-      return { status: "ambiguous", matches, message: "Múltiples líneas posibles · fail-closed" };
-    }
-    return { status: "unmatched", matches: [], message: "Sin línea documental para este token en la OED activa" };
+
+    const candidateCountAfter = session.candidateLineIds === null ? null : session.candidateLineIds.length;
+    session.readings.push({
+      raw: identified.raw,
+      normalized,
+      classification: identified.classification,
+      timestamp: new Date().toISOString(),
+      candidateCountBefore,
+      candidateCountAfter,
+      resultStatus,
+      message
+    });
+    session.status = session.candidateLineIds === null ? resultStatus : resolveProgressiveStatus(session.candidateLineIds);
+    session.identifiedLineId = session.status === "IDENTIFICADO" ? session.candidateLineIds[0] : null;
+    return session;
+  }
+
+  function replayPreReceptionSession(oedId, rawValues) {
+    state.preReceptionSession = createEmptyPreReceptionSession(oedId);
+    rawValues.forEach((raw) => applyPreReceptionReading(raw, oedId));
+    return state.preReceptionSession;
+  }
+
+  function discardLastPreReceptionReading() {
+    const session = state.preReceptionSession;
+    if (!session?.readings.length) return;
+    const raws = session.readings.slice(0, -1).map((reading) => reading.raw);
+    replayPreReceptionSession(session.oedId, raws);
+    renderContent();
+  }
+
+  function resetPreReceptionIdentification() {
+    const oedId = state.preReceptionSession?.oedId || state.activeDigitalEntryOrderId;
+    state.preReceptionSession = createEmptyPreReceptionSession(oedId);
+    renderContent();
   }
 
   function submitPreReceptionConsultation(rawValue) {
     const trimmed = String(rawValue || "").trim();
     if (!trimmed) return;
-    const order = activeDigitalEntryOrder();
-    const identified = identifyWithLogitecDictionary(trimmed);
-    const prediction = predictDigitalEntryLineMatches(order, identified);
-    state.preReceptionConsultSeq += 1;
-    state.preReceptionConsultLog.unshift({
-      id: `PRC-${String(state.preReceptionConsultSeq).padStart(4, "0")}`,
-      raw: identified.raw,
-      normalized: identified.normalized,
-      classification: identified.classification,
-      dictionaryKind: identified.dictionary?.kind || null,
-      predictionStatus: prediction.status,
-      predictionMessage: prediction.message,
-      matchedLineIds: prediction.matches.map((line) => line.lineId),
-      oedId: order?.id || null,
-      at: new Date().toISOString()
-    });
-    state.preReceptionConsultLog = state.preReceptionConsultLog.slice(0, 40);
+    const oedId = state.activeDigitalEntryOrderId;
+    if (!oedId) return;
+    applyPreReceptionReading(trimmed, oedId);
     renderContent();
+  }
+
+  function renderPreReceptionSessionPanel(oedId, { operator = false } = {}) {
+    const session = state.preReceptionSession?.oedId === oedId ? state.preReceptionSession : createEmptyPreReceptionSession(oedId);
+    const order = findDigitalEntryOrder(oedId);
+    const identifiedLine = session.identifiedLineId ? findOedLine(order, session.identifiedLineId) : null;
+    const candidateCount = session.candidateLineIds === null ? "—" : String(session.candidateLineIds.length);
+    const readingsTable = session.readings.length
+      ? `<table class="data-table pre-reception-session-readings"><thead><tr>
+          <th>Hora</th><th>RAW</th><th>Clasificación</th><th>Antes</th><th>Después</th><th>Resultado</th>
+        </tr></thead><tbody>${session.readings
+          .slice()
+          .reverse()
+          .map(
+            (reading) => `<tr>
+              <td>${esc(new Date(reading.timestamp).toLocaleTimeString("es-MX"))}</td>
+              <td><code>${esc(reading.raw)}</code></td>
+              <td>${esc(reading.classification)}</td>
+              <td>${esc(reading.candidateCountBefore ?? "—")}</td>
+              <td>${esc(reading.candidateCountAfter ?? "—")}</td>
+              <td>${esc(reading.resultStatus)} · ${esc(reading.message)}</td>
+            </tr>`
+          )
+          .join("")}</tbody></table>`
+      : `<p class="operational-table-meta">Sin lecturas en la sesión predictiva actual.</p>`;
+    const autocomplete = identifiedLine
+      ? `<div class="card-panel pre-reception-autocomplete ok-soft">
+          <h5>IDENTIFICACIÓN INEQUÍVOCA</h5>
+          <p><span class="client-field-label">SKU</span> ${esc(identifiedLine.sku || "—")}</p>
+          <p><span class="client-field-label">Pedido</span> ${esc(identifiedLine.pedido || "—")}</p>
+          <p><span class="client-field-label">SAP</span> ${esc(identifiedLine.sap || "—")}</p>
+          <p><span class="client-field-label">Lote</span> ${esc(identifiedLine.lote || "—")}</p>
+          <p><span class="client-field-label">Partida</span> ${esc(identifiedLine.partida || "—")}</p>
+          <p><span class="client-field-label">Descripción</span> ${esc(identifiedLine.description || "—")}</p>
+          <p><span class="client-field-label">Proyecto</span> ${esc(order?.project || "—")}</p>
+        </div>`
+      : "";
+    const controls = operator
+      ? `<p class="operational-table-meta">Operador ejecuta cotejo · no administra OED ni diccionario</p>`
+      : `<div class="pre-reception-session-controls">
+          <button type="button" class="btn-secondary btn-compact" id="preReceptionDiscardLast"${session.readings.length ? "" : " disabled"}>DESCARTAR ÚLTIMA LECTURA</button>
+          <button type="button" class="btn-secondary btn-compact" id="preReceptionResetSession">REINICIAR IDENTIFICACIÓN</button>
+        </div>`;
+    return `<div class="card-panel pre-reception-session-panel">
+      <h4>Sesión predictiva · cotejo progresivo POL-004</h4>
+      <p class="operational-table-meta">Estado: <strong>${esc(session.status)}</strong> · Candidatos: <strong>${esc(candidateCount)}</strong></p>
+      ${readingsTable}
+      ${autocomplete}
+      ${controls}
+    </div>`;
   }
 
   function renderIdentificationDictionaryPanel() {
     return `<div class="card-panel pre-reception-dictionary-panel">
       <h4>Diccionario de identificación LOGITEC CORE WMS</h4>
-      <p class="module-lead">Prioridad documental · reutiliza el motor V14 sin inferir cantidad numérica</p>
+      <p class="module-lead">Tipos documentales · reutiliza clasificación V14 · corpus READ-ONLY separado de la OED</p>
       <table class="data-table pre-reception-dictionary-table"><thead><tr>
         <th>Prioridad</th><th>Tipo</th><th>Descripción</th>
       </tr></thead><tbody>${LOGITEC_IDENTIFICATION_DICTIONARY.map(
@@ -654,42 +864,52 @@
     </div>`;
   }
 
-  function renderPreReceptionConsultLog() {
-    if (!state.preReceptionConsultLog.length) {
-      return `<div class="card-panel ops-message">Sin consultas documentales en esta sesión DEMO.</div>`;
+  function renderIdentificationCorpusPanel() {
+    const entries = state.identificationCorpusEntries || [];
+    if (!entries.length) {
+      return `<div class="card-panel ops-message">Corpus READ-ONLY vacío · cargue fuente demo para reconocer antecedentes históricos.</div>`;
     }
-    return `<div class="card-panel"><table class="data-table pre-reception-consult-log"><thead><tr>
-        <th>Hora</th><th>RAW</th><th>Clasificación</th><th>Resultado predictivo</th><th>Línea OED</th>
-      </tr></thead><tbody>${state.preReceptionConsultLog
-        .slice(0, 20)
+    return `<div class="card-panel pre-reception-corpus-panel">
+      <h4>Diccionario real DEMO · corpus READ-ONLY</h4>
+      <p class="module-lead">Construido en memoria desde existencias demo · no persiste · no genera expectativa de recepción</p>
+      <table class="data-table"><thead><tr>
+        <th>Valor</th><th>Tipo</th><th>Proyecto</th><th>Relaciones</th><th>Coincidencias</th><th>Estado</th>
+      </tr></thead><tbody>${entries
+        .slice(0, 120)
         .map(
           (entry) => `<tr>
-            <td>${esc(new Date(entry.at).toLocaleTimeString("es-MX"))}</td>
-            <td><code>${esc(entry.raw)}</code></td>
-            <td>${esc(entry.classification)}</td>
-            <td>${esc(entry.predictionMessage)}</td>
-            <td>${esc(entry.matchedLineIds.join(" · ") || "—")}</td>
+            <td><code>${esc(entry.value)}</code></td>
+            <td>${esc(entry.type)}</td>
+            <td>${esc(entry.project)}</td>
+            <td>${esc(entry.relations)}</td>
+            <td>${esc(entry.matches)}</td>
+            <td>${esc(entry.status)}</td>
           </tr>`
         )
-        .join("")}</tbody></table></div>`;
+        .join("")}</tbody></table>
+    </div>`;
   }
 
   function preReceptionDocumentalView() {
     const orders = state.digitalEntryOrders || [];
     const active = activeDigitalEntryOrder();
+    const activeOedId = active?.id || null;
+    if (activeOedId && (!state.preReceptionSession || state.preReceptionSession.oedId !== activeOedId)) {
+      state.preReceptionSession = createEmptyPreReceptionSession(activeOedId);
+    }
     const orderOptions = orders.length
       ? orders
           .map(
             (order) =>
               `<option value="${esc(order.id)}"${order.id === active?.id ? " selected" : ""}>${esc(order.id)} · ${esc(
                 order.project
-              )}</option>`
+              )} · ${esc(order.documentId)}</option>`
           )
           .join("")
       : `<option value="">Sin órdenes documentales demo</option>`;
     const linesTable = active?.lines?.length
       ? `<table class="data-table pre-reception-oed-lines"><thead><tr>
-          <th>Línea</th><th>SKU</th><th>Descripción</th><th>Cant. esp.</th><th>SAP</th><th>Pedido</th><th>Partida</th>
+          <th>Línea</th><th>SKU</th><th>Descripción</th><th>Cant. esp.</th><th>SAP</th><th>Pedido</th><th>Partida</th><th>Lote</th>
         </tr></thead><tbody>${active.lines
           .map(
             (line) => `<tr>
@@ -700,34 +920,50 @@
               <td>${esc(line.sap || "—")}</td>
               <td>${esc(line.pedido || "—")}</td>
               <td>${esc(line.partida || "—")}</td>
+              <td>${esc(line.lote || "—")}</td>
             </tr>`
           )
           .join("")}</tbody></table>`
-      : `<div class="card-panel ops-message warn">Sin líneas documentales derivadas de la fuente demo actual.</div>`;
+      : `<div class="card-panel ops-message warn">Sin líneas en la OED seleccionada.</div>`;
+    const corpusPanel = state.role === "ADMIN" ? renderIdentificationCorpusPanel() : "";
     return `<div class="module-screen-header"><h3>Pre-recepción documental</h3>
-      <p class="module-lead">Orden de entrada digital · motor predictivo · cotejo documental · DEMO READ-ONLY</p></div>
+      <p class="module-lead">Orden de entrada digital · motor predictivo progresivo · cotejo documental · DEMO READ-ONLY</p></div>
       <div class="card-panel ops-message warn pre-reception-banner">
         PRE-RECEPCIÓN DOCUMENTAL · NO REGISTRA ENTRADA FÍSICA · NO CREA MOVIMIENTO OFICIAL · NO MODIFICA INVENTARIO
       </div>
       <div class="card-panel pre-reception-oed-panel">
         <h4>Orden de entrada digital</h4>
         <p class="operational-table-meta">${esc(active?.status || "Sin OED activa")} · ${esc(active?.supplierRef || "—")}</p>
+        <p class="operational-table-meta">${esc(active?.sourceNote || "Documentación externa digitalizada · LOGITEC no genera administrativamente la OED")}</p>
         <label class="client-field-label" for="preReceptionOedSelect">OED activa</label>
         <select id="preReceptionOedSelect" class="pre-reception-oed-select">${orderOptions}</select>
         ${linesTable}
       </div>
+      ${renderPreReceptionSessionPanel(activeOedId)}
       ${renderIdentificationDictionaryPanel()}
+      ${corpusPanel}
       <div class="card-panel pre-reception-predict-panel">
         <h4>Motor predictivo documental</h4>
-        <p class="module-lead">Identifique un token · prediga línea OED · fail-closed ante ambigüedad o evidencia insuficiente</p>
+        <p class="module-lead">Cotejo progresivo · intersección acumulada · fail-closed POL-004</p>
         <div class="pre-reception-consult-row">
-          <input id="preReceptionConsultInput" class="pre-reception-consult-input" type="text" placeholder="Escanee o escriba SKU · SAP · Pedido · Partida · Serie" autocomplete="off" />
+          <input id="preReceptionConsultInput" class="pre-reception-consult-input" type="text" placeholder="Escanee o escriba SKU · SAP · Pedido · Partida · Serie · Lote" autocomplete="off" />
           <button type="button" class="btn-primary btn-compact" id="preReceptionConsultRun">Cotejar documentalmente</button>
         </div>
-        <p class="operational-table-meta">Usa classifyScanCodeLocal + diccionario · no usa escaneo libre V14 · no escribe en backend</p>
-      </div>
-      <div class="module-screen-header pre-reception-log-header"><h4>Consultas documentales de sesión</h4></div>
-      ${renderPreReceptionConsultLog()}`;
+        <p class="operational-table-meta">Primera lectura: candidatos OED · siguientes: intersección · RAW conservado</p>
+      </div>`;
+  }
+
+  function operatorOedReceptionFlow(task) {
+    ensurePreReceptionSession(task.oedId);
+    return `<div class="operator-handheld-shell">
+      ${renderScannerWorkspace({
+        mode: "task",
+        meta: `${task.id} · ${task.typeLabel} · ${task.oedId}`,
+        instruction: "Escanee para cotejo progresivo de la OED asignada"
+      })}
+      ${renderPreReceptionSessionPanel(task.oedId, { operator: true })}
+      <p class="ops-message">DEMO — recepción documental · no registra movimiento · Operador no administra OED</p>
+    </div>`;
   }
 
   function classificationDisplay(result) {
@@ -1258,6 +1494,22 @@
     const pedido = a.pedido && !/^free to sale$/i.test(String(a.pedido).trim()) ? a.pedido : "45003182";
     return [
       {
+        id: "T-OED-1047",
+        type: "receive",
+        typeLabel: "Recepción · cotejo OED",
+        reference: "OED-DEMO-PROG-001",
+        oedId: "OED-DEMO-PROG-001",
+        project: "AVIAT NETWORKS",
+        product: "Cotejo progresivo documental",
+        description: "Pre-recepción POL-004 · escaneo acumulado",
+        qty: 8,
+        origin: "Documentación externa digitalizada",
+        destination: "Buffer de entrada",
+        priority: "Alta",
+        status: "pending",
+        operator: null
+      },
+      {
         id: "T-1048",
         type: "receive",
         typeLabel: "Recibir mercancía",
@@ -1501,6 +1753,7 @@
   }
 
   function operatorTaskFlow(task) {
+    if (task.oedId) return operatorOedReceptionFlow(task);
     const flow = state.taskFlow || { step: 0 };
     const steps = taskFlowSteps(task);
     const current = steps[flow.step] || steps[steps.length - 1];
@@ -2660,6 +2913,28 @@
   }
 
   async function submitOperatorScan(task) {
+    if (task.oedId) {
+      const input = document.getElementById("scanValue");
+      const fb = document.getElementById("scanFeedback");
+      if (!input || !fb || state.scanProcessing) return;
+      const raw = String(input.value ?? "");
+      if (!String(raw).trim()) {
+        fb.className = "scan-status warn";
+        fb.textContent = "No leído · escanee código";
+        return;
+      }
+      state.scanProcessing = true;
+      applyPreReceptionReading(raw, task.oedId);
+      const last = state.preReceptionSession?.readings?.[state.preReceptionSession.readings.length - 1];
+      fb.className = last?.resultStatus === "CONTRADICTORIO" || last?.resultStatus === "DESCONOCIDO" ? "scan-status warn" : "scan-status ok";
+      fb.textContent = last ? `${last.resultStatus} · ${last.message}` : "Lectura registrada";
+      if (last?.resultStatus === "IDENTIFICADO") playScanOkFeedback();
+      input.value = "";
+      state.scanProcessing = false;
+      state.scanSuccessPlayed = false;
+      renderContent();
+      return;
+    }
     const flow = state.taskFlow || { step: 0 };
     const input = document.getElementById("scanValue");
     const fb = document.getElementById("scanFeedback");
@@ -2858,6 +3133,7 @@
     });
     document.getElementById("preReceptionOedSelect")?.addEventListener("change", (event) => {
       state.activeDigitalEntryOrderId = event.target.value || null;
+      state.preReceptionSession = createEmptyPreReceptionSession(state.activeDigitalEntryOrderId);
       renderContent();
     });
     document.getElementById("preReceptionConsultRun")?.addEventListener("click", () => {
@@ -2870,6 +3146,8 @@
       submitPreReceptionConsultation(event.target.value);
       event.target.value = "";
     });
+    document.getElementById("preReceptionDiscardLast")?.addEventListener("click", () => discardLastPreReceptionReading());
+    document.getElementById("preReceptionResetSession")?.addEventListener("click", () => resetPreReceptionIdentification());
     document.getElementById("freeScanDeclaredAction")?.addEventListener("change", (event) => {
       const session = ensureFreeScanSession();
       session.declaredAction = event.target.value;

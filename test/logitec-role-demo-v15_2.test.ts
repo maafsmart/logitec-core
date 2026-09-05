@@ -101,8 +101,8 @@ function capture(readings: Capture["readings"]): Capture {
 }
 
 test("cache-buster v=15.3", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=16.1/);
-  assert.match(html, /logitec-role-demo\.css\?v=16.1/);
+  assert.match(html, /logitec-role-demo\.js\?v=16.1.1/);
+  assert.match(html, /logitec-role-demo\.css\?v=16.1.1/);
 });
 
 test("fail-closed evalúa todas las coincidencias antes de filtrar autorizables", () => {
