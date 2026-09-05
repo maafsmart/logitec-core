@@ -92,8 +92,8 @@ function baseCapture(overrides: Partial<Capture> = {}): Capture {
   };
 }
 
-test("cache-buster v=15", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=15/);
+test("cache-buster v=15.1", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=15\.1/);
 });
 
 test("Operador CP validada desde Pendientes registra Validación de Supervisor", () => {

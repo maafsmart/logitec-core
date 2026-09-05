@@ -1465,33 +1465,83 @@
     return set;
   }
 
-  function lookupStockRowFromReadingMeta(reading) {
+  function readingClassificationKind(reading) {
+    const cls = String(reading?.classification || "").trim().toUpperCase();
+    if (cls.startsWith("UBICACIÓN") || cls.startsWith("UBICACION")) return "UBICACIÓN";
+    if (cls.startsWith("SKU")) return "SKU";
+    if (cls.startsWith("SAP")) return "SAP";
+    if (cls.startsWith("PEDIDO")) return "PEDIDO";
+    if (cls.startsWith("PARTIDA")) return "PARTIDA";
+    if (cls.startsWith("SERIE")) return "SERIE";
+    return null;
+  }
+
+  function stockRowsMatchingReading(reading) {
+    const kind = readingClassificationKind(reading);
     const norm = String(reading?.normalized || normalizeScannerRawValue(reading?.raw) || "")
       .trim()
       .toUpperCase();
-    if (!norm) return null;
+    if (!norm || !kind || kind === "UBICACIÓN") return [];
     const stock = state.stock || [];
-    return (
-      stock.find((r) => String(r.product?.sku || "").toUpperCase() === norm) ||
-      stock.find((r) => String(r.location?.code || "").toUpperCase() === norm) ||
-      stock.find((r) => String(r.sap || "").toUpperCase() === norm) ||
-      stock.find((r) => String(r.pedido || "").toUpperCase() === norm) ||
-      stock.find((r) => String(r.partida || "").toUpperCase() === norm) ||
-      stock.find((r) => String(r.serialNumber || "").toUpperCase() === norm) ||
-      null
-    );
+    switch (kind) {
+      case "SKU":
+        return stock.filter((r) => String(r.product?.sku || "").toUpperCase() === norm);
+      case "SAP":
+        return stock.filter((r) => String(r.sap || "").toUpperCase() === norm);
+      case "PEDIDO":
+        return stock.filter((r) => String(r.pedido || "").toUpperCase() === norm);
+      case "PARTIDA":
+        return stock.filter((r) => String(r.partida || "").toUpperCase() === norm);
+      case "SERIE":
+        return stock.filter((r) => String(r.serialNumber || "").toUpperCase() === norm);
+      default:
+        return [];
+    }
+  }
+
+  function projectLabelFromStockRow(row) {
+    return String(row?.project?.code || row?.project?.name || "").trim();
+  }
+
+  function authorizedProjectsFromStockRows(rows) {
+    const projects = new Set();
+    rows.forEach((row) => {
+      const project = projectLabelFromStockRow(row);
+      if (isAuthorizedClientProject(project)) projects.add(project);
+    });
+    return projects;
+  }
+
+  function officialLocationsFromStockRows(rows) {
+    const locations = new Set();
+    rows.forEach((row) => {
+      const code = String(row?.location?.code || "").trim();
+      if (code) locations.add(code);
+    });
+    return locations;
+  }
+
+  function deriveReadingProjectLabel(reading) {
+    if (readingClassificationKind(reading) === "UBICACIÓN") return null;
+    const projects = authorizedProjectsFromStockRows(stockRowsMatchingReading(reading));
+    if (projects.size === 1) return [...projects][0];
+    return null;
   }
 
   function deriveCaptureProjectLabel(capture) {
-    for (const reading of capture.readings || []) {
-      const direct = String(reading.project || "").trim();
-      if (isAuthorizedClientProject(direct)) return direct;
-    }
-    for (const reading of capture.readings || []) {
-      const row = lookupStockRowFromReadingMeta(reading);
-      const linked = String(row?.project?.code || row?.project?.name || "").trim();
-      if (isAuthorizedClientProject(linked)) return linked;
-    }
+    const projects = new Set();
+    (capture.readings || []).forEach((reading) => {
+      const project = deriveReadingProjectLabel(reading);
+      if (project) projects.add(project);
+    });
+    if (projects.size === 1) return [...projects][0];
+    return null;
+  }
+
+  function deriveReadingOfficialLocation(reading) {
+    if (readingClassificationKind(reading) === "UBICACIÓN") return null;
+    const locations = officialLocationsFromStockRows(stockRowsMatchingReading(reading));
+    if (locations.size === 1) return [...locations][0];
     return null;
   }
 
@@ -1552,11 +1602,11 @@
   function clientCaptureOfficialLocation(capture) {
     const official = new Set();
     (capture.readings || []).forEach((reading) => {
-      const row = lookupStockRowFromReadingMeta(reading);
-      const code = String(reading.officialLocation || row?.location?.code || "").trim();
-      if (code) official.add(code);
+      const loc = deriveReadingOfficialLocation(reading);
+      if (loc) official.add(loc);
     });
-    return official.size === 1 ? [...official][0] : official.size > 1 ? [...official].join(" · ") : null;
+    if (official.size === 1) return [...official][0];
+    return null;
   }
 
   function renderClientReadingEvidence(readings) {

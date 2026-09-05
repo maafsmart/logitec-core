@@ -52,8 +52,14 @@ const harnessSrc = `
 ${sliceFunction(js, "normalizeScannerRawValue")}
 ${sliceFunction(js, "isAuthorizedClientProject")}
 ${sliceFunction(js, "clientAuthorizedProjectSet")}
-${sliceFunction(js, "lookupStockRowFromReadingMeta")}
+${sliceFunction(js, "readingClassificationKind")}
+${sliceFunction(js, "stockRowsMatchingReading")}
+${sliceFunction(js, "projectLabelFromStockRow")}
+${sliceFunction(js, "authorizedProjectsFromStockRows")}
+${sliceFunction(js, "officialLocationsFromStockRows")}
+${sliceFunction(js, "deriveReadingProjectLabel")}
 ${sliceFunction(js, "deriveCaptureProjectLabel")}
+${sliceFunction(js, "deriveReadingOfficialLocation")}
 ${sliceFunction(js, "clientVisibleProvisionalCaptures")}
 ${sliceFunction(js, "clientAdminStatusMessage")}
 ${sliceFunction(js, "renderClientProvisionalCaptureCard")}
@@ -111,9 +117,9 @@ function authorizedCapture(overrides: Partial<Capture> = {}): Capture {
   };
 }
 
-test("cache-buster v=15", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=15/);
-  assert.match(html, /logitec-role-demo\.css\?v=15/);
+test("cache-buster v=15.1", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=15\.1/);
+  assert.match(html, /logitec-role-demo\.css\?v=15\.1/);
 });
 
 test("Cliente conserva Inicio + Consulta", () => {
@@ -250,5 +256,6 @@ test("ubicación física reportada solo con evidencia de escaneo", () => {
     ]
   });
   assert.equal(h.clientCapturePhysicalLocation(withScan), "AN203");
+  assert.equal(h.clientCaptureOfficialLocation(withScan), null);
   assert.equal(h.clientCapturePhysicalLocation(authorizedCapture()), null);
 });
