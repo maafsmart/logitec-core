@@ -301,6 +301,7 @@
     document.body.classList.toggle("focus-mode", state.concentration);
     syncConcentrationButton();
     syncConcentrationOverlay();
+    syncConcentrationUi();
   }
 
   function wireConcentration() {
@@ -324,9 +325,7 @@
   function cancelActiveTask() {
     state.activeTaskId = null;
     state.taskFlow = null;
-    state.scanProcessing = false;
-    state.scanSuccessPlayed = false;
-    state.scanInputStartedAt = null;
+    unlockScanInput();
     state.scanLastMetrics = null;
     state.module = "tasks";
     state.tab = "operacion";
@@ -1194,13 +1193,17 @@
       if (!task) return;
       const input = document.getElementById("scanValue");
       input?.focus();
+      input?.select();
+      const submitScan = () => {
+        void submitOperatorScan(task);
+      };
       input?.addEventListener("focus", () => {
         if (!state.scanInputStartedAt) state.scanInputStartedAt = performance.now();
       });
       input?.addEventListener("keydown", (event) => {
         if (event.key === "Enter") {
           event.preventDefault();
-          void submitOperatorScan(task);
+          submitScan();
         }
       });
       document.getElementById("scanManual")?.addEventListener("click", () => {
