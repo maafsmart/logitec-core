@@ -421,9 +421,6 @@
     if (!normalized) {
       return { raw, normalized: "", classification: "SIN CLASIFICAR", match: null };
     }
-    if (isPureNumericToken(normalized)) {
-      return { raw, normalized, classification: "SIN CLASIFICAR", match: null, reason: "Valor numérico aislado" };
-    }
     const stock = state.stock || [];
     const skuHit = stock.find((r) => String(r.product?.sku || "").toUpperCase() === normalized);
     if (skuHit) {
@@ -453,6 +450,15 @@
     const serialHit = stock.find((r) => String(r.serialNumber || "").toUpperCase() === normalized);
     if (serialHit) {
       return { raw, normalized, classification: "SERIE", match: { type: "SERIE", value: serialHit.serialNumber } };
+    }
+    if (isPureNumericToken(normalized)) {
+      return {
+        raw,
+        normalized,
+        classification: "SIN CLASIFICAR",
+        match: null,
+        reason: "Valor numérico sin contexto · no se infiere como cantidad"
+      };
     }
     return { raw, normalized, classification: "SIN CLASIFICAR", match: null };
   }
