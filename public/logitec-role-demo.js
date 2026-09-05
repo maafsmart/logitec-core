@@ -224,7 +224,8 @@
     freeScanSession: null,
     freeScanAnchor: null,
     provisionalCaptures: [],
-    provisionalCaptureSeq: 0
+    provisionalCaptureSeq: 0,
+    demoSupervisorActorId: "SUPERVISOR_DEMO"
   };
 
   const app = document.getElementById("app");
@@ -309,6 +310,7 @@
     state.freeScanAnchor = null;
     state.provisionalCaptures = [];
     state.provisionalCaptureSeq = 0;
+    state.demoSupervisorActorId = "SUPERVISOR_DEMO";
     document.body.classList.remove("focus-mode");
     syncConcentrationOverlay();
     syncSupervisorOperatorModeUi();
@@ -410,6 +412,13 @@
     if (state.role === "SUPERVISOR") return "Supervisor";
     if (state.role === "OPERATOR") return "Operador";
     return state.role;
+  }
+
+  function currentDemoActorId() {
+    // Production: actor identity must come from authenticated user id
+    if (state.role === "OPERATOR") return "OPERATOR_DEMO";
+    if (state.role === "SUPERVISOR") return state.demoSupervisorActorId || "SUPERVISOR_DEMO";
+    return null;
   }
 
   function normalizeForClassification(rawValue) {
@@ -571,9 +580,11 @@
   function buildProvisionalCaptureFromSession(session, { validateNow = false } = {}) {
     const action = DECLARED_FLOOR_ACTIONS.find((a) => a.id === session.declaredAction) || DECLARED_FLOOR_ACTIONS[0];
     const executor = demoExecutorLabel();
+    const executorActorId = currentDemoActorId();
     const now = new Date().toISOString();
     const supervisorSelf =
-      validateNow && state.role === "SUPERVISOR" && !state.operatorMode;
+      validateNow && state.role === "SUPERVISOR" && !state.operatorMode && executorActorId;
+    const reviewerActorId = supervisorSelf ? executorActorId : null;
     return {
       id: nextProvisionalCaptureId(),
       status: validateNow ? "VALIDADO · PENDIENTE DE REGISTRO" : "PENDIENTE DE SUPERVISIÓN",
@@ -581,9 +592,14 @@
       declaredActionId: action.id,
       executor,
       executorRole: state.role,
+      executorActorId,
       executorOperatorMode: Boolean(state.operatorMode),
       reviewer: supervisorSelf ? "Supervisor" : null,
-      reviewType: supervisorSelf ? "Autovalidación de Supervisor" : null,
+      reviewerActorId,
+      reviewType:
+        supervisorSelf && executorActorId === reviewerActorId
+          ? "Autovalidación de Supervisor"
+          : null,
       device: "Dispositivo demo",
       physicalStartedAt: session.startedAt,
       physicalEndedAt: now,
@@ -619,9 +635,10 @@
     finalizeProvisionalCapture(buildProvisionalCaptureFromSession(session, { validateNow: true }));
   }
 
-  function supervisorReviewTypeForStatusChange(capture, nextStatus) {
+  function supervisorReviewTypeForStatusChange(capture, reviewerActorId, nextStatus) {
     if (nextStatus === "VALIDADO · PENDIENTE DE REGISTRO") {
-      return capture.executorRole === "SUPERVISOR"
+      // Production: actor identity must come from authenticated user id
+      return capture.executorActorId && reviewerActorId && capture.executorActorId === reviewerActorId
         ? "Autovalidación de Supervisor"
         : "Validación de Supervisor";
     }
@@ -639,10 +656,12 @@
     if (!capture || state.role !== "SUPERVISOR" || state.operatorMode) return;
     if (!PROVISIONAL_STATUSES.includes(nextStatus)) return;
     const now = new Date().toISOString();
+    const reviewerActorId = currentDemoActorId();
     capture.status = nextStatus;
     capture.reviewer = "Supervisor";
+    capture.reviewerActorId = reviewerActorId;
     capture.adminUpdatedAt = now;
-    const reviewType = supervisorReviewTypeForStatusChange(capture, nextStatus);
+    const reviewType = supervisorReviewTypeForStatusChange(capture, reviewerActorId, nextStatus);
     if (reviewType) capture.reviewType = reviewType;
     renderContent();
   }
