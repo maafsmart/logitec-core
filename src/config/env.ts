@@ -19,6 +19,25 @@ const envSchema = z.object({
     (value) => String(value ?? "false").trim().toLowerCase() === "true" ? "true" : "false",
     z.enum(["true", "false"]).default("false")
   ),
+  ENABLE_HUGO_BUFFER_INBOUND: z.preprocess(
+    (value) => (String(value ?? "false").trim().toLowerCase() === "true" ? "true" : "false"),
+    z.enum(["true", "false"]).default("false")
+  ),
+  HUGO_BUFFER_IN_LOCATION_PREFERENCE: z.string().trim().max(120).optional(),
+  HUGO_BUFFER_IN_WAREHOUSE_PREFERENCE: z.string().trim().max(80).optional(),
+  HUGO_BUFFER_OUT_LOCATION_PREFERENCE: z.string().trim().max(120).optional(),
+  HUGO_BUFFER_OUT_WAREHOUSE_PREFERENCE: z.string().trim().max(80).optional(),
+  ENABLE_HUGO_OPERATIONS_FORM: z.preprocess(
+    (value) => (String(value ?? "false").trim().toLowerCase() === "true" ? "true" : "false"),
+    z.enum(["true", "false"]).default("false")
+  ),
+  HUGO_OPERATIONS_INTAKE_DIR: z.string().trim().default("data/operations-intake"),
+  ENABLE_LOGITEC_SIMPLE_PREVIEW: z.preprocess(
+    (value) => (String(value ?? "false").trim().toLowerCase() === "true" ? "true" : "false"),
+    z.enum(["true", "false"]).default("false")
+  ),
+  LOGITEC_DEMO_INVENTORY_XLSX_PATH: z.string().trim().optional(),
+  LOGITEC_DEMO_INVENTORY_SHEET_NAME: z.string().trim().optional(),
   ALLOW_TENANT_INVENTORY_RESET: z.preprocess(
     (value) => {
       const raw = String(value ?? "false").trim().toLowerCase();

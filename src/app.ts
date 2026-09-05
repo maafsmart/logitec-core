@@ -25,6 +25,16 @@ import { requisitionsRouter } from "./modules/requisitions/requisitions.routes.j
 import { tasksRouter } from "./modules/tasks/tasks.routes.js";
 import { traceabilityRouter } from "./modules/traceability/traceability.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
+import {
+  hugoBufferInboundRouter,
+  isHugoBufferInboundEnabled
+} from "./modules/hugo-flow/hugo-buffer-inbound.routes.js";
+import {
+  isHugoOperationsFormEnabled,
+  operationsIntakeRouter
+} from "./modules/operations-intake/operations-intake.routes.js";
+import { demoRouter } from "./modules/demo/demo.routes.js";
+import { isLogitecSimplePreviewEnabled } from "./modules/demo/logitec-simple-preview.feature.js";
 import { errorHandler } from "./middlewares/error.middleware.js";
 
 export const app = express();
@@ -51,13 +61,19 @@ const pdaScannerLabPageGate = createPdaScannerLabGate(
   isPdaScannerLabEnabled(env.ENABLE_PDA_SCANNER_LAB)
 );
 
+const helmetCspDirectives: Record<string, null | string[]> = {
+  "img-src": ["'self'", "data:", "https:"]
+};
+if (env.NODE_ENV !== "production") {
+  // LAN QA uses plain HTTP; upgrade-insecure-requests breaks CSS/JS subresources on phones.
+  helmetCspDirectives["upgrade-insecure-requests"] = null;
+}
+
 app.use(
   helmet({
     contentSecurityPolicy: {
       useDefaults: true,
-      directives: {
-        "img-src": ["'self'", "data:", "https:"]
-      }
+      directives: helmetCspDirectives
     }
   })
 );
@@ -74,6 +90,9 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/auth", authRouter);
+app.use("/api/operations-intake", operationsIntakeRouter);
+app.use("/api/demo", demoRouter);
+app.use("/api/hugo-flow", hugoBufferInboundRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/clients", clientsRouter);
 app.use("/api/warehouses", warehousesRouter);
@@ -108,9 +127,95 @@ app.get("/vendor/zxing-wasm/3.1.3/zxing_writer.wasm", (_req, res) => {
 app.get("/pda-scanner-lab.html", pdaScannerLabPageGate, (_req, res) => {
   res.sendFile(path.join(publicDir, "pda-scanner-lab.html"));
 });
-app.use(express.static("public"));
+app.get("/hugo-buffer-inbound.html", (_req, res) => {
+  if (!isHugoBufferInboundEnabled()) {
+    res.status(404).send("Not Found");
+    return;
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  res.sendFile(path.join(publicDir, "hugo-buffer-inbound.html"));
+});
+function logHugoIntakeAsset(req: express.Request, asset: string, status: number) {
+  console.info("[hugo-intake-asset]", req.method, req.path, {
+    asset,
+    status,
+    ip: req.ip || req.socket.remoteAddress,
+    userAgent: req.get("user-agent") || ""
+  });
+}
 
-app.get(/^\/(?!api|health).*/, (_req, res) => {
+function sendHugoOperationsIntakeAsset(
+  req: express.Request,
+  res: express.Response,
+  filename: "hugo-operations-intake.html" | "hugo-operations-intake.css" | "hugo-operations-intake.js",
+  contentType: "text/html" | "text/css" | "application/javascript"
+) {
+  if (!isHugoOperationsFormEnabled()) {
+    logHugoIntakeAsset(req, filename, 404);
+    res.status(404).type("text/plain").send("Not Found");
+    return;
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  res.type(contentType);
+  logHugoIntakeAsset(req, filename, 200);
+  res.sendFile(path.join(publicDir, filename));
+}
+
+app.get("/hugo-operations-intake.html", (req, res) => {
+  sendHugoOperationsIntakeAsset(req, res, "hugo-operations-intake.html", "text/html");
+});
+app.get("/hugo-operations-intake.css", (req, res) => {
+  sendHugoOperationsIntakeAsset(req, res, "hugo-operations-intake.css", "text/css");
+});
+app.get("/hugo-operations-intake.js", (req, res) => {
+  sendHugoOperationsIntakeAsset(req, res, "hugo-operations-intake.js", "application/javascript");
+});
+
+function sendLogitecPreviewAsset(
+  req: express.Request,
+  res: express.Response,
+  filename:
+    | "logitec-simple-demo.html"
+    | "logitec-simple-demo.css"
+    | "logitec-simple-demo.js"
+    | "logitec-role-demo.html"
+    | "logitec-role-demo.css"
+    | "logitec-role-demo.js",
+  contentType: "text/html" | "text/css" | "application/javascript"
+) {
+  if (!isLogitecSimplePreviewEnabled()) {
+    res.status(404).type("text/plain").send("Not Found");
+    return;
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  res.type(contentType);
+  res.sendFile(path.join(publicDir, filename));
+}
+
+app.get("/logitec-simple-demo.html", (req, res) => {
+  sendLogitecPreviewAsset(req, res, "logitec-simple-demo.html", "text/html");
+});
+app.get("/logitec-simple-demo.css", (req, res) => {
+  sendLogitecPreviewAsset(req, res, "logitec-simple-demo.css", "text/css");
+});
+app.get("/logitec-simple-demo.js", (req, res) => {
+  sendLogitecPreviewAsset(req, res, "logitec-simple-demo.js", "application/javascript");
+});
+app.get("/logitec-role-demo.html", (req, res) => {
+  sendLogitecPreviewAsset(req, res, "logitec-role-demo.html", "text/html");
+});
+app.get("/logitec-role-demo.css", (req, res) => {
+  sendLogitecPreviewAsset(req, res, "logitec-role-demo.css", "text/css");
+});
+app.get("/logitec-role-demo.js", (req, res) => {
+  sendLogitecPreviewAsset(req, res, "logitec-role-demo.js", "application/javascript");
+});
+app.use(express.static(publicDir));
+
+app.get(/^\/(?!api|health)(?!.*\.(?:css|js|html|wasm|png|jpe?g|gif|webp|svg|ico|json|map|txt|pdf|woff2?)).*$/, (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 

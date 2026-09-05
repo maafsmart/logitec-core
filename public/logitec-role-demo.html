@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="es" data-ui-version="compact-workspace-v1" data-visual="industrial-v84" data-visual-polish="v85" data-grid-density="compact">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>LOGITEC CORE WMS · Demo por rol</title>
+    <link rel="stylesheet" href="/logitec-role-demo.css?v=16.1.3" />
+  </head>
+  <body class="workspace-compact sistema-workspace">
+    <div id="mobileEmulationStage" class="mobile-emulation-stage">
+      <div class="mobile-emulation-chrome hidden" id="mobileEmulationChrome" hidden aria-live="polite">
+        <span class="mobile-emulation-label">EMULACIÓN MÓVIL · 390px</span>
+        <button type="button" class="mobile-emulation-restore-btn" id="mobileEmulationRestore">VOLVER A DESKTOP</button>
+      </div>
+      <div id="mobileEmulationFrame" class="mobile-emulation-frame">
+        <div class="demo-env-banner" role="status">ENTORNO DEMO · EXCEL OFICIAL · SOLO LECTURA</div>
+        <div class="app-shell">
+          <div id="concentrationOverlay" class="concentration-overlay hidden" hidden>
+            <button type="button" id="concentrationExitBtn" class="concentration-exit-btn">Salir de concentración</button>
+          </div>
+          <header class="app-topbar">
+            <div class="app-topbar-context">
+              <div class="app-brand">
+                <h1>LOGITEC CORE WMS</h1>
+                <p id="authHint">Conectando…</p>
+              </div>
+              <div class="app-topbar-meta">
+                <span class="demo-source-badge" id="dataSourceBadge">Fuente demo</span>
+                <button type="button" id="focusModeBtn" class="btn-secondary btn-compact focus-mode-btn" aria-pressed="false">Modo concentración</button>
+                <div class="role-demo-switch hidden" id="roleSwitch" hidden aria-label="Vista por rol">
+                  <button type="button" class="nav-section-tab" data-role="ADMIN">Administrador</button>
+                  <button type="button" class="nav-section-tab" data-role="SUPERVISOR">Supervisor</button>
+                  <button type="button" class="nav-section-tab" data-role="OPERATOR">Operador</button>
+                  <button type="button" class="nav-section-tab" data-role="CLIENT">Cliente</button>
+                </div>
+                <span class="app-datetime" id="appDateTime">—</span>
+              </div>
+            </div>
+            <div id="supervisorOperatorModeBar" class="supervisor-operator-mode-bar hidden" hidden aria-live="polite">
+              <span class="supervisor-operator-mode-label">Supervisor · trabajando como Operador</span>
+              <button type="button" class="btn-secondary btn-compact" id="exitSupervisorOperatorModeBtn">VOLVER A SUPERVISOR</button>
+            </div>
+            <nav id="wmsSectionBar" class="wms-section-bar" aria-label="Secciones WMS"></nav>
+          </header>
+          <div class="app-body">
+            <aside class="sidebar" id="sidebar" aria-label="Navegación principal"></aside>
+            <main class="content" id="app"></main>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside id="directorViewBar" class="director-view-bar hidden" hidden aria-label="Modo Director revisión temporal">
+      <p class="director-view-bar-label">MODO DIRECTOR · REVISIÓN TEMPORAL</p>
+      <div class="director-view-bar-actions">
+        <button type="button" class="director-view-btn active" data-director-role="ADMIN">LO QUE VE EL ADMIN</button>
+        <button type="button" class="director-view-btn" data-director-role="SUPERVISOR">LO QUE VE SUPERVISOR</button>
+        <button type="button" class="director-view-btn" data-director-role="OPERATOR">LO QUE VE OPERADOR</button>
+        <button type="button" class="director-view-btn" data-director-role="CLIENT">LO QUE VE CLIENTE</button>
+        <button type="button" class="director-view-btn director-view-btn-mobile" data-director-mobile="1">MODO CELULAR</button>
+        <button type="button" class="director-view-btn director-view-btn-system" data-director-system="1">VER SISTEMA ACTUAL</button>
+      </div>
+    </aside>
+    <footer class="demo-readonly-footer">
+      <span id="writeGuard">Escrituras bloqueadas: 0</span>
+      <span id="dataSourceFooter">Fuente: sin datos</span>
+    </footer>
+    <script src="/logitec-role-demo.js?v=16.1.3" defer></script>
+  </body>
+</html>

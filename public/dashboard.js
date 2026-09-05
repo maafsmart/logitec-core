@@ -1128,6 +1128,97 @@ const NAV_SECTION_DEFAULTS = {
 
 let currentNavSection = "inicio";
 let currentModuleName = null;
+
+const DIRECTIONAL_FLOW_POS_BY_MODULE = {
+  inbound: "first",
+  requisitions: "middle",
+  picking: "middle",
+  relocate: "middle",
+  outbound: "last"
+};
+
+function isDirectionalThemePreviewEnabled() {
+  const host = String(window.location.hostname || "").toLowerCase();
+  if (host !== "localhost" && host !== "127.0.0.1") return false;
+  try {
+    return new URLSearchParams(window.location.search).get("themePreview") === "directional";
+  } catch (_err) {
+    return false;
+  }
+}
+
+function syncDirectionalThemePreview(sectionId) {
+  const html = document.documentElement;
+  const appShell = document.querySelector(".app-shell");
+  if (!isDirectionalThemePreviewEnabled()) {
+    html.removeAttribute("data-theme-preview");
+    document.body.removeAttribute("data-nav-module");
+    document.body.removeAttribute("data-nav-flow-pos");
+    if (appShell) appShell.removeAttribute("data-nav-module");
+    teardownDirectionalHeaderShellObserver();
+    syncDirectionalHeaderShellMetrics();
+    return;
+  }
+  html.setAttribute("data-theme-preview", "directional");
+  const section = sectionId || currentNavSection || "inicio";
+  document.body.setAttribute("data-nav-module", section);
+  if (appShell) appShell.setAttribute("data-nav-module", section);
+  if (section === "operacion" && currentModuleName) {
+    const flowPos = DIRECTIONAL_FLOW_POS_BY_MODULE[currentModuleName] || "middle";
+    document.body.setAttribute("data-nav-flow-pos", flowPos);
+  } else {
+    document.body.removeAttribute("data-nav-flow-pos");
+  }
+  ensureDirectionalHeaderShellObserver();
+  syncDirectionalHeaderShellMetrics();
+}
+
+let directionalHeaderShellObserver = null;
+
+function syncDirectionalHeaderShellMetrics() {
+  if (!isDirectionalThemePreviewEnabled()) {
+    document.documentElement.style.removeProperty("--dash-topbar-track");
+    document.documentElement.style.removeProperty("--dash-header-shell-height");
+    return;
+  }
+  const topbar = document.querySelector(".app-topbar");
+  if (!topbar) return;
+  const topbarH = Math.ceil(topbar.getBoundingClientRect().height);
+  let shellH = topbarH;
+  if (!document.body.classList.contains("focus-mode")) {
+    const sidebar = document.querySelector(".sidebar");
+    const sidebarH = sidebar ? Math.ceil(sidebar.getBoundingClientRect().height) : 0;
+    shellH = topbarH + sidebarH;
+  }
+  document.documentElement.style.setProperty("--dash-topbar-track", `${topbarH}px`);
+  document.documentElement.style.setProperty("--dash-header-shell-height", `${shellH}px`);
+}
+
+function ensureDirectionalHeaderShellObserver() {
+  if (!isDirectionalThemePreviewEnabled() || directionalHeaderShellObserver) return;
+  if (typeof ResizeObserver === "undefined") return;
+  directionalHeaderShellObserver = new ResizeObserver(() => {
+    syncDirectionalHeaderShellMetrics();
+  });
+  const topbar = document.querySelector(".app-topbar");
+  const sidebar = document.querySelector(".sidebar");
+  if (topbar) directionalHeaderShellObserver.observe(topbar);
+  if (sidebar) directionalHeaderShellObserver.observe(sidebar);
+  ["focusNavSlot", "focusSubnavSlot"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) directionalHeaderShellObserver.observe(el);
+  });
+}
+
+function teardownDirectionalHeaderShellObserver() {
+  if (!directionalHeaderShellObserver) return;
+  directionalHeaderShellObserver.disconnect();
+  directionalHeaderShellObserver = null;
+}
+
+function initDirectionalThemePreview() {
+  syncDirectionalThemePreview(currentNavSection);
+}
 const ACTIVE_NAV_STORAGE_KEY = "logitec_active_nav";
 let userSelectedNavDuringBoot = false;
 let pendingUserNav = null;
@@ -1467,6 +1558,7 @@ function navigateTo(sectionId, moduleName) {
     currentModuleName = null;
     moduleButtons.forEach((btn) => btn.classList.remove("active"));
     resetContentScroll();
+    syncDirectionalThemePreview(section);
     return;
   }
 
@@ -1484,6 +1576,7 @@ function navigateTo(sectionId, moduleName) {
   setNavSection(section);
   currentNavSection = section;
   currentModuleName = mod;
+  syncDirectionalThemePreview(section);
   persistNavRoute(section, mod);
   if (fromBulkInbound) {
     announceNav("Entrada masiva abre Inventario → Existencias. Un solo asistente de importación; no hay un segundo importador.");
@@ -4316,6 +4409,7 @@ function setNavSection(sectionId) {
     panel.classList.toggle("active", show);
     panel.style.display = show ? "flex" : "none";
   });
+  syncDirectionalThemePreview(sectionId);
 }
 
 function findNavSectionForModule(moduleName) {
@@ -6586,6 +6680,7 @@ function syncTopbarOffset() {
   if (!bar) return;
   const height = Math.ceil(bar.getBoundingClientRect().height);
   document.documentElement.style.setProperty("--logitec-topbar-height", `${height}px`);
+  syncDirectionalHeaderShellMetrics();
 }
 
 function applyFocusMode(on) {
@@ -16297,4 +16392,5 @@ changeClientBtn?.addEventListener("click", () => {
   if (operationalClient) void clearAdminOperationalClient();
   else void showAdminClientPicker();
 });
+initDirectionalThemePreview();
 validateSession();

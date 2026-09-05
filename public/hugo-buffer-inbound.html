@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1222" />
+  <title>Operación por escaneo · LOGITEC</title>
+  <style>
+    :root {
+      --bg: #0b1222;
+      --card: #132038;
+      --line: #2a3b63;
+      --text: #eaf0ff;
+      --muted: #9caacc;
+      --ok: #2f9e6b;
+      --warn: #c45c12;
+      --err: #c0394a;
+      --flow-accent: #3d7eff;
+      --flow-accent-strong: #3d7eff;
+      --flow-accent-soft: rgba(61, 126, 255, 0.18);
+      --flow-accent-ring: rgba(61, 126, 255, 0.45);
+      --flow-panel-edge: transparent;
+      --flow-edge-style: gradient;
+      --flow-glow-rgb: 61, 126, 255;
+      --sticky-top: 0px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      font-family: Inter, Segoe UI, system-ui, sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at top, #16305a 0%, var(--bg) 55%);
+      padding: 8px 12px;
+      padding-bottom: calc(12px + env(safe-area-inset-bottom));
+      overflow-x: hidden;
+    }
+    .page-head { margin-bottom: 6px; }
+    .banner {
+      background: var(--warn);
+      color: #fff;
+      text-align: center;
+      font: 700 10px/20px Inter, Segoe UI, sans-serif;
+      letter-spacing: .06em;
+      border-radius: 6px;
+      margin-bottom: 6px;
+    }
+    .head-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    h1 { font-size: 1.05rem; margin: 0; line-height: 1.2; }
+    .page-sub {
+      margin: 2px 0 0;
+      font-size: .74rem;
+      line-height: 1.3;
+      color: var(--muted);
+      letter-spacing: .01em;
+    }
+    .sub { color: var(--muted); font-size: .82rem; margin: 0 0 8px; line-height: 1.35; }
+    .panel-hint {
+      margin-top: 0;
+      padding-left: 10px;
+      border-left: 3px solid var(--flow-accent);
+      color: #c5d4f5;
+    }
+    .gate-status {
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: .78rem;
+      margin: 0;
+      flex: 1 1 160px;
+      max-width: 100%;
+    }
+    .gate-status.ok { background: rgba(47, 158, 107, .15); border: 1px solid var(--ok); }
+    .gate-status.idle { background: rgba(61, 126, 255, .1); border: 1px solid var(--line); color: var(--muted); }
+    .gate-status.err { background: rgba(192, 57, 74, .15); border: 1px solid var(--err); }
+    .flow-tabs-wrap {
+      position: sticky;
+      top: var(--sticky-top);
+      z-index: 20;
+      margin: 0 -12px 8px;
+      padding: 6px 12px 8px;
+      background: linear-gradient(
+        180deg,
+        rgba(var(--flow-glow-rgb), 0.14) 0%,
+        rgba(11, 18, 34, 0.97) 58%,
+        rgba(11, 18, 34, 0)
+      );
+      backdrop-filter: blur(6px);
+    }
+    .flow-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .flow-tabs [role="tab"] {
+      appearance: none;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(19, 32, 56, .85);
+      color: var(--muted);
+      font: 700 .82rem/1.15 Inter, Segoe UI, sans-serif;
+      min-height: 48px;
+      padding: 8px 6px 7px;
+      margin: 0;
+      width: 100%;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+    }
+    .tab-label { display: block; }
+    .tab-hint {
+      display: block;
+      font-size: .68rem;
+      font-weight: 600;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: #7f8fad;
+    }
+    .flow-tabs [role="tab"].is-active,
+    .flow-tabs [role="tab"][aria-selected="true"] {
+      color: var(--text);
+      border-color: var(--flow-accent);
+      background: var(--flow-accent-soft);
+      box-shadow: inset 0 0 0 1px var(--flow-accent-ring);
+    }
+    .flow-tabs [role="tab"].is-active .tab-hint,
+    .flow-tabs [role="tab"][aria-selected="true"] .tab-hint {
+      color: var(--flow-accent);
+    }
+    .flow-tabs [role="tab"]:focus-visible {
+      outline: 2px solid var(--flow-accent);
+      outline-offset: 2px;
+    }
+    /*
+      Regla reutilizable por posición de pestaña (paleta = módulo, posición = dirección/intensidad):
+      - flow-pos-first  → entrada: izquierda clara → derecha oscura (to right, stops descendentes)
+      - flow-pos-middle → halo radial central (sin eje horizontal dominante)
+      - flow-pos-last   → salida: izquierda oscura → derecha clara (to right, stops ascendentes)
+      Con 4+ tabs: first=entrada, last=salida, middle*=misma familia sólida con --flow-tone-shift.
+    */
+    #workspace {
+      position: relative;
+      isolation: isolate;
+      --flow-bg-wash: none;
+      --flow-tone-shift: 0%;
+    }
+    #workspace::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background: var(--flow-bg-wash);
+    }
+    #workspace > * {
+      position: relative;
+      z-index: 1;
+    }
+    #workspace.flow-pos-first {
+      --flow-bg-wash: linear-gradient(
+        to right,
+        rgba(var(--flow-glow-rgb), 0.28) 0%,
+        rgba(var(--flow-glow-rgb), 0.16) 18%,
+        rgba(var(--flow-glow-rgb), 0.06) 38%,
+        transparent 62%
+      );
+      --flow-panel-edge: linear-gradient(
+        to right,
+        rgba(var(--flow-glow-rgb), 0.72) 0%,
+        rgba(var(--flow-glow-rgb), 0.14) 42%,
+        transparent 100%
+      );
+      --flow-edge-style: gradient;
+    }
+    #workspace.flow-pos-first .flow-tabs-wrap {
+      background:
+        linear-gradient(
+          to right,
+          rgba(var(--flow-glow-rgb), 0.16) 0%,
+          rgba(var(--flow-glow-rgb), 0.07) 40%,
+          transparent 68%
+        ),
+        linear-gradient(
+          180deg,
+          rgba(var(--flow-glow-rgb), 0.14) 0%,
+          rgba(11, 18, 34, 0.97) 58%,
+          rgba(11, 18, 34, 0)
+        );
+    }
+    #workspace.flow-pos-middle {
+      --flow-bg-wash: radial-gradient(
+        ellipse 125% 62% at 50% -6%,
+        rgba(var(--flow-glow-rgb), 0.2) 0%,
+        rgba(var(--flow-glow-rgb), 0.09) 28%,
+        rgba(var(--flow-glow-rgb), 0.03) 48%,
+        transparent 70%
+      );
+      --flow-panel-edge: var(--flow-accent);
+      --flow-edge-style: solid;
+    }
+    #workspace.flow-pos-middle[data-flow-middle-index="2"] {
+      --flow-tone-shift: 4%;
+    }
+    #workspace.flow-pos-middle[data-flow-middle-index="3"] {
+      --flow-tone-shift: -4%;
+    }
+    #workspace.flow-pos-last {
+      --flow-bg-wash: linear-gradient(
+        to right,
+        rgba(var(--flow-glow-rgb), 0.03) 0%,
+        rgba(var(--flow-glow-rgb), 0.06) 28%,
+        rgba(var(--flow-glow-rgb), 0.16) 52%,
+        rgba(var(--flow-glow-rgb), 0.28) 100%
+      );
+      --flow-panel-edge: linear-gradient(
+        to right,
+        transparent 0%,
+        rgba(var(--flow-glow-rgb), 0.14) 58%,
+        rgba(var(--flow-glow-rgb), 0.72) 100%
+      );
+      --flow-edge-style: gradient;
+    }
+    #workspace.flow-pos-last .flow-tabs-wrap {
+      background:
+        linear-gradient(
+          to right,
+          transparent 32%,
+          rgba(var(--flow-glow-rgb), 0.07) 50%,
+          rgba(var(--flow-glow-rgb), 0.16) 100%
+        ),
+        linear-gradient(
+          180deg,
+          rgba(var(--flow-glow-rgb), 0.14) 0%,
+          rgba(11, 18, 34, 0.97) 58%,
+          rgba(11, 18, 34, 0)
+        );
+    }
+    #workspace.flow-palette-recepcion {
+      --flow-glow-rgb: 46, 196, 214;
+      --flow-accent: #2ec4d6;
+      --flow-accent-strong: color-mix(in srgb, #1aa3b8 calc(100% - var(--flow-tone-shift)), #2ec4d6 var(--flow-tone-shift));
+      --flow-accent-soft: rgba(46, 196, 214, 0.18);
+      --flow-accent-ring: rgba(46, 196, 214, 0.48);
+    }
+    #workspace.flow-palette-mover {
+      --flow-glow-rgb: 99, 102, 214;
+      --flow-accent: #6366d6;
+      --flow-accent-strong: color-mix(in srgb, #4f52bf calc(100% - var(--flow-tone-shift)), #6366d6 var(--flow-tone-shift));
+      --flow-accent-soft: rgba(99, 102, 214, 0.22);
+      --flow-accent-ring: rgba(99, 102, 214, 0.48);
+    }
+    #workspace.flow-palette-salida {
+      --flow-glow-rgb: 56, 189, 248;
+      --flow-accent: #38bdf8;
+      --flow-accent-strong: color-mix(in srgb, #0ea5e9 calc(100% - var(--flow-tone-shift)), #38bdf8 var(--flow-tone-shift));
+      --flow-accent-soft: rgba(56, 189, 248, 0.18);
+      --flow-accent-ring: rgba(56, 189, 248, 0.48);
+    }
+    .flow-panel[hidden] { display: none !important; }
+    .flow-panel {
+      scroll-margin-top: 72px;
+      border-top: 3px solid transparent;
+      border-image: var(--flow-panel-edge) 1;
+      padding-top: 4px;
+    }
+    #workspace.flow-pos-middle .flow-panel:not([hidden]) {
+      border-image: none;
+      border-top-color: var(--flow-accent);
+    }
+    .panel-hint { scroll-margin-top: 72px; }
+    .card {
+      background: rgba(19, 32, 56, .95);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    label {
+      display: block;
+      font-size: .78rem;
+      color: var(--muted);
+      margin-bottom: 4px;
+      line-height: 1.25;
+      word-break: normal;
+      overflow-wrap: anywhere;
+    }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0b1222;
+      color: var(--text);
+      padding: 12px;
+      font: inherit;
+      min-height: 48px;
+    }
+    input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 2px solid var(--flow-accent);
+      outline-offset: 1px;
+      border-color: var(--flow-accent);
+    }
+    textarea { min-height: 72px; resize: vertical; }
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font: 700 1rem/1.1 Inter, Segoe UI, sans-serif;
+      color: #fff;
+      background: var(--flow-accent-strong);
+      min-height: 48px;
+      width: 100%;
+      margin-top: 8px;
+    }
+    button.primary-action:disabled,
+    button.primary-action.is-disabled {
+      background: #1a2944;
+      color: #8ea0c8;
+      border: 1px dashed #4a5f8c;
+      cursor: not-allowed;
+      opacity: 1;
+    }
+    button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+    .submit-help {
+      margin-top: 6px;
+      font-size: .78rem;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+    .msg { border-radius: 10px; padding: 10px 12px; font-size: .9rem; margin: 0 0 8px; }
+    .msg.ok { background: rgba(47, 158, 107, .15); border: 1px solid var(--ok); }
+    .msg.err { background: rgba(192, 57, 74, .15); border: 1px solid var(--err); }
+    .msg.warn { background: rgba(196, 92, 18, .18); border: 1px solid var(--warn); color: #ffd9bf; }
+    .msg.idle { background: rgba(61, 126, 255, .1); border: 1px solid var(--line); color: var(--muted); }
+    .product-pick { list-style: none; margin: 8px 0 0; padding: 0; }
+    .product-pick li button {
+      text-align: left;
+      background: #0b1222;
+      border: 1px solid var(--line);
+      margin-top: 6px;
+    }
+    .product-pick li button strong { display: block; color: var(--text); }
+    .product-pick li button span { font-size: .85rem; color: var(--muted); font-weight: 400; }
+    .selected-product {
+      border: 1px solid var(--ok);
+      border-radius: 10px;
+      padding: 10px;
+      margin-top: 8px;
+      font-size: .9rem;
+    }
+    .serial-list { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: .85rem; }
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .hidden { display: none !important; }
+    @media (max-width: 420px) {
+      .row-2 { grid-template-columns: 1fr; }
+      .flow-tabs [role="tab"] { font-size: .76rem; padding-inline: 4px; }
+      .tab-hint { font-size: .62rem; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="page-head">
+    <div class="banner">DEV LOCAL · BUFFER · NO PRODUCCIÓN</div>
+    <div class="head-row">
+      <div class="head-copy">
+        <h1>Operación por escaneo</h1>
+        <p class="page-sub">Recepción · Movimientos · Buffer de salida</p>
+      </div>
+      <div id="gateMessage" class="gate-status idle">Validando sesión…</div>
+    </div>
+  </header>
+
+  <div id="workspace" class="hidden flow-pos-first flow-palette-recepcion" data-flow-middle-index="">
+    <div class="flow-tabs-wrap">
+      <div class="flow-tabs" role="tablist" aria-label="Flujos de buffer">
+        <button type="button" role="tab" id="tab-recepcion" aria-controls="panel-recepcion" aria-selected="true"><span class="tab-label">Recepción</span><span class="tab-hint">Entrada</span></button>
+        <button type="button" role="tab" id="tab-mover" aria-controls="panel-mover" aria-selected="false" tabindex="-1"><span class="tab-label">Mover</span><span class="tab-hint">Interno</span></button>
+        <button type="button" role="tab" id="tab-salida" aria-controls="panel-salida" aria-selected="false" tabindex="-1"><span class="tab-label">Salida</span><span class="tab-hint">Buffer</span></button>
+      </div>
+    </div>
+
+    <div id="locationsWarn" class="msg warn hidden" role="status" aria-live="polite"></div>
+
+    <div role="tabpanel" id="panel-recepcion" aria-labelledby="tab-recepcion" class="flow-panel">
+      <p class="sub panel-hint">Escaneo → identificación → cantidad → ubicación → registrar entrada</p>
+      <section class="card">
+        <label for="scanInput">Escaneo (SKU, código de barras u otro identificador)</label>
+        <input id="scanInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" placeholder="Dispara el escáner o escribe y Enter" />
+        <ul id="productMatches" class="product-pick hidden"></ul>
+        <div id="selectedProduct" class="selected-product hidden"></div>
+      </section>
+
+      <section class="card">
+        <div class="row-2">
+          <div>
+            <label for="qtyInput">Cantidad</label>
+            <input id="qtyInput" type="number" min="1" step="1" value="1" inputmode="numeric" />
+          </div>
+          <div>
+            <label for="assignmentSelect">Asignación</label>
+            <select id="assignmentSelect">
+              <option value="FREE_TO_SALE">Libre venta</option>
+              <option value="PROJECT">Proyecto</option>
+            </select>
+          </div>
+        </div>
+        <div id="projectWrap" class="hidden" style="margin-top:8px">
+          <label for="projectSelect">Proyecto</label>
+          <select id="projectSelect"><option value="">— Seleccionar —</option></select>
+        </div>
+        <label for="locationSelect" style="margin-top:8px">Ubicación activa</label>
+        <select id="locationSelect"><option value="">Cargando ubicaciones…</option></select>
+        <label for="orderRefInput" style="margin-top:8px">Pedido / referencia del cliente (opcional)</label>
+        <input id="orderRefInput" type="text" maxlength="120" placeholder="SAP, pedido, folio…" />
+        <label for="lotInput" style="margin-top:8px">Lote (opcional)</label>
+        <input id="lotInput" type="text" maxlength="120" placeholder="Solo si aplica al producto" />
+        <div id="serialBlock" class="hidden" style="margin-top:8px">
+          <label for="serialInput">Serie / IMEI (un disparo = un código)</label>
+          <input id="serialInput" type="text" maxlength="120" placeholder="Escanea cada serie y Enter" />
+          <ul id="serialList" class="serial-list"></ul>
+        </div>
+        <label for="notesInput" style="margin-top:8px">Notas (opcional)</label>
+        <textarea id="notesInput" maxlength="500" rows="2"></textarea>
+        <button id="submitBtn" type="button" class="primary-action" disabled>Registrar entrada</button>
+        <p id="submitHelp" class="submit-help hidden" aria-live="polite"></p>
+        <div id="actionMessage" class="msg idle hidden"></div>
+      </section>
+    </div>
+
+    <div role="tabpanel" id="panel-mover" aria-labelledby="tab-mover" class="flow-panel hidden" hidden>
+      <p class="sub panel-hint">Identificar existencia → origen → destino → cantidad → confirmar movimiento</p>
+      <section class="card">
+        <label for="moveScanInput">Escaneo o búsqueda de producto</label>
+        <input id="moveScanInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" placeholder="SKU, código de barras u otro identificador" />
+        <ul id="moveProductMatches" class="product-pick hidden"></ul>
+        <div id="moveSelectedProduct" class="selected-product hidden"></div>
+        <div id="moveStockBlock" class="hidden" style="margin-top:8px">
+          <label>Existencias disponibles (cliente y proyecto autorizados)</label>
+          <ul id="moveStockList" class="product-pick"></ul>
+        </div>
+        <div id="moveOriginSummary" class="selected-product hidden" style="margin-top:8px"></div>
+        <label for="moveDestScan" style="margin-top:8px">Destino (escaneo + Enter o selector)</label>
+        <input id="moveDestScan" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" placeholder="Escanea ubicación destino" />
+        <label for="moveDestSelect" style="margin-top:8px">Ubicación destino activa</label>
+        <select id="moveDestSelect"><option value="">— Seleccionar destino —</option></select>
+        <label for="moveQtyInput" style="margin-top:8px">Cantidad a mover</label>
+        <input id="moveQtyInput" type="number" min="1" step="1" value="1" inputmode="numeric" />
+        <button id="moveSubmitBtn" type="button" class="primary-action" disabled>Confirmar movimiento</button>
+        <p id="moveSubmitHelp" class="submit-help hidden" aria-live="polite"></p>
+        <div id="moveActionMessage" class="msg idle hidden"></div>
+      </section>
+    </div>
+
+    <div role="tabpanel" id="panel-salida" aria-labelledby="tab-salida" class="flow-panel hidden" hidden>
+      <p class="sub panel-hint">Preparar salida · identificar existencia → origen → Buffer de salida → cantidad</p>
+      <section class="card">
+        <label for="outScanInput">Escaneo o búsqueda de producto</label>
+        <input id="outScanInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" placeholder="SKU, código de barras u otro identificador" />
+        <ul id="outProductMatches" class="product-pick hidden"></ul>
+        <div id="outSelectedProduct" class="selected-product hidden"></div>
+        <div id="outStockBlock" class="hidden" style="margin-top:8px">
+          <label>Existencias disponibles (cliente y proyecto autorizados)</label>
+          <ul id="outStockList" class="product-pick"></ul>
+        </div>
+        <div id="outOriginSummary" class="selected-product hidden" style="margin-top:8px"></div>
+        <label for="outOrderRefInput" style="margin-top:8px">Pedido / referencia del cliente (opcional)</label>
+        <input id="outOrderRefInput" type="text" maxlength="120" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="SAP, pedido, folio…" />
+        <label for="outBufferScan" style="margin-top:8px">Buffer de salida (escaneo + Enter o selector)</label>
+        <input id="outBufferScan" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" placeholder="Escanea ubicación Buffer de salida" />
+        <label for="outBufferSelect" style="margin-top:8px">Ubicación Buffer de salida activa</label>
+        <select id="outBufferSelect"><option value="">— Seleccionar Buffer de salida —</option></select>
+        <label for="outQtyInput" style="margin-top:8px">Cantidad a preparar</label>
+        <input id="outQtyInput" type="number" min="1" step="1" value="1" inputmode="numeric" />
+        <button id="outSubmitBtn" type="button" class="primary-action" disabled>Confirmar preparación</button>
+        <p id="outSubmitHelp" class="submit-help hidden" aria-live="polite"></p>
+        <div id="outActionMessage" class="msg idle hidden"></div>
+      </section>
+    </div>
+  </div>
+
+  <script src="/device-server-metrics.js?v=1"></script>
+  <script src="/hugo-buffer-inbound.js?v=9"></script>
+</body>
+</html>

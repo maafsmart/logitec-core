@@ -65,9 +65,23 @@ function clearStoredNavRouteAfterLogin() {
   }
 }
 
+function isSafeInternalPostLoginPath(candidate) {
+  const value = String(candidate || "").trim();
+  if (!value.startsWith("/")) return false;
+  if (value.startsWith("//")) return false;
+  if (value.includes("\\")) return false;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value)) return false;
+  return true;
+}
+
 function resolvePostLoginPath(search) {
   const fallback = "/dashboard.html";
-  const allowed = new Set(["/pda-scanner-lab.html"]);
+  const allowed = new Set([
+    "/pda-scanner-lab.html",
+    "/hugo-buffer-inbound.html",
+    "/logitec-simple-demo.html",
+    "/logitec-role-demo.html"
+  ]);
   try {
     const raw = String(new URLSearchParams(String(search || "")).get("next") || "").trim();
     if (!raw) return fallback;
@@ -77,6 +91,7 @@ function resolvePostLoginPath(search) {
     } catch (_error) {
       return fallback;
     }
+    if (!isSafeInternalPostLoginPath(candidate)) return fallback;
     if (!allowed.has(candidate)) return fallback;
     return candidate;
   } catch (_error) {
