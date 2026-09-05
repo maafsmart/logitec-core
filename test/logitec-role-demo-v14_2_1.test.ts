@@ -102,7 +102,7 @@ function baseCapture(overrides: Partial<Capture> = {}): Capture {
 }
 
 test("cache-buster v=15.3", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=15\.3\.3/);
+  assert.match(html, /logitec-role-demo\.js\?v=16.1/);
 });
 
 test("Operador CP validada desde Pendientes registra Validación de Supervisor", () => {

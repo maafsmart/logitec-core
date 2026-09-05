@@ -129,6 +129,7 @@
         ],
         operacion: [
           { id: "movements", label: "Movimientos / Trazabilidad", desc: "Historial físico de inventario" },
+          { id: "pre_reception", label: "Pre-recepción documental", desc: "Orden de entrada digital · motor predictivo · DEMO READ-ONLY" },
           { id: "inbound", label: "Recepciones", desc: "Entradas y buffer de entrada" },
           { id: "picking", label: "Picking", desc: "Surtido de salida con escaneo" },
           { id: "outbound", label: "Salidas", desc: "Preparación hacia buffer de salida" },
@@ -159,6 +160,7 @@
         operacion: [
           { id: "tasks", label: "Centro de operación", desc: "Operación del día · tareas y seguimiento", primary: true },
           { id: "pending_supervision", label: "Pendientes de supervisión", desc: "Capturas provisionales de piso · revisión DEMO" },
+          { id: "pre_reception", label: "Pre-recepción documental", desc: "Orden de entrada digital · cotejo documental · DEMO READ-ONLY" },
           { id: "tracking", label: "Tareas", desc: "Trabajo asignado al piso" },
           { id: "requisitions", label: "Seguimiento", desc: "Estados · avance · diferencias" },
           { id: "picking", label: "Picking / Surtido", desc: "Órdenes de surtido de salida" },
@@ -227,7 +229,11 @@
     provisionalCaptureSeq: 0,
     demoSupervisorActorId: "SUPERVISOR_DEMO",
     demoAdminActorId: "ADMIN_DEMO",
-    adminTraceFilter: "all"
+    adminTraceFilter: "all",
+    digitalEntryOrders: [],
+    activeDigitalEntryOrderId: null,
+    preReceptionConsultLog: [],
+    preReceptionConsultSeq: 0
   };
 
   const app = document.getElementById("app");
@@ -316,6 +322,10 @@
     state.demoSupervisorActorId = "SUPERVISOR_DEMO";
     state.demoAdminActorId = "ADMIN_DEMO";
     state.adminTraceFilter = "all";
+    state.digitalEntryOrders = [];
+    state.activeDigitalEntryOrderId = null;
+    state.preReceptionConsultLog = [];
+    state.preReceptionConsultSeq = 0;
     document.body.classList.remove("focus-mode");
     syncConcentrationOverlay();
     syncSupervisorOperatorModeUi();
@@ -400,6 +410,20 @@
     "REQUIERE ACLARACIÓN",
     "VALIDADO · PENDIENTE DE REGISTRO",
     "RECHAZADO ADMINISTRATIVAMENTE"
+  ];
+
+  const LOGITEC_IDENTIFICATION_DICTIONARY = [
+    { kind: "SKU", label: "SKU", priority: 10, description: "Identificador comercial del producto en catálogo/stock" },
+    { kind: "SAP", label: "SAP", priority: 20, description: "Material SAP registrado en existencias" },
+    { kind: "PEDIDO", label: "Pedido", priority: 30, description: "Número de pedido de compra documental" },
+    { kind: "PARTIDA", label: "Partida", priority: 40, description: "Posición de partida en el pedido" },
+    { kind: "SERIE", label: "Serie", priority: 50, description: "Número de serie unitario cuando existe" },
+    {
+      kind: "UBICACIÓN",
+      label: "Ubicación",
+      priority: 60,
+      description: "Código de ubicación física · no proyecta línea OED sin contexto adicional"
+    }
   ];
 
   const DECLARED_FLOOR_ACTIONS = [
@@ -488,6 +512,222 @@
       };
     }
     return { raw, normalized, classification: "SIN CLASIFICAR", match: null };
+  }
+
+  function identifyWithLogitecDictionary(rawValue) {
+    const classified = classifyScanCodeLocal(rawValue);
+    const dictionary =
+      LOGITEC_IDENTIFICATION_DICTIONARY.find((entry) => entry.kind === classified.classification) || null;
+    return { ...classified, dictionary };
+  }
+
+  function buildDigitalEntryOrdersFromStock(stock) {
+    // Production: digital entry orders must be issued server-side from authenticated inbound documents.
+    const byProject = new Map();
+    (stock || []).forEach((row) => {
+      const project = String(row.project?.code || row.project?.name || "").trim();
+      if (!project || /^sin proyecto$/i.test(project) || /^free[_\s-]*to[_\s-]*sale$/i.test(project)) return;
+      if (!byProject.has(project)) byProject.set(project, []);
+      const sku = String(row.product?.sku || "").trim();
+      if (!sku) return;
+      const lines = byProject.get(project);
+      const pedido = String(row.pedido || "").trim();
+      const sap = String(row.sap || "").trim();
+      if (lines.some((line) => line.sku === sku && line.pedido === pedido && line.sap === sap)) return;
+      lines.push({
+        lineId: `${project.replace(/[^A-Z0-9]+/gi, "-").slice(0, 12)}-${String(lines.length + 1).padStart(3, "0")}`,
+        sku,
+        description: row.product?.name || sku,
+        qtyExpected: Number(row.qty || 0) || 1,
+        sap,
+        pedido,
+        partida: String(row.partida || "").trim(),
+        serialHint: String(row.serialNumber || "").trim()
+      });
+    });
+    return [...byProject.entries()].slice(0, 8).map(([project, lines], idx) => ({
+      id: `OED-DEMO-${String(idx + 1).padStart(3, "0")}`,
+      project,
+      status: "DOCUMENTAL · PENDIENTE DE RECEPCIÓN FÍSICA",
+      supplierRef: `DOC-${project.replace(/\s+/g, "-").slice(0, 16)}`,
+      lines: lines.slice(0, 16)
+    }));
+  }
+
+  function syncDigitalEntryOrders() {
+    state.digitalEntryOrders = buildDigitalEntryOrdersFromStock(state.stock || []);
+    if (!state.digitalEntryOrders.some((order) => order.id === state.activeDigitalEntryOrderId)) {
+      state.activeDigitalEntryOrderId = state.digitalEntryOrders[0]?.id || null;
+    }
+  }
+
+  function activeDigitalEntryOrder() {
+    return (state.digitalEntryOrders || []).find((order) => order.id === state.activeDigitalEntryOrderId) || null;
+  }
+
+  function oedLineMatchesClassification(line, classified) {
+    const norm = String(classified?.normalized || "").trim().toUpperCase();
+    if (!norm || classified.classification === "SIN CLASIFICAR" || classified.classification === "UBICACIÓN") {
+      return false;
+    }
+    switch (classified.classification) {
+      case "SKU":
+        return String(line.sku || "").toUpperCase() === norm;
+      case "SAP":
+        return String(line.sap || "").toUpperCase() === norm;
+      case "PEDIDO":
+        return String(line.pedido || "").toUpperCase() === norm;
+      case "PARTIDA":
+        return String(line.partida || "").toUpperCase() === norm;
+      case "SERIE":
+        return String(line.serialHint || "").toUpperCase() === norm;
+      default:
+        return false;
+    }
+  }
+
+  function predictDigitalEntryLineMatches(order, classified) {
+    // Production: predictive document matching must be enforced server-side from inbound document scope.
+    if (!order) {
+      return { status: "insufficient", matches: [], message: "Sin orden de entrada digital activa" };
+    }
+    if (!classified?.normalized) {
+      return { status: "insufficient", matches: [], message: "Evidencia insuficiente para vincular línea documental" };
+    }
+    if (classified.classification === "SIN CLASIFICAR") {
+      return {
+        status: "insufficient",
+        matches: [],
+        message: classified.reason || "Sin clasificación · no se infiere línea OED"
+      };
+    }
+    if (classified.classification === "UBICACIÓN") {
+      return {
+        status: "insufficient",
+        matches: [],
+        message: "Ubicación no vincula línea OED sin contexto adicional"
+      };
+    }
+    const matches = (order.lines || []).filter((line) => oedLineMatchesClassification(line, classified));
+    if (matches.length === 1) {
+      return { status: "matched", matches, message: "Coincidencia inequívoca con línea documental" };
+    }
+    if (matches.length > 1) {
+      return { status: "ambiguous", matches, message: "Múltiples líneas posibles · fail-closed" };
+    }
+    return { status: "unmatched", matches: [], message: "Sin línea documental para este token en la OED activa" };
+  }
+
+  function submitPreReceptionConsultation(rawValue) {
+    const trimmed = String(rawValue || "").trim();
+    if (!trimmed) return;
+    const order = activeDigitalEntryOrder();
+    const identified = identifyWithLogitecDictionary(trimmed);
+    const prediction = predictDigitalEntryLineMatches(order, identified);
+    state.preReceptionConsultSeq += 1;
+    state.preReceptionConsultLog.unshift({
+      id: `PRC-${String(state.preReceptionConsultSeq).padStart(4, "0")}`,
+      raw: identified.raw,
+      normalized: identified.normalized,
+      classification: identified.classification,
+      dictionaryKind: identified.dictionary?.kind || null,
+      predictionStatus: prediction.status,
+      predictionMessage: prediction.message,
+      matchedLineIds: prediction.matches.map((line) => line.lineId),
+      oedId: order?.id || null,
+      at: new Date().toISOString()
+    });
+    state.preReceptionConsultLog = state.preReceptionConsultLog.slice(0, 40);
+    renderContent();
+  }
+
+  function renderIdentificationDictionaryPanel() {
+    return `<div class="card-panel pre-reception-dictionary-panel">
+      <h4>Diccionario de identificación LOGITEC CORE WMS</h4>
+      <p class="module-lead">Prioridad documental · reutiliza el motor V14 sin inferir cantidad numérica</p>
+      <table class="data-table pre-reception-dictionary-table"><thead><tr>
+        <th>Prioridad</th><th>Tipo</th><th>Descripción</th>
+      </tr></thead><tbody>${LOGITEC_IDENTIFICATION_DICTIONARY.map(
+        (entry) =>
+          `<tr><td>${esc(entry.priority)}</td><td><strong>${esc(entry.label)}</strong></td><td>${esc(entry.description)}</td></tr>`
+      ).join("")}</tbody></table>
+    </div>`;
+  }
+
+  function renderPreReceptionConsultLog() {
+    if (!state.preReceptionConsultLog.length) {
+      return `<div class="card-panel ops-message">Sin consultas documentales en esta sesión DEMO.</div>`;
+    }
+    return `<div class="card-panel"><table class="data-table pre-reception-consult-log"><thead><tr>
+        <th>Hora</th><th>RAW</th><th>Clasificación</th><th>Resultado predictivo</th><th>Línea OED</th>
+      </tr></thead><tbody>${state.preReceptionConsultLog
+        .slice(0, 20)
+        .map(
+          (entry) => `<tr>
+            <td>${esc(new Date(entry.at).toLocaleTimeString("es-MX"))}</td>
+            <td><code>${esc(entry.raw)}</code></td>
+            <td>${esc(entry.classification)}</td>
+            <td>${esc(entry.predictionMessage)}</td>
+            <td>${esc(entry.matchedLineIds.join(" · ") || "—")}</td>
+          </tr>`
+        )
+        .join("")}</tbody></table></div>`;
+  }
+
+  function preReceptionDocumentalView() {
+    const orders = state.digitalEntryOrders || [];
+    const active = activeDigitalEntryOrder();
+    const orderOptions = orders.length
+      ? orders
+          .map(
+            (order) =>
+              `<option value="${esc(order.id)}"${order.id === active?.id ? " selected" : ""}>${esc(order.id)} · ${esc(
+                order.project
+              )}</option>`
+          )
+          .join("")
+      : `<option value="">Sin órdenes documentales demo</option>`;
+    const linesTable = active?.lines?.length
+      ? `<table class="data-table pre-reception-oed-lines"><thead><tr>
+          <th>Línea</th><th>SKU</th><th>Descripción</th><th>Cant. esp.</th><th>SAP</th><th>Pedido</th><th>Partida</th>
+        </tr></thead><tbody>${active.lines
+          .map(
+            (line) => `<tr>
+              <td>${esc(line.lineId)}</td>
+              <td>${esc(line.sku)}</td>
+              <td>${esc(line.description)}</td>
+              <td>${esc(fmtQty(line.qtyExpected))}</td>
+              <td>${esc(line.sap || "—")}</td>
+              <td>${esc(line.pedido || "—")}</td>
+              <td>${esc(line.partida || "—")}</td>
+            </tr>`
+          )
+          .join("")}</tbody></table>`
+      : `<div class="card-panel ops-message warn">Sin líneas documentales derivadas de la fuente demo actual.</div>`;
+    return `<div class="module-screen-header"><h3>Pre-recepción documental</h3>
+      <p class="module-lead">Orden de entrada digital · motor predictivo · cotejo documental · DEMO READ-ONLY</p></div>
+      <div class="card-panel ops-message warn pre-reception-banner">
+        PRE-RECEPCIÓN DOCUMENTAL · NO REGISTRA ENTRADA FÍSICA · NO CREA MOVIMIENTO OFICIAL · NO MODIFICA INVENTARIO
+      </div>
+      <div class="card-panel pre-reception-oed-panel">
+        <h4>Orden de entrada digital</h4>
+        <p class="operational-table-meta">${esc(active?.status || "Sin OED activa")} · ${esc(active?.supplierRef || "—")}</p>
+        <label class="client-field-label" for="preReceptionOedSelect">OED activa</label>
+        <select id="preReceptionOedSelect" class="pre-reception-oed-select">${orderOptions}</select>
+        ${linesTable}
+      </div>
+      ${renderIdentificationDictionaryPanel()}
+      <div class="card-panel pre-reception-predict-panel">
+        <h4>Motor predictivo documental</h4>
+        <p class="module-lead">Identifique un token · prediga línea OED · fail-closed ante ambigüedad o evidencia insuficiente</p>
+        <div class="pre-reception-consult-row">
+          <input id="preReceptionConsultInput" class="pre-reception-consult-input" type="text" placeholder="Escanee o escriba SKU · SAP · Pedido · Partida · Serie" autocomplete="off" />
+          <button type="button" class="btn-primary btn-compact" id="preReceptionConsultRun">Cotejar documentalmente</button>
+        </div>
+        <p class="operational-table-meta">Usa classifyScanCodeLocal + diccionario · no usa escaneo libre V14 · no escribe en backend</p>
+      </div>
+      <div class="module-screen-header pre-reception-log-header"><h4>Consultas documentales de sesión</h4></div>
+      ${renderPreReceptionConsultLog()}`;
   }
 
   function classificationDisplay(result) {
@@ -1094,6 +1334,7 @@
       movements: 0
     };
     state.tasks = buildTasks();
+    syncDigitalEntryOrders();
   }
 
   function applyDbPayload(summary, movementsPayload, stock) {
@@ -1103,6 +1344,7 @@
     state.movements = movementsPayload?.items || [];
     state.stock = stock || [];
     state.tasks = buildTasks();
+    syncDigitalEntryOrders();
   }
 
   function updateSourceUi() {
@@ -2325,6 +2567,15 @@
     if (m === "tracking") return tasksTable(false);
     if (m === "requisitions" && state.role === "SUPERVISOR" && !state.operatorMode) return seguimientoView();
     if (m === "movements") return movementsView();
+    if (m === "pre_reception") {
+      if (state.role === "ADMIN" || (state.role === "SUPERVISOR" && !state.operatorMode)) {
+        return preReceptionDocumentalView();
+      }
+      return disabledModule(
+        "Pre-recepción documental",
+        "Orden de entrada digital · disponible para Administrador y Supervisor en modo documental · DEMO READ-ONLY"
+      );
+    }
     if (m === "inbound")
       return disabledModule("Recepciones", "Flujo operador: recepción esperada → escaneo → cotejo → Buffer de entrada. Sin captura manual de proyecto/pedido.");
     if (m === "relocate")
@@ -2604,6 +2855,20 @@
         state.adminTraceFilter = btn.getAttribute("data-admin-trace-filter") || "all";
         renderContent();
       });
+    });
+    document.getElementById("preReceptionOedSelect")?.addEventListener("change", (event) => {
+      state.activeDigitalEntryOrderId = event.target.value || null;
+      renderContent();
+    });
+    document.getElementById("preReceptionConsultRun")?.addEventListener("click", () => {
+      submitPreReceptionConsultation(document.getElementById("preReceptionConsultInput")?.value || "");
+      const input = document.getElementById("preReceptionConsultInput");
+      if (input) input.value = "";
+    });
+    document.getElementById("preReceptionConsultInput")?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      submitPreReceptionConsultation(event.target.value);
+      event.target.value = "";
     });
     document.getElementById("freeScanDeclaredAction")?.addEventListener("change", (event) => {
       const session = ensureFreeScanSession();

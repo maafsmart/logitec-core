@@ -1212,6 +1212,25 @@ body.mobile-emulation-active .client-physical-summary-grid { grid-template-colum
   display: grid;
   gap: 14px;
 }
+
+/* ===== V16.1 Pre-recepción documental ===== */
+.pre-reception-banner { font-weight: 600; }
+.pre-reception-oed-panel { margin-bottom: 12px; }
+.pre-reception-oed-select { max-width: 420px; margin: 8px 0 12px; width: 100%; }
+.pre-reception-consult-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+.pre-reception-consult-input {
+  flex: 1 1 240px;
+  min-width: 200px;
+  padding: 8px 10px;
+}
+.pre-reception-dictionary-table td:first-child { width: 72px; }
+.pre-reception-log-header { margin-top: 8px; }
 .client-report-section h4 { margin: 0 0 10px; }
 .client-report-export-row { margin-top: 10px; }
 .client-report-pending-list {

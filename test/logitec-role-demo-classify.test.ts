@@ -78,8 +78,8 @@ const mockStock = [
 const classifyWithStock = classify(mockStock);
 
 test("cache-buster logitec-role-demo v=15.3", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=15\.3\.3/);
-  assert.match(html, /logitec-role-demo\.css\?v=15\.3\.3/);
+  assert.match(html, /logitec-role-demo\.js\?v=16.1/);
+  assert.match(html, /logitec-role-demo\.css\?v=16.1/);
 });
 
 test("número que coincide con Pedido se clasifica como PEDIDO", () => {
