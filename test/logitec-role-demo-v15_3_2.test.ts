@@ -95,8 +95,8 @@ return function build(role, validateNow) {
 `;
 
 test("cache-buster v=15.3.2", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=16.1.2/);
-  assert.match(html, /logitec-role-demo\.css\?v=16.1.2/);
+  assert.match(html, /logitec-role-demo\.js\?v=16.1.3/);
+  assert.match(html, /logitec-role-demo\.css\?v=16.1.3/);
 });
 
 test("stock Cliente solo PROJ-ALPHA + movimiento explícito PROJ-BETA → oculto", () => {

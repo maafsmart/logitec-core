@@ -616,6 +616,48 @@
     return (order.lines || []).filter((line) => oedLineMatchesToken(line, normalized)).map((line) => line.lineId);
   }
 
+  const OED_DOCUMENT_CLASSIFICATION_PRIORITY = ["PEDIDO", "PARTIDA", "SKU", "SAP", "LOTE", "SERIE"];
+
+  function oedFieldTypesMatchingLine(line, normalized) {
+    const norm = String(normalized || "").trim().toUpperCase();
+    if (!norm) return [];
+    const types = [];
+    if (String(line.pedido || "").trim().toUpperCase() === norm) types.push("PEDIDO");
+    if (String(line.partida || "").trim().toUpperCase() === norm) types.push("PARTIDA");
+    if (String(line.sku || "").trim().toUpperCase() === norm) types.push("SKU");
+    if (String(line.sap || "").trim().toUpperCase() === norm) types.push("SAP");
+    if (String(line.lote || "").trim().toUpperCase() === norm) types.push("LOTE");
+    if (String(line.serialHint || "").trim().toUpperCase() === norm) types.push("SERIE");
+    return types;
+  }
+
+  function oedDocumentClassificationForToken(order, normalized, lineIds) {
+    if (!order || !normalized || !lineIds?.length) return null;
+    const lines = lineIds.map((lineId) => findOedLine(order, lineId)).filter(Boolean);
+    if (!lines.length) return null;
+    let commonTypes = null;
+    lines.forEach((line) => {
+      const types = oedFieldTypesMatchingLine(line, normalized);
+      if (!types.length) return;
+      commonTypes = commonTypes === null ? types.slice() : commonTypes.filter((type) => types.includes(type));
+    });
+    if (commonTypes?.length === 1) return commonTypes[0];
+    if (commonTypes?.length > 1) {
+      return OED_DOCUMENT_CLASSIFICATION_PRIORITY.find((type) => commonTypes.includes(type)) || commonTypes[0];
+    }
+    return (
+      OED_DOCUMENT_CLASSIFICATION_PRIORITY.find((type) =>
+        lines.every((line) => oedFieldTypesMatchingLine(line, normalized).includes(type))
+      ) || null
+    );
+  }
+
+  function resolvePreReceptionReadingClassification(order, normalized, stockClassification) {
+    const compatibleLineIds = oedCompatibleLineIds(order, normalized);
+    if (!compatibleLineIds.length) return stockClassification;
+    return oedDocumentClassificationForToken(order, normalized, compatibleLineIds) || stockClassification;
+  }
+
   function corpusRowsMatchingToken(normalized) {
     const norm = String(normalized || "").trim().toUpperCase();
     if (!norm) return [];
@@ -757,10 +799,15 @@
     }
 
     const candidateCountAfter = session.candidateLineIds === null ? null : session.candidateLineIds.length;
+    const displayClassification = resolvePreReceptionReadingClassification(
+      order,
+      normalized,
+      identified.classification
+    );
     session.readings.push({
       raw: identified.raw,
       normalized,
-      classification: identified.classification,
+      classification: displayClassification,
       timestamp: new Date().toISOString(),
       candidateCountBefore,
       candidateCountAfter,

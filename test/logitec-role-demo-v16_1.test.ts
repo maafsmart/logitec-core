@@ -52,6 +52,7 @@ ${sliceFunction(js, "findOedLine")}
 ${sliceFunction(js, "normalizedToken")}
 ${sliceFunction(js, "oedLineMatchesToken")}
 ${sliceFunction(js, "oedCompatibleLineIds")}
+${js.slice(js.indexOf("const OED_DOCUMENT_CLASSIFICATION_PRIORITY"), js.indexOf("function corpusRowsMatchingToken"))}
 ${sliceFunction(js, "corpusRowsMatchingToken")}
 ${sliceFunction(js, "isKnownInCorpus")}
 ${sliceFunction(js, "corpusEntryStatus")}
@@ -147,9 +148,9 @@ function makeHarness(stock = mockStock): Harness {
   return h;
 }
 
-test("cache-buster v=16.1.2", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=16\.1\.2/);
-  assert.match(html, /logitec-role-demo\.css\?v=16\.1\.2/);
+test("cache-buster v=16.1.3", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=16\.1\.3/);
+  assert.match(html, /logitec-role-demo\.css\?v=16\.1\.3/);
 });
 
 test("POL-004 registrada como APROBADA con resumen técnico", () => {
@@ -174,11 +175,13 @@ test("cotejo progresivo 8 → 3 → 1 sin resolución arbitraria", () => {
   assert.equal(h.state.preReceptionSession!.readings[0].resultStatus, "AMBIGUO");
   assert.equal(h.state.preReceptionSession!.readings[0].candidateCountBefore, null);
   assert.equal(h.state.preReceptionSession!.readings[0].candidateCountAfter, 8);
+  assert.equal(h.state.preReceptionSession!.readings[0].classification, "PEDIDO");
 
   h.applyPreReceptionReading("00020", OED_PROG);
   assert.equal(h.state.preReceptionSession!.candidateLineIds!.length, 3);
   assert.equal(h.state.preReceptionSession!.readings[1].candidateCountBefore, 8);
   assert.equal(h.state.preReceptionSession!.readings[1].candidateCountAfter, 3);
+  assert.equal(h.state.preReceptionSession!.readings[1].classification, "PARTIDA");
 
   h.applyPreReceptionReading("SKU-GRP-C", OED_PROG);
   const session = h.state.preReceptionSession!;
@@ -186,6 +189,7 @@ test("cotejo progresivo 8 → 3 → 1 sin resolución arbitraria", () => {
   assert.equal(session.status, "IDENTIFICADO");
   assert.equal(session.identifiedLineId, "L-03");
   assert.equal(session.readings[2].resultStatus, "IDENTIFICADO");
+  assert.equal(session.readings[2].classification, "SKU");
   assert.match(session.readings[2].message, /INEQUÍVOCA/i);
   assert.doesNotMatch(sliceFunction(js, "applyPreReceptionReading"), /\.find\(\(line\)/);
 });
@@ -194,6 +198,14 @@ test("primera lectura genera múltiples candidatos", () => {
   const h = makeHarness();
   h.applyPreReceptionReading("PO-PROG-8", OED_PROG);
   assert.ok((h.state.preReceptionSession!.candidateLineIds?.length || 0) > 1);
+});
+
+test("lectura sin coincidencia OED conserva clasificación stock o SIN CLASIFICAR", () => {
+  const h = makeHarness([]);
+  h.applyPreReceptionReading("REF-DEMO-INEXISTENTE-XYZ", OED_PROG);
+  assert.equal(h.state.preReceptionSession!.readings[0].classification, "SIN CLASIFICAR");
+  h.applyPreReceptionReading("999888777", OED_PROG);
+  assert.equal(h.state.preReceptionSession!.readings[1].classification, "SIN CLASIFICAR");
 });
 
 test("conocido fuera de OED → CONOCIDO_NO_ESPERADO", () => {
