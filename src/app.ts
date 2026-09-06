@@ -213,6 +213,15 @@ app.get("/logitec-role-demo.css", (req, res) => {
 app.get("/logitec-role-demo.js", (req, res) => {
   sendLogitecPreviewAsset(req, res, "logitec-role-demo.js", "application/javascript");
 });
+app.get("/manifest.webmanifest", (_req, res) => {
+  res.type("application/manifest+json");
+  res.sendFile(path.join(publicDir, "manifest.webmanifest"));
+});
+app.get("/logitec-role-demo-sw.js", (_req, res) => {
+  res.setHeader("Service-Worker-Allowed", "/");
+  res.type("application/javascript");
+  res.sendFile(path.join(publicDir, "logitec-role-demo-sw.js"));
+});
 app.use(express.static(publicDir));
 
 app.get(/^\/(?!api|health)(?!.*\.(?:css|js|html|wasm|png|jpe?g|gif|webp|svg|ico|json|map|txt|pdf|woff2?)).*$/, (_req, res) => {

@@ -149,9 +149,9 @@ function makeHarness(stock = mockStock): Harness {
   return h;
 }
 
-test("cache-buster v=16.1.4", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=16\.1\.4/);
-  assert.match(html, /logitec-role-demo\.css\?v=16\.1\.4/);
+test("cache-buster v=16.2.2", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=16\.2\.2/);
+  assert.match(html, /logitec-role-demo\.css\?v=16\.2\.2/);
 });
 
 test("POL-004 registrada como APROBADA con resumen técnico", () => {
@@ -353,9 +353,9 @@ test("agregación económica conserva centavos y cobertura", () => {
 
 test("modo celular alterna y la barra reserva su altura real", () => {
   assert.match(sliceFunction(js, "syncDirectorViewUi"), /VOLVER A DESKTOP.*MODO CELULAR/);
-  assert.match(sliceFunction(js, "initDirectorViewBar"), /setMobileEmulation\(!state\.mobileEmulation\)/);
-  assert.match(sliceFunction(js, "syncDirectorDockSpacing"), /--director-dock-space/);
-  assert.match(css, /padding-bottom:\s*var\(--director-dock-space, 150px\)/);
+  assert.match(sliceFunction(js, "wireDirectorViewBarActions"), /setMobileEmulation\(!state\.mobileEmulation\)/);
+  assert.match(sliceFunction(js, "syncDirectorDockSpacing"), /--mobile-chrome-bottom-space/);
+  assert.match(css, /padding-bottom:\s*var\(--mobile-chrome-bottom-space, 48px\)/);
   assert.doesNotMatch(css, /director-view-bar-actions\s*\{\s*grid-template-columns:\s*1fr/);
   assert.match(css, /@container logitec-mobile[\s\S]*?\.wms-section-bar \.nav-section-tabs[\s\S]*?overflow-x:\s*auto/);
 });

@@ -3,8 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>LOGITEC CORE WMS · Demo por rol</title>
-    <link rel="stylesheet" href="/logitec-role-demo.css?v=16.1.4" />
+    <meta name="theme-color" content="#1075bd" />
+    <meta name="application-name" content="LOGITEC CORE WMS" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="LOGITEC WMS" />
+    <title>LOGITEC CORE WMS</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/logitec-wms-192.png" />
+    <link rel="apple-touch-icon" href="/icons/logitec-wms-192.png" />
+    <link rel="stylesheet" href="/logitec-role-demo.css?v=16.2.2" />
   </head>
   <body class="workspace-compact sistema-workspace">
     <div id="mobileEmulationStage" class="mobile-emulation-stage">
@@ -25,7 +33,10 @@
                 <p id="authHint">Conectando…</p>
               </div>
               <div class="app-topbar-meta">
+                <span class="demo-env-badge" id="demoEnvBadge">DEMO · SOLO LECTURA</span>
                 <span class="demo-source-badge" id="dataSourceBadge">Fuente demo</span>
+                <button type="button" id="pwaInstallBtn" class="btn-secondary btn-compact app-shell-action hidden" hidden>Instalar LOGITEC CORE WMS</button>
+                <button type="button" id="fullscreenBtn" class="btn-secondary btn-compact app-shell-action hidden" hidden>Pantalla completa</button>
                 <button type="button" id="focusModeBtn" class="btn-secondary btn-compact focus-mode-btn" aria-pressed="false">Modo concentración</button>
                 <div class="role-demo-switch hidden" id="roleSwitch" hidden aria-label="Vista por rol">
                   <button type="button" class="nav-section-tab" data-role="ADMIN">Administrador</button>
@@ -33,6 +44,7 @@
                   <button type="button" class="nav-section-tab" data-role="OPERATOR">Operador</button>
                   <button type="button" class="nav-section-tab" data-role="CLIENT">Cliente</button>
                 </div>
+                <span class="session-role-badge hidden" id="sessionRoleBadge" hidden aria-live="polite">Administrador</span>
                 <span class="app-datetime" id="appDateTime">—</span>
               </div>
             </div>
@@ -50,20 +62,54 @@
       </div>
     </div>
     <aside id="directorViewBar" class="director-view-bar hidden" hidden aria-label="Modo Director revisión temporal">
-      <p class="director-view-bar-label">MODO DIRECTOR · REVISIÓN TEMPORAL</p>
-      <div class="director-view-bar-actions">
-        <button type="button" class="director-view-btn active" data-director-role="ADMIN">LO QUE VE EL ADMIN</button>
-        <button type="button" class="director-view-btn" data-director-role="SUPERVISOR">LO QUE VE SUPERVISOR</button>
-        <button type="button" class="director-view-btn" data-director-role="OPERATOR">LO QUE VE OPERADOR</button>
-        <button type="button" class="director-view-btn" data-director-role="CLIENT">LO QUE VE CLIENTE</button>
-        <button type="button" class="director-view-btn director-view-btn-mobile" data-director-mobile="1">MODO CELULAR</button>
-        <button type="button" class="director-view-btn director-view-btn-system" data-director-system="1">VER SISTEMA ACTUAL</button>
+      <div class="director-mobile-dock">
+        <button type="button" id="directorMobileToggle" class="director-mobile-toggle" aria-expanded="false" aria-controls="directorMobileSheet">VISTA DIRECTOR</button>
+        <p id="directorRoleFlash" class="director-role-flash hidden" hidden aria-live="polite"></p>
+      </div>
+      <div class="director-desktop-panel">
+        <p class="director-view-bar-label">MODO DIRECTOR · REVISIÓN TEMPORAL</p>
+        <div class="director-view-bar-actions director-view-bar-actions-desktop">
+          <button type="button" class="director-view-btn active" data-director-role="ADMIN">LO QUE VE EL ADMIN</button>
+          <button type="button" class="director-view-btn" data-director-role="SUPERVISOR">LO QUE VE SUPERVISOR</button>
+          <button type="button" class="director-view-btn" data-director-role="OPERATOR">LO QUE VE OPERADOR</button>
+          <button type="button" class="director-view-btn" data-director-role="CLIENT">LO QUE VE CLIENTE</button>
+          <button type="button" class="director-view-btn director-view-btn-mobile" data-director-mobile="1">MODO CELULAR</button>
+          <button type="button" class="director-view-btn director-view-btn-system" data-director-system="1">VER SISTEMA ACTUAL</button>
+        </div>
+      </div>
+      <div id="directorMobileBackdrop" class="director-mobile-backdrop hidden" hidden aria-hidden="true"></div>
+      <div id="directorMobileSheet" class="director-mobile-sheet hidden" hidden role="dialog" aria-modal="true" aria-labelledby="directorMobileSheetTitle">
+        <div class="director-mobile-sheet-head">
+          <p id="directorMobileSheetTitle">MODO DIRECTOR · REVISIÓN TEMPORAL</p>
+          <button type="button" id="directorMobileClose" class="director-mobile-close" aria-label="Cerrar">×</button>
+        </div>
+        <div class="director-mobile-sheet-body">
+          <div class="director-view-bar-actions director-view-bar-actions-mobile">
+            <button type="button" class="director-view-btn active" data-director-role="ADMIN">Administrador</button>
+            <button type="button" class="director-view-btn" data-director-role="SUPERVISOR">Supervisor</button>
+            <button type="button" class="director-view-btn" data-director-role="OPERATOR">Operador</button>
+            <button type="button" class="director-view-btn" data-director-role="CLIENT">Cliente</button>
+            <button type="button" class="director-view-btn director-view-btn-mobile" data-director-mobile="1">Modo celular</button>
+            <button type="button" class="director-view-btn director-view-btn-system" data-director-system="1">Ver sistema actual</button>
+          </div>
+        </div>
       </div>
     </aside>
     <footer class="demo-readonly-footer">
       <span id="writeGuard">Escrituras bloqueadas: 0</span>
       <span id="dataSourceFooter">Fuente: sin datos</span>
     </footer>
-    <script src="/logitec-role-demo.js?v=16.1.4" defer></script>
+    <div id="gridDetailDrawer" class="grid-detail-drawer" aria-hidden="true" hidden>
+      <div class="grid-detail-backdrop" data-close-drawer></div>
+      <aside class="grid-detail-panel" role="dialog" aria-modal="true" aria-labelledby="gridDetailTitle">
+        <header>
+          <h3 id="gridDetailTitle">Detalle</h3>
+          <button type="button" class="modal-close" data-close-drawer aria-label="Cerrar">×</button>
+        </header>
+        <div id="gridDetailBody" class="grid-detail-body"></div>
+        <div id="gridDetailActions" class="grid-detail-actions"></div>
+      </aside>
+    </div>
+    <script src="/logitec-role-demo.js?v=16.2.2" defer></script>
   </body>
 </html>

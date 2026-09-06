@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#1075bd" />
+    <title>Instalar LOGITEC CORE WMS</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/logitec-wms-192.png" />
+    <style>
+      :root {
+        --accent: #1075bd;
+        --accent-dark: #122a40;
+        --bg: #e8ecf1;
+        --panel: #ffffff;
+        --text: #1a2332;
+        --muted: #5c6b7a;
+        --line: #c8d0d8;
+        --ok: #1f7a43;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Inter", "Segoe UI", Arial, sans-serif;
+        color: var(--text);
+        background: linear-gradient(180deg, #f4f8fc 0%, var(--bg) 100%);
+        display: grid;
+        place-items: center;
+        padding: 24px 16px;
+      }
+      .install-card {
+        width: min(480px, 100%);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        box-shadow: 0 12px 32px rgba(18, 42, 64, 0.08);
+        padding: 28px 24px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 18px;
+      }
+      .brand img {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 1.35rem;
+        color: var(--accent-dark);
+      }
+      p {
+        margin: 0 0 14px;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+      #installBtn {
+        width: 100%;
+        min-height: 48px;
+        border: 0;
+        border-radius: 10px;
+        padding: 12px 16px;
+        font: inherit;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        background: var(--accent);
+        color: #fff;
+      }
+      #installBtn.hidden { display: none; }
+      .status-panel {
+        margin-top: 4px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        font-size: 0.92rem;
+        line-height: 1.5;
+      }
+      .status-panel.hidden { display: none; }
+      .status-panel.ok {
+        background: rgba(31, 122, 67, 0.1);
+        color: var(--ok);
+        border: 1px solid rgba(31, 122, 67, 0.18);
+      }
+      .status-panel.info {
+        background: rgba(16, 117, 189, 0.08);
+        color: var(--accent-dark);
+        border: 1px solid rgba(16, 117, 189, 0.16);
+      }
+      .status-panel.warn {
+        background: rgba(122, 92, 31, 0.08);
+        color: #6b4f1f;
+        border: 1px solid rgba(122, 92, 31, 0.16);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="install-card">
+      <div class="brand">
+        <img src="/icons/logitec-wms-192.png" alt="" />
+        <div>
+          <h1>LOGITEC CORE WMS</h1>
+        </div>
+      </div>
+      <p id="lead">Instale el sistema en este equipo para abrirlo en una ventana independiente.</p>
+      <button type="button" id="installBtn" class="hidden" hidden>INSTALAR LOGITEC CORE WMS</button>
+      <div id="standalonePanel" class="status-panel info hidden" hidden role="status">
+        LOGITEC CORE WMS se está ejecutando como aplicación instalada.
+      </div>
+      <div id="successPanel" class="status-panel ok hidden" hidden role="status">
+        LOGITEC CORE WMS se instaló correctamente. Ábralo desde Inicio o desde su icono de Windows.
+      </div>
+      <div id="manualPanel" class="status-panel warn hidden" hidden role="status">
+        En Chrome/Edge use <strong>Instalar aplicación</strong> desde el menú del navegador (⋮).
+      </div>
+    </main>
+    <script src="/install.js" defer></script>
+  </body>
+</html>

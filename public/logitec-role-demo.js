@@ -15,6 +15,7 @@
   }
 
   function navigateModule(moduleId) {
+    stopDemoCamera("Cámara detenida al cambiar de módulo.");
     state.module = moduleId;
     state.tab = tabForModule(navRoleKey(), moduleId);
     state.activeTaskId = null;
@@ -223,6 +224,7 @@
     scanSuccessPlayed: false,
     scanProcessing: false,
     mobileEmulation: false,
+    directorMobilePanelOpen: false,
     concentration: false,
     mobileScrollSnapshot: 0,
     operatorMode: false,
@@ -241,6 +243,22 @@
     identificationCorpusEntries: []
   };
 
+  let demoCameraStream = null;
+  let demoCameraTimer = null;
+  let demoCameraDetector = null;
+  let demoCameraDetectorKind = "";
+  let demoCameraDetectionBusy = false;
+  let demoCameraDetectionArmed = false;
+  let demoBarcodePolyfillPromise = null;
+  let demoCameraStartedAt = null;
+  let demoCameraRunId = 0;
+  let demoCameraCandidateState = { value: "", count: 0, firstSeenAt: null, stableValue: "" };
+  let demoCameraSeenCodes = new Set();
+  let demoCameraSubmitHandler = null;
+  const demoCameraStabilityFrames = 3;
+  const demoCameraTimedStabilityFrames = 2;
+  const demoCameraStabilityMs = 200;
+
   const app = document.getElementById("app");
   const sidebar = document.getElementById("sidebar");
   const authHint = document.getElementById("authHint");
@@ -248,10 +266,438 @@
   const dataSourceFooter = document.getElementById("dataSourceFooter");
   const dataSourceBadge = document.getElementById("dataSourceBadge");
   const appDateTime = document.getElementById("appDateTime");
+  let directorMobileScrollSnapshot = 0;
+  let directorRoleFlashTimer = null;
+
+  const DIRECTOR_ROLE_FLASH_LABELS = {
+    ADMIN: "Administrador",
+    SUPERVISOR: "Supervisor",
+    OPERATOR: "Operador",
+    CLIENT: "Cliente"
+  };
+
+  function isCompactDirectorLayout() {
+    if (state.mobileEmulation) return true;
+    return window.matchMedia("(max-width: 640px)").matches;
+  }
+
+  function getMobileScrollPosition() {
+    return window.scrollY || document.documentElement.scrollTop || 0;
+  }
+
+  function restoreMobileScrollPosition(top) {
+    window.scrollTo(0, Math.max(0, top || 0));
+  }
+
+  function isScanPriorityActive() {
+    if (state.freeScanActive) return true;
+    if (state.activeTaskId) return true;
+    if (demoCameraStream) return true;
+    const panel = document.getElementById("scanCameraCapture");
+    return Boolean(panel && !panel.hidden);
+  }
+
+  function ensureDirectorMobilePanelClosed(restoreScroll = true) {
+    const top = directorMobileScrollSnapshot || getMobileScrollPosition();
+    state.directorMobilePanelOpen = false;
+    const sheet = document.getElementById("directorMobileSheet");
+    const backdrop = document.getElementById("directorMobileBackdrop");
+    const toggle = document.getElementById("directorMobileToggle");
+    if (sheet) {
+      sheet.hidden = true;
+      sheet.classList.add("hidden");
+    }
+    if (backdrop) {
+      backdrop.hidden = true;
+      backdrop.classList.add("hidden");
+      backdrop.setAttribute("aria-hidden", "true");
+    }
+    if (toggle) toggle.setAttribute("aria-expanded", "false");
+    document.body.classList.remove("director-mobile-panel-open");
+    if (restoreScroll) {
+      requestAnimationFrame(() => {
+        restoreMobileScrollPosition(top);
+        syncDirectorDockSpacing();
+      });
+    } else {
+      syncDirectorDockSpacing();
+    }
+  }
+
+  function syncScanPriorityUi() {
+    const active = isScanPriorityActive();
+    document.body.classList.toggle("scan-mode-active", active);
+    if (active && isCompactDirectorLayout()) ensureDirectorMobilePanelClosed();
+    syncDirectorDockSpacing();
+  }
+
+  function syncMobileLayoutUi() {
+    syncScanPriorityUi();
+    syncDirectorDockSpacing();
+  }
+
+  function syncConcentrationExitLabel() {
+    const exitBtn = document.getElementById("concentrationExitBtn");
+    if (!exitBtn) return;
+    exitBtn.textContent = isCompactDirectorLayout() ? "Salir concentración" : "Salir de concentración";
+  }
+
+  function flashDirectorRole(role) {
+    const flash = document.getElementById("directorRoleFlash");
+    if (!flash) return;
+    const label = DIRECTOR_ROLE_FLASH_LABELS[role] || role;
+    flash.textContent = `Vista: ${label}`;
+    flash.hidden = false;
+    flash.classList.remove("hidden");
+    if (directorRoleFlashTimer) window.clearTimeout(directorRoleFlashTimer);
+    directorRoleFlashTimer = window.setTimeout(() => {
+      flash.hidden = true;
+      flash.classList.add("hidden");
+    }, 2200);
+  }
+
+  function closeDirectorMobilePanel() {
+    if (!state.directorMobilePanelOpen) {
+      document.body.classList.remove("director-mobile-panel-open");
+      return;
+    }
+    ensureDirectorMobilePanelClosed(true);
+  }
+
+  function openDirectorMobilePanel() {
+    if (!isCompactDirectorLayout()) return;
+    if (isScanPriorityActive()) return;
+    directorMobileScrollSnapshot = getMobileScrollPosition();
+    state.directorMobilePanelOpen = true;
+    const sheet = document.getElementById("directorMobileSheet");
+    const backdrop = document.getElementById("directorMobileBackdrop");
+    const toggle = document.getElementById("directorMobileToggle");
+    if (sheet) {
+      sheet.hidden = false;
+      sheet.classList.remove("hidden");
+    }
+    if (backdrop) {
+      backdrop.hidden = false;
+      backdrop.classList.remove("hidden");
+      backdrop.setAttribute("aria-hidden", "false");
+    }
+    if (toggle) toggle.setAttribute("aria-expanded", "true");
+    document.body.classList.add("director-mobile-panel-open");
+    syncDirectorDockSpacing();
+    requestAnimationFrame(() => {
+      document.getElementById("directorMobileClose")?.focus();
+    });
+  }
+
+  function toggleDirectorMobilePanel() {
+    if (state.directorMobilePanelOpen) closeDirectorMobilePanel();
+    else openDirectorMobilePanel();
+  }
+
+  function handleDirectorRoleSelect(role) {
+    applyDirectorView(role);
+    if (isCompactDirectorLayout()) {
+      closeDirectorMobilePanel();
+      flashDirectorRole(role);
+    }
+  }
 
   function isDirectorViewSwitchEnabled() {
     const host = String(window.location.hostname || "").toLowerCase();
-    return host === "localhost" || host === "127.0.0.1";
+    const devHost = host === "localhost" || host === "127.0.0.1";
+    if (!devHost) return false;
+    try {
+      return new URLSearchParams(window.location.search).get("director") === "1";
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function syncDirectorReviewChrome() {
+    const enabled = isDirectorViewSwitchEnabled();
+    document.body.classList.toggle("director-review-active", enabled);
+    const bar = document.getElementById("directorViewBar");
+    if (bar) {
+      bar.hidden = !enabled;
+      bar.classList.toggle("hidden", !enabled);
+    }
+    const footer = document.querySelector(".demo-readonly-footer");
+    if (footer) {
+      footer.hidden = !enabled;
+      footer.classList.toggle("hidden", !enabled);
+    }
+    if (enabled) {
+      document.body.classList.add("director-view-mode");
+    } else {
+      document.body.classList.remove("director-view-mode");
+      ensureDirectorMobilePanelClosed(false);
+    }
+    syncDirectorDockSpacing();
+    syncRoleViewUi();
+  }
+
+  function sessionRoleLabel() {
+    if (state.role === "CLIENT") return "Cliente";
+    if (state.role === "OPERATOR") return "Operador";
+    if (state.role === "SUPERVISOR" && state.operatorMode) return "Supervisor · Operador";
+    if (state.role === "SUPERVISOR") return "Supervisor";
+    if (state.role === "ADMIN") return "Administrador";
+    return String(state.role || "—");
+  }
+
+  function syncRoleViewUi() {
+    document.body.setAttribute("data-role-view", state.role.toLowerCase());
+    const directorReview = isDirectorViewSwitchEnabled();
+    const roleSwitch = document.getElementById("roleSwitch");
+    const roleBadge = document.getElementById("sessionRoleBadge");
+    if (roleSwitch) {
+      roleSwitch.hidden = !directorReview;
+      roleSwitch.classList.toggle("hidden", !directorReview);
+    }
+    if (roleBadge) {
+      roleBadge.textContent = sessionRoleLabel();
+      roleBadge.hidden = directorReview;
+      roleBadge.classList.toggle("hidden", directorReview);
+    }
+  }
+
+  function detailRowAttrs(kind, key) {
+    const safeKey = encodeURIComponent(String(key ?? ""));
+    return `class="detail-row" data-detail-kind="${esc(kind)}" data-detail-key="${safeKey}" tabindex="0" role="button"`;
+  }
+
+  function openDetailDrawer(title, fields, actions = []) {
+    const drawer = document.getElementById("gridDetailDrawer");
+    const titleEl = document.getElementById("gridDetailTitle");
+    const bodyEl = document.getElementById("gridDetailBody");
+    const actionsEl = document.getElementById("gridDetailActions");
+    if (!drawer || !titleEl || !bodyEl || !actionsEl) return;
+    titleEl.textContent = title;
+    bodyEl.innerHTML = fields
+      .map((f) => {
+        const valueHtml = f.html ? String(f.value ?? "—") : esc(f.value ?? "—");
+        return `<div class="detail-field"><label>${esc(f.label)}</label><span>${valueHtml}</span></div>`;
+      })
+      .join("");
+    actionsEl.innerHTML = (actions || [])
+      .map(
+        (a) =>
+          `<button type="button" class="${esc(a.className || "btn-secondary")}" data-detail-action="${esc(a.id)}">${esc(a.label)}</button>`
+      )
+      .join("");
+    actionsEl.querySelectorAll("[data-detail-action]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const act = actions.find((a) => a.id === btn.getAttribute("data-detail-action"));
+        if (act?.onClick) act.onClick();
+      });
+    });
+    drawer.hidden = false;
+    drawer.classList.add("open");
+    drawer.setAttribute("aria-hidden", "false");
+    document.body.classList.add("detail-drawer-open");
+    titleEl.focus();
+  }
+
+  function closeDetailDrawer() {
+    const drawer = document.getElementById("gridDetailDrawer");
+    if (!drawer) return;
+    drawer.classList.remove("open");
+    drawer.hidden = true;
+    drawer.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("detail-drawer-open");
+  }
+
+  function stockRowIndex(row) {
+    return state.stock.indexOf(row);
+  }
+
+  function openStockDetail(index) {
+    const row = state.stock[index];
+    if (!row) return;
+    const valuation = normalizedRowValuation(row);
+    const fields = [
+      { label: "SKU", value: row.product?.sku },
+      { label: "Descripción", value: row.product?.name },
+      { label: "Cantidad", value: fmtQty(row.qty) },
+      { label: "Ubicación", value: row.location?.code },
+      { label: "Proyecto", value: row.project?.code || row.project?.name || "Sin proyecto" },
+      { label: "SAP", value: row.sap || "—" },
+      { label: "Pedido", value: row.pedido || "—" },
+      { label: "Partida", value: row.partida || "—" },
+      { label: "Serie / lote", value: row.serialNumber || "—" }
+    ];
+    if (state.role === "ADMIN" || state.role === "SUPERVISOR" || state.module === "prices") {
+      fields.push(
+        { label: "Valor total MXN", value: valuation.qtyValued > 0 ? fmtMxn(valuation.totalValueMxn) : "Sin valor" },
+        { label: "Estado valuación", value: valuationStatusLabel(valuation.status) }
+      );
+    }
+    openDetailDrawer(`Inventario · ${row.product?.sku || "Detalle"}`, fields, [
+      { id: "close", label: "Cerrar", className: "btn-secondary", onClick: closeDetailDrawer }
+    ]);
+  }
+
+  function openProductDetail(sku) {
+    const rows = state.stock.filter((r) => r.product?.sku === sku);
+    if (!rows.length) return;
+    const total = rows.reduce((acc, r) => acc + Number(r.qty || 0), 0);
+    const locations = new Set(rows.map((r) => r.location?.code).filter(Boolean));
+    const projects = new Set(rows.map((r) => projectLabelFromStockRow(r)).filter(Boolean));
+    openDetailDrawer(`Producto · ${sku}`, [
+      { label: "SKU", value: sku },
+      { label: "Descripción", value: rows[0]?.product?.name || "—" },
+      { label: "Piezas totales", value: fmtQty(total) },
+      { label: "Registros", value: rows.length },
+      { label: "Ubicaciones", value: locations.size ? [...locations].slice(0, 12).join(" · ") : "—" },
+      { label: "Proyectos", value: projects.size ? [...projects].slice(0, 8).join(" · ") : "—" }
+    ], [{ id: "close", label: "Cerrar", className: "btn-secondary", onClick: closeDetailDrawer }]);
+  }
+
+  function openLocationDetail(loc) {
+    const rows = state.stock.filter((r) => r.location?.code === loc);
+    const total = rows.reduce((acc, r) => acc + Number(r.qty || 0), 0);
+    const projects = new Set(rows.map((r) => projectLabelFromStockRow(r)).filter(Boolean));
+    const skus = new Set(rows.map((r) => r.product?.sku).filter(Boolean));
+    openDetailDrawer(`Ubicación · ${loc}`, [
+      { label: "Código", value: loc },
+      { label: "Piezas", value: fmtQty(total) },
+      { label: "Registros", value: rows.length },
+      { label: "Proyectos", value: projects.size ? [...projects].join(" · ") : "—" },
+      { label: "SKUs", value: skus.size ? [...skus].slice(0, 12).join(" · ") : "—" }
+    ], [{ id: "close", label: "Cerrar", className: "btn-secondary", onClick: closeDetailDrawer }]);
+  }
+
+  function openProjectDetail(project) {
+    const rows = state.stock.filter((r) => (r.project?.code || r.project?.name || "Sin proyecto") === project);
+    const total = rows.reduce((acc, r) => acc + Number(r.qty || 0), 0);
+    const locations = new Set(rows.map((r) => r.location?.code).filter(Boolean));
+    const skus = new Set(rows.map((r) => r.product?.sku).filter(Boolean));
+    openDetailDrawer(`Proyecto · ${project}`, [
+      { label: "Proyecto", value: project },
+      { label: "Piezas", value: fmtQty(total) },
+      { label: "Registros", value: rows.length },
+      { label: "Ubicaciones", value: locations.size },
+      { label: "SKUs", value: skus.size ? [...skus].slice(0, 12).join(" · ") : "—" }
+    ], [{ id: "close", label: "Cerrar", className: "btn-secondary", onClick: closeDetailDrawer }]);
+  }
+
+  function openMovementDetail(index) {
+    const movement = state.movements[index];
+    if (!movement) return;
+    openDetailDrawer("Detalle de movimiento", [
+      { label: "Fecha", value: movement.date || movement.createdAt || "—" },
+      { label: "Tipo", value: movement.type || "—" },
+      { label: "Referencia", value: movement.reference || "—" },
+      { label: "Producto", value: movement.product || movement.sku || "—" },
+      { label: "Cantidad", value: fmtQty(movement.qty) },
+      { label: "Origen", value: movement.origin || movement.fromLocation || "—" },
+      { label: "Destino", value: movement.destination || movement.toLocation || "—" }
+    ], [{ id: "close", label: "Cerrar", className: "btn-secondary", onClick: closeDetailDrawer }]);
+  }
+
+  function handleDetailRowActivate(el) {
+    if (!el) return;
+    const kind = el.getAttribute("data-detail-kind");
+    const key = decodeURIComponent(el.getAttribute("data-detail-key") || "");
+    if (kind === "stock") openStockDetail(Number(key));
+    else if (kind === "product") openProductDetail(key);
+    else if (kind === "location") openLocationDetail(key);
+    else if (kind === "project") openProjectDetail(key);
+    else if (kind === "movement") openMovementDetail(Number(key));
+  }
+
+  function wireDetailDrawer() {
+    document.querySelectorAll("[data-close-drawer]").forEach((el) => {
+      if (el.dataset.drawerWired === "1") return;
+      el.dataset.drawerWired = "1";
+      el.addEventListener("click", () => closeDetailDrawer());
+    });
+    if (document.body.dataset.detailDrawerWired === "1") return;
+    document.body.dataset.detailDrawerWired = "1";
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        if (state.directorMobilePanelOpen) return;
+        const drawer = document.getElementById("gridDetailDrawer");
+        if (drawer?.classList.contains("open")) closeDetailDrawer();
+      }
+    });
+    app?.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-detail-kind]");
+      if (!row || !app.contains(row)) return;
+      event.preventDefault();
+      handleDetailRowActivate(row);
+    });
+    app?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const row = event.target.closest("[data-detail-kind]");
+      if (!row || !app.contains(row)) return;
+      event.preventDefault();
+      handleDetailRowActivate(row);
+    });
+  }
+
+  let deferredPwaInstallPrompt = null;
+
+  function isPwaStandalone() {
+    return (
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.matchMedia("(display-mode: minimal-ui)").matches ||
+      window.matchMedia("(display-mode: window-controls-overlay)").matches ||
+      window.navigator.standalone === true
+    );
+  }
+
+  function syncAppShellActions() {
+    const installBtn = document.getElementById("pwaInstallBtn");
+    const fullscreenBtn = document.getElementById("fullscreenBtn");
+    const standalone = isPwaStandalone();
+    if (installBtn) {
+      const showInstall = Boolean(deferredPwaInstallPrompt) && !standalone;
+      installBtn.hidden = !showInstall;
+      installBtn.classList.toggle("hidden", !showInstall);
+    }
+    if (fullscreenBtn) {
+      const canFullscreen = typeof document.documentElement.requestFullscreen === "function";
+      const showFullscreen = canFullscreen && !standalone;
+      fullscreenBtn.hidden = !showFullscreen;
+      fullscreenBtn.classList.toggle("hidden", !showFullscreen);
+      fullscreenBtn.textContent = document.fullscreenElement ? "Salir pantalla completa" : "Pantalla completa";
+    }
+  }
+
+  function wireAppShellActions() {
+    const installBtn = document.getElementById("pwaInstallBtn");
+    const fullscreenBtn = document.getElementById("fullscreenBtn");
+    window.addEventListener("beforeinstallprompt", (event) => {
+      event.preventDefault();
+      deferredPwaInstallPrompt = event;
+      syncAppShellActions();
+    });
+    window.addEventListener("appinstalled", () => {
+      deferredPwaInstallPrompt = null;
+      syncAppShellActions();
+    });
+    installBtn?.addEventListener("click", async () => {
+      if (!deferredPwaInstallPrompt) return;
+      deferredPwaInstallPrompt.prompt();
+      await deferredPwaInstallPrompt.userChoice;
+      deferredPwaInstallPrompt = null;
+      syncAppShellActions();
+    });
+    fullscreenBtn?.addEventListener("click", async () => {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await document.documentElement.requestFullscreen();
+      } catch (_e) {
+        /* optional */
+      }
+      syncAppShellActions();
+    });
+    document.addEventListener("fullscreenchange", syncAppShellActions);
+    syncAppShellActions();
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/logitec-role-demo-sw.js", { scope: "/" }).catch(() => {});
+    }
   }
 
   function syncDirectorViewUi() {
@@ -263,7 +709,12 @@
     });
     document.querySelectorAll("#directorViewBar [data-director-mobile]").forEach((btn) => {
       btn.classList.toggle("active", state.mobileEmulation);
-      btn.textContent = state.mobileEmulation ? "VOLVER A DESKTOP" : "MODO CELULAR";
+      const desktop = btn.closest(".director-view-bar-actions-desktop");
+      if (desktop) {
+        btn.textContent = state.mobileEmulation ? "VOLVER A DESKTOP" : "MODO CELULAR";
+      } else {
+        btn.textContent = state.mobileEmulation ? "Volver a desktop" : "Modo celular";
+      }
       btn.setAttribute("aria-pressed", state.mobileEmulation ? "true" : "false");
     });
     document.body.classList.toggle("mobile-emulation-active", state.mobileEmulation);
@@ -279,14 +730,15 @@
 
   function setMobileEmulation(active) {
     const next = !!active;
-    const scrollHost = document.querySelector("main.content") || app;
     if (next) {
-      state.mobileScrollSnapshot = scrollHost ? scrollHost.scrollTop : window.scrollY || 0;
+      state.mobileScrollSnapshot = getMobileScrollPosition();
       if (state.concentration) applyConcentration(false);
+      ensureDirectorMobilePanelClosed(false);
     }
     if (state.mobileEmulation === next) {
       syncDirectorViewUi();
       syncConcentrationUi();
+      syncMobileLayoutUi();
       return;
     }
     state.mobileEmulation = next;
@@ -294,12 +746,9 @@
     syncConcentrationUi();
     if (!next) {
       const top = state.mobileScrollSnapshot || 0;
-      requestAnimationFrame(() => {
-        const host = document.querySelector("main.content") || app;
-        if (host) host.scrollTop = top;
-        else window.scrollTo(0, top);
-      });
+      requestAnimationFrame(() => restoreMobileScrollPosition(top));
     }
+    syncMobileLayoutUi();
   }
 
   function syncRoleSwitchUi() {
@@ -369,16 +818,20 @@
       btn.classList.toggle("hidden", !show);
     }
     syncConcentrationButton();
+    syncConcentrationExitLabel();
   }
 
   function applyConcentration(on) {
     const next = Boolean(on);
     if (next && !canUseConcentration()) return;
+    ensureDirectorMobilePanelClosed(false);
     state.concentration = next;
     document.body.classList.toggle("focus-mode", state.concentration);
     syncConcentrationButton();
+    syncConcentrationExitLabel();
     syncConcentrationOverlay();
     syncConcentrationUi();
+    syncMobileLayoutUi();
   }
 
   function wireConcentration() {
@@ -396,10 +849,12 @@
   }
 
   function applyDirectorView(role) {
+    if (!isDirectorViewSwitchEnabled()) return;
     applyRoleView(role);
   }
 
   function cancelActiveTask() {
+    stopDemoCamera("Cámara detenida al cancelar la tarea.");
     state.activeTaskId = null;
     state.taskFlow = null;
     state.freeScanActive = false;
@@ -1151,6 +1606,7 @@
   }
 
   function discardFreeScanSession() {
+    stopDemoCamera("Cámara detenida al cerrar la captura.");
     state.freeScanActive = false;
     state.freeScanSession = null;
     state.freeScanAnchor = null;
@@ -1303,6 +1759,276 @@
     renderContent();
   }
 
+  function advanceDemoCameraCandidate(candidateState, rawValue, detectedAt) {
+    const value = normalizeScannerRawValue(rawValue);
+    if (!value) return { value: "", count: 0, firstSeenAt: null, stableValue: "" };
+    if (value !== candidateState.value) {
+      return { value, count: 1, firstSeenAt: detectedAt, stableValue: "" };
+    }
+    const count = candidateState.count + 1;
+    const firstSeenAt = candidateState.firstSeenAt ?? detectedAt;
+    const stableValue =
+      count >= demoCameraStabilityFrames ||
+      (count >= demoCameraTimedStabilityFrames && detectedAt - firstSeenAt >= demoCameraStabilityMs)
+        ? value
+        : "";
+    return { value, count, firstSeenAt, stableValue };
+  }
+
+  function setDemoCameraStatus(message, tone = "") {
+    const status = document.getElementById("scanCameraStatus");
+    if (!status) return;
+    status.textContent = message;
+    status.className = `scan-camera-status${tone ? ` ${tone}` : ""}`;
+  }
+
+  function snapshotDemoCameraFrame() {
+    const video = document.getElementById("scanCameraVideo");
+    if (!video) return null;
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (!width || !height) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.drawImage(video, 0, 0, width, height);
+    return canvas;
+  }
+
+  function haltDemoCameraCapture() {
+    if (demoCameraTimer) window.clearTimeout(demoCameraTimer);
+    demoCameraTimer = null;
+    demoCameraRunId += 1;
+    demoCameraDetectionBusy = false;
+    demoCameraDetectionArmed = false;
+    if (demoCameraStream) {
+      demoCameraStream.getTracks().forEach((track) => track.stop());
+    }
+    demoCameraStream = null;
+    demoCameraStartedAt = null;
+    demoCameraCandidateState = { value: "", count: 0, firstSeenAt: null, stableValue: "" };
+    const video = document.getElementById("scanCameraVideo");
+    if (video) {
+      video.pause();
+      video.srcObject = null;
+    }
+  }
+
+  function stopDemoCamera(message = "Cámara detenida.") {
+    haltDemoCameraCapture();
+    const startBtn = document.getElementById("scanStartCameraBtn");
+    const armBtn = document.getElementById("scanArmCameraBtn");
+    const stopBtn = document.getElementById("scanStopCameraBtn");
+    if (startBtn) startBtn.disabled = false;
+    if (armBtn) {
+      armBtn.disabled = true;
+      armBtn.textContent = "INICIAR LECTURA";
+    }
+    if (stopBtn) stopBtn.disabled = true;
+    if (message) setDemoCameraStatus(message);
+    syncScanPriorityUi();
+  }
+
+  function loadDemoBarcodeDetectorPolyfill() {
+    if (window.BarcodeDetector) return Promise.resolve();
+    if (demoBarcodePolyfillPromise) return demoBarcodePolyfillPromise;
+    demoBarcodePolyfillPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "/vendor/barcode-detector/3.2.2/polyfill.js";
+      script.dataset.barcodeDetectorPolyfill = "true";
+      script.onload = () => resolve();
+      script.onerror = () => {
+        script.remove();
+        demoBarcodePolyfillPromise = null;
+        reject(new Error("No se pudo cargar el decodificador local."));
+      };
+      document.head.appendChild(script);
+    });
+    return demoBarcodePolyfillPromise;
+  }
+
+  async function createDemoCameraDetector() {
+    if (window.BarcodeDetector) {
+      demoCameraDetectorKind = "nativo";
+      return new window.BarcodeDetector();
+    }
+    await loadDemoBarcodeDetectorPolyfill();
+    const prepare = window.BarcodeDetectionAPI?.prepareZXingModule;
+    if (typeof prepare === "function") {
+      await prepare({
+        overrides: {
+          locateFile(path, prefix) {
+            return path.endsWith(".wasm")
+              ? "/vendor/zxing-wasm/3.1.3/zxing_reader.wasm"
+              : `${prefix}${path}`;
+          }
+        }
+      });
+    }
+    if (!window.BarcodeDetector) throw new Error("El decodificador de códigos no está disponible.");
+    demoCameraDetectorKind = "ZXing-WASM";
+    return new window.BarcodeDetector();
+  }
+
+  function scheduleDemoCameraDetection() {
+    if (!demoCameraStream || !demoCameraDetectionArmed) return;
+    demoCameraTimer = window.setTimeout(() => void detectDemoCameraFrame(), 160);
+  }
+
+  async function detectDemoCameraFrame() {
+    if (!demoCameraStream || !demoCameraDetectionArmed || demoCameraDetectionBusy || state.scanProcessing) return;
+    const video = document.getElementById("scanCameraVideo");
+    if (!video || video.readyState < 2) {
+      scheduleDemoCameraDetection();
+      return;
+    }
+    const runId = demoCameraRunId;
+    demoCameraDetectionBusy = true;
+    try {
+      const cameraFrame = snapshotDemoCameraFrame();
+      if (!cameraFrame) {
+        scheduleDemoCameraDetection();
+        return;
+      }
+      const detections = await demoCameraDetector.detect(cameraFrame);
+      if (runId !== demoCameraRunId || !demoCameraStream || !demoCameraDetectionArmed) return;
+      const detectionNow = performance.now();
+      demoCameraCandidateState = advanceDemoCameraCandidate(
+        demoCameraCandidateState,
+        detections?.[0]?.rawValue ?? "",
+        detectionNow
+      );
+      const rawValue = demoCameraCandidateState.stableValue;
+      if (!rawValue) {
+        scheduleDemoCameraDetection();
+        return;
+      }
+      if (demoCameraSeenCodes.has(rawValue)) {
+        setDemoCameraStatus("Código ya procesado en esta lectura · esperando uno distinto…", "armed");
+        scheduleDemoCameraDetection();
+        return;
+      }
+      demoCameraSeenCodes.add(rawValue);
+      demoCameraDetectionArmed = false;
+      const input = document.getElementById("scanValue");
+      const onSubmit = demoCameraSubmitHandler;
+      if (!input || typeof onSubmit !== "function") {
+        scheduleDemoCameraDetection();
+        return;
+      }
+      input.value = rawValue;
+      setDemoCameraStatus(`Código detectado (${demoCameraDetectorKind}) · procesando…`, "ok");
+      stopDemoCamera("Lectura enviada · cámara detenida.");
+      onSubmit(input);
+    } catch (error) {
+      if (!demoCameraStream) return;
+      setDemoCameraStatus(
+        `Buscando código… ${error?.message || "ajusta distancia e iluminación"}`
+      );
+    } finally {
+      demoCameraDetectionBusy = false;
+    }
+    if (demoCameraDetectionArmed && demoCameraStream) scheduleDemoCameraDetection();
+  }
+
+  function armDemoCameraDetection() {
+    if (!demoCameraStream || demoCameraDetectionArmed) return;
+    demoCameraCandidateState = { value: "", count: 0, firstSeenAt: null, stableValue: "" };
+    demoCameraDetectionArmed = true;
+    demoCameraStartedAt = performance.now();
+    const armBtn = document.getElementById("scanArmCameraBtn");
+    if (armBtn) {
+      armBtn.disabled = true;
+      armBtn.textContent = "INICIAR LECTURA";
+    }
+    setDemoCameraStatus(`Lectura armada · detector ${demoCameraDetectorKind}. Buscando código…`, "armed");
+    scheduleDemoCameraDetection();
+  }
+
+  async function startDemoCamera() {
+    if (!window.isSecureContext && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+      setDemoCameraStatus(
+        "La cámara requiere HTTPS o localhost. Use captura manual o lector teclado.",
+        "error"
+      );
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setDemoCameraStatus(
+        "Este navegador no ofrece acceso a cámara. Use captura manual o lector teclado.",
+        "error"
+      );
+      return;
+    }
+    const startBtn = document.getElementById("scanStartCameraBtn");
+    const armBtn = document.getElementById("scanArmCameraBtn");
+    const stopBtn = document.getElementById("scanStopCameraBtn");
+    if (startBtn) startBtn.disabled = true;
+    if (armBtn) armBtn.disabled = true;
+    setDemoCameraStatus("Preparando cámara · solicitando permiso explícito…");
+    try {
+      demoCameraStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      });
+      const video = document.getElementById("scanCameraVideo");
+      if (!video) throw new Error("Vista previa no disponible.");
+      video.srcObject = demoCameraStream;
+      await video.play();
+      demoCameraDetector = demoCameraDetector || (await createDemoCameraDetector());
+      if (armBtn) armBtn.disabled = false;
+      if (stopBtn) stopBtn.disabled = false;
+      setDemoCameraStatus(`Cámara lista · detector ${demoCameraDetectorKind}. Presione INICIAR LECTURA.`, "ok");
+      syncScanPriorityUi();
+    } catch (error) {
+      stopDemoCamera("Cámara no disponible.");
+      const denied = error?.name === "NotAllowedError";
+      setDemoCameraStatus(
+        denied
+          ? "Permiso de cámara denegado. Habilítelo en el navegador o use captura manual/lector teclado."
+          : `No se pudo iniciar la cámara: ${error?.message || "error desconocido"}. Use captura manual/lector teclado.`,
+        "error"
+      );
+    }
+  }
+
+  function wireDemoScannerCamera(onSubmit) {
+    demoCameraSubmitHandler = onSubmit;
+    if (!window.__logitecDemoCameraVisibilityWired) {
+      window.__logitecDemoCameraVisibilityWired = true;
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) stopDemoCamera("Pestaña oculta · cámara detenida.");
+      });
+    }
+    const toggle = document.getElementById("scanCameraToggle");
+    const panel = document.getElementById("scanCameraCapture");
+    toggle?.addEventListener("click", () => {
+      const opening = panel?.hidden !== false;
+      if (panel) panel.hidden = !opening;
+      toggle.setAttribute("aria-expanded", opening ? "true" : "false");
+      if (!opening) stopDemoCamera("Cámara detenida; captura manual disponible.");
+      syncScanPriorityUi();
+    });
+    document.getElementById("scanStartCameraBtn")?.addEventListener("click", () => {
+      demoCameraSeenCodes.clear();
+      void startDemoCamera();
+    });
+    document.getElementById("scanArmCameraBtn")?.addEventListener("click", () => armDemoCameraDetection());
+    document.getElementById("scanStopCameraBtn")?.addEventListener("click", () =>
+      stopDemoCamera("Cámara detenida; captura manual disponible.")
+    );
+  }
+
+  function mobileTableScrollHint() {
+    return `<p class="mobile-table-scroll-hint" aria-hidden="true">Desliza horizontalmente para ver todas las columnas</p>`;
+  }
+
   function renderScannerWorkspace({ mode, meta, instruction }) {
     let banner;
     let help;
@@ -1321,6 +2047,22 @@
       ${meta ? `<p class="scan-handheld-meta">${meta}</p>` : ""}
       ${instruction ? `<h2 class="scan-handheld-instruction">${esc(instruction)}</h2>` : ""}
       <p class="scan-handheld-help">${esc(help)}</p>
+      <div class="scan-camera-shell">
+        <button type="button" class="btn-secondary btn-compact scan-camera-toggle" id="scanCameraToggle" aria-expanded="false">CÁMARA DEL CELULAR</button>
+        <div id="scanCameraCapture" class="scan-camera-capture" hidden>
+          <div class="scan-camera-frame">
+            <video id="scanCameraVideo" muted playsinline aria-label="Vista previa de cámara"></video>
+            <div class="scan-camera-guide" aria-hidden="true"></div>
+          </div>
+          <p id="scanCameraStatus" class="scan-camera-status" role="status">La cámara está apagada. Ábrela, encuadra el código y presione INICIAR LECTURA.</p>
+          <div class="scan-camera-actions">
+            <button type="button" class="btn-primary btn-compact" id="scanStartCameraBtn">ABRIR CÁMARA</button>
+            <button type="button" class="btn-secondary btn-compact scan-arm-reading" id="scanArmCameraBtn" disabled>INICIAR LECTURA</button>
+            <button type="button" class="btn-secondary btn-compact" id="scanStopCameraBtn" disabled>DETENER CÁMARA</button>
+          </div>
+          <p class="scan-camera-note">Requiere HTTPS o localhost · permiso explícito · cámara trasera preferida · BarcodeDetector nativo o ZXing-WASM local.</p>
+        </div>
+      </div>
       <input class="scan-input scan-handheld-input field" id="scanValue" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Escaneo · Enter" />
       <div class="scan-handheld-fallback">
         ${
@@ -1356,15 +2098,15 @@
       input.focus();
       input.placeholder = manualPlaceholder || "Captura manual · escriba y Enter";
     });
+    wireDemoScannerCamera(onSubmit);
   }
 
   function enterSupervisorOperatorMode() {
     if (state.role !== "SUPERVISOR" || state.operatorMode) return;
-    const scrollHost = document.querySelector("main.content") || app;
     state.supervisorReturnContext = {
       tab: state.tab,
       module: state.module,
-      scroll: scrollHost ? scrollHost.scrollTop : 0
+      scroll: getMobileScrollPosition()
     };
     if (state.concentration) applyConcentration(false);
     state.freeScanActive = false;
@@ -1392,10 +2134,7 @@
     syncSupervisorOperatorModeUi();
     syncConcentrationUi();
     render();
-    requestAnimationFrame(() => {
-      const host = document.querySelector("main.content") || app;
-      if (host) host.scrollTop = ctx.scroll || 0;
-    });
+    requestAnimationFrame(() => restoreMobileScrollPosition(ctx.scroll || 0));
   }
 
   function syncSupervisorOperatorModeUi() {
@@ -1406,6 +2145,7 @@
       bar.hidden = !active;
       bar.classList.toggle("hidden", !active);
     }
+    syncRoleViewUi();
   }
 
   function wireSupervisorOperatorMode() {
@@ -1423,6 +2163,7 @@
       exitSupervisorOperatorMode();
       return;
     }
+    ensureDirectorMobilePanelClosed(false);
     state.role = role;
     state.operatorMode = false;
     state.supervisorReturnContext = null;
@@ -1443,47 +2184,83 @@
     render();
   }
 
-  function syncRoleViewUi() {
-    document.body.setAttribute("data-role-view", state.role.toLowerCase());
-    const roleSwitch = document.getElementById("roleSwitch");
-    if (roleSwitch) {
-      const hideForClient = state.role === "CLIENT";
-      roleSwitch.hidden = hideForClient || isDirectorViewSwitchEnabled();
-      roleSwitch.classList.toggle("hidden", roleSwitch.hidden);
-    }
-  }
-
   function syncDirectorDockSpacing() {
     const bar = document.getElementById("directorViewBar");
     const footer = document.querySelector(".demo-readonly-footer");
-    if (!bar || bar.hidden) return;
-    const barHeight = Math.ceil(bar.getBoundingClientRect().height || 0);
-    const footerHeight = Math.ceil(footer?.getBoundingClientRect().height || 0);
-    document.documentElement.style.setProperty("--director-dock-space", `${barHeight + footerHeight + 12}px`);
+    const compact = isCompactDirectorLayout();
+    const scanActive = document.body.classList.contains("scan-mode-active");
+    const focusActive = state.concentration;
+    let bottomSpace = 12;
+    let barHeight = 0;
+    if (bar && !bar.hidden && isDirectorViewSwitchEnabled() && !scanActive && !focusActive) {
+      barHeight = Math.ceil(bar.getBoundingClientRect().height || 0);
+      bottomSpace += barHeight;
+      if (compact) {
+        document.documentElement.style.setProperty("--director-mobile-dock-height", `${barHeight}px`);
+      } else {
+        document.documentElement.style.removeProperty("--director-mobile-dock-height");
+      }
+    } else if (compact) {
+      document.documentElement.style.setProperty("--director-mobile-dock-height", "0px");
+    } else {
+      document.documentElement.style.removeProperty("--director-mobile-dock-height");
+    }
+    if (footer && !scanActive && !focusActive) {
+      bottomSpace += Math.ceil(footer.getBoundingClientRect().height || 0);
+    }
+    document.documentElement.style.setProperty("--mobile-chrome-bottom-space", `${bottomSpace}px`);
+    document.documentElement.style.setProperty("--director-dock-space", `${bottomSpace}px`);
+  }
+
+  function wireDirectorViewBarActions(bar) {
+    bar.querySelectorAll("[data-director-role]").forEach((btn) => {
+      if (btn.dataset.directorWired === "1") return;
+      btn.dataset.directorWired = "1";
+      btn.addEventListener("click", () => handleDirectorRoleSelect(btn.getAttribute("data-director-role") || "OPERATOR"));
+    });
+    bar.querySelectorAll("[data-director-mobile]").forEach((btn) => {
+      if (btn.dataset.directorWired === "1") return;
+      btn.dataset.directorWired = "1";
+      btn.addEventListener("click", () => {
+        setMobileEmulation(!state.mobileEmulation);
+        if (isCompactDirectorLayout()) closeDirectorMobilePanel();
+      });
+    });
+    bar.querySelectorAll("[data-director-system]").forEach((btn) => {
+      if (btn.dataset.directorWired === "1") return;
+      btn.dataset.directorWired = "1";
+      btn.addEventListener("click", () => {
+        if (btn.dataset.opening === "1") return;
+        btn.dataset.opening = "1";
+        if (isCompactDirectorLayout()) closeDirectorMobilePanel();
+        window.open("/dashboard.html", "_blank", "noopener,noreferrer");
+        window.setTimeout(() => {
+          btn.dataset.opening = "0";
+        }, 800);
+      });
+    });
   }
 
   function initDirectorViewBar() {
+    syncDirectorReviewChrome();
     const bar = document.getElementById("directorViewBar");
-    const roleSwitch = document.getElementById("roleSwitch");
     if (!isDirectorViewSwitchEnabled()) {
-      if (roleSwitch) {
-        roleSwitch.hidden = state.role === "CLIENT";
-        roleSwitch.classList.toggle("hidden", roleSwitch.hidden);
-      }
       return;
     }
     if (!bar) return;
     if (bar.dataset.wired === "1") {
       syncDirectorViewUi();
       syncConcentrationUi();
+      syncDirectorDockSpacing();
       return;
     }
     bar.dataset.wired = "1";
-    bar.hidden = false;
-    bar.classList.remove("hidden");
-    document.body.classList.add("director-view-mode");
     syncDirectorDockSpacing();
-    window.addEventListener("resize", syncDirectorDockSpacing, { passive: true });
+    window.addEventListener("resize", () => {
+      if (!isCompactDirectorLayout() && state.directorMobilePanelOpen) closeDirectorMobilePanel();
+      syncDirectorDockSpacing();
+      syncConcentrationExitLabel();
+    }, { passive: true });
     if (typeof ResizeObserver !== "undefined") {
       const dockObserver = new ResizeObserver(syncDirectorDockSpacing);
       dockObserver.observe(bar);
@@ -1491,27 +2268,36 @@
       if (footer) dockObserver.observe(footer);
       bar._dockObserver = dockObserver;
     }
-    bar.querySelectorAll("[data-director-role]").forEach((btn) => {
-      btn.addEventListener("click", () => applyDirectorView(btn.getAttribute("data-director-role") || "OPERATOR"));
-    });
-    bar.querySelectorAll("[data-director-mobile]").forEach((btn) => {
-      btn.addEventListener("click", () => setMobileEmulation(!state.mobileEmulation));
-    });
-    bar.querySelectorAll("[data-director-system]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        if (btn.dataset.opening === "1") return;
-        btn.dataset.opening = "1";
-        window.open("/dashboard.html", "_blank", "noopener,noreferrer");
-        window.setTimeout(() => {
-          btn.dataset.opening = "0";
-        }, 800);
+    wireDirectorViewBarActions(bar);
+    const toggle = document.getElementById("directorMobileToggle");
+    if (toggle && toggle.dataset.wired !== "1") {
+      toggle.dataset.wired = "1";
+      toggle.addEventListener("click", () => toggleDirectorMobilePanel());
+    }
+    const closeBtn = document.getElementById("directorMobileClose");
+    if (closeBtn && closeBtn.dataset.wired !== "1") {
+      closeBtn.dataset.wired = "1";
+      closeBtn.addEventListener("click", () => closeDirectorMobilePanel());
+    }
+    const backdrop = document.getElementById("directorMobileBackdrop");
+    if (backdrop && backdrop.dataset.wired !== "1") {
+      backdrop.dataset.wired = "1";
+      backdrop.addEventListener("click", () => closeDirectorMobilePanel());
+    }
+    if (bar.dataset.escapeWired !== "1") {
+      bar.dataset.escapeWired = "1";
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || !state.directorMobilePanelOpen) return;
+        if (document.getElementById("gridDetailDrawer")?.classList.contains("open")) return;
+        closeDirectorMobilePanel();
       });
-    });
+    }
     const restoreBtn = document.getElementById("mobileEmulationRestore");
     if (restoreBtn) {
       restoreBtn.addEventListener("click", () => setMobileEmulation(false));
     }
     syncDirectorViewUi();
+    syncConcentrationExitLabel();
     requestAnimationFrame(syncDirectorDockSpacing);
   }
 
@@ -1759,6 +2545,8 @@
   }
 
   function applyExcelPayload(payload) {
+    // POL-004 · fuentes documentales separadas: corte histórico 22-jun-2026 vs inventario oficial 14-ago-2026.
+    // No mezclar corpus histórico con stock operativo en esta demo READ-ONLY.
     state.dataSource = "EXCEL";
     state.excelItems = payload.items || [];
     state.stock = state.excelItems.map(excelItemToStock);
@@ -1881,18 +2669,19 @@
           <button type="button" class="btn-secondary" id="invFilterRun">Filtrar</button>
         </div>
         <p class="operational-table-meta">${esc(slice.length)} mostrados · ${esc(rows.length)} resultados · ${esc(state.stock.length)} registros fuente</p>
-        <table class="data-table"><thead><tr>
+        ${mobileTableScrollHint()}
+        <div class="wide-table-scroll-shell"><table class="data-table"><thead><tr>
           <th>SKU</th><th>Descripción</th><th>Proyecto</th><th>Ubicación</th><th>Cant.</th><th>SAP</th><th>Pedido</th><th>Partida</th>
-        </tr></thead><tbody>${slice
+        </tr></thead>        <tbody>${slice
           .map(
-            (r) => `<tr>
+            (r) => `<tr ${detailRowAttrs("stock", stockRowIndex(r))}>
               <td>${esc(r.product?.sku)}</td><td>${esc(r.product?.name)}</td>
               <td>${esc(r.project?.code || r.project?.name || "—")}</td>
               <td>${esc(r.location?.code)}</td><td>${esc(fmtQty(r.qty))}</td>
               <td>${esc(r.sap || "—")}</td><td>${esc(r.pedido || "—")}</td><td>${esc(r.partida || "—")}</td>
             </tr>`
           )
-          .join("")}</tbody></table>
+          .join("")}</tbody></table></div>
         ${
           paginate
             ? `<div class="pagination">
@@ -1917,7 +2706,7 @@
           : state.role === "SUPERVISOR"
             ? "Tareas"
             : "Centro de operación · Tareas";
-    const tableHtml = `<table class="data-table task-row-compact"><thead><tr>
+    const tableHtml = `${mobileTableScrollHint()}<div class="wide-table-scroll-shell"><table class="data-table task-row-compact"><thead><tr>
           <th>Tarea</th><th>Tipo</th><th>Proyecto</th><th>Referencia</th><th>Producto</th><th>Cant.</th><th>Origen</th><th>Destino</th><th>Operador</th><th>Prioridad</th><th>Estado</th>${compact ? "<th></th>" : ""}
         </tr></thead><tbody>${rows.length ? rows
           .map((t) => {
@@ -1931,7 +2720,7 @@
               <td>${esc(t.priority)}</td><td>${statusBadge(t.status)}</td>${action}
             </tr>`;
           })
-          .join("") : `<tr><td colspan="${compact ? 12 : 11}">Sin tareas de este tipo en la demo.</td></tr>`}</tbody></table>`;
+          .join("") : `<tr><td colspan="${compact ? 12 : 11}">Sin tareas de este tipo en la demo.</td></tr>`}</tbody></table></div>`;
     if (innerOnly) return tableHtml;
     return `<div class="module-screen-header"><h3>${esc(heading)}</h3>
       <p class="module-lead">${compact ? "LOGITEC dirige · usted escanea y ejecuta" : "Convertir necesidad operativa en trabajo claro de piso"} <span class="badge demo-flow">EJEMPLO DE FLUJO</span></p></div>
@@ -1980,13 +2769,13 @@
       .join("");
     if (ctx === "admin") {
       return session.readings.length
-        ? `<div class="free-scan-readings-wrap"><table class="data-table free-scan-readings"><thead><tr>
+        ? `<div class="free-scan-readings-wrap">${mobileTableScrollHint()}<table class="data-table free-scan-readings"><thead><tr>
             <th>Hora</th><th>RAW</th><th>Clasificación</th><th>Coincidencia</th><th>Producto</th><th>Ubicación</th><th>Proyecto</th>
           </tr></thead><tbody>${rows}</tbody></table></div>`
         : `<p class="operational-table-meta">Escanee códigos · identificación READ-ONLY · sesión en memoria.</p>`;
     }
     return session.readings.length
-      ? `<div class="free-scan-readings-wrap"><table class="data-table free-scan-readings"><thead><tr>
+      ? `<div class="free-scan-readings-wrap">${mobileTableScrollHint()}<table class="data-table free-scan-readings"><thead><tr>
           <th>Hora</th><th>RAW</th><th>Clasificación</th><th>Coincidencia</th>
         </tr></thead><tbody>${rows}</tbody></table></div>`
       : `<p class="operational-table-meta">Escanee códigos · la evidencia RAW se conserva sin modificar inventario.</p>`;
@@ -2312,7 +3101,7 @@
       </tr></thead><tbody>${state.movements
         .slice(0, 50)
         .map(
-          (m) => `<tr>
+          (m) => `<tr ${detailRowAttrs("movement", state.movements.indexOf(m))}>
             <td>${esc(m.date || m.createdAt || "—")}</td>
             <td>${esc(m.type || "—")}</td>
             <td>${esc(m.reference || "—")}</td>
@@ -2641,7 +3430,7 @@
       </tr></thead><tbody>${movements
         .slice(0, 50)
         .map(
-          (m) => `<tr>
+          (m) => `<tr ${detailRowAttrs("movement", state.movements.indexOf(m))}>
             <td>${esc(m.date || m.createdAt || "—")}</td>
             <td>${esc(m.type || "—")}</td>
             <td>${esc(m.reference || "—")}</td>
@@ -2837,7 +3626,7 @@
           <th>Proyecto</th><th>SKU</th><th>Descripción</th><th>Piezas</th><th>Ubicación</th><th>Pedido</th><th>SAP</th><th>Partida</th>
         </tr></thead><tbody>${inventoryRows
           .map(
-            (r) => `<tr>
+            (r) => `<tr ${detailRowAttrs("stock", stockRowIndex(r))}>
               <td>${esc(r.project?.code || r.project?.name || "—")}</td>
               <td>${esc(r.product?.sku)}</td>
               <td>${esc(r.product?.name)}</td>
@@ -2860,7 +3649,7 @@
           </tr></thead><tbody>${visibleOfficialMovements
             .slice(0, 50)
             .map(
-              (m) => `<tr>
+              (m) => `<tr ${detailRowAttrs("movement", state.movements.indexOf(m))}>
                 <td>${esc(m.date || m.createdAt || "—")}</td>
                 <td>${esc(m.type || "—")}</td>
                 <td>${esc(m.reference || "—")}</td>
@@ -2932,7 +3721,7 @@
       ${kpis()}
       <div class="card-panel"><h4>Proyectos con existencias</h4>
         <table class="data-table"><thead><tr><th>Proyecto</th><th>Piezas</th><th>Registros</th><th>Ubicaciones</th></tr></thead><tbody>${projs
-          .map((p) => `<tr><td>${esc(p.project)}</td><td>${esc(fmtQty(p.pieces))}</td><td>${esc(p.rows)}</td><td>${esc(p.locations.size)}</td></tr>`)
+          .map((p) => `<tr ${detailRowAttrs("project", p.project)}><td>${esc(p.project)}</td><td>${esc(fmtQty(p.pieces))}</td><td>${esc(p.rows)}</td><td>${esc(p.locations.size)}</td></tr>`)
           .join("")}</tbody></table>
       </div>
       ${renderClientPhysicalActivitySection({ compact: true })}`;
@@ -2950,12 +3739,12 @@
       <div class="grid-2">
         <div class="card-panel"><h4>Principales ubicaciones</h4>
           <table class="data-table"><thead><tr><th>Ubicación</th><th>Piezas</th><th>Registros</th></tr></thead><tbody>${locs
-            .map((l) => `<tr><td>${esc(l.loc)}</td><td>${esc(fmtQty(l.pieces))}</td><td>${esc(l.rows)}</td></tr>`)
+            .map((l) => `<tr ${detailRowAttrs("location", l.loc)}><td>${esc(l.loc)}</td><td>${esc(fmtQty(l.pieces))}</td><td>${esc(l.rows)}</td></tr>`)
             .join("")}</tbody></table>
         </div>
         <div class="card-panel"><h4>Principales proyectos</h4>
           <table class="data-table"><thead><tr><th>Proyecto</th><th>Piezas</th><th>Ubicaciones</th></tr></thead><tbody>${projs
-            .map((p) => `<tr><td>${esc(p.project)}</td><td>${esc(fmtQty(p.pieces))}</td><td>${esc(p.locations.size)}</td></tr>`)
+            .map((p) => `<tr ${detailRowAttrs("project", p.project)}><td>${esc(p.project)}</td><td>${esc(fmtQty(p.pieces))}</td><td>${esc(p.locations.size)}</td></tr>`)
             .join("")}</tbody></table>
         </div>
       </div>`;
@@ -2973,7 +3762,7 @@
       .map((row) => {
         const valuation = normalizedRowValuation(row);
         const statusClass = valuation.status === "COMPLETE" ? "complete" : valuation.status === "PARTIAL" ? "partial" : "none";
-        return `<tr>
+        return `<tr ${detailRowAttrs("stock", stockRowIndex(row))}>
           <td>${esc(row.product?.sku || "—")}</td>
           <td>${esc(row.product?.name || "—")}</td>
           <td>${esc(row.project?.code || row.project?.name || "Sin proyecto")}</td>
@@ -2996,6 +3785,7 @@
       </div>
       <div class="card-panel valuation-table-wrap">
         <p class="operational-table-meta">${esc(rows.length)} saldos · mostrando ${esc(visibleRows.length)} · valores en MXN</p>
+        ${mobileTableScrollHint()}
         <table class="data-table valuation-table"><thead><tr>
           <th>SKU</th><th>Descripción</th><th>Proyecto</th><th>Ubicación</th><th class="numeric-cell">Piezas</th><th class="numeric-cell">Valor unitario / rango</th><th class="numeric-cell">Valor total</th><th>Estado</th>
         </tr></thead><tbody>${tableRows || '<tr><td colspan="8">Sin existencias en la fuente actual.</td></tr>'}</tbody></table>
@@ -3020,20 +3810,20 @@
       const locs = aggregateLocations();
       return `<div class="module-screen-header"><h3>Ubicaciones</h3></div><div class="card-panel"><table class="data-table"><thead><tr><th>Ubicación</th><th>Piezas</th><th>Registros</th><th>Proyectos</th></tr></thead><tbody>${locs
         .slice(0, 100)
-        .map((l) => `<tr><td>${esc(l.loc)}</td><td>${esc(fmtQty(l.pieces))}</td><td>${esc(l.rows)}</td><td>${esc(l.projects.size)}</td></tr>`)
+        .map((l) => `<tr ${detailRowAttrs("location", l.loc)}><td>${esc(l.loc)}</td><td>${esc(fmtQty(l.pieces))}</td><td>${esc(l.rows)}</td><td>${esc(l.projects.size)}</td></tr>`)
         .join("")}</tbody></table></div>`;
     }
     if (m === "projects") {
       const projs = aggregateProjects();
       return `<div class="module-screen-header"><h3>Proyectos</h3></div><div class="card-panel"><table class="data-table"><thead><tr><th>Proyecto</th><th>Piezas</th><th>Registros</th><th>Ubicaciones</th></tr></thead><tbody>${projs
-        .map((p) => `<tr><td>${esc(p.project)}</td><td>${esc(fmtQty(p.pieces))}</td><td>${esc(p.rows)}</td><td>${esc(p.locations.size)}</td></tr>`)
+        .map((p) => `<tr ${detailRowAttrs("project", p.project)}><td>${esc(p.project)}</td><td>${esc(fmtQty(p.pieces))}</td><td>${esc(p.rows)}</td><td>${esc(p.locations.size)}</td></tr>`)
         .join("")}</tbody></table></div>`;
     }
     if (m === "products") {
       const prods = aggregateProducts();
       return `<div class="module-screen-header"><h3>Productos / catálogo</h3></div><div class="card-panel"><table class="data-table"><thead><tr><th>SKU</th><th>Descripción</th><th>Piezas</th><th>Registros</th></tr></thead><tbody>${prods
         .slice(0, 100)
-        .map((p) => `<tr><td>${esc(p.sku)}</td><td>${esc(p.name)}</td><td>${esc(fmtQty(p.pieces))}</td><td>${esc(p.rows)}</td></tr>`)
+        .map((p) => `<tr ${detailRowAttrs("product", p.sku)}><td>${esc(p.sku)}</td><td>${esc(p.name)}</td><td>${esc(fmtQty(p.pieces))}</td><td>${esc(p.rows)}</td></tr>`)
         .join("")}</tbody></table></div>`;
     }
     if (m === "tasks") {
@@ -3282,6 +4072,7 @@
         state.freeScanActive = false;
         state.freeScanSession = null;
         state.freeScanAnchor = null;
+        stopDemoCamera("Cámara detenida al cambiar de sección.");
         render();
       });
     });
@@ -3423,12 +4214,14 @@
 
   function renderContent() {
     if (!app) return;
+    stopDemoCamera("");
     syncFlowTheme();
     app.innerHTML = renderModule();
     wireContent();
   }
 
   function render() {
+    ensureDirectorMobilePanelClosed(false);
     syncRoleViewUi();
     syncSupervisorOperatorModeUi();
     syncFlowTheme();
@@ -3436,6 +4229,7 @@
     renderSectionTabs();
     renderSidebar();
     renderContent();
+    syncMobileLayoutUi();
   }
 
   function auditDemoNavDom() {
@@ -3519,7 +4313,10 @@
   window.__logitecDemoNavStress = runNavStressTest;
 
   document.querySelectorAll("#roleSwitch [data-role]").forEach((btn) => {
-    btn.addEventListener("click", () => applyDirectorView(btn.getAttribute("data-role") || "OPERATOR"));
+    btn.addEventListener("click", () => {
+      if (!isDirectorViewSwitchEnabled()) return;
+      applyDirectorView(btn.getAttribute("data-role") || "OPERATOR");
+    });
   });
 
   async function loadDbSource() {
@@ -3549,6 +4346,9 @@
   async function boot() {
     if (appDateTime) appDateTime.textContent = new Date().toLocaleString("es-MX");
     resetDemoStartupView();
+    syncDirectorReviewChrome();
+    wireAppShellActions();
+    wireDetailDrawer();
     initDirectorViewBar();
     wireConcentration();
     wireSupervisorOperatorMode();
