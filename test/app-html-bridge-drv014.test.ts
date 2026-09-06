@@ -32,7 +32,7 @@ function sliceFunction(source: string, name: string) {
 
 test("/app.html expone la interfaz V16 oficial sin banners demo visibles", () => {
   assert.match(appHtml, /data-interface-mode="official"/);
-  assert.match(appHtml, /logitec-role-demo\.js\?v=16\.2\.8/);
+  assert.match(appHtml, /logitec-role-demo\.js\?v=16\.2\.9/);
   assert.match(appHtml, /logitec-role-demo\.css\?v=16\.2\.8/);
   assert.match(appHtml, /class="demo-env-banner hidden"[^>]*hidden/);
   assert.match(appHtml, /id="demoEnvBadge"[^>]*hidden/);
@@ -47,9 +47,10 @@ test("CSS oficial oculta chrome demo con display:none !important", () => {
   assert.match(css, /html\[data-interface-mode="official"\] #dataSourceFooter[\s\S]*display: none !important;/);
 });
 
-test("cache-buster oficial /app.html usa v16.2.8 sin alterar demo v16.2.7", () => {
+test("cache-buster oficial /app.html usa JS v16.2.9 y CSS v16.2.8 sin alterar demo v16.2.7", () => {
   const demoHtml = readFileSync(new URL("../public/logitec-role-demo.html", import.meta.url), "utf8");
-  assert.match(appHtml, /logitec-role-demo\.(css|js)\?v=16\.2\.8/);
+  assert.match(appHtml, /logitec-role-demo\.js\?v=16\.2\.9/);
+  assert.match(appHtml, /logitec-role-demo\.css\?v=16\.2\.8/);
   assert.match(demoHtml, /logitec-role-demo\.js\?v=16\.2\.7/);
   assert.match(demoHtml, /logitec-role-demo\.css\?v=16\.2\.7/);
   assert.doesNotMatch(demoHtml, /data-interface-mode="official"/);
@@ -111,7 +112,7 @@ test("manifest demo conserva start_url logitec-role-demo.html", () => {
 });
 
 test("SW oficial cachea solo shell /app.html y no API/login/tokens", () => {
-  assert.match(appSw, /logitec-app-shell-v16\.2\.8/);
+  assert.match(appSw, /logitec-app-shell-v16\.2\.9/);
   assert.match(appSw, /\/app\.html/);
   assert.match(appSw, /\/app\.webmanifest/);
   assert.doesNotMatch(appSw, /\/logitec-role-demo\.html/);

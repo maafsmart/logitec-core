@@ -2183,11 +2183,30 @@
     </div>`;
   }
 
+  function shouldAutofocusScanInputOnMount() {
+    try {
+      if (typeof window.matchMedia === "function") {
+        if (window.matchMedia("(pointer: coarse)").matches) return false;
+        if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) return false;
+      }
+      if (typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 0) {
+        if (typeof window.matchMedia === "function" && window.matchMedia("(hover: none)").matches) {
+          return false;
+        }
+      }
+    } catch (_error) {
+      return true;
+    }
+    return true;
+  }
+
   function wireScannerInput(onSubmit, manualPlaceholder) {
     const input = document.getElementById("scanValue");
     if (!input || typeof onSubmit !== "function") return;
-    input.focus();
-    input.select();
+    if (shouldAutofocusScanInputOnMount()) {
+      input.focus();
+      input.select();
+    }
     const submitScan = () => {
       void onSubmit(input);
     };
