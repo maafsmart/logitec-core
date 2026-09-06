@@ -1,5 +1,5 @@
 /* LOGITEC CORE WMS · service worker mínimo · shell PWA solamente */
-const SHELL_CACHE = "logitec-demo-shell-v16.2.2";
+const SHELL_CACHE = "logitec-demo-shell-v16.2.7";
 const SHELL_ASSETS = [
   "/logitec-role-demo.html",
   "/logitec-role-demo.css",

@@ -25,6 +25,15 @@
       state.freeScanSession = null;
       state.freeScanAnchor = null;
     }
+    if (moduleId === "users" && isRealAdmin()) {
+      loadUsersAdmin()
+        .then(() => render())
+        .catch((error) => {
+          state.usersMessage = error.message || "No fue posible cargar usuarios.";
+          render();
+        });
+      return;
+    }
     render();
   }
 
@@ -142,12 +151,12 @@
           { id: "products", label: "Productos", desc: "Catálogo desde fuente demo" },
           { id: "prices", label: "Precios", desc: "Solo lectura en demo" },
           { id: "imports", label: "Importaciones", desc: "Deshabilitado en demo" },
-          { id: "users", label: "Usuarios", desc: "Administración en sistema oficial" }
+          { id: "users", label: "Usuarios y accesos", desc: "Administración de fichas, roles y clientes" }
         ],
         informacion: [
           { id: "reports", label: "Reportes", desc: "Indicadores operativos" },
           { id: "exports", label: "Exportaciones", desc: "Export CSV/Excel oficial" },
-          { id: "config", label: "Configuración", desc: "Reglas operativas LOGITEC" }
+          { id: "config", label: "Configuración", desc: "Accesos administrativos seguros" }
         ]
       }
     },
@@ -205,6 +214,10 @@
 
   const state = {
     role: "ADMIN",
+    sessionUser: null,
+    usersCache: [],
+    clientsCache: [],
+    usersMessage: "",
     tab: "inicio",
     module: "control",
     dataSource: "NONE",
@@ -437,12 +450,13 @@
   }
 
   function sessionRoleLabel() {
-    if (state.role === "CLIENT") return "Cliente";
-    if (state.role === "OPERATOR") return "Operador";
-    if (state.role === "SUPERVISOR" && state.operatorMode) return "Supervisor · Operador";
-    if (state.role === "SUPERVISOR") return "Supervisor";
-    if (state.role === "ADMIN") return "Administrador";
-    return String(state.role || "—");
+    const role = realSessionRole() || state.role;
+    if (role === "CLIENT") return "Cliente";
+    if (role === "OPERATOR") return "Operador";
+    if (role === "SUPERVISOR" && state.operatorMode) return "Supervisor · Operador";
+    if (role === "SUPERVISOR") return "Supervisor";
+    if (role === "ADMIN") return "Administrador";
+    return String(role || "—");
   }
 
   function syncRoleViewUi() {
@@ -526,7 +540,7 @@
       { label: "Partida", value: row.partida || "—" },
       { label: "Serie / lote", value: row.serialNumber || "—" }
     ];
-    if (state.role === "ADMIN" || state.role === "SUPERVISOR" || state.module === "prices") {
+    if ((state.role === "ADMIN" || state.role === "SUPERVISOR" || state.module === "prices") && !clientExcelDemoSource()) {
       fields.push(
         { label: "Valor total MXN", value: valuation.qtyValued > 0 ? fmtMxn(valuation.totalValueMxn) : "Sin valor" },
         { label: "Estado valuación", value: valuationStatusLabel(valuation.status) }
@@ -604,6 +618,7 @@
     else if (kind === "location") openLocationDetail(key);
     else if (kind === "project") openProjectDetail(key);
     else if (kind === "movement") openMovementDetail(Number(key));
+    else if (kind === "user") openUserFormDrawer("edit", findUserById(key));
   }
 
   function wireDetailDrawer() {
@@ -616,6 +631,11 @@
     document.body.dataset.detailDrawerWired = "1";
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
+        if (isUserTempPasswordModalOpen()) {
+          event.preventDefault();
+          closeUserTempPasswordModal();
+          return;
+        }
         if (state.directorMobilePanelOpen) return;
         const drawer = document.getElementById("gridDetailDrawer");
         if (drawer?.classList.contains("open")) closeDetailDrawer();
@@ -668,6 +688,7 @@
   function wireAppShellActions() {
     const installBtn = document.getElementById("pwaInstallBtn");
     const fullscreenBtn = document.getElementById("fullscreenBtn");
+    const logoutBtn = document.getElementById("logoutBtn");
     window.addEventListener("beforeinstallprompt", (event) => {
       event.preventDefault();
       deferredPwaInstallPrompt = event;
@@ -694,6 +715,7 @@
       syncAppShellActions();
     });
     document.addEventListener("fullscreenchange", syncAppShellActions);
+    logoutBtn?.addEventListener("click", forceLogout);
     syncAppShellActions();
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/logitec-role-demo-sw.js", { scope: "/" }).catch(() => {});
@@ -756,6 +778,10 @@
   }
 
   function resetDemoStartupView() {
+    state.sessionUser = null;
+    state.usersCache = [];
+    state.clientsCache = [];
+    state.usersMessage = "";
     state.role = "ADMIN";
     state.tab = "inicio";
     state.module = "control";
@@ -2309,9 +2335,239 @@
     }
   }
 
+  function forceLogout() {
+    stopDemoCamera("Sesión cerrada.");
+    closeUserTempPasswordModal();
+    closeDetailDrawer();
+    ensureDirectorMobilePanelClosed(false);
+    if (state.concentration) applyConcentration(false);
+    applyMustChangePasswordGate(false);
+    clearMustChangePasswordFields();
+    state.sessionUser = null;
+    state.usersCache = [];
+    state.clientsCache = [];
+    try {
+      localStorage.removeItem("token");
+    } catch (_e) {
+      /* ignore private mode */
+    }
+    window.location.replace("/login.html?next=" + encodeURIComponent("/logitec-role-demo.html"));
+  }
+
+  function realSessionRole() {
+    return state.sessionUser?.role || null;
+  }
+
+  function realSessionUserId() {
+    return state.sessionUser?.id || null;
+  }
+
+  function isRealAdmin() {
+    return realSessionRole() === "ADMIN";
+  }
+
+  function isBoundOperationalRole(role) {
+    return role === "SUPERVISOR" || role === "OPERATOR" || role === "CLIENT";
+  }
+
+  function fetchUrlString(input) {
+    if (typeof input === "string") return input;
+    if (input && typeof input === "object" && "url" in input) return String(input.url || "");
+    return String(input || "");
+  }
+
+  function isUsersAdminWrite(url, method) {
+    const verb = String(method || "GET").toUpperCase();
+    if (verb === "GET") return false;
+    if (!isRealAdmin()) return false;
+    try {
+      const path = new URL(fetchUrlString(url), window.location.origin).pathname;
+      return path === "/api/users" || path.startsWith("/api/users/");
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function isSelfPasswordChangeWrite(url, method) {
+    const verb = String(method || "GET").toUpperCase();
+    if (verb !== "POST") return false;
+    try {
+      const path = new URL(fetchUrlString(url), window.location.origin).pathname;
+      return path === "/api/auth/change-password";
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function isDemoWriteAllowed(url, method) {
+    return isUsersAdminWrite(url, method) || isSelfPasswordChangeWrite(url, method);
+  }
+
+  function sessionMustChangePassword() {
+    return Boolean(state.sessionUser?.mustChangePassword);
+  }
+
+  function applyMustChangePasswordGate(required) {
+    const active = Boolean(required);
+    document.body.classList.toggle("must-change-password", active);
+    const banner = document.getElementById("mustChangePasswordBanner");
+    if (banner) {
+      banner.hidden = !active;
+      banner.classList.toggle("hidden", !active);
+    }
+    if (active) {
+      const bar = document.getElementById("wmsSectionBar");
+      if (bar) {
+        bar.hidden = true;
+        bar.classList.add("hidden");
+        bar.innerHTML = "";
+      }
+      if (sidebar) sidebar.innerHTML = "";
+    }
+  }
+
+  function clearMustChangePasswordFields() {
+    ["pwaCurrentPassword", "pwaNewPassword", "pwaConfirmPassword"].forEach((id) => {
+      const input = document.getElementById(id);
+      if (input) input.value = "";
+    });
+    const errorEl = document.getElementById("pwaChangePasswordError");
+    if (errorEl) errorEl.textContent = "";
+  }
+
+  function renderMustChangePasswordPanel() {
+    if (!app) return;
+    app.innerHTML = `<div class="card-panel must-change-password-panel">
+      <h2>Cambio de contraseña obligatorio</h2>
+      <p class="module-lead">Debes establecer una contraseña nueva antes de usar LOGITEC CORE WMS. Usa la contraseña temporal que recibiste.</p>
+      <form id="pwaChangePasswordForm" class="users-form-grid must-change-password-form" autocomplete="off">
+        <div class="field">
+          <label for="pwaCurrentPassword">Contraseña temporal actual</label>
+          <input id="pwaCurrentPassword" type="password" minlength="6" required autocomplete="current-password" />
+        </div>
+        <div class="field">
+          <label for="pwaNewPassword">Nueva contraseña</label>
+          <input id="pwaNewPassword" type="password" minlength="6" required autocomplete="new-password" />
+        </div>
+        <div class="field">
+          <label for="pwaConfirmPassword">Confirmar nueva contraseña</label>
+          <input id="pwaConfirmPassword" type="password" minlength="6" required autocomplete="new-password" />
+        </div>
+        <p id="pwaChangePasswordError" class="must-change-password-error" role="alert"></p>
+        <button id="pwaChangePasswordBtn" type="submit" class="btn-primary btn-compact">Actualizar contraseña</button>
+      </form>
+    </div>`;
+    wireMustChangePasswordForm();
+  }
+
+  function wireMustChangePasswordForm() {
+    const form = document.getElementById("pwaChangePasswordForm");
+    if (!form || form.dataset.wired === "1") return;
+    form.dataset.wired = "1";
+    form.addEventListener("submit", submitMustChangePassword);
+  }
+
+  async function submitMustChangePassword(event) {
+    event.preventDefault();
+    const errorEl = document.getElementById("pwaChangePasswordError");
+    const submitBtn = document.getElementById("pwaChangePasswordBtn");
+    const currentInput = document.getElementById("pwaCurrentPassword");
+    const newInput = document.getElementById("pwaNewPassword");
+    const confirmInput = document.getElementById("pwaConfirmPassword");
+    if (errorEl) errorEl.textContent = "";
+    if (submitBtn) submitBtn.disabled = true;
+
+    const currentPassword = String(currentInput?.value || "");
+    const newPassword = String(newInput?.value || "");
+    const confirmPassword = String(confirmInput?.value || "");
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      if (errorEl) errorEl.textContent = "Completa todos los campos de contraseña.";
+      if (submitBtn) submitBtn.disabled = false;
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      if (errorEl) errorEl.textContent = "La nueva contraseña y la confirmación deben coincidir.";
+      if (submitBtn) submitBtn.disabled = false;
+      return;
+    }
+    if (currentPassword === newPassword) {
+      if (errorEl) errorEl.textContent = "La nueva contraseña debe ser diferente a la actual.";
+      if (submitBtn) submitBtn.disabled = false;
+      return;
+    }
+
+    try {
+      const response = await guardFetch("/api/auth/change-password", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        credentials: "same-origin",
+        body: JSON.stringify({ currentPassword, newPassword })
+      });
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch (_e) {
+        payload = null;
+      }
+      if (!response.ok) {
+        if (errorEl) errorEl.textContent = (payload && payload.message) || "No se pudo actualizar la contraseña.";
+        return;
+      }
+      clearMustChangePasswordFields();
+      await resumeBootAfterPasswordChange();
+    } catch (_error) {
+      if (errorEl) errorEl.textContent = "Error de red actualizando contraseña.";
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  }
+
+  async function resumeBootAfterPasswordChange() {
+    const sessionUser = await loadSessionUser();
+    if (!sessionUser) throw new Error("No se pudo cargar la sesión.");
+    if (sessionUser.mustChangePassword) {
+      state.sessionUser = sessionUser;
+      applyMustChangePasswordGate(true);
+      renderMustChangePasswordPanel();
+      const errorEl = document.getElementById("pwaChangePasswordError");
+      if (errorEl) errorEl.textContent = "Debes completar el cambio de contraseña.";
+      return;
+    }
+    state.sessionUser = sessionUser;
+    applySessionFromMe(sessionUser);
+    applyMustChangePasswordGate(false);
+    authHint.textContent = `${sessionRoleLabel()} · ${sessionUser.email || ""}`;
+    if (!(await loadDbSource())) await loadExcelSource();
+    updateSourceUi();
+    render();
+  }
+
+  async function continueBootAfterAuth(sessionUser) {
+    applySessionFromMe(sessionUser);
+    authHint.textContent = `${sessionRoleLabel()} · ${sessionUser.email || ""}`;
+    if (sessionMustChangePassword()) {
+      applyMustChangePasswordGate(true);
+      renderMustChangePasswordPanel();
+      return;
+    }
+    applyMustChangePasswordGate(false);
+    if (!(await loadDbSource())) await loadExcelSource();
+    updateSourceUi();
+    render();
+  }
+
+  function authHeaders(extra) {
+    const headers = { Accept: "application/json", ...(extra || {}) };
+    const token = readAccessToken();
+    if (token) headers.Authorization = "Bearer " + token;
+    return headers;
+  }
+
   function guardFetch(input, init) {
     const method = String((init && init.method) || "GET").toUpperCase();
-    if (method !== "GET") {
+    const url = fetchUrlString(input);
+    if (method !== "GET" && !isDemoWriteAllowed(url, method)) {
       state.blockedWrites += 1;
       writeGuard.textContent = `Escrituras bloqueadas: ${state.blockedWrites}`;
       return Promise.reject(new Error(`Demo read-only: ${method} bloqueado`));
@@ -2319,11 +2575,12 @@
     return fetch(input, init);
   }
 
-  async function apiGet(path, soft) {
-    const headers = { Accept: "application/json" };
-    const t = readAccessToken();
-    if (t) headers.Authorization = "Bearer " + t;
-    const response = await guardFetch(path, { headers, cache: "no-store", credentials: "same-origin" });
+  async function apiFetch(path, init, soft) {
+    const response = await guardFetch(path, {
+      ...(init || {}),
+      headers: authHeaders((init && init.headers) || {}),
+      credentials: "same-origin"
+    });
     let payload = null;
     try {
       payload = await response.json();
@@ -2332,8 +2589,466 @@
     }
     if (soft) return { ok: response.ok, status: response.status, data: payload };
     if (response.status === 401) throw new Error("Sesión requerida.");
-    if (!response.ok) throw new Error((payload && payload.message) || `GET ${path} → ${response.status}`);
+    if (!response.ok) throw new Error((payload && payload.message) || `${String((init && init.method) || "GET")} ${path} → ${response.status}`);
     return payload;
+  }
+
+  async function apiGet(path, soft) {
+    return apiFetch(path, { method: "GET", cache: "no-store" }, soft);
+  }
+
+  async function loadSessionUser() {
+    const result = await apiGet("/api/auth/me", true);
+    if (!result.ok || !result.data) return null;
+    return result.data;
+  }
+
+  function applySessionFromMe(user) {
+    state.sessionUser = user;
+    if (!isDirectorViewSwitchEnabled()) {
+      const role = user.role;
+      if (NAV[role]) {
+        state.role = role;
+        state.tab = ROLE_TAB_DEFAULT[role] || Object.keys(NAV[role].modules)[0];
+        state.module = ROLE_DEFAULT[role] || (NAV[role].modules[state.tab] || [])[0]?.id || "control";
+      }
+    }
+    syncRoleViewUi();
+  }
+
+  function clientDisplayName(client) {
+    if (!client) return "Sin cliente";
+    return client.tradeName || client.name || client.code || "Cliente";
+  }
+
+  function userStatusBadges(user) {
+    const badges = [];
+    if (user.isActive === false) badges.push('<span class="user-status-badge is-inactive">Inactivo</span>');
+    else badges.push('<span class="user-status-badge is-active">Activo</span>');
+    if (user.mustChangePassword) badges.push('<span class="user-status-badge must-change">Cambio obligatorio</span>');
+    return badges.join(" ");
+  }
+
+  async function ensureClientsCache() {
+    if (state.clientsCache.length) return state.clientsCache;
+    const data = await apiGet("/api/clients");
+    state.clientsCache = Array.isArray(data) ? data : [];
+    return state.clientsCache;
+  }
+
+  function renderClientSelectOptions(selectedId, emptyLabel) {
+    const clients = state.clientsCache.filter((c) => c.active !== false);
+    const options = [`<option value="">${esc(emptyLabel || "— Seleccionar cliente —")}</option>`]
+      .concat(
+        clients.map(
+          (c) =>
+            `<option value="${esc(c.id)}"${selectedId === c.id ? " selected" : ""}>${esc(c.code || "—")} · ${esc(
+              c.tradeName || c.name || c.code || "Cliente"
+            )}</option>`
+        )
+      )
+      .join("");
+    return options;
+  }
+
+  async function loadUsersAdmin() {
+    if (!isRealAdmin()) {
+      state.usersMessage = "Este módulo requiere permisos de ADMIN.";
+      state.usersCache = [];
+      return;
+    }
+    await ensureClientsCache();
+    const users = await apiGet("/api/users");
+    state.usersCache = Array.isArray(users) ? users : [];
+    state.usersMessage = `${state.usersCache.length} usuarios · ficha, rol, cliente y estado`;
+  }
+
+  function findUserById(userId) {
+    return state.usersCache.find((row) => row.id === userId) || null;
+  }
+
+  const USER_TEMP_PASSWORD_COPY_LABEL = "COPIAR";
+  const USER_TEMP_PASSWORD_COPY_OK = "COPIADO";
+  const USER_TEMP_PASSWORD_COPY_FAIL = "COPIA NO DISPONIBLE";
+  let userTempPasswordCopyResetTimer = null;
+  let userTempPasswordCloseHandlers = [];
+
+  function isUserTempPasswordModalOpen() {
+    const modal = document.getElementById("userTempPasswordModal");
+    return Boolean(modal && !modal.hidden);
+  }
+
+  function resetUserTempPasswordCopyFeedback(copyBtn, feedbackEl) {
+    if (userTempPasswordCopyResetTimer) {
+      window.clearTimeout(userTempPasswordCopyResetTimer);
+      userTempPasswordCopyResetTimer = null;
+    }
+    if (copyBtn) copyBtn.textContent = USER_TEMP_PASSWORD_COPY_LABEL;
+    if (feedbackEl) {
+      feedbackEl.textContent = "";
+      feedbackEl.hidden = true;
+      feedbackEl.classList.add("hidden");
+      feedbackEl.classList.remove("ok", "warn");
+    }
+  }
+
+  async function copyTextWithFallback(text) {
+    const value = String(text || "");
+    if (!value) return false;
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch (_e) {
+        /* fallback below */
+      }
+    }
+    try {
+      const helper = document.createElement("textarea");
+      helper.value = value;
+      helper.setAttribute("readonly", "");
+      helper.style.position = "fixed";
+      helper.style.left = "-9999px";
+      helper.style.opacity = "0";
+      document.body.appendChild(helper);
+      helper.focus();
+      helper.select();
+      const ok = document.execCommand("copy");
+      helper.remove();
+      return ok;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function showUserTempPasswordCopyFeedback(copyBtn, feedbackEl, ok) {
+    resetUserTempPasswordCopyFeedback(copyBtn, feedbackEl);
+    if (ok) {
+      copyBtn.textContent = USER_TEMP_PASSWORD_COPY_OK;
+      if (feedbackEl) {
+        feedbackEl.textContent = USER_TEMP_PASSWORD_COPY_OK;
+        feedbackEl.hidden = false;
+        feedbackEl.classList.remove("hidden", "warn");
+        feedbackEl.classList.add("ok");
+      }
+    } else {
+      copyBtn.textContent = USER_TEMP_PASSWORD_COPY_FAIL;
+      if (feedbackEl) {
+        feedbackEl.textContent = USER_TEMP_PASSWORD_COPY_FAIL;
+        feedbackEl.hidden = false;
+        feedbackEl.classList.remove("hidden", "ok");
+        feedbackEl.classList.add("warn");
+      }
+    }
+    userTempPasswordCopyResetTimer = window.setTimeout(() => {
+      resetUserTempPasswordCopyFeedback(copyBtn, feedbackEl);
+    }, 2500);
+  }
+
+  function unwireUserTempPasswordCloseHandlers() {
+    userTempPasswordCloseHandlers.forEach(({ el, handler }) => {
+      el.removeEventListener("click", handler);
+    });
+    userTempPasswordCloseHandlers = [];
+  }
+
+  function wireUserTempPasswordCloseHandlers(modal) {
+    unwireUserTempPasswordCloseHandlers();
+    modal.querySelectorAll("[data-close-temp-password]").forEach((el) => {
+      const handler = () => closeUserTempPasswordModal();
+      el.addEventListener("click", handler);
+      userTempPasswordCloseHandlers.push({ el, handler });
+    });
+  }
+
+  function closeUserTempPasswordModal() {
+    const modal = document.getElementById("userTempPasswordModal");
+    const valueEl = document.getElementById("userTempPasswordValue");
+    const copyBtn = document.getElementById("userTempPasswordCopyBtn");
+    const feedbackEl = document.getElementById("userTempPasswordCopyFeedback");
+    if (!modal) return;
+    modal.hidden = true;
+    modal.setAttribute("hidden", "");
+    modal.classList.add("hidden");
+    modal.setAttribute("aria-hidden", "true");
+    if (valueEl) valueEl.textContent = "";
+    resetUserTempPasswordCopyFeedback(copyBtn, feedbackEl);
+  }
+
+  function openUserTempPasswordModal(tempPassword) {
+    const modal = document.getElementById("userTempPasswordModal");
+    const valueEl = document.getElementById("userTempPasswordValue");
+    const copyBtn = document.getElementById("userTempPasswordCopyBtn");
+    const feedbackEl = document.getElementById("userTempPasswordCopyFeedback");
+    if (!modal || !valueEl || !copyBtn || !tempPassword) return;
+    resetUserTempPasswordCopyFeedback(copyBtn, feedbackEl);
+    valueEl.textContent = String(tempPassword);
+    modal.hidden = false;
+    modal.removeAttribute("hidden");
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+    wireUserTempPasswordCloseHandlers(modal);
+    copyBtn.onclick = async () => {
+      const ok = await copyTextWithFallback(tempPassword);
+      showUserTempPasswordCopyFeedback(copyBtn, feedbackEl, ok);
+    };
+  }
+
+  function wireUserTempPasswordModalGlobal() {
+    if (document.body.dataset.userTempPasswordWired === "1") return;
+    document.body.dataset.userTempPasswordWired = "1";
+    window.addEventListener("pageshow", (event) => {
+      if (!event.persisted) return;
+      closeUserTempPasswordModal();
+    });
+  }
+
+  function openUserFormDrawer(mode, user) {
+    const isCreate = mode === "create";
+    const role = isCreate ? "OPERATOR" : user?.role || "OPERATOR";
+    const clientId = isCreate ? "" : user?.clientId || "";
+    const showClient = isCreate || isBoundOperationalRole(role) || Boolean(clientId);
+    const fields = [
+      {
+        label: "Nombre",
+        value: `<input id="userFormFullName" type="text" required value="${esc(isCreate ? "" : user?.fullName || "")}" />`,
+        html: true
+      },
+      {
+        label: "Email",
+        value: `<input id="userFormEmail" type="email" required value="${esc(isCreate ? "" : user?.email || "")}" />`,
+        html: true
+      }
+    ];
+    if (isCreate) {
+      fields.push({
+        label: "Contraseña inicial",
+        value: `<input id="userFormPassword" type="password" minlength="6" required autocomplete="new-password" />`,
+        html: true
+      });
+    }
+    fields.push(
+      {
+        label: "Rol",
+        value: `<select id="userFormRole">${["ADMIN", "SUPERVISOR", "OPERATOR", "CLIENT"]
+          .map((r) => `<option value="${r}"${role === r ? " selected" : ""}>${r}</option>`)
+          .join("")}</select>`,
+        html: true
+      },
+      {
+        label: "Cliente",
+        value: `<select id="userFormClientId"${showClient ? "" : " hidden"}>${renderClientSelectOptions(
+          clientId,
+          isCreate ? "— Seleccionar cliente —" : "— Sin cliente (solo ADMIN) —"
+        )}</select>`,
+        html: true
+      }
+    );
+    if (!isCreate) {
+      fields.push({
+        label: "Estado",
+        value: `<label class="users-active-toggle"><input id="userFormActive" type="checkbox"${user?.isActive !== false ? " checked" : ""} /> Activo</label>`,
+        html: true
+      });
+    }
+    openDetailDrawer(isCreate ? "Nuevo usuario" : `Usuario · ${user?.fullName || user?.email || ""}`, fields, [
+      {
+        id: "save-user",
+        label: isCreate ? "Crear usuario" : "Guardar cambios",
+        className: "btn-primary",
+        onClick: () => (isCreate ? submitCreateUser() : submitEditUser(user.id))
+      },
+      ...(isCreate
+        ? []
+        : [
+            user?.isActive === false
+              ? {
+                  id: "reactivate-user",
+                  label: "Reactivar",
+                  className: "btn-secondary",
+                  onClick: () => submitReactivateUser(user.id)
+                }
+              : user?.id !== realSessionUserId()
+                ? {
+                    id: "deactivate-user",
+                    label: "Desactivar",
+                    className: "btn-secondary",
+                    onClick: () => submitDeactivateUser(user.id)
+                  }
+                : null,
+            {
+              id: "reset-user-password",
+              label: "Restablecer contraseña",
+              className: "btn-secondary",
+              onClick: () => submitResetUserPassword(user.id)
+            }
+          ].filter(Boolean)),
+      { id: "close-user", label: "Cerrar", className: "btn-secondary", onClick: closeDetailDrawer }
+    ]);
+    const roleEl = document.getElementById("userFormRole");
+    const clientEl = document.getElementById("userFormClientId");
+    if (roleEl && clientEl) {
+      const syncClientVisibility = () => {
+        const nextRole = roleEl.value;
+        const needsClient = isBoundOperationalRole(nextRole);
+        clientEl.hidden = !needsClient && nextRole !== "ADMIN";
+        clientEl.closest(".detail-field")?.classList.toggle("hidden", clientEl.hidden);
+      };
+      roleEl.addEventListener("change", syncClientVisibility);
+      syncClientVisibility();
+    }
+  }
+
+  async function refreshUsersModule() {
+    await loadUsersAdmin();
+    if (state.module === "users") renderContent();
+  }
+
+  async function submitCreateUser() {
+    const fullName = document.getElementById("userFormFullName")?.value?.trim();
+    const email = document.getElementById("userFormEmail")?.value?.trim();
+    const password = document.getElementById("userFormPassword")?.value || "";
+    const role = document.getElementById("userFormRole")?.value;
+    const clientId = document.getElementById("userFormClientId")?.value || null;
+    const payload = {
+      fullName,
+      email,
+      password,
+      role,
+      clientId: isBoundOperationalRole(role) ? clientId : role === "ADMIN" ? clientId || null : null
+    };
+    try {
+      await apiFetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      closeDetailDrawer();
+      await refreshUsersModule();
+    } catch (error) {
+      window.alert(error.message || "No se pudo crear el usuario.");
+    }
+  }
+
+  async function submitEditUser(userId) {
+    const role = document.getElementById("userFormRole")?.value;
+    const payload = {
+      fullName: document.getElementById("userFormFullName")?.value?.trim(),
+      email: document.getElementById("userFormEmail")?.value?.trim(),
+      role,
+      clientId: document.getElementById("userFormClientId")?.value || null,
+      isActive: document.getElementById("userFormActive")?.checked !== false
+    };
+    try {
+      await apiFetch(`/api/users/${encodeURIComponent(userId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      closeDetailDrawer();
+      await refreshUsersModule();
+    } catch (error) {
+      window.alert(error.message || "No se pudo guardar la ficha.");
+    }
+  }
+
+  async function submitDeactivateUser(userId) {
+    if (!window.confirm("¿Desactivar este usuario? No podrá iniciar sesión.")) return;
+    try {
+      await apiFetch(`/api/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+      closeDetailDrawer();
+      await refreshUsersModule();
+    } catch (error) {
+      window.alert(error.message || "No se pudo desactivar el usuario.");
+    }
+  }
+
+  async function submitReactivateUser(userId) {
+    try {
+      await apiFetch(`/api/users/${encodeURIComponent(userId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: true })
+      });
+      closeDetailDrawer();
+      await refreshUsersModule();
+    } catch (error) {
+      window.alert(error.message || "No se pudo reactivar el usuario.");
+    }
+  }
+
+  async function submitResetUserPassword(userId) {
+    if (!window.confirm("¿Generar contraseña temporal para este usuario?")) return;
+    try {
+      const data = await apiFetch(`/api/users/${encodeURIComponent(userId)}/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      closeDetailDrawer();
+      if (data?.temporaryPassword) openUserTempPasswordModal(data.temporaryPassword);
+      await refreshUsersModule();
+    } catch (error) {
+      window.alert(error.message || "No se pudo restablecer la contraseña.");
+    }
+  }
+
+  function renderUsersModule() {
+    if (!isRealAdmin()) {
+      return disabledModule("Usuarios y accesos", "Administración disponible solo para ADMIN autenticado.");
+    }
+    const list = state.usersCache
+      .map((user) => {
+        const clientLabel = clientDisplayName(user.client);
+        const attrs = detailRowAttrs("user", user.id).replace(
+          'class="detail-row"',
+          'class="user-access-card detail-row"'
+        );
+        return `<article ${attrs}>
+          <div class="user-access-head">
+            <strong>${esc(user.fullName || user.email)}</strong>
+            ${userStatusBadges(user)}
+          </div>
+          <p class="user-access-meta">${esc(user.email)} · ${esc(user.role)} · ${esc(clientLabel)}</p>
+        </article>`;
+      })
+      .join("");
+    return `<div class="module-screen-header">
+        <h3>Usuarios y accesos</h3>
+        <p class="module-lead">Administración de fichas oficiales, roles y accesos · solo ADMIN real</p>
+      </div>
+      <div class="users-access-toolbar">
+        <p class="operational-table-meta">${esc(state.usersMessage || "Cargando usuarios…")}</p>
+        <button type="button" class="btn-primary btn-compact" data-users-create>NUEVO USUARIO</button>
+      </div>
+      <div class="users-access-list">${list || '<div class="card-panel"><p>Sin usuarios registrados.</p></div>'}</div>`;
+  }
+
+  function renderConfigModule() {
+    if (!isRealAdmin()) {
+      return disabledModule("Configuración", "Configuración administrativa disponible solo para ADMIN autenticado.");
+    }
+    return `<div class="module-screen-header">
+        <h3>Configuración</h3>
+        <p class="module-lead">Accesos administrativos seguros · sin acciones destructivas en demo</p>
+      </div>
+      <div class="card-panel config-entry-card">
+        <h4>Usuarios y accesos</h4>
+        <p class="module-lead">Crear, editar, activar/desactivar usuarios y restablecer contraseñas temporales.</p>
+        <button type="button" class="btn-primary btn-compact" data-open-users-module>Usuarios y accesos</button>
+      </div>`;
+  }
+
+  function wireUsersModule() {
+    app.querySelector("[data-users-create]")?.addEventListener("click", async () => {
+      try {
+        await ensureClientsCache();
+        openUserFormDrawer("create");
+      } catch (error) {
+        window.alert(error.message || "No fue posible cargar clientes.");
+      }
+    });
+    app.querySelector("[data-open-users-module]")?.addEventListener("click", () => navigateModule("users"));
   }
 
   function esc(t) {
@@ -3750,7 +4465,12 @@
       </div>`;
   }
 
+  function clientExcelDemoSource() {
+    return state.role === "CLIENT" && state.dataSource === "EXCEL";
+  }
+
   function valuationView() {
+    if (clientExcelDemoSource()) return clientExcelValuationUnavailableView();
     const rows = state.stock || [];
     const totals = aggregateValuation(rows);
     const visibleRows = rows.slice(0, 200);
@@ -3785,6 +4505,42 @@
       </div>
       <div class="card-panel valuation-table-wrap">
         <p class="operational-table-meta">${esc(rows.length)} saldos · mostrando ${esc(visibleRows.length)} · valores en MXN</p>
+        ${mobileTableScrollHint()}
+        <table class="data-table valuation-table"><thead><tr>
+          <th>SKU</th><th>Descripción</th><th>Proyecto</th><th>Ubicación</th><th class="numeric-cell">Piezas</th><th class="numeric-cell">Valor unitario / rango</th><th class="numeric-cell">Valor total</th><th>Estado</th>
+        </tr></thead><tbody>${tableRows || '<tr><td colspan="8">Sin existencias en la fuente actual.</td></tr>'}</tbody></table>
+      </div>`;
+  }
+
+  function clientExcelValuationUnavailableView() {
+    const rows = state.stock || [];
+    const visibleRows = rows.slice(0, 200);
+    const notice = "Valuación no disponible en esta fuente demo. El Excel oficial no incluye precios unitarios ni importes.";
+    const tableRows = visibleRows
+      .map(
+        (row) => `<tr ${detailRowAttrs("stock", stockRowIndex(row))}>
+          <td>${esc(row.product?.sku || "—")}</td>
+          <td>${esc(row.product?.name || "—")}</td>
+          <td>${esc(row.project?.code || row.project?.name || "Sin proyecto")}</td>
+          <td>${esc(row.location?.code || "—")}</td>
+          <td class="numeric-cell">${esc(fmtQty(row.qty))}</td>
+          <td class="numeric-cell valuation-unit">—</td>
+          <td class="numeric-cell valuation-total">—</td>
+          <td><span class="valuation-status none">N/D demo</span></td>
+        </tr>`
+      )
+      .join("");
+    return `<div class="module-screen-header"><h3>Precios y valuación</h3>
+      <p class="module-lead">Consulta económica autorizada para el rol actual · DEMO READ-ONLY</p></div>
+      <div class="card-panel ops-message warn">${esc(notice)}</div>
+      <div class="valuation-summary-grid valuation-summary-unavailable">
+        <div class="kpi-card accent valuation-money-card"><span class="kpi-value valuation-money-value">—</span><span class="kpi-label">Valor inventario MXN</span></div>
+        <div class="kpi-card ok"><span class="kpi-value">—</span><span class="kpi-label">Piezas valuadas</span></div>
+        <div class="kpi-card warn"><span class="kpi-value">—</span><span class="kpi-label">Piezas sin valor</span></div>
+        <div class="kpi-card"><span class="kpi-value">—</span><span class="kpi-label">Cobertura económica</span></div>
+      </div>
+      <div class="card-panel valuation-table-wrap">
+        <p class="operational-table-meta">${esc(rows.length)} saldos · mostrando ${esc(visibleRows.length)} · valuación económica no disponible en Excel demo</p>
         ${mobileTableScrollHint()}
         <table class="data-table valuation-table"><thead><tr>
           <th>SKU</th><th>Descripción</th><th>Proyecto</th><th>Ubicación</th><th class="numeric-cell">Piezas</th><th class="numeric-cell">Valor unitario / rango</th><th class="numeric-cell">Valor total</th><th>Estado</th>
@@ -3856,10 +4612,10 @@
     if (m === "incidents") return disabledModule("Incidencias", "Excepciones operativas · disponible en WMS oficial.");
     if (m === "prices") return valuationView();
     if (m === "imports") return disabledModule("Importaciones", "Disponible en sistema oficial · deshabilitado en demo.");
-    if (m === "users") return disabledModule("Usuarios", "Administración disponible en sistema oficial.");
+    if (m === "users") return renderUsersModule();
     if (m === "reports" && state.role === "CLIENT") return clientReportsView();
     if (m === "reports" || m === "exports") return disabledModule(m === "reports" ? "Reportes" : "Exportaciones", "Exportes y reportes del WMS real · READ-ONLY en demo.");
-    if (m === "config") return disabledModule("Configuración", "Reglas operativas LOGITEC · no editable en demo.");
+    if (m === "config") return renderConfigModule();
     return controlCenter();
   }
 
@@ -4210,6 +4966,7 @@
     if (state.freeScanActive) {
       wireScannerInput((input) => submitFreeScanReading(input), "Captura manual · escriba y Enter");
     }
+    wireUsersModule();
   }
 
   function renderContent() {
@@ -4344,6 +5101,8 @@
   }
 
   async function boot() {
+    closeUserTempPasswordModal();
+    wireUserTempPasswordModalGlobal();
     if (appDateTime) appDateTime.textContent = new Date().toLocaleString("es-MX");
     resetDemoStartupView();
     syncDirectorReviewChrome();
@@ -4362,9 +5121,9 @@
         renderSidebar();
         return;
       }
-      if (!(await loadDbSource())) await loadExcelSource();
-      updateSourceUi();
-      render();
+      const sessionUser = await loadSessionUser();
+      if (!sessionUser) throw new Error("No se pudo cargar la sesión.");
+      await continueBootAfterAuth(sessionUser);
     } catch (error) {
       authHint.textContent = error.message || "Error";
       app.innerHTML = `<div class="card-panel ops-message warn">${esc(error.message)}</div>`;
@@ -4377,7 +5136,8 @@
     apply(target, thisArg, args) {
       const init = args[1] || {};
       const method = String(init.method || "GET").toUpperCase();
-      if (String(args[0] || "").includes("/api/") && method !== "GET") {
+      const url = fetchUrlString(args[0]);
+      if (url.includes("/api/") && method !== "GET" && !isDemoWriteAllowed(url, method)) {
         state.blockedWrites += 1;
         writeGuard.textContent = `Escrituras bloqueadas: ${state.blockedWrites}`;
         return Promise.reject(new Error("Demo read-only"));

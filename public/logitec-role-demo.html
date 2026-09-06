@@ -12,7 +12,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icons/logitec-wms-192.png" />
     <link rel="apple-touch-icon" href="/icons/logitec-wms-192.png" />
-    <link rel="stylesheet" href="/logitec-role-demo.css?v=16.2.2" />
+    <link rel="stylesheet" href="/logitec-role-demo.css?v=16.2.7" />
   </head>
   <body class="workspace-compact sistema-workspace">
     <div id="mobileEmulationStage" class="mobile-emulation-stage">
@@ -21,7 +21,7 @@
         <button type="button" class="mobile-emulation-restore-btn" id="mobileEmulationRestore">VOLVER A DESKTOP</button>
       </div>
       <div id="mobileEmulationFrame" class="mobile-emulation-frame">
-        <div class="demo-env-banner" role="status">ENTORNO DEMO · EXCEL OFICIAL · SOLO LECTURA</div>
+        <div class="demo-env-banner" role="status">ENTORNO DEMO · EXCEL OFICIAL · INVENTARIO SOLO LECTURA</div>
         <div class="app-shell">
           <div id="concentrationOverlay" class="concentration-overlay hidden" hidden>
             <button type="button" id="concentrationExitBtn" class="concentration-exit-btn">Salir de concentración</button>
@@ -33,11 +33,12 @@
                 <p id="authHint">Conectando…</p>
               </div>
               <div class="app-topbar-meta">
-                <span class="demo-env-badge" id="demoEnvBadge">DEMO · SOLO LECTURA</span>
+                <span class="demo-env-badge" id="demoEnvBadge">DEMO · INVENTARIO SOLO LECTURA</span>
                 <span class="demo-source-badge" id="dataSourceBadge">Fuente demo</span>
                 <button type="button" id="pwaInstallBtn" class="btn-secondary btn-compact app-shell-action hidden" hidden>Instalar LOGITEC CORE WMS</button>
                 <button type="button" id="fullscreenBtn" class="btn-secondary btn-compact app-shell-action hidden" hidden>Pantalla completa</button>
                 <button type="button" id="focusModeBtn" class="btn-secondary btn-compact focus-mode-btn" aria-pressed="false">Modo concentración</button>
+                <button type="button" id="logoutBtn" class="btn-secondary btn-compact app-shell-action">Cerrar sesión</button>
                 <div class="role-demo-switch hidden" id="roleSwitch" hidden aria-label="Vista por rol">
                   <button type="button" class="nav-section-tab" data-role="ADMIN">Administrador</button>
                   <button type="button" class="nav-section-tab" data-role="SUPERVISOR">Supervisor</button>
@@ -53,6 +54,9 @@
               <button type="button" class="btn-secondary btn-compact" id="exitSupervisorOperatorModeBtn">VOLVER A SUPERVISOR</button>
             </div>
             <nav id="wmsSectionBar" class="wms-section-bar" aria-label="Secciones WMS"></nav>
+            <p id="mustChangePasswordBanner" class="must-change-banner hidden" hidden role="status">
+              Debes establecer una contraseña nueva antes de operar. La temporal se muestra una sola vez y no se puede recuperar.
+            </p>
           </header>
           <div class="app-body">
             <aside class="sidebar" id="sidebar" aria-label="Navegación principal"></aside>
@@ -110,6 +114,19 @@
         <div id="gridDetailActions" class="grid-detail-actions"></div>
       </aside>
     </div>
-    <script src="/logitec-role-demo.js?v=16.2.2" defer></script>
+    <div id="userTempPasswordModal" class="user-temp-password-modal hidden" hidden role="dialog" aria-modal="true" aria-labelledby="userTempPasswordTitle">
+      <div class="user-temp-password-backdrop" data-close-temp-password></div>
+      <div class="user-temp-password-sheet card-panel">
+        <h3 id="userTempPasswordTitle">Contraseña temporal</h3>
+        <p class="module-lead">Se muestra una sola vez. No se almacena en este dispositivo.</p>
+        <p id="userTempPasswordValue" class="user-temp-password-value"></p>
+        <p id="userTempPasswordCopyFeedback" class="user-temp-password-copy-feedback hidden" hidden aria-live="polite"></p>
+        <div class="user-temp-password-actions">
+          <button type="button" class="btn-primary btn-compact" id="userTempPasswordCopyBtn">COPIAR</button>
+          <button type="button" class="btn-secondary btn-compact" data-close-temp-password>Cerrar</button>
+        </div>
+      </div>
+    </div>
+    <script src="/logitec-role-demo.js?v=16.2.7" defer></script>
   </body>
 </html>

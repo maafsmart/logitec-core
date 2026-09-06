@@ -149,9 +149,9 @@ function makeHarness(stock = mockStock): Harness {
   return h;
 }
 
-test("cache-buster v=16.2.2", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=16\.2\.2/);
-  assert.match(html, /logitec-role-demo\.css\?v=16\.2\.2/);
+test("cache-buster v=16.2.7", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=16\.2\.7/);
+  assert.match(html, /logitec-role-demo\.css\?v=16\.2\.7/);
 });
 
 test("POL-004 registrada como APROBADA con resumen técnico", () => {

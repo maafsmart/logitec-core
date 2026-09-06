@@ -10,9 +10,9 @@ const sw = readFileSync(new URL("../public/logitec-role-demo-sw.js", import.meta
 const installHtml = readFileSync(new URL("../public/install.html", import.meta.url), "utf8");
 const installJs = readFileSync(new URL("../public/install.js", import.meta.url), "utf8");
 
-test("cache buster v16.2.2", () => {
-  assert.match(html, /logitec-role-demo\.js\?v=16\.2\.2/);
-  assert.match(html, /logitec-role-demo\.css\?v=16\.2\.2/);
+test("cache buster v16.2.7", () => {
+  assert.match(html, /logitec-role-demo\.js\?v=16\.2\.7/);
+  assert.match(html, /logitec-role-demo\.css\?v=16\.2\.7/);
 });
 
 test("PWA manifest instalable LOGITEC CORE WMS", () => {

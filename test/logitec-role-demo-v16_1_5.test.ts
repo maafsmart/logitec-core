@@ -36,9 +36,9 @@ function sliceFunction(source: string, name: string): string {
   throw new Error(`unclosed function ${name}`);
 }
 
-test("cache buster v16.2.2", () => {
-  assert.match(html, /logitec-role-demo\.css\?v=16\.2\.2/);
-  assert.match(html, /logitec-role-demo\.js\?v=16\.2\.2/);
+test("cache buster v16.2.7", () => {
+  assert.match(html, /logitec-role-demo\.css\?v=16\.2\.7/);
+  assert.match(html, /logitec-role-demo\.js\?v=16\.2\.7/);
 });
 
 test("scroll móvil usa window y scan-mode-active desde JS", () => {
