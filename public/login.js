@@ -80,7 +80,8 @@ function resolvePostLoginPath(search) {
     "/pda-scanner-lab.html",
     "/hugo-buffer-inbound.html",
     "/logitec-simple-demo.html",
-    "/logitec-role-demo.html"
+    "/logitec-role-demo.html",
+    "/app.html"
   ]);
   try {
     const raw = String(new URLSearchParams(String(search || "")).get("next") || "").trim();

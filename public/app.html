@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="es" data-ui-version="compact-workspace-v1" data-visual="industrial-v84" data-visual-polish="v85" data-grid-density="compact" data-interface-mode="official">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#1075bd" />
+    <meta name="application-name" content="LOGITEC CORE WMS" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="LOGITEC WMS" />
+    <title>LOGITEC CORE WMS</title>
+    <link rel="manifest" href="/app.webmanifest" />
+    <link rel="icon" href="/icons/logitec-wms-192.png" />
+    <link rel="apple-touch-icon" href="/icons/logitec-wms-192.png" />
+    <link rel="stylesheet" href="/logitec-role-demo.css?v=16.2.7" />
+  </head>
+  <body class="workspace-compact sistema-workspace">
+    <div id="mobileEmulationStage" class="mobile-emulation-stage">
+      <div class="mobile-emulation-chrome hidden" id="mobileEmulationChrome" hidden aria-live="polite">
+        <span class="mobile-emulation-label">EMULACIÓN MÓVIL · 390px</span>
+        <button type="button" class="mobile-emulation-restore-btn" id="mobileEmulationRestore">VOLVER A DESKTOP</button>
+      </div>
+      <div id="mobileEmulationFrame" class="mobile-emulation-frame">
+        <div class="demo-env-banner hidden" role="status" hidden>ENTORNO DEMO · EXCEL OFICIAL · INVENTARIO SOLO LECTURA</div>
+        <div class="app-shell">
+          <div id="concentrationOverlay" class="concentration-overlay hidden" hidden>
+            <button type="button" id="concentrationExitBtn" class="concentration-exit-btn">Salir de concentración</button>
+          </div>
+          <header class="app-topbar">
+            <div class="app-topbar-context">
+              <div class="app-brand">
+                <h1>LOGITEC CORE WMS</h1>
+                <p id="authHint">Conectando…</p>
+              </div>
+              <div class="app-topbar-meta">
+                <span class="demo-env-badge hidden" id="demoEnvBadge" hidden>DEMO · INVENTARIO SOLO LECTURA</span>
+                <span class="demo-source-badge hidden" id="dataSourceBadge" hidden>Fuente demo</span>
+                <button type="button" id="pwaInstallBtn" class="btn-secondary btn-compact app-shell-action hidden" hidden>Instalar LOGITEC CORE WMS</button>
+                <button type="button" id="fullscreenBtn" class="btn-secondary btn-compact app-shell-action hidden" hidden>Pantalla completa</button>
+                <button type="button" id="focusModeBtn" class="btn-secondary btn-compact focus-mode-btn" aria-pressed="false">Modo concentración</button>
+                <button type="button" id="logoutBtn" class="btn-secondary btn-compact app-shell-action">Cerrar sesión</button>
+                <div class="role-demo-switch hidden" id="roleSwitch" hidden aria-label="Vista por rol">
+                  <button type="button" class="nav-section-tab" data-role="ADMIN">Administrador</button>
+                  <button type="button" class="nav-section-tab" data-role="SUPERVISOR">Supervisor</button>
+                  <button type="button" class="nav-section-tab" data-role="OPERATOR">Operador</button>
+                  <button type="button" class="nav-section-tab" data-role="CLIENT">Cliente</button>
+                </div>
+                <span class="session-role-badge hidden" id="sessionRoleBadge" hidden aria-live="polite">Administrador</span>
+                <span class="app-datetime" id="appDateTime">—</span>
+              </div>
+            </div>
+            <div id="supervisorOperatorModeBar" class="supervisor-operator-mode-bar hidden" hidden aria-live="polite">
+              <span class="supervisor-operator-mode-label">Supervisor · trabajando como Operador</span>
+              <button type="button" class="btn-secondary btn-compact" id="exitSupervisorOperatorModeBtn">VOLVER A SUPERVISOR</button>
+            </div>
+            <nav id="wmsSectionBar" class="wms-section-bar" aria-label="Secciones WMS"></nav>
+            <p id="mustChangePasswordBanner" class="must-change-banner hidden" hidden role="status">
+              Debes establecer una contraseña nueva antes de operar. La temporal se muestra una sola vez y no se puede recuperar.
+            </p>
+          </header>
+          <div class="app-body">
+            <aside class="sidebar" id="sidebar" aria-label="Navegación principal"></aside>
+            <main class="content" id="app"></main>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside id="directorViewBar" class="director-view-bar hidden" hidden aria-label="Modo Director revisión temporal">
+      <div class="director-mobile-dock">
+        <button type="button" id="directorMobileToggle" class="director-mobile-toggle" aria-expanded="false" aria-controls="directorMobileSheet">VISTA DIRECTOR</button>
+        <p id="directorRoleFlash" class="director-role-flash hidden" hidden aria-live="polite"></p>
+      </div>
+      <div class="director-desktop-panel">
+        <p class="director-view-bar-label">MODO DIRECTOR · REVISIÓN TEMPORAL</p>
+        <div class="director-view-bar-actions director-view-bar-actions-desktop">
+          <button type="button" class="director-view-btn active" data-director-role="ADMIN">LO QUE VE EL ADMIN</button>
+          <button type="button" class="director-view-btn" data-director-role="SUPERVISOR">LO QUE VE SUPERVISOR</button>
+          <button type="button" class="director-view-btn" data-director-role="OPERATOR">LO QUE VE OPERADOR</button>
+          <button type="button" class="director-view-btn" data-director-role="CLIENT">LO QUE VE CLIENTE</button>
+          <button type="button" class="director-view-btn director-view-btn-mobile" data-director-mobile="1">MODO CELULAR</button>
+          <button type="button" class="director-view-btn director-view-btn-system" data-director-system="1">VER SISTEMA ACTUAL</button>
+        </div>
+      </div>
+      <div id="directorMobileBackdrop" class="director-mobile-backdrop hidden" hidden aria-hidden="true"></div>
+      <div id="directorMobileSheet" class="director-mobile-sheet hidden" hidden role="dialog" aria-modal="true" aria-labelledby="directorMobileSheetTitle">
+        <div class="director-mobile-sheet-head">
+          <p id="directorMobileSheetTitle">MODO DIRECTOR · REVISIÓN TEMPORAL</p>
+          <button type="button" id="directorMobileClose" class="director-mobile-close" aria-label="Cerrar">×</button>
+        </div>
+        <div class="director-mobile-sheet-body">
+          <div class="director-view-bar-actions director-view-bar-actions-mobile">
+            <button type="button" class="director-view-btn active" data-director-role="ADMIN">Administrador</button>
+            <button type="button" class="director-view-btn" data-director-role="SUPERVISOR">Supervisor</button>
+            <button type="button" class="director-view-btn" data-director-role="OPERATOR">Operador</button>
+            <button type="button" class="director-view-btn" data-director-role="CLIENT">Cliente</button>
+            <button type="button" class="director-view-btn director-view-btn-mobile" data-director-mobile="1">Modo celular</button>
+            <button type="button" class="director-view-btn director-view-btn-system" data-director-system="1">Ver sistema actual</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+    <footer class="demo-readonly-footer">
+      <span id="writeGuard">Escrituras bloqueadas: 0</span>
+      <span id="dataSourceFooter">Fuente: sin datos</span>
+    </footer>
+    <div id="gridDetailDrawer" class="grid-detail-drawer" aria-hidden="true" hidden>
+      <div class="grid-detail-backdrop" data-close-drawer></div>
+      <aside class="grid-detail-panel" role="dialog" aria-modal="true" aria-labelledby="gridDetailTitle">
+        <header>
+          <h3 id="gridDetailTitle">Detalle</h3>
+          <button type="button" class="modal-close" data-close-drawer aria-label="Cerrar">×</button>
+        </header>
+        <div id="gridDetailBody" class="grid-detail-body"></div>
+        <div id="gridDetailActions" class="grid-detail-actions"></div>
+      </aside>
+    </div>
+    <div id="userTempPasswordModal" class="user-temp-password-modal hidden" hidden role="dialog" aria-modal="true" aria-labelledby="userTempPasswordTitle">
+      <div class="user-temp-password-backdrop" data-close-temp-password></div>
+      <div class="user-temp-password-sheet card-panel">
+        <h3 id="userTempPasswordTitle">Contraseña temporal</h3>
+        <p class="module-lead">Se muestra una sola vez. No se almacena en este dispositivo.</p>
+        <p id="userTempPasswordValue" class="user-temp-password-value"></p>
+        <p id="userTempPasswordCopyFeedback" class="user-temp-password-copy-feedback hidden" hidden aria-live="polite"></p>
+        <div class="user-temp-password-actions">
+          <button type="button" class="btn-primary btn-compact" id="userTempPasswordCopyBtn">COPIAR</button>
+          <button type="button" class="btn-secondary btn-compact" data-close-temp-password>Cerrar</button>
+        </div>
+      </div>
+    </div>
+    <script src="/logitec-role-demo.js?v=16.2.7" defer></script>
+  </body>
+</html>

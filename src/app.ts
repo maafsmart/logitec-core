@@ -204,23 +204,34 @@ app.get("/logitec-simple-demo.css", (req, res) => {
 app.get("/logitec-simple-demo.js", (req, res) => {
   sendLogitecPreviewAsset(req, res, "logitec-simple-demo.js", "application/javascript");
 });
+app.get("/logitec-role-demo.css", (_req, res) => {
+  res.type("text/css");
+  res.sendFile(path.join(publicDir, "logitec-role-demo.css"));
+});
+app.get("/logitec-role-demo.js", (_req, res) => {
+  res.type("application/javascript");
+  res.sendFile(path.join(publicDir, "logitec-role-demo.js"));
+});
 app.get("/logitec-role-demo.html", (req, res) => {
   sendLogitecPreviewAsset(req, res, "logitec-role-demo.html", "text/html");
-});
-app.get("/logitec-role-demo.css", (req, res) => {
-  sendLogitecPreviewAsset(req, res, "logitec-role-demo.css", "text/css");
-});
-app.get("/logitec-role-demo.js", (req, res) => {
-  sendLogitecPreviewAsset(req, res, "logitec-role-demo.js", "application/javascript");
 });
 app.get("/manifest.webmanifest", (_req, res) => {
   res.type("application/manifest+json");
   res.sendFile(path.join(publicDir, "manifest.webmanifest"));
 });
+app.get("/app.webmanifest", (_req, res) => {
+  res.type("application/manifest+json");
+  res.sendFile(path.join(publicDir, "app.webmanifest"));
+});
 app.get("/logitec-role-demo-sw.js", (_req, res) => {
   res.setHeader("Service-Worker-Allowed", "/");
   res.type("application/javascript");
   res.sendFile(path.join(publicDir, "logitec-role-demo-sw.js"));
+});
+app.get("/app-sw.js", (_req, res) => {
+  res.setHeader("Service-Worker-Allowed", "/");
+  res.type("application/javascript");
+  res.sendFile(path.join(publicDir, "app-sw.js"));
 });
 app.use(express.static(publicDir));
 

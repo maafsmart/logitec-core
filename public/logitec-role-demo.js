@@ -1,6 +1,22 @@
 (function logitecRoleDemo() {
   "use strict";
 
+  const OFFICIAL_APP =
+    document.documentElement.dataset.interfaceMode === "official" ||
+    window.location.pathname.replace(/\/+$/, "") === "/app.html";
+
+  function officialLoginNextPath() {
+    return OFFICIAL_APP ? "/app.html" : "/logitec-role-demo.html";
+  }
+
+  function applyOfficialAppChrome() {
+    if (!OFFICIAL_APP) return;
+    document.querySelectorAll(".demo-env-banner, .demo-env-badge, .demo-source-badge").forEach((el) => {
+      el.classList.add("hidden");
+      el.hidden = true;
+    });
+  }
+
   const ROLE_DEFAULT = { ADMIN: "control", SUPERVISOR: "tasks", OPERATOR: "tasks", CLIENT: "control" };
 
   const ROLE_TAB_DEFAULT = { ADMIN: "inicio", SUPERVISOR: "operacion", OPERATOR: "operacion", CLIENT: "inicio" };
@@ -718,7 +734,8 @@
     logoutBtn?.addEventListener("click", forceLogout);
     syncAppShellActions();
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/logitec-role-demo-sw.js", { scope: "/" }).catch(() => {});
+      const swPath = OFFICIAL_APP ? "/app-sw.js" : "/logitec-role-demo-sw.js";
+      navigator.serviceWorker.register(swPath, { scope: "/" }).catch(() => {});
     }
   }
 
@@ -2538,7 +2555,7 @@
     applySessionFromMe(sessionUser);
     applyMustChangePasswordGate(false);
     authHint.textContent = `${sessionRoleLabel()} · ${sessionUser.email || ""}`;
-    if (!(await loadDbSource())) await loadExcelSource();
+    await loadOperationalSources();
     updateSourceUi();
     render();
   }
@@ -2552,7 +2569,7 @@
       return;
     }
     applyMustChangePasswordGate(false);
-    if (!(await loadDbSource())) await loadExcelSource();
+    await loadOperationalSources();
     updateSourceUi();
     render();
   }
@@ -3289,6 +3306,16 @@
   }
 
   function updateSourceUi() {
+    if (OFFICIAL_APP) {
+      applyOfficialAppChrome();
+      if (state.dataSource === "DB") {
+        if (dataSourceFooter) dataSourceFooter.textContent = "Fuente: BD operativa";
+        if (dataSourceBadge) dataSourceBadge.hidden = true;
+      } else if (dataSourceFooter) {
+        dataSourceFooter.textContent = "Fuente: sin datos";
+      }
+      return;
+    }
     const label = state.dataSource === "EXCEL" ? "Fuente demo: Excel oficial · solo lectura" : state.dataSource === "DB" ? "Fuente: BD READ-ONLY" : "Fuente: sin datos";
     if (dataSourceFooter) dataSourceFooter.textContent = label;
     if (dataSourceBadge) dataSourceBadge.textContent = label;
@@ -5076,6 +5103,16 @@
     });
   });
 
+  async function loadOperationalSources() {
+    if (OFFICIAL_APP) {
+      if (!(await loadDbSource())) {
+        throw new Error("No hay inventario operativo disponible en la base de datos.");
+      }
+      return;
+    }
+    if (!(await loadDbSource())) await loadExcelSource();
+  }
+
   async function loadDbSource() {
     const summaryResult = await apiGet("/api/inventory/summary", true);
     if (!summaryResult.ok || !summaryResult.data || !dbHasInventory(summaryResult.data)) return false;
@@ -5084,11 +5121,16 @@
       apiGet("/api/inventory/stock", true)
     ]);
     applyDbPayload(summaryResult.data, movementsResult.data || {}, stockResult.ok ? stockResult.data : []);
-    authHint.textContent = `BD READ-ONLY · ${fmtQty(summaryResult.data.qty)} piezas`;
+    if (OFFICIAL_APP && state.sessionUser) {
+      authHint.textContent = `${sessionRoleLabel()} · ${fmtQty(summaryResult.data.qty)} piezas`;
+    } else {
+      authHint.textContent = `BD READ-ONLY · ${fmtQty(summaryResult.data.qty)} piezas`;
+    }
     return true;
   }
 
   async function loadExcelSource() {
+    if (OFFICIAL_APP) return false;
     const excelResult = await apiGet("/api/demo/inventory-from-excel", true);
     if (excelResult.status === 401) throw new Error("Sesión requerida. Use login.html?next=/logitec-role-demo.html");
     const payload = excelResult.data || {};
@@ -5103,6 +5145,7 @@
   async function boot() {
     closeUserTempPasswordModal();
     wireUserTempPasswordModalGlobal();
+    applyOfficialAppChrome();
     if (appDateTime) appDateTime.textContent = new Date().toLocaleString("es-MX");
     resetDemoStartupView();
     syncDirectorReviewChrome();
@@ -5116,7 +5159,7 @@
     try {
       if (!readAccessToken()) {
         authHint.textContent = "Sesión requerida";
-        app.innerHTML = `<div class="card-panel"><p><a href="/login.html?next=${encodeURIComponent("/logitec-role-demo.html")}">Iniciar sesión</a> · mismo host</p></div>`;
+        app.innerHTML = `<div class="card-panel"><p><a href="/login.html?next=${encodeURIComponent(officialLoginNextPath())}">Iniciar sesión</a> · mismo host</p></div>`;
         renderSectionTabs();
         renderSidebar();
         return;

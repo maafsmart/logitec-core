@@ -57,7 +57,7 @@ test("detección standalone y registro SW con scope", () => {
   assert.match(js, /function isPwaStandalone\(\)/);
   assert.match(js, /display-mode: standalone/);
   assert.match(js, /display-mode: minimal-ui/);
-  assert.match(js, /navigator\.serviceWorker\.register\("\/logitec-role-demo-sw\.js", \{ scope: "\/" \}\)/);
+  assert.match(js, /OFFICIAL_APP \? "\/app-sw\.js" : "\/logitec-role-demo-sw\.js"/);
   assert.match(installJs, /register\("\/logitec-role-demo-sw\.js", \{ scope: "\/" \}\)/);
 });
 
@@ -65,7 +65,8 @@ test("service worker mínimo no cachea APIs", () => {
   assert.match(sw, /\/api\//);
   assert.match(sw, /if \(url\.pathname\.startsWith\("\/api\/"\)\) return;/);
   assert.match(sw, /if \(url\.pathname\.startsWith\("\/login"\)\) return;/);
-  assert.match(js, /navigator\.serviceWorker\.register\("\/logitec-role-demo-sw\.js", \{ scope: "\/" \}\)/);
+  assert.match(js, /logitec-role-demo-sw\.js/);
+  assert.match(js, /app-sw\.js/);
 });
 
 test("Director oculto salvo ?director=1 en localhost", () => {
