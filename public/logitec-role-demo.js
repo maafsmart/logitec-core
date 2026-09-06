@@ -17,6 +17,69 @@
     });
   }
 
+  function officializeCopy(text) {
+    if (!OFFICIAL_APP) return text;
+    let out = String(text ?? "");
+    const replacements = [
+      ["Fuente demo: Excel oficial · solo lectura", "Fuente: BD operativa"],
+      [
+        "Valuación no disponible en esta fuente demo. El Excel oficial no incluye precios unitarios ni importes.",
+        "Valuación no disponible en la fuente actual."
+      ],
+      [
+        "La fuente Excel oficial no contiene precios; los registros se muestran como sin valor.",
+        "La fuente actual no contiene precios; los registros se muestran como sin valor."
+      ],
+      ["Datos reales de la fuente demo · READ-ONLY", "Datos operativos · solo consulta"],
+      ["Catálogo desde fuente demo", "Catálogo operativo"],
+      ["Export CSV/Excel oficial", "Export CSV/Excel"],
+      ["Disponible en sistema oficial · deshabilitado en demo.", "Disponible en el panel administrativo completo."],
+      ["Disponible en sistema oficial · demo muestra tareas derivadas.", "Disponible en el panel administrativo completo."],
+      ["Exportes y reportes del WMS real · READ-ONLY en demo.", "Exportes y reportes · solo consulta."],
+      ["No disponible en la fuente actual de la DEMO.", "No disponible en la fuente actual."],
+      ["cargue fuente demo para reconocer antecedentes históricos.", "cargue inventario operativo para reconocer antecedentes históricos."],
+      ["Diferencia reportada · DEMO — supervisor notificado", "Diferencia reportada · supervisor notificado"],
+      ["DEMO READ-ONLY", "Solo consulta"],
+      ["deshabilitado en demo", "no disponible en esta vista"],
+      ["Deshabilitado en demo", "No disponible en esta vista"],
+      ["fuente demo", "fuente operativa"],
+      ["Fuente demo", "Fuente operativa"],
+      ["Excel oficial", "inventario"],
+      [" · DEMO", ""],
+      ["DEMO —", ""],
+      [" en demo.", " en esta vista."],
+      [" sesión DEMO.", " sesión actual."],
+      [" revisión DEMO", " revisión local"],
+      ["OED-DEMO-", "OED-"],
+      ["OPERATOR_DEMO", "OPERADOR"],
+      ["SUPERVISOR_DEMO", "SUPERVISOR"],
+      ["ADMIN_DEMO", "ADMIN"]
+    ];
+    replacements.forEach(([from, to]) => {
+      out = out.split(from).join(to);
+    });
+    out = out
+      .replace(/\bDEMO READ-ONLY\b/gi, "Solo consulta")
+      .replace(/\bsolo lectura en demo\b/gi, "solo consulta")
+      .replace(/\bdeshabilitado en demo\b/gi, "no disponible en esta vista")
+      .replace(/\bDEMO —/g, "")
+      .replace(/\s·\s*DEMO\b/g, "")
+      .replace(/\bde la DEMO\b/gi, "de la fuente actual")
+      .replace(/\bsesión DEMO\b/gi, "sesión actual")
+      .replace(/\brevisión DEMO\b/gi, "revisión local")
+      .replace(/\bDEMO\b/g, "");
+    return out
+      .replace(/\s{2,}/g, " ")
+      .replace(/\s·\s·+/g, " · ")
+      .replace(/\s·\s*$/g, "")
+      .replace(/^\s·\s*/g, "")
+      .trim();
+  }
+
+  function finalizeOfficialHtml(html) {
+    return OFFICIAL_APP ? officializeCopy(html) : html;
+  }
+
   const ROLE_DEFAULT = { ADMIN: "control", SUPERVISOR: "tasks", OPERATOR: "tasks", CLIENT: "control" };
 
   const ROLE_TAB_DEFAULT = { ADMIN: "inicio", SUPERVISOR: "operacion", OPERATOR: "operacion", CLIENT: "inicio" };
@@ -4873,7 +4936,7 @@
             const primary = m.primary ? " nav-primary" : "";
             return `<button type="button" class="module-btn${primary}${active}" data-nav-module="${esc(m.id)}" data-nav-tab-target="${esc(t.id)}">
               <span class="module-btn-label">${esc(m.label)}</span>
-              <span class="module-btn-desc">${esc(m.desc)}</span>
+              <span class="module-btn-desc">${esc(officializeCopy(m.desc))}</span>
             </button>`;
           })
           .join("");
@@ -4985,7 +5048,7 @@
         const fb = document.getElementById("scanFeedback");
         if (fb) {
           fb.className = "scan-status warn";
-          fb.textContent = "Diferencia reportada · DEMO — supervisor notificado";
+          fb.textContent = officializeCopy("Diferencia reportada · DEMO — supervisor notificado");
         }
       });
       return;
@@ -5000,7 +5063,7 @@
     if (!app) return;
     stopDemoCamera("");
     syncFlowTheme();
-    app.innerHTML = renderModule();
+    app.innerHTML = finalizeOfficialHtml(renderModule());
     wireContent();
   }
 

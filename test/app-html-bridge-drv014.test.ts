@@ -32,11 +32,29 @@ function sliceFunction(source: string, name: string) {
 
 test("/app.html expone la interfaz V16 oficial sin banners demo visibles", () => {
   assert.match(appHtml, /data-interface-mode="official"/);
-  assert.match(appHtml, /logitec-role-demo\.js\?v=16\.2\.7/);
-  assert.match(appHtml, /logitec-role-demo\.css\?v=16\.2\.7/);
+  assert.match(appHtml, /logitec-role-demo\.js\?v=16\.2\.8/);
+  assert.match(appHtml, /logitec-role-demo\.css\?v=16\.2\.8/);
   assert.match(appHtml, /class="demo-env-banner hidden"[^>]*hidden/);
   assert.match(appHtml, /id="demoEnvBadge"[^>]*hidden/);
   assert.match(appHtml, /id="dataSourceBadge"[^>]*hidden/);
+});
+
+test("CSS oficial oculta chrome demo con display:none !important", () => {
+  const css = readFileSync(new URL("../public/logitec-role-demo.css", import.meta.url), "utf8");
+  assert.match(css, /html\[data-interface-mode="official"\] \.demo-env-badge[\s\S]*display: none !important;/);
+  assert.match(css, /html\[data-interface-mode="official"\] \.demo-env-banner[\s\S]*display: none !important;/);
+  assert.match(css, /html\[data-interface-mode="official"\] \.demo-readonly-footer[\s\S]*display: none !important;/);
+  assert.match(css, /html\[data-interface-mode="official"\] #dataSourceFooter[\s\S]*display: none !important;/);
+});
+
+test("cache-buster oficial /app.html usa v16.2.8 sin alterar demo v16.2.7", () => {
+  const demoHtml = readFileSync(new URL("../public/logitec-role-demo.html", import.meta.url), "utf8");
+  assert.match(appHtml, /logitec-role-demo\.(css|js)\?v=16\.2\.8/);
+  assert.match(demoHtml, /logitec-role-demo\.js\?v=16\.2\.7/);
+  assert.match(demoHtml, /logitec-role-demo\.css\?v=16\.2\.7/);
+  assert.doesNotMatch(demoHtml, /data-interface-mode="official"/);
+  assert.match(demoHtml, /class="demo-env-banner"/);
+  assert.doesNotMatch(demoHtml, /demo-env-banner hidden/);
 });
 
 test("login allowlist incluye /app.html y conserva dashboard como fallback", () => {
@@ -93,6 +111,7 @@ test("manifest demo conserva start_url logitec-role-demo.html", () => {
 });
 
 test("SW oficial cachea solo shell /app.html y no API/login/tokens", () => {
+  assert.match(appSw, /logitec-app-shell-v16\.2\.8/);
   assert.match(appSw, /\/app\.html/);
   assert.match(appSw, /\/app\.webmanifest/);
   assert.doesNotMatch(appSw, /\/logitec-role-demo\.html/);
@@ -115,4 +134,52 @@ test("app.ts expone manifest/SW oficial y shell V16 sin gate preview", () => {
   assert.match(appSrc, /logitec-role-demo\.css/);
   assert.match(appSrc, /logitec-role-demo\.js/);
   assert.match(appSrc, /sendLogitecPreviewAsset\(req, res, "logitec-role-demo\.html"/);
+});
+
+function evalOfficializeCopy() {
+  const start = demoJs.indexOf("function officializeCopy(");
+  const end = demoJs.indexOf("function finalizeOfficialHtml(", start);
+  assert.ok(start >= 0 && end > start, "officializeCopy block missing");
+  return new Function(`const OFFICIAL_APP = true; ${demoJs.slice(start, end)}; return officializeCopy;`)();
+}
+
+const BANNED_OFFICIAL_TERMS = [
+  /\bDEMO\b/i,
+  /Fuente demo/i,
+  /fuente demo/i,
+  /Excel oficial/i,
+  /solo lectura en demo/i,
+  /deshabilitado en demo/i
+];
+
+test("OFFICIAL_APP elimina copy demo visible en navegación y módulos", () => {
+  assert.match(demoJs, /function officializeCopy\(/);
+  assert.match(demoJs, /finalizeOfficialHtml\(renderModule\(\)\)/);
+  assert.match(demoJs, /esc\(officializeCopy\(m\.desc\)\)/);
+  const officializeCopy = evalOfficializeCopy();
+  const samples = [
+    "Pre-recepción documental · motor predictivo · DEMO READ-ONLY",
+    "Catálogo desde fuente demo",
+    "Solo lectura en demo",
+    "Disponible en sistema oficial · deshabilitado en demo.",
+    "Export CSV/Excel oficial",
+    "No disponible en la fuente actual de la DEMO.",
+    "Diferencia reportada · DEMO — supervisor notificado",
+    "Valuación no disponible en esta fuente demo. El Excel oficial no incluye precios unitarios ni importes."
+  ];
+  for (const sample of samples) {
+    const cleaned = officializeCopy(sample);
+    for (const pattern of BANNED_OFFICIAL_TERMS) {
+      assert.doesNotMatch(cleaned, pattern, `${sample} -> ${cleaned}`);
+    }
+  }
+});
+
+test("logitec-role-demo.html conserva copy DEMO en fuente compartida", () => {
+  const demoHtml = readFileSync(new URL("../public/logitec-role-demo.html", import.meta.url), "utf8");
+  assert.match(demoJs, /DEMO READ-ONLY/);
+  assert.match(demoJs, /Catálogo desde fuente demo/);
+  assert.match(demoJs, /deshabilitado en demo/);
+  assert.match(demoHtml, /DEMO · INVENTARIO SOLO LECTURA/);
+  assert.doesNotMatch(demoJs, /if \(!OFFICIAL_APP\) return NAV/);
 });

@@ -1767,6 +1767,16 @@ body:not(.director-review-active) .app-body {
 body.director-review-active .demo-env-badge {
   display: none;
 }
+html[data-interface-mode="official"] .demo-env-banner,
+html[data-interface-mode="official"] .demo-env-badge,
+html[data-interface-mode="official"] .demo-source-badge,
+html[data-interface-mode="official"] #demoEnvBadge,
+html[data-interface-mode="official"] #dataSourceBadge,
+html[data-interface-mode="official"] .demo-readonly-footer,
+html[data-interface-mode="official"] #writeGuard,
+html[data-interface-mode="official"] #dataSourceFooter {
+  display: none !important;
+}
 
 /* ===== detail drawer (reutilizado de dashboard) ===== */
 .grid-detail-drawer {

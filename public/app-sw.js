@@ -1,5 +1,5 @@
 /* LOGITEC CORE WMS · service worker oficial · shell /app.html solamente */
-const SHELL_CACHE = "logitec-app-shell-v16.2.7";
+const SHELL_CACHE = "logitec-app-shell-v16.2.8";
 const SHELL_ASSETS = [
   "/app.html",
   "/logitec-role-demo.css",
