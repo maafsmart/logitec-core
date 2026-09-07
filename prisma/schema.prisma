@@ -48,6 +48,9 @@ model User {
   reservationsCreated  InventoryReservation[]
   importBatches        ImportBatch[]
   importRowAudits      ImportRowAudit[]
+  provisionalCapturesCreated  ProvisionalCapture[] @relation("ProvisionalCaptureCreated")
+  provisionalCapturesReviewed ProvisionalCapture[] @relation("ProvisionalCaptureReviewer")
+  provisionalCaptureReviews   ProvisionalCaptureReview[]
 
   @@index([clientId])
 }
@@ -220,6 +223,7 @@ model Client {
   comments       Comment[]
   tasks          Task[]
   incidents      Incident[]
+  provisionalCaptures ProvisionalCapture[]
 }
 
 model Customer {
@@ -248,6 +252,7 @@ model Customer {
   productProjects ProductProject[]
   movementsFrom  InventoryMovement[] @relation("MovementFromProject")
   movementsTo    InventoryMovement[] @relation("MovementToProject")
+  provisionalCaptures ProvisionalCapture[]
 
   @@index([clientId])
 }
@@ -575,6 +580,52 @@ model Task {
   @@index([warehouse])
   @@index([requisitionId])
   @@index([clientId])
+}
+
+model ProvisionalCapture {
+  id                   String   @id @default(cuid())
+  clientId             String
+  createdById          String
+  declaredActionId     String
+  status               String
+  observation          String?
+  readings             Json
+  physicalStartedAt    DateTime
+  physicalEndedAt      DateTime
+  executorOperatorMode Boolean  @default(false)
+  device               String?
+  projectId            String?
+  reviewerId           String?
+  reviewType           String?
+  adminUpdatedAt       DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  client      Client              @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy   User                @relation("ProvisionalCaptureCreated", fields: [createdById], references: [id], onDelete: Restrict)
+  reviewer    User?               @relation("ProvisionalCaptureReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  project     Customer?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  reviews     ProvisionalCaptureReview[]
+
+  @@index([clientId, status, createdAt])
+  @@index([createdById])
+  @@index([projectId])
+}
+
+model ProvisionalCaptureReview {
+  id           String   @id @default(cuid())
+  captureId    String
+  reviewerId   String
+  reviewerRole String
+  reviewType   String
+  status       String
+  createdAt    DateTime @default(now())
+
+  capture  ProvisionalCapture @relation(fields: [captureId], references: [id], onDelete: Cascade)
+  reviewer User               @relation(fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@index([captureId, createdAt])
+  @@index([reviewerId])
 }
 
 model Incident {

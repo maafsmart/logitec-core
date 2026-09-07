@@ -17,6 +17,7 @@ import { clientsRouter } from "./modules/clients/clients.routes.js";
 import { warehousesRouter } from "./modules/master-data/warehouses.routes.js";
 import { commentsRouter } from "./modules/comments/comments.routes.js";
 import { incidentsRouter } from "./modules/incidents/incidents.routes.js";
+import { provisionalCapturesRouter } from "./modules/provisional-captures/provisional-captures.routes.js";
 import { inventoryRouter } from "./modules/inventory/inventory.routes.js";
 import { importsRouter } from "./modules/imports/imports.routes.js";
 import { exportsRouter } from "./modules/exports/exports.routes.js";
@@ -108,6 +109,7 @@ app.use("/api/catalog", catalogRouter);
 app.use("/api/traceability", traceabilityRouter);
 app.use("/api/tasks", tasksRouter);
 app.use("/api/incidents", incidentsRouter);
+app.use("/api/provisional-captures", provisionalCapturesRouter);
 app.get("/vendor/barcode-detector/3.2.2/polyfill.js", (_req, res) => {
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   res.sendFile(barcodeDetectorPolyfill);

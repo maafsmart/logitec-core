@@ -10,6 +10,7 @@ const catalog = read("../src/modules/catalog/catalog.routes.ts");
 const tasks = read("../src/modules/tasks/tasks.routes.ts");
 const incidents = read("../src/modules/incidents/incidents.routes.ts");
 const comments = read("../src/modules/comments/comments.routes.ts");
+const provisionalCaptures = read("../src/modules/provisional-captures/provisional-captures.routes.ts");
 const warehouses = read("../src/modules/master-data/warehouses.routes.ts");
 const masterData = read("../src/modules/master-data/master-data.service.ts");
 
@@ -47,6 +48,8 @@ test("tareas, incidencias, comentarios y estadísticas persisten clientId", () =
   assert.match(incidents, /clientId: operationalClientId\(req\.auth!\)/);
   assert.match(incidents, /clientId,\s*\.\.\.\(isElevated/);
   assert.match(comments, /clientId: operationalClientId\(req\.auth!\)/);
+  assert.match(provisionalCaptures, /requireOperationalClient/);
+  assert.match(provisionalCaptures, /requireRole\(\["ADMIN", "SUPERVISOR", "OPERATOR"\]\)/);
   assert.match(masterData, /where: \{ clientId, location: \{ warehouseId: warehouse\.id \}/);
   assert.match(warehouses, /warehouseOperationalStats\(prisma as never, row, operationalClientId\(req\.auth!\)\)/);
 });
