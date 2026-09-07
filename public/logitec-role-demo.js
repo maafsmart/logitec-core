@@ -326,6 +326,8 @@
     freeScanAnchor: null,
     provisionalCaptures: [],
     provisionalCaptureSeq: 0,
+    provisionalApiError: "",
+    provisionalActionError: "",
     demoSupervisorActorId: "SUPERVISOR_DEMO",
     demoAdminActorId: "ADMIN_DEMO",
     adminTraceFilter: "all",
@@ -1771,6 +1773,113 @@
     return capture;
   }
 
+  function declaredActionLabel(actionId) {
+    const action = DECLARED_FLOOR_ACTIONS.find((a) => a.id === actionId);
+    return action ? action.label : String(actionId || "");
+  }
+
+  function mapServerCaptureToUi(serverCapture) {
+    const createdBy = serverCapture.createdBy || {};
+    const reviewer = serverCapture.reviewer || null;
+    const declaredActionId = String(serverCapture.declaredActionId || "");
+    return {
+      id: String(serverCapture.id),
+      status: String(serverCapture.status || ""),
+      declaredAction: declaredActionLabel(declaredActionId),
+      declaredActionId,
+      executor: String(createdBy.fullName || createdBy.email || ""),
+      executorRole: String(createdBy.role || ""),
+      executorActorId: String(serverCapture.createdById || createdBy.id || ""),
+      executorOperatorMode: Boolean(serverCapture.executorOperatorMode),
+      reviewer: reviewer ? String(reviewer.fullName || reviewer.email || "") : null,
+      reviewerRole: reviewer ? String(reviewer.role || "") : null,
+      reviewerActorId: serverCapture.reviewerId ? String(serverCapture.reviewerId) : null,
+      reviewType: serverCapture.reviewType ? String(serverCapture.reviewType) : null,
+      reviewHistory: (serverCapture.reviews || []).map((event) => ({
+        reviewer: String(event.reviewer?.fullName || event.reviewer?.email || ""),
+        reviewerRole: String(event.reviewerRole || ""),
+        reviewerActorId: String(event.reviewerId || ""),
+        reviewType: String(event.reviewType || ""),
+        status: String(event.status || ""),
+        at:
+          typeof event.createdAt === "string"
+            ? event.createdAt
+            : event.createdAt
+              ? new Date(event.createdAt).toISOString()
+              : new Date().toISOString()
+      })),
+      device: String(serverCapture.device || "PWA oficial"),
+      physicalStartedAt:
+        typeof serverCapture.physicalStartedAt === "string"
+          ? serverCapture.physicalStartedAt
+          : new Date(serverCapture.physicalStartedAt).toISOString(),
+      physicalEndedAt:
+        typeof serverCapture.physicalEndedAt === "string"
+          ? serverCapture.physicalEndedAt
+          : new Date(serverCapture.physicalEndedAt).toISOString(),
+      observation: String(serverCapture.observation || "").trim(),
+      readings: Array.isArray(serverCapture.readings)
+        ? serverCapture.readings.map((reading) => ({ ...reading }))
+        : [],
+      adminUpdatedAt: serverCapture.adminUpdatedAt
+        ? typeof serverCapture.adminUpdatedAt === "string"
+          ? serverCapture.adminUpdatedAt
+          : new Date(serverCapture.adminUpdatedAt).toISOString()
+        : null,
+      projectId: serverCapture.projectId || null,
+      project: serverCapture.project || null
+    };
+  }
+
+  function upsertOfficialProvisionalCapture(serverCapture) {
+    const mapped = mapServerCaptureToUi(serverCapture);
+    const index = state.provisionalCaptures.findIndex((capture) => capture.id === mapped.id);
+    if (index >= 0) state.provisionalCaptures[index] = mapped;
+    else state.provisionalCaptures.unshift(mapped);
+    return mapped;
+  }
+
+  function buildOfficialCapturePostBody(session, { validateNow = false } = {}) {
+    return {
+      declaredActionId: session.declaredAction,
+      observation: String(session.observation || "").trim(),
+      readings: session.readings.map((reading) => ({ ...reading })),
+      physicalStartedAt: session.startedAt,
+      physicalEndedAt: new Date().toISOString(),
+      executorOperatorMode: Boolean(state.operatorMode),
+      device: navigator.userAgent ? String(navigator.userAgent).slice(0, 160) : "PWA oficial",
+      validateNow: Boolean(validateNow)
+    };
+  }
+
+  async function loadOfficialProvisionalCaptures() {
+    if (!OFFICIAL_APP) return;
+    const result = await apiGet("/api/provisional-captures", true);
+    if (result.status === 401) throw new Error("Sesión requerida.");
+    if (!result.ok) {
+      throw new Error(
+        (result.data && result.data.message) || "No se pudieron cargar las capturas provisionales."
+      );
+    }
+    const items = (result.data && result.data.items) || [];
+    state.provisionalCaptures = items.map((capture) => mapServerCaptureToUi(capture));
+    state.provisionalApiError = "";
+  }
+
+  function clearProvisionalCaptureSession() {
+    state.freeScanActive = false;
+    state.freeScanSession = null;
+    state.freeScanAnchor = null;
+    unlockScanInput();
+    renderContent();
+  }
+
+  function renderProvisionalApiNotice() {
+    const message = state.provisionalActionError || state.provisionalApiError;
+    if (!message) return "";
+    return `<div class="card-panel ops-message warn provisional-api-notice" role="alert">${esc(message)}</div>`;
+  }
+
   function finalizeProvisionalCapture(capture) {
     state.provisionalCaptures.unshift(capture);
     state.freeScanActive = false;
@@ -1780,22 +1889,54 @@
     renderContent();
   }
 
-  function sendProvisionalCapture() {
+  async function sendProvisionalCapture() {
     const session = state.freeScanSession;
     if (!session || !session.readings.length) return;
     if (state.role === "ADMIN" && !isPhysicalFloorAction(session.declaredAction)) return;
     if (state.role === "SUPERVISOR" && !state.operatorMode && !isPhysicalFloorAction(session.declaredAction)) {
       return;
     }
+    if (OFFICIAL_APP) {
+      state.provisionalActionError = "";
+      try {
+        const result = await apiFetch("/api/provisional-captures", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildOfficialCapturePostBody(session, { validateNow: false }))
+        });
+        upsertOfficialProvisionalCapture(result.capture);
+        clearProvisionalCaptureSession();
+      } catch (error) {
+        state.provisionalActionError = error.message || "No se pudo guardar la captura provisional.";
+        renderContent();
+      }
+      return;
+    }
     finalizeProvisionalCapture(buildProvisionalCaptureFromSession(session));
   }
 
-  function validateProvisionalCaptureNow() {
+  async function validateProvisionalCaptureNow() {
     const session = state.freeScanSession;
     if (!session || !session.readings.length) return;
     if (state.operatorMode) return;
     if (state.role !== "SUPERVISOR" && state.role !== "ADMIN") return;
     if (!isPhysicalFloorAction(session.declaredAction)) return;
+    if (OFFICIAL_APP) {
+      state.provisionalActionError = "";
+      try {
+        const result = await apiFetch("/api/provisional-captures", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildOfficialCapturePostBody(session, { validateNow: true }))
+        });
+        upsertOfficialProvisionalCapture(result.capture);
+        clearProvisionalCaptureSession();
+      } catch (error) {
+        state.provisionalActionError = error.message || "No se pudo validar la captura provisional.";
+        renderContent();
+      }
+      return;
+    }
     finalizeProvisionalCapture(buildProvisionalCaptureFromSession(session, { validateNow: true }));
   }
 
@@ -1837,11 +1978,30 @@
     return state.role === "SUPERVISOR" || state.role === "ADMIN";
   }
 
-  function updateProvisionalCaptureStatus(captureId, nextStatus) {
+  async function updateProvisionalCaptureStatus(captureId, nextStatus) {
     const capture = state.provisionalCaptures.find((c) => c.id === captureId);
     if (!capture || !canReviewProvisionalCapture()) return;
     if (!PROVISIONAL_STATUSES.includes(nextStatus)) return;
     if (capture.status === nextStatus) return;
+    if (OFFICIAL_APP) {
+      state.provisionalActionError = "";
+      try {
+        const result = await apiFetch(
+          `/api/provisional-captures/${encodeURIComponent(captureId)}/review`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: nextStatus })
+          }
+        );
+        upsertOfficialProvisionalCapture(result.capture);
+        renderContent();
+      } catch (error) {
+        state.provisionalActionError = error.message || "No se pudo actualizar el estado de la captura.";
+        renderContent();
+      }
+      return;
+    }
     const now = new Date().toISOString();
     const reviewerActorId = currentDemoActorId();
     const reviewerRole = state.role;
@@ -2498,8 +2658,24 @@
     }
   }
 
+  function isOfficialProvisionalWrite(url, method) {
+    if (!OFFICIAL_APP) return false;
+    try {
+      const path = new URL(url, window.location.origin).pathname.replace(/\/+$/, "") || "/";
+      if (path === "/api/provisional-captures" && method === "POST") return true;
+      if (/^\/api\/provisional-captures\/[^/]+\/review$/.test(path) && method === "PATCH") return true;
+      return false;
+    } catch (_e) {
+      return false;
+    }
+  }
+
   function isDemoWriteAllowed(url, method) {
-    return isUsersAdminWrite(url, method) || isSelfPasswordChangeWrite(url, method);
+    return (
+      isUsersAdminWrite(url, method) ||
+      isSelfPasswordChangeWrite(url, method) ||
+      isOfficialProvisionalWrite(url, method)
+    );
   }
 
   function sessionMustChangePassword() {
@@ -2638,6 +2814,7 @@
     applyMustChangePasswordGate(false);
     authHint.textContent = `${sessionRoleLabel()} · ${sessionUser.email || ""}`;
     await loadOperationalSources();
+    if (OFFICIAL_APP) await loadOfficialProvisionalCaptures();
     updateSourceUi();
     render();
   }
@@ -2652,6 +2829,7 @@
     }
     applyMustChangePasswordGate(false);
     await loadOperationalSources();
+    if (OFFICIAL_APP) await loadOfficialProvisionalCaptures();
     updateSourceUi();
     render();
   }
@@ -5082,7 +5260,7 @@
     if (!app) return;
     stopDemoCamera("");
     syncFlowTheme();
-    app.innerHTML = finalizeOfficialHtml(renderModule());
+    app.innerHTML = finalizeOfficialHtml(renderProvisionalApiNotice() + renderModule());
     wireContent();
   }
 
